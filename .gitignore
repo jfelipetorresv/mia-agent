@@ -1,0 +1,8 @@
+.env
+mia-data/
+.tmp/
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc

@@ -1,0 +1,336 @@
+# Mia — Resúmenes de sesión
+
+## 2026-06-14 — Sesión 13
+TL;DR: Módulo 3e Feedback processor cerrado. Trazas enriquecidas a v2 (decisión #19).
+       **HITO: Fase 2 — Knowledge Stores COMPLETA (3a-3e).** 15/15 suites (308 checks).
+Qué construimos:
+- Investigación previa: las trazas reales (mia.trace.v1) NO registraban la decisión HITL, ni
+  el borrador original vs final, ni los documentos citados → las 3 señales del spec no eran
+  detectables. Se presentó y el usuario decidió (decisión #19): enriquecer la traza en el
+  origen (Opción 1).
+- `memory/trace_capture.py` — Trace gana 4 campos OPCIONALES (hitl_outcome, draft_original,
+  draft_final, retrieved_doc_ids); schema sube a `mia.trace.v2` solo si traen valor (v1 sin
+  ellos sigue válida). `capture()` acepta los kwargs nuevos.
+- `agents/graph.py::finalize_node` — escribe los 4 campos: hitl_outcome desde final_status,
+  draft_original/final, retrieved_doc_ids DERIVADO de state["documents"] (sin tocar MatterState
+  ni el reducer).
+- `db/migrations/006_feedback_proposals.sql` (NUEVO) — `feedback_proposals` (proposal_type
+  improve_playbook|new_playbook|flag_gap, target_playbook_id, suggested_content, rationale,
+  signal_count, trace_ids, status pending|approved|rejected|applied) y
+  `processed_traces_watermark` (tenant_id, trace_date, last_processed_at, traces_processed).
+  RLS por-tenant en ambas.
+- `memory/feedback_processor.py` (NUEVO) — `FeedbackProcessor`: load_traces (v1/v2, ignora
+  eventos, excluye días ya procesados por watermark, ventana since_hours), analyze (HITL_REJECTION/
+  HITL_EDIT con diff>20% via difflib / NO_RESULT), propose (umbral ≥2; improve/new/flag_gap;
+  call_llm task=curator), save_proposals (status pending), mark_traces_processed (watermark),
+  run / run_all_tenants.
+- `cron/scheduler.py` — +job `feedback_daily` (24h). `memory/__init__.py` exporta FeedbackProcessor.
+- `execution/init_feedback.py` (runner 006) y `execution/test_feedback_processor.py` (21/21,
+  trazas sintéticas v1+v2 en .tmp, LLM mockeado). `architecture/feedback_processor.md` (SOP).
+Qué decidimos: decisión #19 (trazas v2 con señales HITL; processor PROPONE, no aplica;
+idempotencia por watermark).
+Qué sigue: **Fase 3 — UX (5 pantallas Next.js)**. Antes de Fase 3, ver Riesgo #22 (el scheduler
+nunca se arranca: los jobs no se disparan en producción) y #21 (propuestas sin revisar/aplicar).
+
+Citas legales: ninguna. El módulo es infraestructura de aprendizaje; el contenido de trazas y
+propuestas del gate es sintético. Las propuestas que generaría en vivo son borradores para que
+el ABOGADO revise (no se aplican solas).
+
+## 2026-06-14 — Sesión 12
+TL;DR: Módulo 3b Curator cerrado + persistencia de playbooks (decisión #18).
+       Gate test_curator 23/23; regresión 14/14 suites (287 checks). Fase 2 COMPLETA.
+Qué construimos:
+- Investigación previa: el spec asumía una tabla `playbooks` que NO existía (el 2b era
+  in-memory). Se presentó y el usuario decidió (decisión #18, Opción 2): crear la tabla Y
+  cablear PlaybookManager a DB en la misma sesión, manteniendo su interfaz pública.
+- `db/migrations/005_playbooks.sql` (NUEVO) — tabla `playbooks` (title, summary, applies_when,
+  content, status active|archived|draft, usage_count, last_used_at, embedding vector(1024),
+  metadata; UNIQUE(tenant_id,title); RLS por-tenant; HNSW + BTREE; GRANT mia_app).
+- `memory/playbook_manager.py` — ADITIVO: `__init__(pool=None, tenant_id=None)`; con pool=None
+  sigue 100% in-memory (gate 2b 14/14 intacto). +métodos async DB: register_playbook (upsert +
+  embedding de summary+applies via voyage), get_index, get_playbook, mark_used, list_active.
+- `memory/curator.py` (NUEVO) — `Curator`: run/load_playbooks/find_candidates (similitud coseno
+  por operador `<=>` de pgvector, umbral 0.85)/consolidate (call_llm task=curator → claude-sonnet,
+  archiva originales, idempotente)/prune (last_used_at > 90d, NULL no se poda)/run_all_tenants.
+- `agent/llm.py` — +task `"curator": "claude-sonnet"` en _TASK_MODELS (alias que resuelve a
+  claude-sonnet-4-6; auxiliary_client.TASK_MODELS es el mismo dict por referencia).
+- `cron/scheduler.py` — +job `curator_weekly` (168h, domingos 2am sin timezone en v1).
+- `execution/init_playbooks.py` (runner 005) y `execution/test_curator.py` (23/23, LLM+embeddings
+  mockeados, embeddings de candidatos controlados con inserts directos para cosenos 0.9/0.84).
+- `architecture/curator.md` (antes vacío) — SOP + Self-Annealing.
+Qué decidimos: decisión #18 (playbooks persisten en DB; PlaybookManager DB-backed con interfaz
+intacta; task curator → claude-sonnet).
+Qué sigue: PAUSA — Módulo 3e — Feedback processor (último de Fase 2).
+
+Citas legales: ninguna entregada. El contenido de los playbooks en el gate es filler de prueba.
+NOTA jurídica: el Curator consolida/archiva playbooks con LLM SIN revisión humana → Riesgo #19
+(un playbook jurídico podría degradarse; originales quedan archived/recuperables).
+
+## 2026-06-14 — Sesión 11
+TL;DR: Módulo 3d Pinecone connector cerrado. Gate 14/14; regresión 13/13 suites
+       (264 checks). Store externo OPCIONAL y CONDICIONAL (noop sin API key).
+Qué construimos:
+- `connectors/pinecone_connector.py` (NUEVO) — `PineconeConnectorBase` (ABC: upsert/query/
+  delete/describe_index), `PineconeConnector` (real; aislamiento por namespace
+  `{prefix}_{tenant_id}`, batch upsert 100, SDK pinecone v3+ con import PEREZOSO),
+  `NoopPineconeConnector` (misma interfaz, no-op, is_configured=False) y factory
+  `get_pinecone_connector()` (real si hay PINECONE_API_KEY, si no noop).
+- `.env`: +PINECONE_INDEX_NAME / PINECONE_NAMESPACE_PREFIX (comentados, defaults mia-legal/
+  tenant). PINECONE_API_KEY ya estaba.
+- `execution/test_pinecone_connector.py` (NUEVO, 14/14) — sin Pinecone real: noop + índice
+  FALSO inyectado en `_index`. Cubre factory con/sin key, noop, interfaz completa, namespace
+  por tenant, batch 250→[100,100,50], metadata intacta, top_k, normalización de matches, delete.
+- `architecture/pinecone_connector.md` (antes vacío) — SOP + Self-Annealing.
+Qué decidimos: sin decisión formal nueva (el módulo aplica decisión #2: pgvector primario,
+Pinecone externo opcional). Aclaración de spec registrada en el SOP: el aislamiento es por el
+parámetro `namespace` de Pinecone, no por un filtro de metadata (no se contamina la metadata).
+Qué sigue: PAUSA — Módulo 3b — Curator cron. Pendiente Fase 2: 3e Feedback processor.
+
+Citas legales: ninguna. El módulo es infraestructura de store vectorial; no genera ni cita
+texto jurídico. El gate no toca Pinecone real ni red.
+
+## 2026-06-14 — Sesión 10
+TL;DR: Módulo 3c Obsidian indexer CERRADO. Gate test_obsidian_sync 22/22;
+       regresión 12/12 suites (250 checks). 3 premisas del spec corregidas.
+Qué construimos:
+- Investigación previa: el spec asumía 3 cosas que no existían → se presentaron y el
+  usuario decidió (decisión #17): (C1) los chunks de Obsidian van a una tabla NUEVA
+  `knowledge_chunks`, NO a `documents` (documents.matter_id es NOT NULL; las notas son
+  del despacho, no de un asunto); (C2) embeddings por `embeddings.embed_texts` (librería,
+  no `call_llm(task="embedding")` que no existe); (C3) `cron/scheduler.py` no existía →
+  se creó un scheduler propio mínimo (sin APScheduler).
+- `db/migrations/004_knowledge_stores.sql` (NUEVO) — `knowledge_chunks` (source/source_path/
+  chunk_index/heading_path/content/embedding(1024)/content_tsv GENERATED/metadata, UNIQUE
+  por (tenant,source,source_path,chunk_index), RLS por-tenant + HNSW + GIN) y
+  `obsidian_file_hashes` (sha256 por archivo, RLS). NO toca documents/chunks.
+- `connectors/obsidian_sync.py` (NUEVO) — `ObsidianSync`: scan (excluye .carpetas y _archivos),
+  hash sha256 incremental, chunking por encabezados H1/H2/H3 con máx 512 tok (split por
+  párrafos), embed en batches de 128, upsert/borrado en knowledge_chunks y hashes, todo por
+  `tenant_connection` (RLS).
+- `cron/scheduler.py` (NUEVO) — registro de jobs en memoria (register/list/run/start); job
+  `sync_obsidian_all_tenants` cada 6h (enumera tenants con vault configurado y sincroniza).
+- `execution/init_knowledge_stores.py` (runner migración 004) y
+  `execution/test_obsidian_sync.py` (gate, 22 checks, vault temporal en .tmp/, embeddings
+  mockeados). `architecture/obsidian_sync.md` (SOP, antes vacío).
+Qué decidimos: decisión #17 (knowledge_chunks tabla separada + correcciones C1/C2/C3).
+Qué sigue: PAUSA — Módulo 3d — Pinecone connector. Pendientes Fase 2: 3b Curator, 3e Feedback.
+
+Citas legales: ninguna. El módulo no genera ni cita texto jurídico; el vault de prueba del
+gate es contenido filler temporal en .tmp/ (no es el vault real ni datos entregables).
+
+## 2026-06-14 — Sesión 9
+TL;DR: Módulo 3a SAT-Graph CERRADO. Corpus semilla cargado en DB.
+       Gate test_sat_graph.py 21/21; regresión 11/11 suites (228 checks).
+Qué construimos:
+- Migración corrida: `init_sat_graph.py` aplicó 003_sat_graph.sql (3 tablas
+  legal_norms/norm_relations/jurisprudence, RLS abierto, GRANT a mia_app).
+- Corpus semilla cargado: `ingest_corpus.py` (+runner `__main__`, se corre con
+  `python -m mia.rag.ingest_corpus`) → 5 normas, 3 providencias, 2 relaciones
+  (todas [VERIFICAR]; datos de desarrollo, no citas entregadas).
+- `execution/test_sat_graph.py` (NUEVO) — gate async contra DB real, 21 checks:
+  tablas, RLS (mia_app SELECT · 2 tenants ven el mismo corpus), curaduría +
+  upsert idempotente, vigencia temporal antes/durante/expirada, relaciones +
+  filtro, cadena recursiva simple/hoja/ciclo, FTS español con acento, semilla.
+- `architecture/sat_graph.md` (NUEVO) — SOP del módulo + Self-Annealing.
+Qué decidimos:
+- Decisión #16 (ya registrada en Sesión 8 previa al crash): SAT-Graph = corpus
+  COMPARTIDO (sin tenant_id), RLS abierto USING(true) WITH CHECK(true), escritura
+  por GRANT a mia_app, acceso vía pool.connection() (sin GUC).
+- Sin decisiones nuevas esta sesión; se completó la implementación de 3a.
+Qué sigue: PAUSA — no arrancar otro módulo sin el usuario. Candidato (orden del
+usuario): Módulo 3c — Obsidian indexer. Pendientes Fase 2: 3b Curator, 3d Pinecone,
+3e Feedback. Nuevos riesgos #13 (corpus escribible sin rol curador separado, 🔐) y
+#14 (corpus semilla [VERIFICAR] sin contrastar).
+
+Citas legales: ninguna entregada al cliente. El corpus semilla (normas y
+providencias en ingest_corpus.py) es ILUSTRATIVO/de desarrollo, marcado [VERIFICAR]
+en metadata; debe contrastarse contra SUIN-Juriscol / la corte respectiva antes de
+cualquier uso real.
+
+## 2026-06-14 — Sesión 8
+TL;DR: Cerrada deuda del grafo (#11 reframe, #12 fix quirúrgico).
+       Conteo de checks corregido a 207.
+Qué construimos:
+- Riesgo #11 cerrado por reframe: el ContextCompressor NO se cablea
+  al grafo LangGraph hoy (nodos autocontenidos, historial no consumido).
+  Decisión #14 registrada.
+- Riesgo #12 cerrado con fix mínimo: role="system" → role="user"
+  en el mensaje de resumen del ContextCompressor. SUMMARY_PREFIX
+  actualizado a "[RESUMEN DE CONTEXTO ANTERIOR]". Decisión #15 registrada.
+Qué decidimos:
+- Cablear el compresor al grafo queda para cuando el grafo adopte
+  historial creciente (Fase 3 o decisión de producto posterior).
+- No insertar ack de assistant tras el resumen — SUMMARY_END_MARKER
+  es suficiente para desambiguación semántica.
+- Conteo canónico de checks: 207 (no 235 — error de tally corregido).
+Qué sigue: Fase 2 — Knowledge Stores · Módulo 3a SAT-Graph.
+
+## 2026-06-14 — Sesión 7
+**TL;DR:** Módulo 2c (ContextCompressor) COMPLETO → **Fase 1 (Memoria, 2a-2d) cerrada**.
+Gate `test_context_compressor.py` 22/22; regresión 10/10 suites (235 checks). PAUSA.
+
+**Qué construimos:**
+- Se leyó COMPLETO el `context_compressor.py` de Hermes (2079 líneas). Params no
+  contradicen (Hermes parametriza 0.50/3/20; Mia fija 0.55/5/30). Se flaggearon 2
+  mejoras → aprobadas (decisión #13).
+- `agent/context_compressor.py` (NUEVO) — compress() con threshold 55%, protect 5/30,
+  resumen del medio en haiku (BLOQUEO), `[RESUMEN DE CONTEXTO]` como msg system,
+  `[VERIFICAR]` preservado verbatim, resumen estructurado en español jurídico,
+  (A) iterativo + (B) anti-thrashing.
+- `memory/trace_capture.py` +capture_event (evento context_compressed, schema event).
+- `agent/core.py` run_turn comprime antes del turno (transparente). `config.py`
+  +MIA_CONTEXT_WINDOW. `architecture/context_compressor.md`. Gate 22/22.
+
+**Qué decidimos (decisión #13):** ContextCompressor adopta resumen iterativo (A) y
+anti-thrashing (B) de Hermes. Params locked intactos (55%/5/30, compression→haiku).
+
+**Qué sigue:** PAUSA — Fase 0 + Módulo 1 + Fase 1 completos. No arrancar otro módulo sin
+el usuario. Candidatos: Fase 2 (3a-3e), Fase 3 (UX), Módulo 5 (SOUL.md). Nuevos Riesgos
+#11 (compresor solo en run_turn, no en el grafo) y #12 (resumen role=system mid-array sin
+verificar contra Anthropic). #5 ampliado (el umbral de compresión depende del estimador).
+
+**Citas legales:** ninguna entregada al cliente. El texto jurídico en fixtures/prompts
+es ilustrativo, sin `[VERIFICAR]` pendientes de fuente real.
+
+## 2026-06-13 — Sesión 6
+**TL;DR:** Módulo 1e (Agent Hub) COMPLETO → **Módulo 1 cerrado (1a-1e)**. Gate
+`test_agent_hub.py` 38/38; regresión 9/9 suites verdes. PAUSA.
+
+**Qué construimos:**
+- Premisa del spec corregida: NO existía tabla `profiles` → decisión #12 (tabla nueva
+  `tenant_settings` jsonb, RLS, migración por postgres). 3/5 CLIs instalados
+  (hermes/claude/codex) → degradación real.
+- `gateway/agent_hub.py` (AgentHub, 5 conectores, detección PATH/env, subprocess
+  args-en-lista shell=False, graceful degradation), `gateway/hub_config.py` (config
+  por tenant en tenant_settings, RLS), `api/routes/settings.py` (GET + enable/disable,
+  §G sin marcas), seam de delegación OFF-por-defecto en `graph.py`,
+  `architecture/agent_hub.md`, `execution/test_agent_hub.py` (38/38).
+- `schema.sql` +tenant_settings; aplicado re-corriendo init_db.py (9 tablas, 5 policies).
+
+**Qué decidimos:**
+- #12 tenant_settings como config store por tenant (no profiles). Defaults: D2
+  subprocess args-en-lista (no comillas manuales), D3 flags de CLI [VERIFICAR],
+  D4 delegación OFF por defecto.
+
+**Qué sigue:** PAUSA — Módulo 1 completo. No arrancar otro módulo sin el usuario.
+Candidatos: 2c (ContextCompressor), Fase 2 (3a-3e), Fase 3 (UX). Nuevos Riesgos #9
+(flags [VERIFICAR] + invocación en vivo) y #10 (subprocesos del hub NO acotados por
+RLS — relevante para multi-tenant en producción).
+
+**Citas legales:** ninguna entregada al cliente. Único [VERIFICAR] abierto: los flags
+de invocación de cada CLI del Agent Hub (no jurídico).
+
+## 2026-06-13 — Sesión 5
+**TL;DR:** Módulo 1d (LangGraph StateGraph + SSE + HITL) COMPLETO — el módulo más
+delicado. Gate `test_hitl_flow.py` 19/19 contra DB + checkpointer Postgres reales
+(LLM/embeddings mockeados). Regresión 8/8 suites verdes (test_rls intacto). PAUSA
+antes de 1e.
+
+**Qué construimos:**
+- Investigación previa → 4 decisiones presentadas y aprobadas (decisions.md #9-#11).
+  Hallazgos: el schema ya soportaba RRF (content_tsv+GIN+HNSW); mia_app sin CREATE;
+  Hermes NO usa LangGraph (no había patrón de grafo en los refs).
+- `agents/`: `state.py` (MatterState), `retrieval.py` (RRF híbrido), `graph.py`
+  (5 nodos async; interrupt() 1ª línea de hitl_checkpoint), `checkpointer.py`
+  (AsyncPostgresSaver).
+- `execution/init_checkpointer.py` (migración: tablas de checkpoint por postgres +
+  GRANT DML a mia_app).
+- `api/routes/{_common,stream,hitl}.py` (SSE + approve/reject/edit; cruzado→401;
+  eventos en español §G) + `api/main.py` monta los routers.
+- `architecture/hitl_flow.md`, `pyproject.toml` (+langgraph 1.2.5,
+  langgraph-checkpoint-postgres 3.1.0, sse-starlette 3.4.4).
+
+**Qué decidimos (decisions.md #9-#11):**
+- #9 Checkpoint: tablas LangGraph creadas por postgres + GRANT a mia_app; aislamiento
+  por thread_id+JWT; RLS de dominio sigue activo. (Subclase RLS-aware descartada.)
+- #10 interrupt() = 1ª línea de hitl_checkpoint_node.
+- #11 approve/reject/edit reanuda y emite finalizing→done en la misma SSE.
+
+**Qué sigue:** PAUSA — el usuario pidió NO arrancar 1e (Agent Hub) sin él presente.
+Pendientes vivos: 2c (ContextCompressor, saltado), Riesgo #4 (LiteLLM librería vs
+proxy), y los nuevos Riesgos #7 (invariante de aislamiento del checkpoint) y #8
+(pooling del checkpointer).
+
+**Citas legales:** ninguna entregada al cliente. El texto jurídico en fixtures y
+prompts (p. ej. "caducidad de la reparación directa, 2 años") es ILUSTRATIVO, no una
+cita verificada.
+
+## 2026-06-12 — Sesión 4
+**TL;DR:** Lote autónomo 1b→2d cerrado tras "procede" del usuario. 5 módulos con gate
+verde (1b 32 · 1c 16 · 2a 19 · 2b 14 · 2d 20) + regresión completa offline 6/6 suites
+(116 checks). PAUSA antes de 1d/1e.
+
+**Qué construimos:**
+- 1b: `prompt_builder` refactor a tabla única `LAYERS` (10 capas; L1-6 cached TTL 1h),
+  `auxiliary_client.py` (`AuxiliaryClient.complete`→texto; `TASK_MODELS` completo),
+  `test_prompt_builder.py` 32/32; corregida la aserción stale de 1a (15/15).
+- 1c: `plugins.py` (`PluginManager` + 6 hooks en orden de ciclo de vida, intercepción
+  real) cableado en `core.py` (run_turn pre/post_llm_call + start/end_session),
+  `test_plugins.py` 16/16.
+- Paquete nuevo `backend/mia/memory/` (memoria en EJECUCIÓN, ≠ `/memory/` de
+  construcción): `tokens.py` (estimador compartido); 2a `profile_manager.py` (perfiles
+  600/900 tok, frozen al inicio del asunto) 19/19; 2b `playbook_manager.py` (índice 3k
+  siempre presente + contenido on-demand) 14/14; 2d `trace_capture.py` (JSONL por
+  tenant, `to_sft_example`, 8 campos) 20/20.
+
+**Qué decidimos:**
+- 2c (ContextCompressor) se salta por orden del usuario (el plan iba 2a→2b→2d).
+- Estimador de tokens = heurística offline ~4 chars/token (tiktoken baja vocab por red
+  → no offline; el conteo exacto lo da el gateway). → Riesgo #5.
+- Memoria en ejecución en `backend/mia/memory/` (≠ `/memory/` raíz). → Riesgo #6.
+- streaming/fallbacks de `call_llm` y wiring de tracing al turno → diferidos a 1d
+  (no estaban en estos gates).
+
+**Qué sigue:** PAUSA. A la vuelta de Pipe: 1d (LangGraph StateGraph + SSE + HITL) y
+1e (Agent Hub). Pendiente reconciliar Riesgo #4 (LiteLLM librería vs. proxy).
+
+**Citas legales:** ninguna entregada al cliente esta sesión. El texto jurídico en los
+fixtures de test y en las capas de prompt (p. ej. "caducidad 2 años") es ILUSTRATIVO,
+no una cita verificada y no se afirma como fuente (regla global de verificación).
+
+## 2026-06-12 — Sesión 3
+**TL;DR:** Módulo 0 cerrado al 100% (ingest real verificado: chunks=3, con_embedding=3,
+dim=1024). Módulo 1a completo (MiaAgent + router call_llm, gate 15/15). Módulo 1b en
+progreso (prompt_builder de 10 capas + cableado con caché de sesión; falta el gate).
+
+**Qué construimos:**
+- Cierre del Paso 6 del Módulo 0: vault de prueba + tenant/matter + ingest end-to-end.
+- 1a: `agent/{llm,core,__init__}.py`, config (LITELLM_BASE_URL/API_KEY, MIA_MODEL),
+  +openai, `test_agent_core.py` 15/15, doc `architecture/prompt_builder.md`.
+- 1b (parcial): `agent/prompt_builder.py` (10 capas, 3 tiers) + `core.py` cableado
+  (caché de sesión `_cached_system_prompt`, `invalidate_prompt`, 5 campos-costura).
+
+**Qué decidimos:**
+- Router LLM delgado sobre LiteLLM (LiteLLM hace lo que los ~5.800 líneas de Hermes;
+  alias en `litellm_config.yaml` como fuente única).
+- `compression=claude-haiku` implementado como BLOQUEO por código (`_LOCKED_TASKS`),
+  no como default (decisión #7).
+- Las 10 capas: L1-6 stable (prefijo cacheado), L7-8 context, L9-10 volatile;
+  L4/L6/L7/L9 son costuras no-op hasta los módulos que las llenan.
+
+**Qué sigue:** cerrar el gate de 1b (`test_prompt_builder.py`) + corregir la aserción
+stale de `test_agent_core.py` (el prompt creció de identidad a 10 capas). Después seguir
+el plan 1c→2a→2b→2d con PAUSA antes de 1d/1e. NOTA: el `/effort high` del usuario falló
+al parsear y se llevó ese plan como argumento — pendiente de reenvío.
+
+## 2026-06-12 — Sesión 2
+**TL;DR:** Módulo 0 completo — PostgreSQL 16 + pgvector 0.8.2 + RLS multi-tenant
+(gate `test_rls.py` 12/12) + API FastAPI (`/health`, middleware JWT) + scaffolding
+del backend. Solo falta correr el ingest real (gated por `VOYAGE_API_KEY`).
+
+**Qué construimos:**
+- Reset de la contraseña de `postgres` (Opción 3, pg_hba trust, script elevado).
+- pgvector 0.8.2 instalado en Windows nativo (binario de terceros verificado
+  por SHA256) + load-test OK.
+- Backend `mia/`: schema+RLS, `init_db`, pool con contexto de tenant, middleware
+  JWT, `/health`, `/matters` tenant-scoped, ingest (voyage-law-2), `test_rls`,
+  scripts de arranque Modo B, `pyproject` + deps en `.venv`.
+
+**Qué decidimos:**
+- Embeddings `voyage-law-2` / `vector(1024)` vía LiteLLM (decisión #8).
+- App se conecta como `mia_app` (NOSUPERUSER/NOBYPASSRLS); `postgres` solo
+  migraciones. RLS fail-closed por GUC `app.tenant_id`.
+- pgvector de terceros es válido SOLO para desarrollo (Riesgo #3 abierto).
+
+**Qué sigue:** llenar `VOYAGE_API_KEY` y correr el ingest real (cierra Paso 6);
+luego Módulo 1 (core del agente, 1a–1e).

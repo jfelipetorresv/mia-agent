@@ -1,0 +1,22 @@
+[project]
+name = "mia-backend"
+version = "0.0.0"
+description = "Mia — agente legal cognitivo autónomo (backend). Módulo 0: DB + RLS + ingestión."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "psycopg[binary,pool]>=3.2",
+  "pgvector>=0.3.6",
+  "pyjwt>=2.9",
+  "python-dotenv>=1.0",
+  "litellm>=1.88",
+  "openai>=1.40",
+  "langgraph>=1.2",                      # Módulo 1d: StateGraph + interrupt() (HITL)
+  "langgraph-checkpoint-postgres>=3.1",  # checkpointing multi-tenant (decisión #9)
+  "sse-starlette>=3.4",                  # streaming SSE del turno (PASO 4)
+]
+
+# Proyecto "virtual": no se empaqueta; las deps se instalan en mia/.venv con uv.
+[tool.uv]
+package = false
