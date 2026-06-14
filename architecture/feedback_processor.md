@@ -62,6 +62,17 @@ await mia.db.pool.open_pool()
 await FeedbackProcessor().run("<tenant_uuid>")     # usa mia-data/traces/ por defecto
 ```
 
+## Arranque en producción
+El scheduler se arranca en el **lifespan de FastAPI** (`backend/mia/api/main.py`): tras abrir el
+pool, `build_scheduler()` se lanza como tarea de fondo (`asyncio.create_task(scheduler.start())`)
+y se detiene en el shutdown (`scheduler.stop()` + cancelación de la tarea). **Sin esto, los 3
+jobs (`sync_obsidian_all_tenants` 6h, `curator_weekly` 168h, `feedback_daily` 24h) no se
+disparan en producción** (cerró el Riesgo #22). La PRIMERA corrida de cada job se agenda a un
+intervalo de distancia (no en el arranque): un job diario/semanal no debe ejecutarse en cada
+reinicio. Para forzar una corrida inmediata (p. ej. en operación o debugging), usar
+`run_job("feedback_daily")`. Nota: el scheduler v1 no tiene timezone; dispara por intervalo
+desde el arranque, no a una hora exacta.
+
 ## Self-Annealing — si el gate falla, revisar en este orden
 1. **¿Corrió la migración 006?** `init_feedback.py` debe reportar las 2 tablas con
    `mia_app INSERT=True RLS=True`.

@@ -57,14 +57,22 @@ class Scheduler:
 
     async def start(self, poll_seconds: int = 60) -> None:
         """Loop asyncio: dispara cada job cuando vence su next_run. Bloquea; correrlo como
-        tarea de fondo en el lifespan de la app."""
+        tarea de fondo en el lifespan de la app.
+
+        La PRIMERA ejecución de cada job se agenda a un intervalo de distancia (no al
+        arrancar): un job diario/semanal NO debe correr en cada reinicio de la app. Para
+        forzar una corrida inmediata, usar `run_job(name)`."""
         import asyncio
 
+        now = datetime.now(timezone.utc)
+        for job in self._jobs.values():
+            if job["next_run"] is None:
+                job["next_run"] = now + timedelta(hours=job["interval_hours"])
         self._running = True
         while getattr(self, "_running", False):
             now = datetime.now(timezone.utc)
             for job in list(self._jobs.values()):
-                if job["next_run"] is None or now >= job["next_run"]:
+                if job["next_run"] is not None and now >= job["next_run"]:
                     try:
                         await self.run_job(job["name"])
                     except Exception:

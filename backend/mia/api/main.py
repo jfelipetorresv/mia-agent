@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio
 import sys
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request
 
@@ -12,6 +12,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from .. import config
+from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
 from .routes import hitl, settings, stream
@@ -20,8 +21,20 @@ from .routes import hitl, settings, stream
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await pool.open_pool()
-    yield
-    await pool.close_pool()
+    # Arranque del scheduler de tareas periódicas (Riesgo #22): sin esto, los jobs
+    # registrados (obsidian_sync 6h, curator_weekly 168h, feedback_daily 24h) NO se
+    # disparan en producción. Corre como tarea de fondo y se detiene en el shutdown.
+    scheduler = build_scheduler()
+    app.state.scheduler = scheduler
+    scheduler_task = asyncio.create_task(scheduler.start())
+    try:
+        yield
+    finally:
+        scheduler.stop()
+        scheduler_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler_task
+        await pool.close_pool()
 
 
 app = FastAPI(title="Mia API", version="0.0.0", lifespan=lifespan)
