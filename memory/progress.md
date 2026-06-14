@@ -809,3 +809,75 @@ build). Sigue abierto #23 (login real; hoy token de dev).
 
 **Próximo paso:** PAUSA — Fase 4 (Módulo 5: SOUL.md + E2E) o endurecer UX (#23/#25). Probar el
 flujo vivo (Modo B, 3 terminales) antes de producción. **Bloqueantes:** ninguno.
+
+---
+
+## Sesión 16 — 2026-06-14 — Módulo 5 (SOUL.md + E2E) COMPLETO · 🎉 PROYECTO COMPLETO · Mia v0 operativa
+
+**Contexto:** el ÚLTIMO módulo. Investigación previa de premisas (CLAUDE.md + memory + Doc 4 +
+api_surface + prompt_builder + state + graph + ux + gates) → **4 premisas falsas del spec**, se
+presentaron como decisiones (AskUserQuestion):
+- El **Doc 4 NO estaba en el repo** (busqué `triad_mode`/`doctrinal_stance`/`hard_nos` en todo el
+  árbol: 0). El usuario lo entregó completo → fuente exacta de las 19 preguntas, el template y los
+  datos de Lexia.
+- El spec decía "18 preguntas" pero el Doc 4 trae **19** (P19 triad_mode, opcional) → se
+  implementaron las 19 con conteo dinámico.
+- **`$MIA_HOME` no existía** en `config.py` (el `.env` sí traía `MIA_HOME=.\mia-data`) → añadido.
+- **`_TASK_MODELS` no tenía `"soul"`** → añadido (claude-sonnet).
+- A4: la Capa 1 del prompt_builder NO leía el SOUL.md, y el turno REAL (grafo) nunca llenaba
+  `soul_snapshot` (mismo patrón del Riesgo #11). El usuario eligió **"Grafo + prompt_builder"**
+  (decisión #21): cablear AMBAS rutas, ambas None-safe.
+
+**Construido (PARTE A — onboarding + SOUL):**
+- `config.py` — +`MIA_HOME` (ancla rutas relativas a PROJECT_ROOT; lee en cada uso → tests lo
+  apuntan a tempdir).
+- `agent/llm.py` — +task `"soul": "claude-sonnet"` (heredado por AuxiliaryClient).
+- `onboarding/soul_interview.py` + `onboarding/__init__.py` (NUEVOS) — `SoulInterview`
+  (get_questions/run_interview/update_soul); `QUESTIONS` (19, id/block/field/question/example,
+  Doc 4 verbatim); `SOUL_TEMPLATE`/`SOUL_SECTIONS` (9 secciones exactas); helpers PUROS de archivo
+  (soul_path/load_soul_text/load_soul_snapshot/soul_status/load_responses/responses_path) que leen
+  `config.MIA_HOME`; generación vía `call_llm(task="soul")` con import diferido de `llm`; conserva
+  placeholders de campos sin respuesta (no inventa datos); persiste respuestas crudas en
+  `…responses.json` para "Revisar mi perfil".
+- `api/routes/ux.py` — 3 endpoints `/api/onboarding/{questions,complete,status}` (status con
+  `responses`).
+- **Wiring del SOUL (decisión #21):** `agents/state.py::initial_state` carga `soul_snapshot` desde
+  `$MIA_HOME` (import diferido); `agents/graph.py` +`_render_soul`/`_system_with_soul` antepone la
+  identidad en analysis/draft/edit; `agent/core.py::__post_init__` carga el SOUL.md en
+  `self.identity` (Capa 1) si existe y no hay override. NO se tocó `prompt_builder.py`.
+
+**Construido (PARTE A5 — frontend):**
+- `frontend/app/onboarding/page.tsx` (NUEVO) — wizard de 19 preguntas (una a la vez, progreso
+  "Pregunta X de 19" + barra, ejemplo del Doc 4, textarea/input, Anterior/Siguiente/Finalizar,
+  resultado con el SOUL.md + Editar/Continuar, estado "ya configurado" con Revisar mi perfil que
+  precarga respuestas).
+- `frontend/app/_components/OnboardingGate.tsx` (NUEVO) — chequea `/api/onboarding/status` y
+  redirige a `/onboarding` la primera vez (silencioso si el backend no responde). Montado en
+  `layout.tsx`.
+
+**Construido (PARTE B — E2E):**
+- `execution/test_e2e.py` (NUEVO) — **GATE FINAL, 25/25 PASS**. Recorrido completo con TestClient
+  (LLM/embeddings mockeados, `$MIA_HOME` aislado en tempdir): Paso 1 onboarding (19 preguntas, 5
+  bloques, SOUL con las 9 secciones, archivo creado, `soul_snapshot` carga, status completed),
+  Paso 2 crear asunto (status active), Paso 3 subir PDF 2 págs (Ley 80/1993 del corpus) →
+  chunks>0, Paso 4 chat→stream_url + SSE text/event-stream sin jerga, Paso 5 HITL (draft+approve),
+  Paso 6 memoria (perfil/playbooks/proposals), Paso 7 dashboard (matters≥1, documents≥1), §G.
+- `architecture/e2e_runbook.md` (NUEVO) — smoke test manual en navegador (Modo B, 3 terminales).
+- `architecture/soul_interview.md` (NUEVO) — SOP del módulo + Self-Annealing.
+
+**Regresión:** **17/17 suites verdes, 358 checks** (los 16 previos intactos + test_e2e 25).
+**`test_rls` 12/12 INTACTO** (regla HALT §G cumplida). Gates que el wiring tocaba: 1a 15/15,
+1b 32/32, 1d 19/19, UX 25/25 (incl. `npm run build` ✓ → el frontend nuevo compila).
+
+**Riesgos nuevos:** #26 (el SOUL.md lo genera un LLM; en vivo podría no respetar las 9 secciones —
+mitigado: el abogado lo revisa/edita en la pantalla de resultado) y #27 (triad_mode se almacena en
+el SOUL.md pero NO está implementado como modo de ejecución de 3 modelos en el grafo — preferencia
+latente, como otras costuras).
+
+**🎉🎉 HITO — PROYECTO COMPLETO · Mia v0 operativa · 2026-06-14:** Fase 0 + Módulo 1 + Fase 1 +
+Fase 2 + Fase 3 + **Fase 4 (Módulo 5)**. Los 17 gates verdes.
+
+**Próximo paso:** smoke test VIVO en navegador (runbook) con LLM real, y atender los riesgos
+abiertos antes del PRIMER CLIENTE: #23 (login real), #25 (diagnóstico/flags UI), #19 (Curator sin
+HITL ⚖️), #13 (rol curador SAT-Graph 🔐), #3 (pgvector oficial para clientes). **Bloqueantes:**
+ninguno.

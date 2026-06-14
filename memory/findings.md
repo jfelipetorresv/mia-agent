@@ -1,6 +1,6 @@
 # Mia — findings.md
 # Patrones de referencia (Hermes / OpenJarvis) · restricciones técnicas
-# Última actualización: 2026-06-13
+# Última actualización: 2026-06-14
 
 Los repos de referencia están en "D:\Codex\Mia-Super Agent\" y son SOLO
 fuente de patrones, no dependencias ni base del proyecto.
@@ -34,6 +34,18 @@ Los embeddings van por la **librería LiteLLM directa** (`embeddings.embed_texts
 `"embedding"` en `_TASK_MODELS`. Cualquier indexer/ingestor (Módulo 0 ingest, Obsidian sync 3c)
 embebe con `embeddings.embed_texts`. Consistente con el **Riesgo #4** (dos rutas LiteLLM:
 librería para embeddings, proxy para chat).
+
+## SOUL.md / $MIA_HOME — la TERCERA "memoria" (Módulo 5 · decisión #21)
+Cuidado con el nombre "memoria": ahora hay TRES cosas distintas (amplía el Riesgo #6).
+- `/memory/` raíz = memoria de CONSTRUCCIÓN (para Claude Code; este archivo).
+- `backend/mia/memory/` = memoria en EJECUCIÓN 2a-2d (perfil/playbooks/trazas).
+- `backend/mia/onboarding/` + `$MIA_HOME/soul_{tenant}.md` = IDENTIDAD/persona del agente (SOUL.md),
+  el `$MIA_HOME/SOUL.md` que menciona CLAUDE.md §A.
+`config.MIA_HOME` (default `mia-data/`, el `.env` trae `MIA_HOME=.\mia-data`) ancla rutas relativas
+a `PROJECT_ROOT` y se lee como atributo en cada uso → los tests lo apuntan a un tempdir. El SOUL.md
+NO va en DB (status = existencia/mtime del archivo). El `soul_snapshot` se carga en `initial_state`
+(grafo) y la identidad en `MiaAgent.__post_init__` (Capa 1) con imports DIFERIDOS dentro de la
+función para evitar ciclos `agents`/`agent` → `onboarding`.
 
 ## Dependencias añadidas en Fase 3 backend (Sesión 14)
 Para la superficie `/api/*` se instalaron en `.venv` y se declararon en `backend/pyproject.toml`:

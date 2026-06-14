@@ -338,6 +338,30 @@ corre; las reglas de estilo no tumban el build.
 item de `GET /api/matters` (join con checkpoints o una bandera en `matters`). No bloquea el flujo
 principal (preguntar → borrador → aprobar) que sí funciona.
 
+## 🟡 Riesgo #26 — El SOUL.md lo genera un LLM (estructura no garantizada en vivo)  [detectado 2026-06-14, Sesión 16]
+`SoulInterview.run_interview` arma el SOUL.md con `call_llm(task="soul")=claude-sonnet` a partir
+del template de 9 secciones. El gate (`test_e2e`) MOCKEA el LLM, así que en vivo el modelo podría
+no respetar exactamente los 9 encabezados o reformular un campo. La identidad es la capa MÁS
+importante del prompt; un SOUL.md mal formado degradaría todos los turnos.
+
+**Mitigación hoy:** (1) el abogado REVISA y puede EDITAR el SOUL.md en la pantalla de resultado del
+onboarding antes de continuar (HITL real); (2) `_GEN_SYSTEM` instruye conservar encabezados y
+placeholders y NO inventar datos; (3) las respuestas crudas quedan en `…responses.json` (regenerable).
+**Acción antes del primer cliente:** validar el SOUL.md generado contra `SOUL_SECTIONS` (las 9
+secciones) tras `run_interview` y reintentar/avisar si falta alguna; considerar un render
+determinista del template como fallback si el LLM falla.
+
+## 🟡 Riesgo #27 — triad_mode se almacena pero NO está implementado  [detectado 2026-06-14, Sesión 16]
+La pregunta 19 (triad_mode) captura si el despacho quiere "modo de análisis profundo" (tres modelos
+en ciclo cerrado) y se guarda en la sección `## triad_mode` del SOUL.md. Pero NO existe ningún modo
+de ejecución de triada en el grafo: hoy es solo una preferencia almacenada (valor latente, como
+knowledge_chunks/Pinecone/playbooks en Riesgos #16/#18/#20).
+
+**Riesgo:** un despacho podría habilitarlo esperando un comportamiento que no ocurre. **Acción
+(módulo/flujo futuro):** implementar el modo triada (p. ej. analizar→criticar→sintetizar con 2-3
+modelos distintos para matters de alta complejidad, gated por `triad_mode.enabled` + el trigger) o,
+hasta entonces, no ofrecerlo como activo en la UI. No bloquea v0.
+
 ---
 
 ## 📐 REGLA DE ARQUITECTURA — Separación producto vs. instancia personal

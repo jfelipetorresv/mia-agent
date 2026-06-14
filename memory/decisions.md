@@ -224,3 +224,30 @@ content_tsv. Migración 004 (con `obsidian_file_hashes`). NO toca el esquema del
 NO `call_llm(task="embedding")` — ese task no existe; consistente con Riesgo #4; (C3)
 `cron/scheduler.py` no existía (1e construyó el Agent Hub) → se crea un scheduler mínimo propio
 sin dependencia externa.
+
+## 21 · 2026-06-14 — SOUL.md + entrevista de onboarding (Módulo 5 · cierre)
+**Decisión:** el SOUL.md (identidad del agente por despacho) se construye con una entrevista de
+**19 preguntas** (Doc 4, 5 bloques) y se guarda como ARCHIVO en `$MIA_HOME/soul_{tenant_id}.md`
+(+ `…responses.json`), no en DB. `call_llm(task="soul")=claude-sonnet` (la identidad importa)
+rellena el template de 9 secciones; los campos sin respuesta quedan como placeholder (no se
+inventan datos). 3 endpoints en `/api/onboarding/*` (questions/complete/status); el status se
+deriva de la existencia/mtime del archivo → **sin migración DB**.
+**`$MIA_HOME`:** nuevo en `config.py`; el `.env` ya traía `MIA_HOME=.\mia-data`. Una ruta
+relativa se ancla a `PROJECT_ROOT` (no depende del CWD); default bajo `mia-data/` (gitignored),
+estado de instancia por despacho como las API keys. Se lee como atributo en cada uso (los tests lo
+apuntan a un tempdir).
+**Wiring del SOUL al turno (alcance "Grafo + prompt_builder", elegido por el usuario):** el spec
+A4 solo conectaba el prompt_builder, pero el turno REAL corre por el grafo, que no consumía
+`soul_snapshot` (mismo patrón del Riesgo #11). Se decidió cablear AMBAS rutas:
+(1) `initial_state()` carga `soul_snapshot` desde `$MIA_HOME` y `graph.py::_system_with_soul`
+antepone la identidad en analysis/draft/edit; (2) `MiaAgent.__post_init__` carga el SOUL.md en
+`self.identity` (Capa 1). Todo **None-safe**: sin archivo → comportamiento idéntico → gates 1a/1b/
+1d intactos. NO se tocó `prompt_builder.py` (la Capa 1 ya leía `agent.identity`). Esto CIERRA en la
+práctica el hueco de la costura `soul_snapshot` (antes inerte).
+**Premisas del spec corregidas:** (a) el Doc 4 NO estaba en el repo → el usuario lo entregó
+completo y es la fuente exacta; (b) el spec decía "18 preguntas" pero el Doc 4 trae **19** (la 19ª,
+triad_mode, es opcional) → se implementaron las 19 con conteo dinámico; (c) `$MIA_HOME` no existía
+en `config.py` → se añadió; (d) `_TASK_MODELS` no tenía `"soul"` → añadido.
+**Imports diferidos:** `state.py`/`core.py` importan los helpers de `onboarding.soul_interview`
+DENTRO de la función (no al top) para evitar ciclos y no arrastrar el cliente LLM al grafo.
+**Gate:** `execution/test_e2e.py` (25/25) — el GATE FINAL del proyecto.

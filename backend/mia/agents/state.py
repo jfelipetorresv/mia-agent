@@ -59,7 +59,15 @@ def initial_state(
     profile_snapshot: Optional[dict] = None,
     soul_snapshot: Optional[dict] = None,
 ) -> MatterState:
-    """Estado inicial de un turno a partir del mensaje del abogado."""
+    """Estado inicial de un turno a partir del mensaje del abogado.
+
+    Si el caller no pasa `soul_snapshot`, se carga el SOUL.md del despacho desde
+    $MIA_HOME (Módulo 5): así la identidad del agente entra al turno real del grafo.
+    Sin onboarding (archivo ausente) queda None → el grafo no antepone identidad.
+    """
+    if soul_snapshot is None:
+        from ..onboarding.soul_interview import load_soul_snapshot  # diferido (sin ciclo)
+        soul_snapshot = load_soul_snapshot(tenant_id)
     return MatterState(
         tenant_id=tenant_id,
         matter_id=matter_id,

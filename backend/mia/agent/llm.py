@@ -36,6 +36,7 @@ _TASK_MODELS: dict[str, str] = {
     "web_extract": "claude-haiku",       # extracción de contenido web — barato
     "vision": "claude-sonnet",           # comprensión de documentos/imágenes
     "curator": "claude-sonnet",          # consolidación semántica de playbooks (3b, decisión #18)
+    "soul": "claude-sonnet",             # generación del SOUL.md — la identidad del agente (Módulo 5)
 }
 
 # Tareas cuyo modelo es un contrato fijo: un `model` explícito NO puede cambiarlo.

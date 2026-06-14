@@ -27,6 +27,7 @@ from ...ingest.ingest import chunk_text
 from ...memory.playbook_manager import Playbook, PlaybookManager
 from ...memory.profile_manager import ProfileManager
 from ...memory.trace_capture import TraceCapture
+from ...onboarding.soul_interview import SoulInterview, load_responses, soul_status
 from ._common import assert_owns_matter
 from .hitl import _resume
 from .stream import stream_matter
@@ -300,6 +301,37 @@ async def ignore_proposal(proposal_id: str, request: Request):
         if res.rowcount == 0:
             raise HTTPException(status_code=404, detail="Sugerencia no encontrada o ya revisada.")
     return {"status": "ignored"}
+
+
+# ── Onboarding · entrevista del SOUL.md (Módulo 5) ───────────────────────────
+class OnboardingComplete(BaseModel):
+    responses: dict
+
+
+@router.get("/onboarding/questions")
+async def onboarding_questions(request: Request):
+    """Las 19 preguntas de la entrevista (id/block/field/question/example)."""
+    _tenant(request)
+    return await SoulInterview().get_questions()
+
+
+@router.post("/onboarding/complete")
+async def onboarding_complete(request: Request, body: OnboardingComplete):
+    """Genera el SOUL.md del despacho a partir de las respuestas y lo guarda."""
+    tid = _tenant(request)
+    content = await SoulInterview().run_interview(tid, body.responses)
+    return {"soul_content": content, "path": f"soul_{tid}.md"}
+
+
+@router.get("/onboarding/status")
+async def onboarding_status(request: Request):
+    """¿El despacho ya tiene SOUL.md? {completed, last_updated, responses}.
+
+    `responses` trae las respuestas guardadas (o {}) para que 'Revisar mi perfil'
+    precargue lo que el abogado contestó la última vez.
+    """
+    tid = _tenant(request)
+    return {**soul_status(tid), "responses": load_responses(tid)}
 
 
 # ── Pantalla 5 · dashboard ───────────────────────────────────────────────────

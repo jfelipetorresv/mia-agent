@@ -63,6 +63,27 @@ def _last_user_message(state: MatterState) -> str:
     return ""
 
 
+def _render_soul(snapshot: Optional[dict]) -> str:
+    """Texto del SOUL.md del despacho (identidad del agente), o '' si no hay onboarding."""
+    if not snapshot:
+        return ""
+    return str(snapshot.get("content") or "").strip()
+
+
+def _system_with_soul(state: MatterState, base_system: str) -> str:
+    """Antepone la identidad (SOUL.md, Módulo 5) al system prompt del nodo, si existe.
+
+    Sin SOUL.md (soul_snapshot None) devuelve el system base sin cambios → el flujo del
+    grafo (y el gate 1d) se comporta igual que antes. Con SOUL.md, la identidad del
+    despacho encabeza el prompt para que el análisis y el borrador hablen con su voz.
+    """
+    soul = _render_soul(state.get("soul_snapshot"))
+    if not soul:
+        return base_system
+    return ("Esta es tu identidad y la voz del despacho (SOUL.md). Razona y redacta "
+            "conforme a ella:\n\n" + soul + "\n\n---\n\n" + base_system)
+
+
 def _render_profile(p: Optional[dict]) -> str:
     if not p:
         return "(sin perfil cargado)"
@@ -144,7 +165,7 @@ class MatterGraphBuilder:
         ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(docs)) or \
             "(sin documentos recuperados del expediente)"
         diagnosis, usage = await self._llm([
-            {"role": "system", "content": ANALYSIS_SYSTEM},
+            {"role": "system", "content": _system_with_soul(state, ANALYSIS_SYSTEM)},
             {"role": "user", "content": f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"},
         ])
         md = dict(state.get("metadata") or {})
@@ -158,7 +179,7 @@ class MatterGraphBuilder:
         diagnosis = md_in.get("diagnosis", "")
         profile_txt = _render_profile(state.get("profile_snapshot"))
         draft, usage = await self._llm([
-            {"role": "system", "content": DRAFT_SYSTEM},
+            {"role": "system", "content": _system_with_soul(state, DRAFT_SYSTEM)},
             {"role": "user", "content": f"Diagnóstico:\n{diagnosis}\n\n{profile_txt}\n\n"
                                         "Redacta el borrador del escrito."},
         ])
@@ -191,7 +212,7 @@ class MatterGraphBuilder:
 
         if status == "editing":
             final, usage = await self._llm([
-                {"role": "system", "content": EDIT_SYSTEM},
+                {"role": "system", "content": _system_with_soul(state, EDIT_SYSTEM)},
                 {"role": "user", "content": f"Borrador:\n{draft}\n\nIndicaciones del abogado:\n"
                                             f"{decision.get('edits', '')}\n\nDevuelve el borrador corregido."},
             ])

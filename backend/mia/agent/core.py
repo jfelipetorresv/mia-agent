@@ -74,6 +74,14 @@ class MiaAgent:
     def __post_init__(self) -> None:
         if self.compressor is None:
             self.compressor = ContextCompressor(trace_capture=self.trace_capture)
+        # SOUL.md (Módulo 5): la capa 1 (identidad) se toma del SOUL.md del despacho si
+        # existe ($MIA_HOME/soul_{tenant_id}.md). Sin onboarding, queda DEFAULT_IDENTITY
+        # (el placeholder). Solo sustituye cuando el caller NO pasó una identidad propia.
+        if self.identity == DEFAULT_IDENTITY:
+            from ..onboarding.soul_interview import load_soul_text  # diferido (sin ciclo)
+            soul = load_soul_text(self.tenant_id)
+            if soul:
+                self.identity = soul
 
     def _system_prompt(self) -> str:
         """System prompt del turno (10 capas), cacheado por sesión."""

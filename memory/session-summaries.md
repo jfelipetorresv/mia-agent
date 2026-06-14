@@ -1,5 +1,74 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-14 — Sesión 16 — 🎉 CIERRE DEL PROYECTO
+TL;DR: Módulo 5 cerrado (SOUL.md + entrevista de onboarding + prueba E2E). **Mia v0 operativa.**
+       Gate `test_e2e.py` 25/25; regresión **17/17 suites · 358 checks**; `test_rls` 12/12 intacto.
+Qué construimos:
+- Investigación previa → 4 premisas falsas del spec, presentadas como decisiones: el Doc 4 no
+  estaba en el repo (el usuario lo entregó → fuente exacta), el spec decía 18 preguntas pero el
+  Doc 4 trae 19 (P19 triad_mode opcional), `$MIA_HOME` no existía en config, `_TASK_MODELS` sin
+  `"soul"`. Y A4: la Capa 1 no leía el SOUL.md y el grafo nunca llenaba `soul_snapshot` (Riesgo #11).
+- PARTE A: `config.MIA_HOME` (ancla rutas relativas); `llm._TASK_MODELS["soul"]="claude-sonnet"`;
+  `onboarding/soul_interview.py` (`SoulInterview`: get_questions/run_interview/update_soul; 19
+  preguntas; template de 9 secciones; genera el SOUL.md por LLM conservando placeholders; helpers
+  puros de archivo; persiste respuestas para "Revisar mi perfil"); 3 endpoints
+  `/api/onboarding/*`. Wiring (decisión #21, "Grafo + prompt_builder"): `initial_state` carga
+  `soul_snapshot`, `graph.py` lo antepone en analysis/draft/edit, `MiaAgent.__post_init__` lo carga
+  en la Capa 1 — todo None-safe, gates intactos. NO se tocó `prompt_builder.py`.
+- PARTE A5 (frontend): `app/onboarding/page.tsx` (wizard de 19 preguntas, progreso, ejemplos,
+  resultado con el SOUL.md, Editar/Continuar, "Revisar mi perfil") + `OnboardingGate` (redirige a
+  /onboarding la primera vez) montado en `layout.tsx`.
+- PARTE B: `execution/test_e2e.py` (GATE FINAL, 25/25) — 7 pasos punta a punta con TestClient,
+  `$MIA_HOME` aislado en tempdir, LLM/embeddings mockeados, PDF Ley 80/1993. SOPs
+  `architecture/{e2e_runbook,soul_interview}.md`.
+Qué decidimos: decisión #21 (SOUL.md como archivo en `$MIA_HOME`, sin DB; 19 preguntas; status por
+mtime; wiring del soul_snapshot al grafo Y a la Capa 1, None-safe; imports diferidos para evitar
+ciclos). Nuevos riesgos #26 (SOUL generado por LLM — mitigado por la revisión humana en la pantalla
+de resultado) y #27 (triad_mode se almacena pero no está implementado como modo de ejecución).
+Qué sigue: smoke test VIVO en navegador con LLM real (runbook). Antes del PRIMER CLIENTE, atender
+riesgos abiertos: #23 (login real), #25 (diagnóstico/flags UI), #19 (Curator sin HITL ⚖️), #13 (rol
+curador SAT-Graph 🔐), #3 (pgvector oficial para clientes). No quedan módulos pendientes.
+
+Citas legales: ninguna entregada. El SOUL de Lexia (Doc 4) y el PDF Ley 80/1993 del E2E son datos
+de prueba/identidad del despacho, no citas a un cliente; el corpus semilla sigue marcado [VERIFICAR]
+(Riesgo #14). El SOUL.md conserva como placeholder los campos sin responder (no inventa datos).
+
+## 2026-06-14 — Handoff pre-Sesión 16
+TL;DR: Terminal cerrándose (contexto ~65%) antes de arrancar el Módulo 5.
+
+**Estado exacto:** **Fase 3 COMPLETA y commiteada.** HEAD = `91f0884`. Commits de este terminal:
+- `91f0884` feat: frontend Next.js 14 — 5 pantallas (Fase 3 UX)
+- `d4f5c57` feat: superficie /api/* completa + persistencia de perfil (Fase 3 backend)
+- `3d3929d` fix: arrancar scheduler en lifespan FastAPI (#22)
+- `b6f6bf1` Fase 0-2 completa
+Regresión **16/16 suites · 333 checks** verdes. `npm run build` ✓ (frontend compila).
+
+**CORRECCIÓN al borrador del handoff:** NO fue "solo planificación". En este terminal SÍ se
+construyó toda la Fase 3: Sesión 14 (superficie `/api/*` + persistencia de perfil `firm_profiles`
++ parser PDF/Word, gate `test_ux.py` 18/18) y Sesión 15 (scaffold Next.js 14 + las 5 pantallas +
+cierre del Riesgo #24, gate `test_ux.py` 25/25). Dos commits nuevos (`d4f5c57`, `91f0884`).
+
+**Próximo paso EXACTO:** pegar el prompt del **Módulo 5 (Fase 4): entrevista SOUL.md + prueba
+E2E** — es el ÚLTIMO módulo del proyecto. Patrón de siempre: investigar premisas → presentar
+decisiones (AskUserQuestion) → construir → gate → regresión → wrap → commit. Tras el gate de
+Módulo 5 la regresión pasa de 16 a **17 suites** (la "17/17" del borrador es el objetivo FUTURO,
+no el estado actual, que es 16/16).
+
+**Opcional antes de Módulo 5:** smoke test VIVO de la UI (Modo B, 3 terminales: `litellm` /
+`uvicorn` / `npm run dev`) — NO se hizo esta sesión; solo se verificó `npm run build` + el gate
+de endpoints (TestClient). Sería el primer recorrido real en navegador.
+
+**Riesgos abiertos (principales):** #23 (login real; hoy token de dev en frontend/.env.local),
+#25 (diagnóstico de P2 y punto "borrador pendiente" de P1 sin endpoint que los alimente), #19
+(Curator consolida/poda playbooks SIN revisión humana ⚖️), #13 (corpus SAT-Graph escribible por
+cualquier conexión `mia_app`, sin rol curador 🔐). Lista COMPLETA en `memory/bugs-and-risks.md`.
+
+**Arranque rápido próxima sesión:** leer `CLAUDE.md` + `memory/{progress,task_plan,decisions,
+bugs-and-risks}.md` + `architecture/api_surface.md`. Entorno: PostgreSQL 16 + pgvector corriendo;
+`.venv` con todas las deps; `frontend/` scaffoldeado con node_modules instalados. Tenant de dev:
+`DEV_FRONTEND`. El wrap de Sesión 15 YA está commiteado (en `91f0884`); lo ÚNICO sin commitear es
+esta entrada de handoff (`memory/session-summaries.md` modificado en el árbol de trabajo).
+
 ## 2026-06-14 — Sesión 15
 TL;DR: Frontend Next.js 14 — las 5 pantallas. **Fase 3 (UX) COMPLETA.** Riesgo #24 cerrado.
        Gate test_ux.py 25/25 (incl. npm build); regresión 16/16 (333 checks).

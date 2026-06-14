@@ -48,14 +48,27 @@ verificada. `frontend/` NO existe aún (el Módulo 0 no lo creó).
 gate `test_ux.py` 25/25, `npm run build` ✓).
 
 ## Fase 4 — Personalidad
-- [ ] Módulo 5 — Entrevista SOUL.md + prueba E2E
+- [x] **Módulo 5** — Entrevista SOUL.md + prueba E2E  ✅ 2026-06-14 (gate `test_e2e.py` 25/25; decisión #21)
+
+**🎉🎉 PROYECTO COMPLETO · Mia v0 operativa · 2026-06-14** — Fase 0 + Módulo 1 (1a-1e) + Fase 1
+(2a-2d) + Fase 2 (3a-3e) + Fase 3 (UX) + Fase 4 (Módulo 5). Los 17 gates verdes (358 checks).
 
 ---
 
-**Estado actual:** **Fase 0 + Módulo 1 (1a-1e) + Fase 1 (2a-2d) + FASE 2 (3a-3e) + FASE 3
-(UX: backend /api/* + 5 pantallas Next.js) COMPLETOS.** Pendiente: Fase 4 (Módulo 5 SOUL.md).
-Regresión 16/16 suites verdes: 1a 15 · 1b 32 · 1c 16 · 2a 19 · 2b 14 · 2c 22 · 2d 20 ·
-test_rls 12 · 1d 19 · 1e 38 · 3a 21 · 3c 22 · 3d 14 · 3b 23 · 3e 21 · UX 25. (333 checks.)
+**Estado actual:** **PROYECTO COMPLETO — Mia v0 operativa (2026-06-14).** Fase 0 + Módulo 1
+(1a-1e) + Fase 1 (2a-2d) + FASE 2 (3a-3e) + FASE 3 (UX) + **FASE 4 (Módulo 5: SOUL.md + E2E)**.
+Regresión **17/17 suites verdes**: 1a 15 · 1b 32 · 1c 16 · 2a 19 · 2b 14 · 2c 22 · 2d 20 ·
+test_rls 12 · 1d 19 · 1e 38 · 3a 21 · 3c 22 · 3d 14 · 3b 23 · 3e 21 · UX 25 · **Módulo 5 (E2E) 25**.
+(**358 checks.**) `test_rls` 12/12 intacto.
+Módulo 5 cerrado (2026-06-14): SOUL.md + entrevista de onboarding (19 preguntas del Doc 4, decisión
+#21); `$MIA_HOME/soul_{tenant}.md` (sin DB); wiring del `soul_snapshot` al grafo (None-safe, cierra
+en la práctica el hueco del Riesgo #11) + a la Capa 1 del MiaAgent; 3 endpoints `/api/onboarding/*`;
+pantalla de onboarding + gate de redirección; gate `test_e2e.py` 25/25; SOPs
+`architecture/{soul_interview,e2e_runbook}.md`.
+**Antes del PRIMER CLIENTE (no bloquean v0, sí producción/multi-tenant):** #23 login real ·
+#25 diagnóstico/flags UI · #19 Curator sin HITL ⚖️ · #13 rol curador SAT-Graph 🔐 · #3 pgvector
+oficial para clientes · #26 SOUL generado por LLM (revisión humana) · #27 triad_mode no implementado.
+Recomendado: smoke test VIVO en navegador con LLM real (runbook).
 Deuda del grafo cerrada (2026-06-14): Riesgo #11 por reframe (decisión #14), Riesgo #12
 corregido (resumen role="user", decisión #15).
 3a cerrado (2026-06-14): corpus jurídico COMPARTIDO en Postgres (decisión #16); migración
@@ -73,7 +86,7 @@ interfaz intacta); job `curator_weekly` (168h); gate 23/23; SOP `architecture/cu
 detecta rechazos/ediciones/sin-resultado y PROPONE mejoras a playbooks (status pending, no
 aplica); watermark por día; job `feedback_daily` (24h); gate 21/21; SOP
 `architecture/feedback_processor.md`. **→ Fase 2 COMPLETA.**
-**Siguiente:** PAUSA — el usuario pidió NO arrancar otro módulo sin él presente.
-**Fase 3 — UX (5 pantallas Next.js, 4a-4e).** También: Módulo 5 (SOUL.md).
-PENDIENTE TÉCNICO antes/durante Fase 3: Riesgo #22 (arrancar el scheduler en el lifespan de la
-app — hoy los jobs no se disparan) y #21 (revisar/aplicar feedback_proposals — Pantalla 4).
+Módulo 5 cerrado (2026-06-14): SOUL.md + onboarding (decisión #21); ver el bloque "Estado actual"
+arriba. **→ Fase 4 COMPLETA · PROYECTO COMPLETO.**
+**Siguiente:** ya no hay módulos pendientes. Trabajo futuro = endurecimiento para producción/primer
+cliente (riesgos abiertos) + smoke test vivo en navegador (`architecture/e2e_runbook.md`).

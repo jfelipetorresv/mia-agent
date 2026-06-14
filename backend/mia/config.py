@@ -33,6 +33,18 @@ MIA_MODEL = os.getenv("MIA_MODEL", "claude-sonnet")
 # (2c) para el umbral del 55%. Default 200k (claude-sonnet); configurable por entorno.
 MIA_CONTEXT_WINDOW = int(os.getenv("MIA_CONTEXT_WINDOW", "200000"))
 
+# --- Memoria del agente en ejecución (Módulo 5) ---
+# $MIA_HOME: carpeta donde vive la identidad por despacho (SOUL.md por tenant) y otra
+# memoria en ejecución del agente. Es estado de INSTANCIA por despacho (como las API
+# keys), no se commitea: default bajo mia-data/ (gitignored). Configurable por entorno
+# (.env trae MIA_HOME=.\mia-data). Una ruta RELATIVA se ancla a PROJECT_ROOT para no
+# depender del directorio de trabajo (igual criterio que mia-data/traces de 2d). Se lee
+# como atributo en cada uso, así los tests pueden apuntarlo a un tempdir reasignando
+# config.MIA_HOME.
+MIA_HOME = Path(os.getenv("MIA_HOME", "mia-data"))
+if not MIA_HOME.is_absolute():
+    MIA_HOME = (PROJECT_ROOT / MIA_HOME).resolve()
+
 
 def litellm_embed_model() -> str:
     """Nombre del modelo de embeddings con prefijo de proveedor para LiteLLM."""
