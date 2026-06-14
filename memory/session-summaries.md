@@ -1,5 +1,10 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-14 — Pausa post-v0
+TL;DR: Terminal se trabó al arrancar smoke test. Proyecto intacto. Retomamos mañana.
+Estado: 17/17 suites · 358 checks · commit 64bad3f
+Qué sigue: decidir entre smoke test vivo o cerrar riesgo #23 (login real) antes del primer cliente.
+
 ## 2026-06-14 — Sesión 16 — 🎉 CIERRE DEL PROYECTO
 TL;DR: Módulo 5 cerrado (SOUL.md + entrevista de onboarding + prueba E2E). **Mia v0 operativa.**
        Gate `test_e2e.py` 25/25; regresión **17/17 suites · 358 checks**; `test_rls` 12/12 intacto.

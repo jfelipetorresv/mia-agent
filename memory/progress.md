@@ -881,3 +881,17 @@ Fase 2 + Fase 3 + **Fase 4 (Módulo 5)**. Los 17 gates verdes.
 abiertos antes del PRIMER CLIENTE: #23 (login real), #25 (diagnóstico/flags UI), #19 (Curator sin
 HITL ⚖️), #13 (rol curador SAT-Graph 🔐), #3 (pgvector oficial para clientes). **Bloqueantes:**
 ninguno.
+
+---
+
+## 2026-06-14 — PAUSA post-v0 (no hay módulo en construcción)
+
+**Estado:** proyecto en PAUSA tras cerrar Mia v0. **No hay ningún módulo en construcción** — las
+4 fases están completas (17/17 suites · 358 checks · commit `64bad3f`). El terminal se trabó al
+arrancar el smoke test vivo; no se construyó ni se tocó código. El proyecto queda intacto.
+
+**Qué sigue al retomar:** decidir entre (a) smoke test VIVO en navegador con LLM real (Modo B, 3
+terminales; runbook `architecture/e2e_runbook.md`) o (b) cerrar el Riesgo #23 (login real) antes
+del primer cliente. Lista completa de riesgos abiertos en `memory/bugs-and-risks.md`.
+
+**Bloqueantes:** ninguno.
