@@ -66,8 +66,10 @@ async def list_matters(request: Request):
     tid = _tenant(request)
     async with pool.tenant_connection(tid) as conn:
         rows = await (await conn.execute(
-            "SELECT id, title, created_at FROM matters ORDER BY created_at DESC")).fetchall()
-    return [{"id": str(r[0]), "name": r[1], "created_at": r[2]} for r in rows]
+            "SELECT id, title, description, status, created_at FROM matters "
+            "ORDER BY created_at DESC")).fetchall()
+    return [{"id": str(r[0]), "name": r[1], "description": r[2], "status": r[3],
+             "created_at": r[4]} for r in rows]
 
 
 @router.post("/matters", status_code=201)
@@ -75,10 +77,10 @@ async def create_matter(request: Request, body: MatterCreate):
     tid = _tenant(request)
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
-            "INSERT INTO matters (tenant_id, title) VALUES (%s::uuid, %s) RETURNING id, created_at",
-            (tid, body.name))).fetchone()
+            "INSERT INTO matters (tenant_id, title, description) VALUES (%s::uuid, %s, %s) "
+            "RETURNING id, status, created_at", (tid, body.name, body.description))).fetchone()
     return {"id": str(row[0]), "name": body.name, "description": body.description,
-            "created_at": row[1]}
+            "status": row[1], "created_at": row[2]}
 
 
 @router.get("/matters/{matter_id}")
@@ -87,10 +89,12 @@ async def get_matter(matter_id: str, request: Request):
     await assert_owns_matter(tid, matter_id)
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
-            "SELECT id, title, created_at FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
+            "SELECT id, title, description, status, created_at FROM matters "
+            "WHERE id = %s::uuid", (matter_id,))).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Asunto no encontrado")
-    return {"id": str(row[0]), "name": row[1], "created_at": row[2]}
+    return {"id": str(row[0]), "name": row[1], "description": row[2], "status": row[3],
+            "created_at": row[4]}
 
 
 # ── Pantalla 2 · documentos ──────────────────────────────────────────────────

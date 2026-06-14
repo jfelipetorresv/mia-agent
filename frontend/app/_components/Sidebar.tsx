@@ -1,0 +1,35 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const LINKS = [
+  { href: "/", label: "Asuntos", match: (p: string) => p === "/" || p.startsWith("/asuntos") },
+  { href: "/memoria", label: "Conocimiento", match: (p: string) => p.startsWith("/memoria") },
+  { href: "/dashboard", label: "Panel de control", match: (p: string) => p.startsWith("/dashboard") },
+];
+
+export default function Sidebar() {
+  const path = usePathname() || "/";
+  return (
+    <aside className="flex w-[220px] shrink-0 flex-col border-r border-gray-200 bg-[#F8F8F8]">
+      <div className="px-6 py-6 text-2xl font-semibold tracking-tight text-gray-900">Mia</div>
+      <nav className="flex flex-col gap-1 px-3">
+        {LINKS.map((l) => {
+          const active = l.match(path);
+          return (
+            <Link
+              key={l.href}
+              href={l.href}
+              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                active ? "bg-gray-200 text-gray-900" : "text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              {l.label}
+            </Link>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}

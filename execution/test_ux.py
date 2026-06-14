@@ -131,9 +131,11 @@ def run_checks(client, auth, tid) -> list[str]:
     mC = client.post("/api/matters", headers=auth, json={"name": "Asunto rechazo"}).json()["id"]
     threads += [thread_id_for(tid, mA), thread_id_for(tid, mC)]
 
-    # 3 · detalle de asunto
+    # 3 · detalle de asunto (incluye description y status — Riesgo #24)
     r = client.get(f"/api/matters/{mA}", headers=auth)
-    check("GET /api/matters/{id} -> 200", r.status_code == 200 and r.json()["id"] == mA)
+    mj = r.json()
+    check("GET /api/matters/{id} -> 200 con description y status (#24)",
+          r.status_code == 200 and mj["id"] == mA and "description" in mj and "status" in mj)
     visible_payloads.append(r.text)
 
     # 4 · documentos (lista vacía)
@@ -231,8 +233,35 @@ def run_checks(client, auth, tid) -> list[str]:
     return threads
 
 
+def frontend_checks() -> None:
+    """Checks ligeros del frontend (sin Playwright): existencia de las pantallas + build TS."""
+    import subprocess
+    app_dir = ROOT / "frontend" / "app"
+    screens = {
+        "test_pantalla1_existe (app/page.tsx)": app_dir / "page.tsx",
+        "test_pantalla2_existe (asuntos/[id]/page.tsx)": app_dir / "asuntos" / "[id]" / "page.tsx",
+        "test_pantalla3_existe (asuntos/[id]/revisar/page.tsx)": app_dir / "asuntos" / "[id]" / "revisar" / "page.tsx",
+        "test_pantalla4_existe (memoria/page.tsx)": app_dir / "memoria" / "page.tsx",
+        "test_pantalla5_existe (dashboard/page.tsx)": app_dir / "dashboard" / "page.tsx",
+    }
+    for name, path in screens.items():
+        ok = path.exists() and "export default" in path.read_text(encoding="utf-8")
+        check(name, ok)
+    layout = app_dir / "layout.tsx"
+    check("test_layout_existe (layout con Sidebar)",
+          layout.exists() and "Sidebar" in layout.read_text(encoding="utf-8"))
+
+    # El check más importante: que el frontend COMPILE (TypeScript).
+    try:
+        r = subprocess.run("npm run build", cwd=str(ROOT / "frontend"), shell=True,
+                           capture_output=True, text=True, timeout=300)
+        check("test_build_nextjs (npm run build sin errores)", r.returncode == 0)
+    except Exception as e:
+        check(f"test_build_nextjs (npm run build) [excepción: {e}]", False)
+
+
 def main() -> int:
-    print("== Fase 3 (backend) · superficie /api/* ==")
+    print("== Fase 3 · superficie /api/* + 5 pantallas ==")
     if not os.getenv("PG_PASSWORD") or not config.JWT_SECRET:
         print("  [FAIL] PG_PASSWORD o JWT_SECRET vacío en .env")
         return 1
@@ -253,6 +282,8 @@ def main() -> int:
             threads = run_checks(client, auth, tid)
     finally:
         cleanup(tid, threads)
+
+    frontend_checks()   # filesystem + npm run build (no necesita el backend)
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

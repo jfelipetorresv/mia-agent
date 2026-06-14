@@ -1,5 +1,37 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-14 — Sesión 15
+TL;DR: Frontend Next.js 14 — las 5 pantallas. **Fase 3 (UX) COMPLETA.** Riesgo #24 cerrado.
+       Gate test_ux.py 25/25 (incl. npm build); regresión 16/16 (333 checks).
+Qué construimos:
+- Cierre del Riesgo #24: migración `008_matters_description.sql` (+description, +status en
+  matters); `ux.py` create/get/list ahora persisten/devuelven description y status. #24 🟢.
+- Scaffold `frontend/` con `create-next-app@14` (TypeScript, Tailwind, App Router, no-src-dir,
+  alias @/*). Next 14.2.35 + React 18. `next.config.mjs`: eslint.ignoreDuringBuilds (el build
+  valida TS; ESLint no lo tumba).
+- Token de dev (#23): `frontend/.env.local` (gitignored) con NEXT_PUBLIC_API_URL +
+  NEXT_PUBLIC_DEV_TOKEN (JWT del tenant DEV_FRONTEND, acuñado como los gates). Documentado en
+  api_surface.md §auth.
+- `lib/api.ts` — cliente con Bearer; SSE sobre fetch (streamTurn) porque EventSource no admite
+  headers. `app/_components/Sidebar.tsx` (nav activa). `app/layout.tsx` (Inter + sidebar 220px).
+- Las 5 pantallas (Tailwind puro, §G, cada fetch con Bearer):
+  P1 `app/page.tsx` (lista + modal crear), P2 `app/asuntos/[id]/page.tsx` (3 columnas: docs +
+  chat con SSE en vivo + diagnóstico), P3 `app/asuntos/[id]/revisar/page.tsx` (borrador,
+  [VERIFICAR] en amarillo, aprobar/editar/rechazar), P4 `app/memoria/page.tsx` (perfil +
+  playbooks + sugerencias con aplicar/ignorar), P5 `app/dashboard/page.tsx` (actividad,
+  procesos, modelos, costo, conectores — todo con etiquetas amigables).
+- `execution/test_ux.py` — +7 checks de frontend (5 pantallas exportan default, layout con
+  Sidebar, `npm run build` sin errores). Total 25/25.
+Qué decidimos: sin decisión formal nueva. ESLint fuera del build (TS sí se valida). El
+diagnóstico (P2) y el punto de "borrador pendiente" (P1) quedan como placeholder (sin endpoint
+que los alimente) → Riesgo #25.
+Qué sigue: **Fase 4 — Módulo 5 (entrevista SOUL.md + prueba E2E)**, o endurecer la UX (login
+real #23, diagnóstico/flags #25). Antes de producción: arrancar backend+frontend juntos (Modo B,
+3 terminales) y probar el flujo vivo end-to-end.
+
+Citas legales: ninguna. La UI muestra contenido del backend (sintético en los tests). §G
+verificado automáticamente (sin jerga técnica en respuestas ni etiquetas).
+
 ## 2026-06-14 — Sesión 14
 TL;DR: Fase 3 ARRANCA, dividida en dos (decisión #20). Esta sesión: superficie /api/*
        completa + persistencia de perfil. Gate test_ux.py 18/18; regresión 16/16 (326 checks).

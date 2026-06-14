@@ -312,13 +312,31 @@ usará un **token de desarrollo hardcodeado** (un solo tenant de dev) — deuda 
 un flujo de autenticación real (login → emisión de JWT con `tenant_id`, expiración, refresh) o
 integrar un IdP. Hasta entonces, el frontend de S15 queda restringido a desarrollo local.
 
-## 🟡 Riesgo #24 — `matters.description` no se persiste  [detectado 2026-06-14, Sesión 14]
-`POST /api/matters` acepta `{name, description}` pero la tabla `matters` (Módulo 0) solo tiene
-`title` — la `description` se devuelve en la respuesta (echo) pero NO se guarda. Si la Pantalla 2
-necesita mostrar la descripción del asunto, hoy se perdería.
+## 🟢 Riesgo #24 — `matters.description` no se persiste  [CERRADO 2026-06-14, Sesión 15]
+`POST /api/matters` aceptaba `{name, description}` pero la tabla `matters` solo tenía `title` →
+la `description` se devolvía en la respuesta pero NO se guardaba.
 
-**Acción:** si la UX lo requiere, añadir una columna `description text` a `matters` (migración) y
-persistirla en el POST. Deuda menor; no bloquea.
+**Cerrado (2026-06-14):** migración `008_matters_description.sql` añadió `description text
+DEFAULT ''` y `status varchar(20) DEFAULT 'active' CHECK (active|archived|closed)`. `create_matter`
+ahora persiste `description`; `list_matters`/`get_matter` devuelven `description` y `status`.
+Verificado: las columnas existen y los endpoints las exponen (gate `test_ux.py`).
+
+## 🟡 Riesgo #25 — La UI tiene datos incompletos por falta de endpoint  [detectado 2026-06-14, Sesión 15]
+Dos elementos de las pantallas no tienen un endpoint que los alimente y quedan como
+placeholder/inactivos:
+1. **Diagnóstico (Pantalla 2, columna derecha):** "Problema jurídico / Normas / Riesgo" se
+   muestran vacíos. El grafo SÍ produce un diagnóstico (`analysis_node` lo guarda en
+   `state.metadata['diagnosis']`), pero NINGÚN endpoint lo expone y el SSE no lo emite.
+2. **Punto naranja "borrador pendiente" (Pantalla 1):** `GET /api/matters` no devuelve un flag
+   de borrador pendiente (habría que consultar el checkpoint por asunto), así que el punto nunca
+   se muestra.
+Nota menor: el build del frontend IGNORA ESLint (`next.config.mjs`) — el type-check de TS sí
+corre; las reglas de estilo no tumban el build.
+
+**Acción (endurecer UX):** (a) exponer el diagnóstico estructurado (un campo en el SSE
+`awaiting_review` o un `GET /api/matters/{id}/diagnosis`); (b) añadir `pending_review` a cada
+item de `GET /api/matters` (join con checkpoints o una bandera en `matters`). No bloquea el flujo
+principal (preguntar → borrador → aprobar) que sí funciona.
 
 ---
 

@@ -760,3 +760,52 @@ S15) y #24 (matters.description no se persiste — sin columna en el esquema del
 
 **Próximo paso:** PAUSA — **Sesión 15: frontend Next.js 14 (scaffold + 5 pantallas)** contra la
 API ya verificada. **Bloqueantes:** ninguno.
+
+---
+
+## Sesión 15 — 2026-06-14 — Frontend Next.js 14 · 5 pantallas · 🎉 FASE 3 COMPLETA (gate 25/25)
+
+**Contexto:** segunda mitad de Fase 3 (decisión #20). Antes de scaffoldear se cerró el Riesgo #24.
+
+**Construido:**
+- **Riesgo #24 cerrado:** migración `008_matters_description.sql` (+`description text`,
+  +`status varchar CHECK(active|archived|closed)` en `matters`, idempotente, aplicada como
+  postgres leyendo PG_PASSWORD de .env). `api/routes/ux.py`: `create_matter` persiste
+  description; `list_matters`/`get_matter` devuelven description+status. #24 🟢.
+- **Scaffold `frontend/`** con `create-next-app@14 --typescript --tailwind --app --no-src-dir
+  --import-alias "@/*" --eslint --use-npm` (añadí --eslint para que no prompteara; Next 14.2.35,
+  React 18, 381 paquetes). `next.config.mjs`: `eslint.ignoreDuringBuilds=true` (el build valida
+  TypeScript; ESLint no tumba el build). globals.css sin dark mode.
+- **Token de dev (#23):** `frontend/.env.local` (gitignored por Next) con `NEXT_PUBLIC_API_URL`
+  + `NEXT_PUBLIC_DEV_TOKEN` (JWT del tenant `DEV_FRONTEND`, acuñado con el mismo `jwt.encode` +
+  JWT_SECRET que los gates). Documentado en `architecture/api_surface.md` §auth.
+- `lib/api.ts` — `apiGet/apiSend/apiUpload` con header Bearer; `streamTurn` consume el SSE sobre
+  fetch+ReadableStream (EventSource no admite Authorization). `app/_components/Sidebar.tsx`
+  (nav con estado activo). `app/layout.tsx` (Inter + sidebar 220px gris #F8F8F8, sin header).
+- **5 pantallas** (Tailwind puro, sin libs de UI, §G estricto, cada fetch con Bearer):
+  - P1 `app/page.tsx` — lista de asuntos + modal crear (nombre/descripción) + estado vacío.
+  - P2 `app/asuntos/[id]/page.tsx` — 3 columnas: documentos (subida PDF/Word) · chat con SSE
+    en vivo (status "analizando/redactando", burbujas user/Mia con avatar "M", botón Revisar
+    al haber borrador) · diagnóstico (placeholder, ver #25).
+  - P3 `app/asuntos/[id]/revisar/page.tsx` — borrador 16px; `[VERIFICAR]` resaltado en amarillo
+    con tooltip; Aprobar(verde)/Editar(azul, inline)/Rechazar(rojo); vuelve a P2 con ?confirmed.
+  - P4 `app/memoria/page.tsx` — tabs: Mi despacho (perfil editable + chips) · Lo que Mia sabe
+    (playbooks + modal crear) · Sugerencias (proposals con Aplicar/Ignorar).
+  - P5 `app/dashboard/page.tsx` — actividad, procesos automáticos (etiquetas amigables), modelos,
+    costo del mes, conectores (Base de conocimiento / Almacén externo).
+- `execution/test_ux.py` — +`frontend_checks()`: 5 pantallas exportan default, layout con
+  Sidebar, y **`npm run build` sin errores** (el check clave). matter_get verifica description+
+  status (#24). Total **25/25**.
+
+**Build:** `npm run build` ✓ compila (TypeScript válido), 5 rutas generadas (/, /asuntos/[id],
+/asuntos/[id]/revisar, /dashboard, /memoria).
+**Regresión:** **16/16 suites verdes, 333 checks** (los 15 gates Python intactos + UX 25).
+
+**🎉 HITO — FASE 3 (UX) COMPLETA · 2026-06-14:** backend `/api/*` (S14) + 5 pantallas Next.js (S15).
+
+**Riesgos nuevos:** #25 (la UI tiene datos incompletos por falta de endpoint: el diagnóstico de
+P2 y el punto naranja de "borrador pendiente" de P1 son placeholder/inactivos; ESLint fuera del
+build). Sigue abierto #23 (login real; hoy token de dev).
+
+**Próximo paso:** PAUSA — Fase 4 (Módulo 5: SOUL.md + E2E) o endurecer UX (#23/#25). Probar el
+flujo vivo (Modo B, 3 terminales) antes de producción. **Bloqueantes:** ninguno.
