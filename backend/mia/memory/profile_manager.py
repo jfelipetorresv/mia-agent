@@ -64,11 +64,17 @@ class ProfileManager:
     estado vigente en ese instante.
     """
 
-    def __init__(self, *, abogado: str = "", despacho: str = "") -> None:
+    def __init__(self, *, abogado: str = "", despacho: str = "",
+                 pool=None, tenant_id: str | None = None) -> None:
         self._abogado = ""
         self._despacho = ""
         self.set_abogado(abogado)
         self.set_despacho(despacho)
+        # Backend de persistencia del perfil ESTRUCTURADO del despacho (Fase 3, decisión #20).
+        # Distinto de los perfiles de TEXTO de arriba (abogado/despacho, costura L9). Con
+        # pool=None el manager es in-memory puro (el gate 2a no cambia).
+        self._pool = pool
+        self._tenant_id = tenant_id
 
     @staticmethod
     def _check_budget(kind: str, text: str, budget: int) -> None:
@@ -105,3 +111,54 @@ class ProfileManager:
             abogado=self._abogado,
             despacho=self._despacho,
         )
+
+    # ── perfil estructurado del despacho en DB (Fase 3, decisión #20) ──────────
+    # Tabla firm_profiles, una fila por tenant. Bajo RLS (tenant_connection).
+    _FIRM_FIELDS = (
+        "name", "lawyer_name", "tp_number", "jurisdiction", "practice_areas",
+        "voice_adjectives", "banned_words", "preferred_sources", "hard_nos", "tools",
+    )
+
+    async def get_firm_profile(self, tenant_id: str | None = None) -> dict | None:
+        """Perfil estructurado del despacho (dict) o None si no se ha creado."""
+        tid = tenant_id or self._tenant_id
+        if self._pool is None or tid is None:
+            return None
+        from psycopg.rows import dict_row
+        async with self._pool.tenant_connection(tid) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT name, lawyer_name, tp_number, jurisdiction, practice_areas, "
+                    "voice_adjectives, banned_words, preferred_sources, hard_nos, rhythm, tools, "
+                    "updated_at FROM firm_profiles WHERE tenant_id = %s::uuid", (tid,))
+                return await cur.fetchone()
+
+    async def upsert_firm_profile(self, tenant_id: str, data: dict) -> dict:
+        """Crea/actualiza el perfil estructurado del despacho (upsert por tenant). Devuelve el
+        perfil resultante."""
+        from psycopg.types.json import Json
+        from psycopg.rows import dict_row
+        rhythm = Json(data.get("rhythm") or {})
+        vals = {f: data.get(f) for f in self._FIRM_FIELDS}
+        async with self._pool.tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "INSERT INTO firm_profiles "
+                    "  (tenant_id, name, lawyer_name, tp_number, jurisdiction, practice_areas, "
+                    "   voice_adjectives, banned_words, preferred_sources, hard_nos, rhythm, tools) "
+                    "VALUES (%(t)s::uuid, %(name)s, %(lawyer_name)s, %(tp_number)s, "
+                    "  COALESCE(%(jurisdiction)s,'colombia'), %(practice_areas)s, "
+                    "  %(voice_adjectives)s, %(banned_words)s, %(preferred_sources)s, "
+                    "  %(hard_nos)s, %(rhythm)s, %(tools)s) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET "
+                    "  name=EXCLUDED.name, lawyer_name=EXCLUDED.lawyer_name, "
+                    "  tp_number=EXCLUDED.tp_number, jurisdiction=EXCLUDED.jurisdiction, "
+                    "  practice_areas=EXCLUDED.practice_areas, voice_adjectives=EXCLUDED.voice_adjectives, "
+                    "  banned_words=EXCLUDED.banned_words, preferred_sources=EXCLUDED.preferred_sources, "
+                    "  hard_nos=EXCLUDED.hard_nos, rhythm=EXCLUDED.rhythm, tools=EXCLUDED.tools, "
+                    "  updated_at=now() "
+                    "RETURNING name, lawyer_name, tp_number, jurisdiction, practice_areas, "
+                    "  voice_adjectives, banned_words, preferred_sources, hard_nos, rhythm, tools, "
+                    "  updated_at",
+                    {"t": tenant_id, "rhythm": rhythm, **vals})
+                return await cur.fetchone()

@@ -1,5 +1,32 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-14 — Sesión 14
+TL;DR: Fase 3 ARRANCA, dividida en dos (decisión #20). Esta sesión: superficie /api/*
+       completa + persistencia de perfil. Gate test_ux.py 18/18; regresión 16/16 (326 checks).
+Qué construimos:
+- Investigación previa: `frontend/` NO existe (Módulo 0 solo hizo backend); de 15 endpoints del
+  gate solo ~3 existían (bajo /matters, no /api); el perfil nunca se persistió (2a in-memory).
+  Se presentó y el usuario decidió (decisión #20): Fase 3 en 2 sesiones — S14 backend, S15 frontend.
+- `db/migrations/007_profiles.sql` (NUEVO) — tabla `firm_profiles` (perfil estructurado del
+  despacho, RLS por-tenant). `memory/profile_manager.py` — ADITIVO: __init__ +pool/+tenant_id;
+  con pool=None sigue in-memory (gate 2a 19/19 intacto); +get_firm_profile/upsert_firm_profile.
+- `api/routes/ux.py` (NUEVO) — router /api con ~18 endpoints: matters (list/create/get),
+  documents (list/upload PDF·Word), chat (devuelve stream_url), stream (alias del SSE de 1d),
+  draft (lee el checkpoint; 404 si no hay), draft/approve|reject (delegan en _resume de 1d),
+  profile (get/put), playbooks (list/create), proposals (list/apply/ignore — apply cablea
+  propuesta→playbook, cierra parte de #21), dashboard/stats. Montado en main.py. §G estricto.
+- `ingest/extract.py` (NUEVO) — extrae texto de PDF (PyMuPDF) / Word (python-docx) / txt·md.
+- Deps nuevas (pyproject + .venv): python-multipart (FastAPI lo exige para UploadFile), pymupdf,
+  python-docx. Documentadas en findings.md.
+- `execution/init_profiles.py` (runner 007) + `execution/test_ux.py` (18/18, TestClient + JWT,
+  LLM/embeddings mockeados, PDF/Word sintéticos, check §G). `architecture/api_surface.md` (SOP).
+Qué decidimos: decisión #20 (Fase 3 en 2 sesiones; /api/* nuevo + /matters legacy intacto;
+perfil en firm_profiles; auth = token dev en S15).
+Qué sigue: **Sesión 15 — frontend Next.js 14 (scaffold + 5 pantallas)** contra esta API verificada.
+
+Citas legales: ninguna. Los datos del gate (documentos, perfil, playbooks, propuestas) son
+sintéticos de prueba. La regla §G se verifica automáticamente (sin jerga técnica en respuestas).
+
 ## 2026-06-14 — Sesión 13
 TL;DR: Módulo 3e Feedback processor cerrado. Trazas enriquecidas a v2 (decisión #19).
        **HITO: Fase 2 — Knowledge Stores COMPLETA (3a-3e).** 15/15 suites (308 checks).

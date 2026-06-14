@@ -15,7 +15,7 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
-from .routes import hitl, settings, stream
+from .routes import hitl, settings, stream, ux
 
 
 @asynccontextmanager
@@ -45,6 +45,8 @@ app.include_router(stream.router)
 app.include_router(hitl.router)
 # Router de ajustes del Agent Hub (Módulo 1e).
 app.include_router(settings.router)
+# Superficie /api/* de las 5 pantallas (Fase 3 backend, decisión #20).
+app.include_router(ux.router)
 
 
 @app.get("/health")

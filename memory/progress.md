@@ -710,3 +710,53 @@ producción NO se disparan).
 
 **Próximo paso:** PAUSA — **Fase 3 (UX, 5 pantallas Next.js)**. Atender #22 antes/durante el
 despliegue. **Bloqueantes:** ninguno.
+
+---
+
+## Sesión 14 — 2026-06-14 — Fase 3 ARRANCA (dividida) · superficie /api/* backend (gate 18/18)
+
+**Contexto:** Riesgo #22 ya cerrado al inicio (scheduler en el lifespan). Investigación previa de
+Fase 3 → tres premisas falsas del spec: (1) `frontend/` NO existe (Módulo 0 solo construyó
+backend+DB; no hay scaffold Next.js); (2) de los 15 endpoints del gate solo ~3 existían y bajo
+`/matters` (no `/api`); (3) el perfil nunca se persistió (ProfileManager 2a es in-memory). Se
+presentó la decisión de alcance; el usuario eligió **dividir Fase 3 en dos** (decisión #20):
+**S14 = backend** (superficie /api/* + persistencia de perfil + parser de documentos), **S15 =
+frontend** (scaffold Next.js + 5 pantallas) contra endpoints ya verificados.
+
+**Construido:**
+- `db/migrations/007_profiles.sql` (NUEVO) — `firm_profiles` (perfil estructurado del despacho:
+  name, lawyer_name, jurisdiction, practice_areas, voice_adjectives, banned_words, …; UNIQUE por
+  tenant; RLS ENABLE+FORCE; GRANT mia_app). `execution/init_profiles.py` runner → verificado.
+- `memory/profile_manager.py` — cambio ADITIVO: `__init__(*, abogado, despacho, pool=None,
+  tenant_id=None)`; con pool=None es el in-memory original (gate 2a 19/19 SIN tocar). +async
+  `get_firm_profile` / `upsert_firm_profile` (tabla firm_profiles, RLS). Es el perfil
+  ESTRUCTURADO, distinto de los perfiles de texto de 2a (costura L9).
+- `api/routes/ux.py` (NUEVO) — `APIRouter(prefix="/api")`, ~18 endpoints (ver
+  `architecture/api_surface.md`): matters list/create/get, documents list/upload(PDF·Word·txt·md),
+  chat (→ stream_url), stream (alias que delega en `stream_matter` de 1d), draft (lee
+  `graph.aget_state` del checkpoint; 404 si no hay), draft/approve|reject (delegan en `_resume`
+  de 1d; approve con edited_text = edición), profile get/put, playbooks list/create
+  (PlaybookManager DB), proposals list + apply/ignore (apply cablea propuesta→playbook y marca
+  applied → cierra parte del Riesgo #21), dashboard/stats. §G estricto (etiquetas amigables para
+  jobs/conectores/modelos; nunca pgvector/tenant_id/embedding/hitl/langgraph/tool_call).
+  Montado en `api/main.py` junto a los routers legacy (que NO se tocaron).
+- `ingest/extract.py` (NUEVO) — extrae texto de PDF (PyMuPDF/fitz), Word (python-docx), txt/md;
+  import perezoso de las libs pesadas.
+- Deps nuevas en `pyproject.toml` + `.venv`: **python-multipart** (FastAPI lo EXIGE para
+  `UploadFile` — sin él la app no arranca), **pymupdf**, **python-docx**. Documentadas en findings.md.
+- `execution/test_ux.py` (NUEVO) — **18/18 PASS**. TestClient + JWT del tenant de prueba;
+  LLM/embeddings mockeados; PDF (fitz) y Word (docx) sintéticos. Checks: matters list/create/get,
+  documents list/upload PDF+Word, chat→stream_url, stream text/event-stream, draft 200 (tras
+  turno) / 404 (sin turno), draft approve/reject 200, profile get/put, playbooks list, proposals
+  list, dashboard stats (todas las claves), y §G (sin jerga técnica en respuestas).
+- `architecture/api_surface.md` (NUEVO) — SOP: mapa de endpoints, relación con rutas legacy,
+  §G, decisiones de diseño, Self-Annealing. `memory/decisions.md` #20.
+
+**Regresión:** **16/16 suites verdes, 326 checks**. `test_profile_manager` (2a) 19/19 y
+`test_hitl_flow` (1d) 19/19 intactos (cambio aditivo a ProfileManager + router /api adicional).
+
+**Riesgos nuevos:** #23 (no hay login/auth de usuario — el frontend usará token de dev, deuda
+S15) y #24 (matters.description no se persiste — sin columna en el esquema del Módulo 0).
+
+**Próximo paso:** PAUSA — **Sesión 15: frontend Next.js 14 (scaffold + 5 pantallas)** contra la
+API ya verificada. **Bloqueantes:** ninguno.

@@ -274,19 +274,20 @@ hoy estaría vacía (sus stats serían 0).
 el alta de playbooks por despacho (onboarding o import) a `PlaybookManager(pool=…).register_playbook`,
 y decidir si el prompt_builder pasa a leer el índice desde DB (`get_index`) en vez del in-memory.
 
-## 🔴 Riesgo #22 — El scheduler nunca se arranca: los jobs cron NO se disparan  [detectado 2026-06-14, Sesión 13]
+## 🟢 Riesgo #22 — El scheduler nunca se arranca: los jobs cron NO se disparan  [CERRADO 2026-06-14, Sesión 14]
 `cron/scheduler.py` registra 3 jobs (`sync_obsidian_all_tenants` 6h, `curator_weekly` 168h,
-`feedback_daily` 24h) vía `build_scheduler()`, pero NADIE llama a `Scheduler.start()`: el
-lifespan de la app (`api/main.py`) no lo arranca. En producción, **ninguna de las tareas de
-mantenimiento (Obsidian sync, Curator, Feedback) se ejecutaría sola** — solo corren si se
-disparan a mano (`run_job`) o desde los gates.
+`feedback_daily` 24h) vía `build_scheduler()`, pero NADIE llamaba a `Scheduler.start()`: el
+lifespan de la app (`api/main.py`) no lo arrancaba → las 3 automatizaciones estaban INERTES en
+producción.
 
-**Por qué no se notó:** cada módulo (3c/3b/3e) se cerró con su gate, que invoca la lógica
-directamente; el job registrado solo se verifica como "está en la lista", no que se dispare.
-**Acción (Fase 3 / despliegue):** arrancar `build_scheduler().start()` como tarea de fondo en el
-lifespan de `api/main.py` (o un proceso worker dedicado en Modo A), con manejo de apagado
-(`stop()`). Hasta entonces, las tres automatizaciones están INERTES en producción. No bloquea
-el desarrollo; bloquea el valor en producción.
+**Cerrado (2026-06-14):** el `lifespan` de FastAPI (`api/main.py`) arranca el scheduler como
+tarea de fondo tras abrir el pool (`asyncio.create_task(scheduler.start())`) y lo detiene en el
+shutdown (`scheduler.stop()` + cancelación de la tarea, antes de `pool.close_pool()`). Además se
+ajustó `Scheduler.start()` para agendar la PRIMERA corrida de cada job a un intervalo de
+distancia (no en el arranque): un job diario/semanal no debe correr en cada reinicio, y así los
+gates que instancian la app (`test_hitl_flow`, `test_agent_hub`) no disparan los jobs. Regresión
+15/15 verde tras el cambio. Documentado en `architecture/feedback_processor.md` §"Arranque en
+producción". Para forzar una corrida manual: `run_job("feedback_daily")`.
 
 ## 🟡 Riesgo #21 — Las propuestas de feedback no se revisan ni se aplican  [detectado 2026-06-14, Sesión 13]
 El Feedback processor (3e) escribe `feedback_proposals` con `status='pending'`, pero NINGÚN flujo
@@ -299,6 +300,25 @@ secundaria: una traza histórica v1 (sin `retrieved_doc_ids`) cuenta como NO_RES
 trazas v1 acumuladas podría inflar propuestas `flag_gap`. **Acción (Fase 3):** construir la
 Pantalla 4 (listar/aprobar/rechazar propuestas) y conectar la aprobación con el PlaybookManager;
 considerar limitar el análisis a trazas v2 para las señales que dependen de campos nuevos.
+
+## 🟡 Riesgo #23 — No hay login/auth de usuario; el frontend usará un token de desarrollo  [detectado 2026-06-14, Sesión 14] 🔐
+El middleware exige `Authorization: Bearer <jwt>` con `tenant_id` en todo salvo `/health`, pero
+NO existe un flujo de login: los tokens se acuñan fuera (los gates hacen `jwt.encode(...,
+JWT_SECRET)`). El frontend (Sesión 15) necesitará un JWT para llamar a `/api/*` y, sin login,
+usará un **token de desarrollo hardcodeado** (un solo tenant de dev) — deuda técnica explícita.
+
+**Riesgo:** un token de dev en el frontend NO es seguro para producción ni multi-tenant real
+(cualquiera con el token actúa como ese despacho). **Acción (antes de producción):** construir
+un flujo de autenticación real (login → emisión de JWT con `tenant_id`, expiración, refresh) o
+integrar un IdP. Hasta entonces, el frontend de S15 queda restringido a desarrollo local.
+
+## 🟡 Riesgo #24 — `matters.description` no se persiste  [detectado 2026-06-14, Sesión 14]
+`POST /api/matters` acepta `{name, description}` pero la tabla `matters` (Módulo 0) solo tiene
+`title` — la `description` se devuelve en la respuesta (echo) pero NO se guarda. Si la Pantalla 2
+necesita mostrar la descripción del asunto, hoy se perdería.
+
+**Acción:** si la UX lo requiere, añadir una columna `description text` a `matters` (migración) y
+persistirla en el POST. Deuda menor; no bloquea.
 
 ---
 

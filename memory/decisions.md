@@ -186,6 +186,25 @@ vacío/ausente. Umbral: mínimo 2 ocurrencias del mismo patrón para proponer.
 `status='pending'` para revisión del abogado (Pantalla 4, Fase 3). Task LLM: `call_llm(task=
 "curator")` (ya existe desde 3b, decisión #18).
 
+## 20 · 2026-06-14 — Fase 3 se divide en dos sesiones (backend / frontend)
+**Decisión:** la Fase 3 (UX) se parte en dos. **Sesión 14 (esta):** superficie `/api/*`
+completa + persistencia de perfil + exposición del borrador + parser PDF/Word. Gate
+`test_ux.py` = endpoints de backend con TestClient. **Sesión 15 (siguiente):** scaffold
+Next.js 14 + las 5 pantallas, contra endpoints ya verificados.
+**Razón:** `frontend/` NO existe (el Módulo 0 solo construyó backend + DB), faltan ~12 de los
+15 endpoints, y `ProfileManager` es in-memory sin tabla (mismo patrón que PlaybookManager en
+3b/decisión #18). Construir el frontend sin un backend verificado repetiría el error de premisa.
+**Premisas del spec corregidas:** (a) `frontend/` se scaffoldeará desde cero en S15, no "ya
+existe"; (b) las rutas reales eran `/matters/*` sin prefijo — la nueva superficie va bajo
+`/api/*` y se MANTIENEN las `/matters/*` legacy (no romper el gate 1d `test_hitl_flow`); (c) la
+auth JWT ya existe (no "sin auth"): el frontend usará un token de desarrollo (deuda técnica S15);
+(d) el perfil estructurado del despacho se persiste en una tabla nueva `firm_profiles` (distinta
+de los perfiles de texto in-memory abogado/despacho de 2a, que alimentan la costura L9 del prompt).
+**Wiring de propuestas (cierra parte del Riesgo #21):** `POST /api/proposals/{id}/apply` crea o
+actualiza un playbook desde la propuesta y la marca `applied`; `/ignore` la marca `rejected`.
+**§G en las respuestas:** los endpoints `/api/*` no exponen jerga (nombres de job, modelos,
+conectores → etiquetas amigables; nunca pgvector/tenant_id/embedding/hitl/langgraph/tool_call).
+
 ## 17 · 2026-06-14 — knowledge_chunks: tabla separada para conocimiento del despacho (Módulo 3c)
 **Decisión:** los chunks de Obsidian (conocimiento del despacho) van en una tabla NUEVA
 `knowledge_chunks`, no en `documents`/`chunks`.

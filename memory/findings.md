@@ -35,6 +35,14 @@ Los embeddings van por la **librería LiteLLM directa** (`embeddings.embed_texts
 embebe con `embeddings.embed_texts`. Consistente con el **Riesgo #4** (dos rutas LiteLLM:
 librería para embeddings, proxy para chat).
 
+## Dependencias añadidas en Fase 3 backend (Sesión 14)
+Para la superficie `/api/*` se instalaron en `.venv` y se declararon en `backend/pyproject.toml`:
+- **python-multipart** (`>=0.0.9`) — FastAPI lo EXIGE para `UploadFile`/form-data (sin él,
+  importar el router con un endpoint de subida lanza `RuntimeError` al arrancar la app).
+- **pymupdf** (`fitz`, `>=1.24`) — extracción de texto de PDF.
+- **python-docx** (`>=1.1`) — extracción de texto de Word `.docx`.
+Los dos últimos se importan de forma PEREZOSA en `ingest/extract.py` (solo al subir ese tipo).
+
 ## Restricciones técnicas
 - ⚠️ **Ruta con espacio**: el proyecto vive en
   "D:\Codex\Mia-Super Agent\mia". **Toda ruta en scripts y comandos debe

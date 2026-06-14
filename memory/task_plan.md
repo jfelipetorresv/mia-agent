@@ -32,22 +32,27 @@ Leyenda: [x] completado · [ ] pendiente · [~] en progreso
 
 **🎉 FASE 2 — KNOWLEDGE STORES COMPLETA · 2026-06-14** (3a-3e, las 15 suites verdes).
 
-## Fase 3 — UX
-- [ ] 4a — Pantalla 1 (de las 5)
-- [ ] 4b — Pantalla 2
-- [ ] 4c — Pantalla 3
-- [ ] 4d — Pantalla 4
-- [ ] 4e — Pantalla 5
+## Fase 3 — UX  (DIVIDIDA en dos sesiones, decisión #20)
+**Backend (Sesión 14, 2026-06-14) ✅** — superficie `/api/*` completa + persistencia de perfil
+(`firm_profiles`) + parser PDF/Word. Gate `test_ux.py` 18/18. SOP `architecture/api_surface.md`.
+**Frontend (Sesión 15, pendiente)** — scaffold Next.js 14 + las 5 pantallas, contra la API ya
+verificada. `frontend/` NO existe aún (el Módulo 0 no lo creó).
+- [x] Backend /api/* (las 5 pantallas)  ✅ 2026-06-14 (gate `test_ux.py` 18/18)
+- [ ] 4a — Pantalla 1 · Lista de asuntos (Next.js)
+- [ ] 4b — Pantalla 2 · Workspace (chat + SSE)
+- [ ] 4c — Pantalla 3 · Revisión de borrador
+- [ ] 4d — Pantalla 4 · Memoria (perfil + playbooks + sugerencias)
+- [ ] 4e — Pantalla 5 · Dashboard
 
 ## Fase 4 — Personalidad
 - [ ] Módulo 5 — Entrevista SOUL.md + prueba E2E
 
 ---
 
-**Estado actual:** **Fase 0 + Módulo 1 (1a-1e) + Fase 1 Memoria (2a-2d) + FASE 2 COMPLETA
-(3a-3e) COMPLETOS.**
-Regresión 15/15 suites verdes: 1a 15 · 1b 32 · 1c 16 · 2a 19 · 2b 14 · 2c 22 · 2d 20 ·
-test_rls 12 · 1d 19 · 1e 38 · 3a 21 · 3c 22 · 3d 14 · 3b 23 · 3e 21. (308 checks.)
+**Estado actual:** **Fase 0 + Módulo 1 (1a-1e) + Fase 1 (2a-2d) + FASE 2 (3a-3e) + Fase 3
+BACKEND (/api/*) COMPLETOS.** Pendiente: Fase 3 frontend (5 pantallas, Sesión 15).
+Regresión 16/16 suites verdes: 1a 15 · 1b 32 · 1c 16 · 2a 19 · 2b 14 · 2c 22 · 2d 20 ·
+test_rls 12 · 1d 19 · 1e 38 · 3a 21 · 3c 22 · 3d 14 · 3b 23 · 3e 21 · UX 18. (326 checks.)
 Deuda del grafo cerrada (2026-06-14): Riesgo #11 por reframe (decisión #14), Riesgo #12
 corregido (resumen role="user", decisión #15).
 3a cerrado (2026-06-14): corpus jurídico COMPARTIDO en Postgres (decisión #16); migración
