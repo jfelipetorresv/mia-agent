@@ -5,6 +5,7 @@ import sys
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 
 # psycopg async no es compatible con el ProactorEventLoop (default de Windows).
 # Modo B es Windows nativo: fijar SelectorEventLoop antes de que uvicorn cree el loop.
@@ -39,6 +40,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Mia API", version="0.0.0", lifespan=lifespan)
 app.add_middleware(TenantContextMiddleware)
+
+# CORS: el frontend (localhost:3000) llama a la API (localhost:8000) cross-origin
+# con header Authorization -> el navegador manda un preflight OPTIONS sin token.
+# CORSMiddleware se anade DESPUES para quedar como el mas EXTERNO: contesta el
+# preflight (y pone Access-Control-Allow-* en las respuestas reales) ANTES de que
+# TenantContextMiddleware pueda rechazarlo con 401.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Routers del turno del asunto (Módulo 1d): SSE + HITL.
 app.include_router(stream.router)

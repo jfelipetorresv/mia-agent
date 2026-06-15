@@ -18,7 +18,9 @@ OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
 class TenantContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request.state.tenant_id = None
-        if request.url.path in OPEN_PATHS:
+        # El preflight CORS (OPTIONS) no trae token; lo maneja CORSMiddleware.
+        # No verificar JWT aqui evita devolver 401 antes del preflight.
+        if request.method == "OPTIONS" or request.url.path in OPEN_PATHS:
             return await call_next(request)
 
         auth = request.headers.get("authorization", "")

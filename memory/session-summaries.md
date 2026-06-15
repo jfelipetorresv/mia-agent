@@ -1,5 +1,20 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-15 — Handoff smoke test
+TL;DR: Mia corre en el navegador. Bloqueado en CORS — fix listo, 
+       pendiente de aplicar y verificar.
+Estado: 3 terminales corriendo (litellm :4000, uvicorn :8000, 
+        next :3000). Frontend carga. Crear asunto falla con 401 
+        por CORS faltante.
+Fix pendiente de verificar:
+  - CORSMiddleware en main.py (causa raíz)
+  - Bypass OPTIONS en middleware.py (defensa en profundidad)
+  Claude Code ya tiene el diff exacto. Aplicado pero NO verificado 
+  en navegador — Pipe apagó el computador antes de probar.
+Qué sigue: arrancar los 3 terminales, abrir localhost:3000, 
+  crear asunto "Demanda seguros HDI — prueba Mia" y verificar 
+  que funciona.
+
 ## 2026-06-14 — Pausa post-v0
 TL;DR: Terminal se trabó al arrancar smoke test. Proyecto intacto. Retomamos mañana.
 Estado: 17/17 suites · 358 checks · commit 64bad3f
