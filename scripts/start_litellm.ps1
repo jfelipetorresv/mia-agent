@@ -16,5 +16,7 @@ Get-Content $envFile | ForEach-Object {
 # Mia NO usa la BD de LiteLLM (solo es proxy de modelos) -> la quitamos del proceso.
 [Environment]::SetEnvironmentVariable('DATABASE_URL', $null, 'Process')
 $cfg = Join-Path $root 'litellm_config.yaml'
+# Mismo cold-start: litellm usa su mapa de precios embebido en vez de ir a la red.
+$env:LITELLM_LOCAL_MODEL_COST_MAP = "True"
 Write-Host "Iniciando LiteLLM proxy en http://127.0.0.1:4000 (config: $cfg)"
 litellm --config $cfg --port 4000
