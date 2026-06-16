@@ -1,5 +1,26 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-16 — Sesión 17 · Smoke test vivo completado
+TL;DR: Mia v0 operativa en navegador con LLM real. 4 issues 
+       identificados en el smoke test.
+Qué funciona:
+- Onboarding 19 preguntas → SOUL.md generado ✅
+- Crear asunto → aparece en lista ✅
+- Workspace abre con avatar M + diagnóstico + área chat ✅
+- Pantalla Conocimiento (3 tabs) ✅
+- Panel de control con métricas reales ✅
+Issues encontrados (priorizados):
+1. CRÍTICO: Mia no responde en el chat — el turno del agente 
+   no se dispara o no llega al frontend vía SSE.
+2. UX: Preguntas del onboarding deberían tener tipos 
+   (algunas abiertas, otras selección múltiple / checkboxes)
+3. UX: No hay carga masiva de documentos ni conexión a 
+   carpeta local
+4. CONFIGURACIÓN: Conectores externos (Obsidian vault, 
+   Pinecone) no configurables desde la UI todavía
+Qué sigue: atacar Issue #1 primero (chat sin respuesta).
+Sin ese fix, el sistema no es demostrable.
+
 ## 2026-06-15 — Handoff smoke test
 TL;DR: Mia corre en el navegador. Bloqueado en CORS — fix listo, 
        pendiente de aplicar y verificar.
