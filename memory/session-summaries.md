@@ -1,5 +1,19 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-16 — Sesión 18 · Fix intake + Ollama
+TL;DR: Issue #1 casi resuelto. Skip embeddings si chunks=0 + 
+       timeout Voyage. Pendiente: verificar respuesta de Ollama.
+Qué construimos:
+- Fix LITELLM_LOCAL_MODEL_COST_MAP en scripts de arranque
+- Skip embeddings en intake_node cuando chunks=0
+- Timeout=15 + num_retries=2 en embed_texts
+- mia-local (Ollama qwen2.5:32b) en litellm_config.yaml
+Commits: 7b6c384, a1c47b6
+Qué sigue: reiniciar Terminal 2, enviar mensaje en chat,
+  verificar que Terminal 1 muestra llamada a mia-local.
+  Si aparece → Issue #1 cerrado. Si Ollama responde → 
+  Mia funciona end-to-end.
+
 ## 2026-06-16 — Sesión 17 · Smoke test vivo completado
 TL;DR: Mia v0 operativa en navegador con LLM real. 4 issues 
        identificados en el smoke test.
