@@ -11,6 +11,10 @@ Get-Content $envFile | ForEach-Object {
     [Environment]::SetEnvironmentVariable($name, $val, 'Process')
   }
 }
+# LiteLLM hereda el entorno del proceso. Si ve DATABASE_URL asume que debe
+# gestionar su BD interna e intenta importar Prisma (No module named 'prisma').
+# Mia NO usa la BD de LiteLLM (solo es proxy de modelos) -> la quitamos del proceso.
+[Environment]::SetEnvironmentVariable('DATABASE_URL', $null, 'Process')
 $cfg = Join-Path $root 'litellm_config.yaml'
 Write-Host "Iniciando LiteLLM proxy en http://127.0.0.1:4000 (config: $cfg)"
 litellm --config $cfg --port 4000
