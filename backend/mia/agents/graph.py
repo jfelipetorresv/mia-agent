@@ -148,9 +148,14 @@ class MatterGraphBuilder:
     # ── 1 · intake ──────────────────────────────────────────────────────────
     async def intake_node(self, state: MatterState) -> dict:
         msg = _last_user_message(state)
-        vecs = await asyncio.to_thread(embeddings.embed_texts, [msg])
-        qvec = vecs[0] if vecs else [0.0] * config.EMBED_DIM
-        docs = await retrieval.retrieve_rrf(state["tenant_id"], state["matter_id"], msg, qvec)
+        # Sin documentos indexados no hay nada que recuperar: evitamos la llamada
+        # a embeddings (Voyage) por completo. Si los hay, embebemos y hacemos RRF.
+        if await retrieval.matter_has_chunks(state["tenant_id"], state["matter_id"]):
+            vecs = await asyncio.to_thread(embeddings.embed_texts, [msg])
+            qvec = vecs[0] if vecs else [0.0] * config.EMBED_DIM
+            docs = await retrieval.retrieve_rrf(state["tenant_id"], state["matter_id"], msg, qvec)
+        else:
+            docs = []
         md = dict(state.get("metadata") or {})
         md.update(stage="intake", retrieved=len(docs))
         delegation = await self._maybe_delegate(state)  # no-op salvo señal + habilitado

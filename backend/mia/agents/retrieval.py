@@ -92,3 +92,19 @@ async def retrieve_rrf(
     async with pool.tenant_connection(tenant_id) as conn:
         rows = await (await conn.execute(_RRF_SQL, args)).fetchall()
     return [{"id": str(r[0]), "content": r[1], "score": float(r[2])} for r in rows]
+
+
+async def matter_has_chunks(tenant_id: str, matter_id: str) -> bool:
+    """True si el asunto tiene al menos un chunk con embedding indexado.
+
+    Permite a intake_node saltarse embeddings+RRF cuando no hay nada que
+    recuperar (asunto sin documentos): evita la llamada a Voyage por completo.
+    Corre bajo tenant_connection -> RLS activo (mismo aislamiento que retrieve_rrf).
+    """
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM chunks c JOIN documents d ON d.id = c.document_id "
+            "WHERE d.matter_id = %s AND c.embedding IS NOT NULL)",
+            (matter_id,),
+        )).fetchone()
+    return bool(row[0])

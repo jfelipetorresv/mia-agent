@@ -14,10 +14,14 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         )
     import litellm  # import diferido: solo se necesita al ingerir
 
+    # timeout/num_retries: la 1a llamada a Voyage tiene latencia variable (0.5s-40s+);
+    # sin acotar, colgaba el turno. Acota cada intento y reintenta ante un atasco.
     resp = litellm.embedding(
         model=config.litellm_embed_model(),
         input=texts,
         api_key=config.VOYAGE_API_KEY,
+        timeout=15,
+        num_retries=2,
     )
     vectors = [item["embedding"] for item in resp.data]
     for v in vectors:
