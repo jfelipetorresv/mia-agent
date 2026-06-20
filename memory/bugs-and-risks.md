@@ -4,8 +4,20 @@
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
 
-## ðŸ”´ Riesgo #28 â€” Smoke test vivo bloqueado por PostgreSQL/pgvector local  [detectado 2026-06-20]
-La Tarea 1 (cerrar Issue #1: chat sin respuesta) no se pudo confirmar end-to-end porque las rutas
+## [CERRADO] Riesgo #28 - Issue #1 cerrado: chat responde con mia-local  [CERRADO 2026-06-20]
+**Cierre:** smoke test vivo completado en el asunto "Nueva prueba". Se levanto PostgreSQL 16 portable
+con `pgvector 0.8.2` en `127.0.0.1:55432`, se aplicaron `init_db.py` + migraciones 003-008, y
+`execution/test_rls.py` paso 12/12. `ollama run qwen2.5:32b "hola"` respondio correctamente tras
+reiniciar Ollama sin GPU (`OLLAMA_NO_GPU=1`, `CUDA_VISIBLE_DEVICES=-1`). `mia-local` quedo apuntando a
+`ollama/qwen2.5:32b`; el stream del asunto devolvio `draft_ready` y `awaiting_review`. El log de LiteLLM
+registro `mia-local`, `qwen2.5:32b`, `POST /chat/completions` y `200 OK`. Regresion completa: 17/17
+suites verdes.
+
+**Nota operativa:** el puerto `8000` quedo tomado por un listener huerfano de Windows durante la sesion,
+por eso el smoke vivo se verifico en `8001` usando el mismo runner de API y el mismo backend. `start_api.ps1`
+queda corregido para usar `mia.api.run`, que fija `WindowsSelectorEventLoopPolicy` antes de uvicorn.
+
+**Historico del bloqueo:** La Tarea 1 (cerrar Issue #1: chat sin respuesta) no se pudo confirmar end-to-end porque las rutas
 `/api/matters` quedan esperando una conexiÃ³n a `DATABASE_URL=postgresql://mia_app:***@127.0.0.1:5432/mia`.
 `Test-NetConnection 127.0.0.1:5432` falla, no hay servicio `postgres*`/`pgsql*` visible, `where pg_ctl`
 no encuentra binario, y la API termina con `psycopg_pool.PoolTimeout: couldn't get a connection after

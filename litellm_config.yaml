@@ -17,7 +17,7 @@ model_list:
   # MIA_MODEL=mia-local en .env + reiniciar uvicorn. ollama_chat/ usa /api/chat.
   - model_name: mia-local
     litellm_params:
-      model: ollama/qwen3-coder:30b
+      model: ollama/qwen2.5:32b
       api_base: http://127.0.0.1:11434
 
 litellm_settings:
