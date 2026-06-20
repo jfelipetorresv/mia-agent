@@ -143,12 +143,20 @@ async def feedback_run_all_tenants() -> dict:
     return await FeedbackProcessor().run_all_tenants()
 
 
+async def gepa_run_all_tenants() -> dict:
+    """Evolución procedural semanal de playbooks por tenant."""
+    from ..memory.gepa import GEPALoop
+
+    return await GEPALoop().run_all_tenants()
+
+
 def build_scheduler() -> Scheduler:
     """Scheduler con los jobs del sistema (Obsidian 6h, Curator 168h, Feedback 24h)."""
     sched = Scheduler()
     sched.register_job("sync_obsidian_all_tenants", sync_obsidian_all_tenants, interval_hours=6)
     # domingos 2am — sin timezone en v1; intervalo semanal de 168h (decisión #18).
     sched.register_job("curator_weekly", curator_run_all_tenants, interval_hours=168)
+    sched.register_job("gepa_weekly", gepa_run_all_tenants, interval_hours=168)
     # diario 1am — sin timezone en v1; intervalo de 24h (decisión #19).
     sched.register_job("feedback_daily", feedback_run_all_tenants, interval_hours=24)
     return sched
