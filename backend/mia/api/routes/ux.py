@@ -9,9 +9,12 @@ y modelos se traducen a etiquetas amigables; nunca pgvector/tenant_id/embedding/
 """
 from __future__ import annotations
 
+import time
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from psycopg.types.json import Json
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
@@ -19,14 +22,16 @@ from ... import embeddings
 from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import thread_id_for
-from ...connectors import get_pinecone_connector
+from ...connectors import ObsidianSync, PineconeConnector, get_pinecone_connector
 from ...cron import build_scheduler
 from ...db import pool
 from ...ingest.extract import extract_text
 from ...ingest.ingest import chunk_text
+from ...memory.gepa import GEPALoop
 from ...memory.playbook_manager import Playbook, PlaybookManager
 from ...memory.profile_manager import ProfileManager
 from ...memory.trace_capture import TraceCapture
+from ...memory.wiki_manager import WikiManager
 from ...onboarding.soul_interview import SoulInterview, load_responses, soul_status
 from ._common import assert_owns_matter
 from .hitl import _resume
@@ -38,15 +43,30 @@ router = APIRouter(prefix="/api", tags=["ux"])
 _USD_PER_TOKEN = 0.000009
 
 _PROPOSAL_LABEL = {
-    "improve_playbook": "Mejorar conocimiento",
-    "new_playbook": "Conocimiento nuevo",
-    "flag_gap": "Brecha detectada",
+    "improve_playbook": "Mejorar procedimiento",
+    "new_playbook": "Nuevo procedimiento detectado",
+    "flag_gap": "Brecha de conocimiento",
+    "wiki_correction": "Corrección pendiente",
+    "weekly_report": "Resumen semanal",
 }
 _JOB_LABEL = {
     "sync_obsidian_all_tenants": "Sincronización del conocimiento",
     "curator_weekly": "Depuración del conocimiento",
     "feedback_daily": "Aprendizaje de Mia",
+    "dreams_weekly": "Consolidación semanal",
 }
+
+
+def _available_models() -> list[str]:
+    cfg = Path(__file__).resolve().parents[4] / "litellm_config.yaml"
+    if not cfg.exists():
+        return []
+    out: list[str] = []
+    for line in cfg.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("- model_name:"):
+            out.append(line.split(":", 1)[1].strip())
+    return out
 
 
 def _tenant(request: Request) -> str:
@@ -303,6 +323,116 @@ async def ignore_proposal(proposal_id: str, request: Request):
     return {"status": "ignored"}
 
 
+# ── Second brain · wiki, sugerencias y conectores ─────────────────────────────
+class ObsidianSyncBody(BaseModel):
+    vault_path: str | None = None
+
+
+@router.post("/connectors/obsidian/sync")
+async def sync_obsidian(request: Request, body: ObsidianSyncBody):
+    tid = _tenant(request)
+    vault = body.vault_path
+    if not vault:
+        async with pool.tenant_connection(tid) as conn:
+            row = await (await conn.execute(
+                "SELECT config->>'obsidian_vault_path' FROM tenant_settings WHERE tenant_id=%s::uuid",
+                (tid,),
+            )).fetchone()
+        vault = row[0] if row else None
+    if not vault:
+        raise HTTPException(status_code=400, detail="Falta la ruta del vault.")
+    start = time.perf_counter()
+    stats = await ObsidianSync().sync(vault, tid)
+    duration_ms = int((time.perf_counter() - start) * 1000)
+    async with pool.tenant_connection(tid) as conn:
+        await conn.execute(
+            "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "config = jsonb_set(tenant_settings.config, '{obsidian_vault_path}', to_jsonb(%s::text), true), "
+            "updated_at = now()",
+            (tid, Json({"obsidian_vault_path": vault}), vault),
+        )
+    return {"status": "ok", "chunks_indexed": stats.get("indexed", 0), "duration_ms": duration_ms}
+
+
+class PineconeConfigBody(BaseModel):
+    api_key: str
+    index_name: str
+
+
+@router.post("/connectors/pinecone/configure")
+async def configure_pinecone(request: Request, body: PineconeConfigBody):
+    tid = _tenant(request)
+    connector = PineconeConnector(body.api_key, body.index_name, "tenant")
+    vectors_count = 0
+    status = "active"
+    try:
+        stats = await connector.describe_index()
+        total = stats.get("total_vector_count") if isinstance(stats, dict) else None
+        vectors_count = int(total or 0)
+    except Exception as exc:
+        status = "inactive"
+        stats = {"error": str(exc)}
+    async with pool.tenant_connection(tid) as conn:
+        await conn.execute(
+            "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "config = jsonb_set(tenant_settings.config, '{pinecone}', %s::jsonb, true), updated_at = now()",
+            (tid, Json({"pinecone": {"api_key": body.api_key, "index_name": body.index_name, "status": status}}),
+             Json({"api_key": body.api_key, "index_name": body.index_name, "status": status, "stats": stats})),
+        )
+    return {"status": status, "vectors_count": vectors_count}
+
+
+@router.get("/wiki/concepts")
+async def wiki_concepts(request: Request):
+    tid = _tenant(request)
+    return await WikiManager().list_concepts(tid)
+
+
+@router.get("/wiki/concepts/{concept_name}")
+async def wiki_concept(concept_name: str, request: Request):
+    tid = _tenant(request)
+    content = await WikiManager().get_concept(tid, concept_name)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Concepto no encontrado")
+    return {"concept": concept_name, "markdown": content}
+
+
+class WikiFeedbackBody(BaseModel):
+    correction: str
+
+
+@router.post("/wiki/concepts/{concept_name}/feedback", status_code=201)
+async def wiki_feedback(concept_name: str, request: Request, body: WikiFeedbackBody):
+    tid = _tenant(request)
+    async with pool.tenant_connection(tid) as conn:
+        await conn.execute(
+            "INSERT INTO feedback_proposals "
+            "  (tenant_id, proposal_type, suggested_content, rationale) "
+            "VALUES (%s::uuid, 'wiki_correction', %s, %s)",
+            (tid, body.correction, f"Corrección sugerida para {concept_name}"),
+        )
+    return {"status": "pending"}
+
+
+@router.get("/dreams/report")
+async def dreams_report(request: Request):
+    tid = _tenant(request)
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT suggested_content, created_at FROM feedback_proposals "
+            "WHERE proposal_type='weekly_report' ORDER BY created_at DESC LIMIT 1"
+        )).fetchone()
+    return {"report": row[0], "created_at": row[1]} if row else {"report": None, "created_at": None}
+
+
+@router.get("/skills/ranked")
+async def skills_ranked(request: Request):
+    tid = _tenant(request)
+    return await GEPALoop().grade_all_skills(tid)
+
+
 # ── Onboarding · entrevista del SOUL.md (Módulo 5) ───────────────────────────
 class OnboardingComplete(BaseModel):
     responses: dict
@@ -344,10 +474,17 @@ async def dashboard_stats(request: Request):
         matters_active = await scalar("SELECT count(*) FROM matters")
         documents_indexed = await scalar("SELECT count(*) FROM documents")
         playbooks_active = await scalar("SELECT count(*) FROM playbooks WHERE status='active'")
+        playbooks_archived = await scalar("SELECT count(*) FROM playbooks WHERE status='archived'")
         proposals_pending = await scalar("SELECT count(*) FROM feedback_proposals WHERE status='pending'")
         knowledge_items = await scalar("SELECT count(*) FROM knowledge_chunks")
         last_sync = (await (await conn.execute(
             "SELECT max(last_indexed) FROM obsidian_file_hashes")).fetchone())[0]
+        settings = (await (await conn.execute(
+            "SELECT config FROM tenant_settings WHERE tenant_id=%s::uuid", (tid,))).fetchone())
+        latest_report = (await (await conn.execute(
+            "SELECT created_at FROM feedback_proposals WHERE proposal_type='weekly_report' "
+            "ORDER BY created_at DESC LIMIT 1")).fetchone())
+        config_json = settings[0] if settings else {}
 
     # Costo aproximado del periodo a partir de las trazas del despacho.
     total_tokens = 0
@@ -362,18 +499,33 @@ async def dashboard_stats(request: Request):
     jobs = [{"label": _JOB_LABEL.get(j["name"], j["name"]),
              "next_run": j["next_run"], "last_run": j["last_run"]}
             for j in build_scheduler().list_jobs()]
+    raw_jobs = build_scheduler().list_jobs()
+    dreams_next = next((j["next_run"] for j in raw_jobs if j["name"] == "dreams_weekly"), None)
+    concepts_count = len(await WikiManager().list_concepts(tid))
+    dreams_metrics = ((config_json or {}).get("dreams") or {}).get("last_metrics") or {}
+    pinecone_cfg = ((config_json or {}).get("pinecone") or {})
 
     return {
         "matters_active": matters_active,
         "documents_indexed": documents_indexed,
         "playbooks_active": playbooks_active,
+        "playbooks_archived": playbooks_archived,
         "proposals_pending": proposals_pending,
         "knowledge_items": knowledge_items,
         "scheduler_jobs": jobs,
         "cost_month_usd": cost_month_usd,
         "connectors": {
-            "knowledge_base": {"active": last_sync is not None, "last_sync": last_sync},
-            "external_store": {"active": get_pinecone_connector().is_configured},
-            "models": ["Razonamiento principal", "Respuestas rápidas"],
+            "knowledge_base": {"active": last_sync is not None, "last_sync": last_sync, "chunks": knowledge_items},
+            "external_store": {"active": bool(pinecone_cfg.get("status") == "active") or get_pinecone_connector().is_configured,
+                               "vectors_count": (((pinecone_cfg.get("stats") or {}).get("total_vector_count")) or 0)},
+            "models": _available_models(),
+        },
+        "second_brain": {
+            "weekly_approval_rate": dreams_metrics.get("approval_rate", 0),
+            "concepts_count": concepts_count,
+            "skills_active": playbooks_active,
+            "skills_archived": playbooks_archived,
+            "next_consolidation": dreams_next,
+            "last_report": latest_report[0] if latest_report else None,
         },
     }
