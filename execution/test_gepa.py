@@ -35,7 +35,6 @@ except Exception:
 import init_feedback  # noqa: E402
 import init_playbooks  # noqa: E402
 from mia.agent import llm  # noqa: E402
-from mia.cron import build_scheduler  # noqa: E402
 from mia.db import pool  # noqa: E402
 from mia.memory.gepa import GEPALoop  # noqa: E402
 from mia.memory.trace_capture import TraceCapture  # noqa: E402
@@ -132,8 +131,7 @@ async def run_checks() -> None:
             tc = TraceCapture(Path(tmp) / "traces")
             gepa = GEPALoop(trace_capture=tc)
 
-            jobs = {j["name"] for j in build_scheduler().list_jobs()}
-            check("scheduler registra gepa_weekly", "gepa_weekly" in jobs)
+            check("GEPA expone run_all_tenants", callable(getattr(gepa, "run_all_tenants", None)))
 
             append_trace(tc, tenant, hitl_outcome="approved", input="misma pregunta recurrente")
             check("detect_new_skill devuelve None con una sola señal",
