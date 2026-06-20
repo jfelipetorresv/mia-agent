@@ -1,5 +1,16 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-20 — Sesión 19 · Goal Codex — 4 tareas
+TL;DR: Issue #1 cerrado. Mia responde end-to-end con Ollama.
+       Onboarding tipado + carga masiva completados.
+Qué construimos:
+- Issue #1 cerrado: chat responde con mia-local/qwen2.5:32b
+- Onboarding con tipos mixtos (checkboxes, selects, chips, toggle)
+- Carga masiva de documentos + selector de carpeta + progreso
+Commits: 2fba689, b1c0960, 4390a48
+Qué sigue: Issues #3 (conectores externos desde UI) y 
+           pulir UX/diseño visual
+
 ## 2026-06-16 — Sesión 18 · Fix intake + Ollama
 TL;DR: Issue #1 casi resuelto. Skip embeddings si chunks=0 + 
        timeout Voyage. Pendiente: verificar respuesta de Ollama.
