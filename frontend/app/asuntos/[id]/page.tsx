@@ -206,8 +206,8 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                   </div>
                 ) : null}
                 <div
-                  className={`max-w-[75%] whitespace-pre-wrap rounded-2xl px-4 py-2 text-sm ${
-                    m.role === "user" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-900"
+                  className={`max-w-[75%] whitespace-pre-wrap rounded-lg px-4 py-2 text-sm ${
+                    m.role === "user" ? "bg-gray-900 text-white" : "bg-[#f8f9fa] text-gray-900"
                   }`}
                 >
                   {m.text || <span className="text-gray-400">...</span>}

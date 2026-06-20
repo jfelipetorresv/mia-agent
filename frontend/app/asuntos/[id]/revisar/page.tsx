@@ -77,10 +77,10 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              className="h-[60vh] w-full rounded-xl border border-gray-200 p-5 text-[16px] leading-relaxed outline-none focus:border-gray-400"
+              className="h-[60vh] w-full rounded-lg border border-gray-200 p-5 text-[16px] leading-relaxed outline-none focus:border-gray-400"
             />
           ) : (
-            <div className="whitespace-pre-wrap rounded-xl border border-gray-100 bg-white p-6 text-[16px] leading-relaxed">
+            <div className="whitespace-pre-wrap rounded-lg border border-gray-100 bg-white p-6 text-[16px] leading-relaxed">
               {renderDraft(text)}
             </div>
           )}

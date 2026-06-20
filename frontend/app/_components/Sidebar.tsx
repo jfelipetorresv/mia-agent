@@ -15,7 +15,7 @@ export default function Sidebar() {
   const router = useRouter();
   if (path.startsWith("/login") || path.startsWith("/register")) return null;
   return (
-    <aside className="flex w-[220px] shrink-0 flex-col border-r border-gray-200 bg-[#F8F8F8]">
+    <aside className="flex w-[220px] shrink-0 flex-col border-r border-gray-200 bg-[#f8f9fa]">
       <div className="px-6 py-6 text-2xl font-semibold tracking-tight text-gray-900">Mia</div>
       <nav className="flex flex-col gap-1 px-3">
         {LINKS.map((l) => {
@@ -24,8 +24,8 @@ export default function Sidebar() {
             <Link
               key={l.href}
               href={l.href}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                active ? "bg-gray-200 text-gray-900" : "text-gray-600 hover:bg-gray-100"
+              className={`border-l-2 px-3 py-2 text-sm font-medium transition-colors ${
+                active ? "border-gray-900 bg-gray-100 text-gray-900" : "border-transparent text-gray-600 hover:bg-gray-100"
               }`}
             >
               {l.label}
@@ -39,7 +39,7 @@ export default function Sidebar() {
             clearToken();
             router.replace("/login");
           }}
-          className="w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100"
+          className="w-full px-3 py-2 text-left text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100"
         >
           Cerrar sesión
         </button>

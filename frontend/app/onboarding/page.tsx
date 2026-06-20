@@ -27,28 +27,22 @@ type Status = {
 
 const BLOCK_LABEL: Record<string, string> = {
   identity: "Identidad",
-  jurisdiction: "Jurisdiccion",
-  legal_voice: "Voz juridica",
-  mission_rhythm: "Mision y ritmo",
+  jurisdiction: "Contexto",
+  legal_voice: "Voz",
+  mission_rhythm: "Ritmo",
   triad_mode: "Modo profundo",
 };
 
-const TEXT_IDS = new Set(["p1", "p2", "p4", "p12", "p13", "p14", "p15"]);
-const TAG_IDS = new Set(["p3", "p11"]);
+const TEXT_IDS = new Set(["p1", "p2", "p4", "p5", "p8", "p9", "p12", "p13", "p14", "p15"]);
+const TAG_IDS = new Set(["p3", "p6", "p7", "p11", "p18"]);
 
 const SELECT_OPTIONS: Record<string, string[]> = {
-  p5: ["Colombia", "Espana", "Mexico", "Argentina", "Peru", "Chile", "Otro"],
 };
 
 const CHECKBOX_OPTIONS: Record<string, string[]> = {
-  p6: ["Seguros", "Fiscal", "Civil", "Penal", "Laboral", "Contencioso-Adm", "Contratos Publicos", "Otro"],
-  p7: ["Aseguradoras", "Empresas", "Personas", "Sector Publico"],
-  p8: ["Tribunal Adm. Cundinamarca", "Consejo de Estado", "Contraloria", "Arbitraje", "Otro"],
-  p9: ["Corte Constitucional", "Consejo de Estado", "CSJ Sala Civil", "Corte Suprema Sala Laboral", "Otro"],
-  p18: ["Obsidian", "Claude Code", "Linear", "WhatsApp Business", "Otro"],
 };
 
-const STRUCTURE_OPTIONS = ["Parrafos narrativos", "Mixto", "Segun el escrito"];
+const STRUCTURE_OPTIONS = ["Narrativo continuo", "Estructurado con secciones", "Depende del tipo de escrito"];
 const DAYS = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"];
 
 function asText(value: AnswerValue | undefined): string {
@@ -220,12 +214,12 @@ export default function OnboardingPage() {
           </span>
           <span>{pct}%</span>
         </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+        <div className="h-1 w-full overflow-hidden rounded-full bg-gray-100">
           <div className="h-full rounded-full bg-gray-900 transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
 
-      <h1 className="mb-3 text-xl font-semibold leading-snug">{current.question}</h1>
+      <h1 className="mb-3 text-center text-2xl font-semibold leading-snug">{current.question}</h1>
       <p className="mb-5 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-500">
         <span className="font-medium text-gray-600">Ejemplo: </span>
         {current.example}

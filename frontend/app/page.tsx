@@ -80,16 +80,16 @@ export default function AsuntosPage() {
       {loading ? (
         <p className="text-gray-400">Cargando…</p>
       ) : matters.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 py-16 text-center text-gray-400">
+        <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center text-gray-400">
           Aún no tienes asuntos activos.
         </div>
       ) : (
-        <ul className="divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-100">
+        <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-100">
           {matters.map((m) => (
             <li key={m.id}>
               <button
                 onClick={() => router.push(`/asuntos/${m.id}`)}
-                className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-gray-50"
+                className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:-translate-y-px hover:bg-gray-50"
               >
                 {m.pending ? (
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-orange-500" title="Borrador pendiente de revisar" />
@@ -112,7 +112,7 @@ export default function AsuntosPage() {
           className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4"
           onClick={() => setShowModal(false)}
         >
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h2 className="mb-4 text-lg font-semibold">Nuevo asunto</h2>
             <label className="mb-1 block text-sm font-medium text-gray-700">Nombre</label>
             <input
