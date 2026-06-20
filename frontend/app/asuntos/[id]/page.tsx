@@ -6,6 +6,7 @@ import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
 
 type Doc = { id: string; name: string; type?: string; created_at?: string };
 type Msg = { role: "user" | "mia"; text: string };
+type UploadItem = { name: string; status: "waiting" | "uploading" | "done" | "error" };
 
 function fmtDate(s?: string): string {
   if (!s) return "";
@@ -26,7 +27,10 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const [status, setStatus] = useState("");
   const [hasDraft, setHasDraft] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [uploadSummary, setUploadSummary] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
 
   async function loadDocs() {
     try {
@@ -42,18 +46,37 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matterId]);
 
-  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function uploadFiles(files: File[]) {
+    if (files.length === 0) return;
     setUploading(true);
-    try {
-      await apiUpload(`/api/matters/${matterId}/documents`, file);
-      await loadDocs();
-    } catch {
-      /* ignore */
+    setUploadSummary("");
+    setUploadItems(files.map((file) => ({ name: file.name, status: "waiting" })));
+    let added = 0;
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      setUploadItems((items) => items.map((item, idx) => (idx === i ? { ...item, status: "uploading" } : item)));
+      try {
+        await apiUpload(`/api/matters/${matterId}/documents`, file);
+        added += 1;
+        setUploadItems((items) => items.map((item, idx) => (idx === i ? { ...item, status: "done" } : item)));
+      } catch {
+        setUploadItems((items) => items.map((item, idx) => (idx === i ? { ...item, status: "error" } : item)));
+      }
     }
+    await loadDocs();
+    setUploadSummary(`${added} documentos agregados`);
     setUploading(false);
+  }
+
+  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    await uploadFiles(Array.from(e.target.files ?? []));
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  async function onFolderUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []).filter((file) => /\.(pdf|doc|docx)$/i.test(file.name));
+    await uploadFiles(files);
+    if (folderRef.current) folderRef.current.value = "";
   }
 
   async function send() {
@@ -61,7 +84,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     if (!text) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", text }, { role: "mia", text: "" }]);
-    setStatus("Mia está analizando…");
+    setStatus("Mia esta analizando...");
     setHasDraft(false);
     try {
       const { stream_url } = await apiSend<{ stream_url: string }>(
@@ -70,8 +93,8 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         { message: text },
       );
       await streamTurn(stream_url, (event, data) => {
-        if (event === "thinking") setStatus(data.message || "Mia está analizando…");
-        else if (event === "draft_ready") setStatus("Mia está redactando…");
+        if (event === "thinking") setStatus(data.message || "Mia esta analizando...");
+        else if (event === "draft_ready") setStatus("Mia esta redactando...");
         else if (event === "awaiting_review") {
           setStatus("Tienes un borrador listo");
           setHasDraft(true);
@@ -79,7 +102,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
             const copy = [...m];
             copy[copy.length - 1] = {
               role: "mia",
-              text: data.draft || "He preparado un borrador para tu revisión.",
+              text: data.draft || "He preparado un borrador para tu revision.",
             };
             return copy;
           });
@@ -92,17 +115,16 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
 
   return (
     <div className="flex h-screen">
-      {/* Columna izquierda: documentos */}
       <div className="flex w-[280px] shrink-0 flex-col border-r border-gray-100">
         <div className="border-b border-gray-100 px-5 py-4">
           <button onClick={() => router.push("/")} className="mb-2 text-xs text-gray-400 hover:text-gray-600">
-            ← Asuntos
+            Asuntos
           </button>
           <div className="font-semibold leading-tight">{matter?.name || "Asunto"}</div>
         </div>
         <div className="flex-1 overflow-auto px-3 py-3">
           {docs.length === 0 ? (
-            <p className="px-2 py-4 text-sm text-gray-400">Sin documentos todavía.</p>
+            <p className="px-2 py-4 text-sm text-gray-400">Sin documentos todavia.</p>
           ) : (
             <ul className="space-y-1">
               {docs.map((d) => (
@@ -115,18 +137,62 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           )}
         </div>
         <div className="border-t border-gray-100 p-3">
-          <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt,.md" onChange={onUpload} className="hidden" />
+          <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt,.md" multiple onChange={onUpload} className="hidden" />
+          <input
+            ref={folderRef}
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx"
+            onChange={onFolderUpload}
+            className="hidden"
+            {...({ webkitdirectory: "true", directory: "true" } as any)}
+          />
           <button
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
             className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
           >
-            {uploading ? "Subiendo…" : "Agregar documento"}
+            {uploading ? "Subiendo..." : "Agregar documento"}
           </button>
+          <button
+            onClick={() => folderRef.current?.click()}
+            disabled={uploading}
+            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+          >
+            Conectar carpeta
+          </button>
+          {uploadItems.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {uploadItems.map((item) => (
+                <div key={item.name} className="text-xs text-gray-500">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">{item.name}</span>
+                    <span className="shrink-0">
+                      {item.status === "waiting"
+                        ? "En cola"
+                        : item.status === "uploading"
+                          ? "Procesando"
+                          : item.status === "done"
+                            ? "Listo"
+                            : "Error"}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-100">
+                    <div
+                      className={`h-full rounded-full ${
+                        item.status === "error" ? "bg-red-500" : item.status === "done" ? "bg-gray-900" : "bg-gray-400"
+                      }`}
+                      style={{ width: item.status === "waiting" ? "15%" : item.status === "uploading" ? "55%" : "100%" }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {uploadSummary ? <div className="mt-3 text-xs font-medium text-gray-600">{uploadSummary}</div> : null}
         </div>
       </div>
 
-      {/* Columna central: chat */}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex-1 space-y-4 overflow-auto px-6 py-6">
           {messages.length === 0 ? (
@@ -144,7 +210,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                     m.role === "user" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-900"
                   }`}
                 >
-                  {m.text || <span className="text-gray-400">…</span>}
+                  {m.text || <span className="text-gray-400">...</span>}
                 </div>
               </div>
             ))
@@ -173,7 +239,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                 }
               }}
               rows={1}
-              placeholder="Escribe tu consulta…"
+              placeholder="Escribe tu consulta..."
               className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-2 text-sm outline-none focus:border-gray-400"
             />
             <button onClick={send} className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">
@@ -183,17 +249,14 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* Columna derecha: diagnóstico */}
       <div className="w-[280px] shrink-0 border-l border-gray-100 px-5 py-6">
-        <h3 className="mb-3 text-sm font-semibold text-gray-700">Diagnóstico</h3>
+        <h3 className="mb-3 text-sm font-semibold text-gray-700">Diagnostico</h3>
         <div className="space-y-4 text-sm">
-          <DiagField label="Problema jurídico" />
+          <DiagField label="Problema juridico" />
           <DiagField label="Normas aplicables" />
           <DiagField label="Riesgo estimado" />
         </div>
-        <p className="mt-6 text-xs text-gray-400">
-          El diagnóstico se completará a medida que Mia analice el asunto.
-        </p>
+        <p className="mt-6 text-xs text-gray-400">El diagnostico se completara a medida que Mia analice el asunto.</p>
       </div>
     </div>
   );
@@ -203,7 +266,7 @@ function DiagField({ label }: { label: string }) {
   return (
     <div>
       <div className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</div>
-      <div className="mt-1 text-gray-300">—</div>
+      <div className="mt-1 text-gray-300">-</div>
     </div>
   );
 }
