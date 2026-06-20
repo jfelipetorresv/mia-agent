@@ -1,5 +1,19 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-20 — Sesión 20 · Goal Codex — Autoaprendizaje horizontal
+TL;DR: Login real multi-tenant, second brain, WikiManager, GEPA, Dreams,
+       conectores UI y onboarding horizontal completados.
+Qué construimos:
+- Auth real: register/login/me con users por tenant, bcrypt, JWT 7 días y frontend sin token dev.
+- WikiManager en $MIA_HOME/wiki/{tenant_id}: conceptos, búsqueda, lint, archivo y update tras HITL.
+- GEPA Loop: detecta drafts de procedimientos, propone mejoras y archiva skills sin uso.
+- Dreams semanal: replay, wiki update, GEPA, lint, nudges en SOUL.md y weekly report.
+- UI second brain: wiki, sugerencias, conectores Obsidian/Pinecone y salud del sistema.
+- Onboarding horizontal: sin opciones hardcodeadas de país, jurisdicción, área, cortes o herramientas.
+Commits: a755447, 7f443dc, 04bcde0, 2901f2c, ef0fc28, 9fda67f
+Regresión: 23/23 suites verdes (17 históricas + 6 gates nuevos). `test_rls.py` 12/12 intacto.
+Qué sigue: push a origin/main.
+
 ## 2026-06-20 — Sesión 19 · Goal Codex — 4 tareas
 TL;DR: Issue #1 cerrado. Mia responde end-to-end con Ollama.
        Onboarding tipado + carga masiva completados.

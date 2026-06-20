@@ -4,6 +4,45 @@
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
 
+## Actualización 2026-06-20 — Sesión 20
+
+### 🟢 Riesgo #23 — Login real multi-tenant cerrado
+**Cierre:** migración `009_users.sql`, tabla `users` por tenant con RLS, endpoints
+`/api/auth/register`, `/api/auth/login` y `/api/auth/me`, bcrypt cost 12, JWT con expiración de
+7 días, frontend con `localStorage['mia_token']`, páginas login/register y logout. Se eliminó
+`NEXT_PUBLIC_DEV_TOKEN` de `frontend/.env.local`. Gates: `test_auth.py` 20/20 y `test_rls.py` 12/12.
+
+### 🟢 Riesgo #21 — Propuestas revisables desde UI cerrado
+**Cierre:** Pantalla 4 muestra sugerencias pendientes y weekly reports; `apply/ignore` existen
+para propuestas, y se agregaron tipos `wiki_correction` y `weekly_report`. GEPA y Dreams proponen
+mejoras, pero no aplican conocimiento jurídico/procedural sin revisión humana.
+
+### 🟡 Riesgo #29 — Login usa función SECURITY DEFINER para resolver email antes de RLS
+Para hacer login, la app necesita encontrar el usuario por email antes de conocer su tenant.
+`users` mantiene RLS por tenant, y `auth_user_by_email(email)` es una función `SECURITY DEFINER`
+mínima que devuelve id, tenant_id, email y password_hash.
+
+**Riesgo:** cualquier función `SECURITY DEFINER` es una excepción controlada al modelo normal de RLS.
+Si se amplía sin cuidado podría filtrar datos cross-tenant. **Mitigación:** devuelve solo la fila
+por email único y el password se valida con bcrypt. **Acción:** auditar antes de multi-tenant
+productivo y considerar un rol auth dedicado.
+
+### 🟡 Riesgo #30 — Pinecone API key se guarda en tenant_settings sin cifrado
+`/api/connectors/pinecone/configure` guarda `{api_key,index_name}` en `tenant_settings.config`.
+El spec permitió "encriptado o como está"; se eligió "como está" para cerrar el flujo local.
+
+**Riesgo:** en producción, una lectura indebida de DB expondría la API key del tenant.
+**Acción:** cifrar secretos por tenant o moverlos a un vault/secret manager antes de producción.
+
+### 🟡 Riesgo #31 — GEPA depende de trazas con activación de playbook para medir skills
+GEPA soporta `playbook_id`, `playbook_ids`, `skill_id`, `skill_ids` o `activated_playbooks` en
+trazas JSONL. Las trazas actuales del grafo no siempre registran qué playbook se activó.
+
+**Riesgo:** `grade_all_skills` y `evolve_skill` pueden subestimar activaciones reales hasta que el
+grafo registre explícitamente los playbooks usados. **Mitigación:** `detect_new_skill` sí funciona
+con respuestas aprobadas sin skill asignado y GEPA nunca aplica cambios sin revisión. **Acción:**
+cablear activación de playbooks al grafo/TraceCapture cuando el retriever procedural entre al prompt.
+
 ## [CERRADO] Riesgo #28 - Issue #1 cerrado: chat responde con mia-local  [CERRADO 2026-06-20]
 **Cierre:** smoke test vivo completado en el asunto "Nueva prueba". Se levanto PostgreSQL 16 portable
 con `pgvector 0.8.2` en `127.0.0.1:55432`, se aplicaron `init_db.py` + migraciones 003-008, y

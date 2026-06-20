@@ -251,3 +251,10 @@ en `config.py` → se añadió; (d) `_TASK_MODELS` no tenía `"soul"` → añadi
 **Imports diferidos:** `state.py`/`core.py` importan los helpers de `onboarding.soul_interview`
 DENTRO de la función (no al top) para evitar ciclos y no arrastrar el cliente LLM al grafo.
 **Gate:** `execution/test_e2e.py` (25/25) — el GATE FINAL del proyecto.
+
+## 22 · 2026-06-20 — Sistema completamente horizontal
+**Decisión:** ningún módulo nuevo tiene conocimiento jurídico hardcodeado. El wiki, los skills y el SOUL.md son el único lugar donde existe conocimiento específico — y lo escribe el uso, no el código.
+
+**Razonamiento:** Mia debe servir para cualquier jurisdicción, país, área del derecho, idioma, corte, norma o tipo de proceso. El producto es el recipiente; cada despacho lo llena con onboarding, documentos, asuntos aprobados, playbooks y correcciones. Por eso WikiManager, GEPA, Dreams, conectores y onboarding se implementan con prompts y controles genéricos.
+
+**Implicación:** las opciones fijas de país/área/cliente/cortes/herramientas se retiran del onboarding. Los módulos nuevos solo pueden guardar o recuperar conocimiento específico si ese conocimiento llegó desde el tenant: SOUL.md, wiki por tenant, trazas aprobadas, playbooks o documentos conectados.

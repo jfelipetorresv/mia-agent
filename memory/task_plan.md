@@ -1,10 +1,20 @@
 # Mia — task_plan.md
 # Fases del proyecto · objetivos por módulo · checklists
-# Última actualización: 2026-06-14
+# Última actualización: 2026-06-20
 
 Leyenda: [x] completado · [ ] pendiente · [~] en progreso
 
 ---
+
+## Fase 5 — Autoaprendizaje horizontal + second brain (Sesión 20, 2026-06-20)
+- [x] Auth real multi-tenant — users, register/login/me, bcrypt, JWT 7 días, frontend con localStorage (gate `test_auth.py` 20/20).
+- [x] WikiManager — wiki por tenant en `$MIA_HOME/wiki/{tenant_id}`, conceptos, búsqueda, lint, archivo, HITL background (gate `test_wiki_manager.py` 18/18).
+- [x] GEPA Loop — memoria procedural con drafts, propuestas HITL, grading y pruning (gate `test_gepa.py` 16/16).
+- [x] Dreams semanal — replay, wiki update, GEPA, lint, nudges, weekly_report (gate `test_dreams.py` 16/16).
+- [x] Conectores + UI second brain — endpoints Obsidian/Pinecone/wiki/report/skills y Pantallas 4/5 ampliadas (gate `test_second_brain_ui.py` 15/15).
+- [x] Onboarding horizontal + pulido visual — sin opciones hardcodeadas de país/área/cortes/herramientas (gate `test_onboarding_horizontal.py` 10/10).
+
+**Regla vigente:** el sistema es horizontal. Ningún módulo nuevo debe contener conocimiento jurídico específico hardcodeado; el conocimiento específico vive por tenant en wiki, playbooks y SOUL.md.
 
 ## Fase 0 — Plumbing
 - [x] **Módulo -1** — CLAUDE.md + estructura `/memory/`  ✅ 2026-06-11
