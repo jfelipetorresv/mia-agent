@@ -1,12 +1,25 @@
-// Mia · cliente HTTP del frontend. Token de desarrollo (#23) desde .env.local.
+// Mia · cliente HTTP del frontend. El token vive en localStorage.
 // Todas las llamadas mandan Authorization: Bearer <token>. EventSource no admite headers,
 // por eso el SSE se consume con fetch + ReadableStream (streamTurn).
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const TOKEN = process.env.NEXT_PUBLIC_DEV_TOKEN || "";
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem("mia_token");
+}
+
+export function setToken(token: string): void {
+  if (typeof window !== "undefined") window.localStorage.setItem("mia_token", token);
+}
+
+export function clearToken(): void {
+  if (typeof window !== "undefined") window.localStorage.removeItem("mia_token");
+}
 
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  return { Authorization: `Bearer ${TOKEN}`, ...extra };
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
 }
 
 export async function apiGet<T = any>(path: string): Promise<T> {
@@ -66,4 +79,4 @@ export async function streamTurn(streamPath: string, onEvent: SseHandler): Promi
   }
 }
 
-export const apiConfig = { hasToken: Boolean(TOKEN) };
+export const apiConfig = { hasToken: () => Boolean(getToken()) };

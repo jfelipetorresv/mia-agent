@@ -16,7 +16,7 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
-from .routes import hitl, settings, stream, ux
+from .routes import auth, hitl, settings, stream, ux
 
 
 @asynccontextmanager
@@ -55,6 +55,7 @@ app.add_middleware(
 )
 
 # Routers del turno del asunto (Módulo 1d): SSE + HITL.
+app.include_router(auth.router)
 app.include_router(stream.router)
 app.include_router(hitl.router)
 # Router de ajustes del Agent Hub (Módulo 1e).

@@ -12,12 +12,13 @@ from starlette.responses import JSONResponse
 
 from .. import config
 
-OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/api/auth/register", "/api/auth/login"}
 
 
 class TenantContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request.state.tenant_id = None
+        request.state.email = None
         # El preflight CORS (OPTIONS) no trae token; lo maneja CORSMiddleware.
         # No verificar JWT aqui evita devolver 401 antes del preflight.
         if request.method == "OPTIONS" or request.url.path in OPEN_PATHS:
@@ -36,4 +37,5 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         if not tenant_id:
             return JSONResponse({"detail": "Token sin tenant_id"}, status_code=401)
         request.state.tenant_id = tenant_id
+        request.state.email = payload.get("email")
         return await call_next(request)

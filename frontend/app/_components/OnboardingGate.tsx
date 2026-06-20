@@ -13,6 +13,7 @@ export default function OnboardingGate() {
   const pathname = usePathname() || "/";
 
   useEffect(() => {
+    if (pathname.startsWith("/login") || pathname.startsWith("/register")) return;
     if (pathname.startsWith("/onboarding")) return;
     let cancelled = false;
     (async () => {
