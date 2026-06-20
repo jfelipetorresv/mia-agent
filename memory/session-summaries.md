@@ -1,5 +1,13 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-20 — Pausa post-goal second brain
+TL;DR: Goal completado (23/23 suites). Smoke test del
+       login pendiente — Pipe no tiene acceso al computador.
+Estado: 23/23 suites · 7 commits · origin/main en 2cc8a15
+Qué sigue: levantar los 3 procesos, smoke test del nuevo
+  login en navegador, verificar registro + onboarding
+  + chat con el nuevo sistema de auth.
+
 ## 2026-06-20 — Sesión 20 · Goal Codex — Autoaprendizaje horizontal
 TL;DR: Login real multi-tenant, second brain, WikiManager, GEPA, Dreams,
        conectores UI y onboarding horizontal completados.
