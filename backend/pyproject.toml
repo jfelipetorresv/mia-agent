@@ -10,7 +10,7 @@ dependencies = [
   "pgvector>=0.3.6",
   "pyjwt>=2.9",
   "python-dotenv>=1.0",
-  "litellm>=1.88",
+  "litellm[proxy]==1.74.8",
   "openai>=1.40",
   "langgraph>=1.2",                      # Módulo 1d: StateGraph + interrupt() (HITL)
   "langgraph-checkpoint-postgres>=3.1",  # checkpointing multi-tenant (decisión #9)

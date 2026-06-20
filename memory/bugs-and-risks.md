@@ -4,6 +4,26 @@
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
 
+## ðŸ”´ Riesgo #28 â€” Smoke test vivo bloqueado por PostgreSQL local apagado/no visible  [detectado 2026-06-20]
+La Tarea 1 (cerrar Issue #1: chat sin respuesta) no se pudo confirmar end-to-end porque las rutas
+`/api/matters` quedan esperando una conexiÃ³n a `DATABASE_URL=postgresql://mia_app:***@127.0.0.1:5432/mia`.
+`Test-NetConnection 127.0.0.1:5432` falla, no hay servicio `postgres*`/`pgsql*` visible, `where pg_ctl`
+no encuentra binario, y la API termina con `psycopg_pool.PoolTimeout: couldn't get a connection after
+30.00 sec`.
+
+**Estado parcial:** `start_api.ps1` sÃ­ levanta uvicorn, Next escucha en 3000 y LiteLLM escucha en 4000.
+LiteLLM requiriÃ³ reparar el `.venv` local y un workaround para no inicializar Prisma cuando se usa
+sin base propia. `mia-local` quedÃ³ apuntando a `qwen3-coder:30b` porque `ollama run qwen2.5:32b "hola"`
+no terminÃ³ en ~13 minutos y el modelo no apareciÃ³ en `ollama list`; `qwen3-coder:30b` sÃ­ respondiÃ³.
+
+**AcciÃ³n requerida para cerrar Issue #1:** restaurar/arrancar PostgreSQL local en 5432 con la base `mia`
+y el rol `mia_app`; luego repetir el smoke test del asunto "Nueva prueba" y confirmar en el log de LiteLLM
+una llamada a `mia-local` antes de marcar el issue como cerrado.
+
+**Impacto en regresiÃ³n:** la regresiÃ³n completa 17/17 no puede finalizar mientras PostgreSQL estÃ©
+apagado/no visible. Las 8 suites offline verificadas el 2026-06-20 pasaron; las suites que usan DB real
+quedan bloqueadas por la misma falta de conexiÃ³n.
+
 ---
 
 ## 🟡 Riesgo #1 — Ruta del proyecto contiene un espacio
