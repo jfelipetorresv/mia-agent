@@ -7,6 +7,8 @@ decisión #9).
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Request
 from langgraph.types import Command
 from pydantic import BaseModel
@@ -15,6 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import thread_id_for
+from ...memory.wiki_manager import WikiManager
 from ._common import assert_owns_matter, sse
 
 router = APIRouter(tags=["matters"])
@@ -43,6 +46,8 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
             async for chunk in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
                 if "finalize" in chunk:
                     final_draft = (chunk["finalize"] or {}).get("draft")
+            if command.get("decision") == "approved":
+                asyncio.create_task(WikiManager().update_from_approved_matter(tenant_id, matter_id))
             yield sse("done", "Listo.", draft=final_draft, status=command.get("decision"))
 
     return EventSourceResponse(gen())
