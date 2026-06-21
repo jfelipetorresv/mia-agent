@@ -287,6 +287,22 @@ def _render_responses(responses: dict) -> str:
     return "\n".join(lines) or "(el abogado no respondió ninguna pregunta)"
 
 
+def _plain(value) -> str:
+    """Renderiza un valor de respuesta (str / list / dict) a texto plano legible.
+
+    El frontend envía strings, listas (chips/tags/checkboxes) y dicts
+    ({firm,lawyer} / {country,city} / {pillars} / {no_meetings,hours} /
+    {enabled,trigger}). Aquí se aplanan a una línea para el SOUL.md sin LLM.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(v).strip() for v in value if str(v).strip())
+    if isinstance(value, dict):
+        return ", ".join(f"{k}: {str(v).strip()}" for k, v in value.items() if str(v).strip())
+    return str(value).strip()
+
+
 # ── La entrevista ───────────────────────────────────────────────────────────
 
 class SoulInterview:
@@ -334,6 +350,155 @@ class SoulInterview:
         _write_soul(tenant_id, content)
         merged = {**load_responses(tenant_id), **updates}   # respuestas previas + cambios
         _write_responses(tenant_id, merged)
+        return content
+
+    # ── Fallback sin LLM (timeout / fallo del gateway) ───────────────────────
+    def generate_without_llm(self, responses: dict) -> str:
+        """Construye el SOUL.md directamente desde las respuestas, SIN llamar al LLM.
+
+        Fallback determinista para cuando call_llm(task='soul') hace timeout o falla.
+        Mapea cada respuesta a su campo del template de 9 secciones; los campos sin
+        respuesta quedan como placeholder entre corchetes (no se inventan datos). El
+        abogado puede refinar este perfil base luego desde la pantalla 'Mi despacho'.
+        """
+        r = responses or {}
+        gen_date, review_date = self._dates()
+
+        # identity.name: {firm, lawyer} (onboarding nuevo) o string (legacy).
+        name = r.get("identity.name")
+        firm = lawyer = ""
+        if isinstance(name, dict):
+            firm = str(name.get("firm", "")).strip()
+            lawyer = str(name.get("lawyer", "")).strip()
+        elif isinstance(name, str):
+            firm = name.strip()
+
+        # identity.location: {country, city} o string.
+        loc = r.get("identity.location")
+        country = city = ""
+        if isinstance(loc, dict):
+            country = str(loc.get("country", "")).strip()
+            city = str(loc.get("city", "")).strip()
+        elif isinstance(loc, str):
+            country = loc.strip()
+        location = ", ".join(p for p in (city, country) if p)
+
+        # mission.pillars: {pillars:[...]} | list | string.
+        pillars_val = r.get("mission.pillars")
+        if isinstance(pillars_val, dict):
+            pillars = [str(p).strip() for p in pillars_val.get("pillars", []) if str(p).strip()]
+        elif isinstance(pillars_val, list):
+            pillars = [str(p).strip() for p in pillars_val if str(p).strip()]
+        elif isinstance(pillars_val, str) and pillars_val.strip():
+            pillars = [pillars_val.strip()]
+        else:
+            pillars = []
+
+        # rhythm: {no_meetings:[...], hours:""} | string.
+        rhythm_val = r.get("rhythm")
+        deep_work = no_meetings = ""
+        if isinstance(rhythm_val, dict):
+            deep_work = str(rhythm_val.get("hours", "")).strip()
+            no_meetings = ", ".join(str(d).strip() for d in rhythm_val.get("no_meetings", []) if str(d).strip())
+        elif isinstance(rhythm_val, str):
+            deep_work = rhythm_val.strip()
+
+        # triad_mode: {enabled, trigger} | string.
+        triad_val = r.get("triad_mode")
+        triad_enabled, triad_trigger = "false", ""
+        if isinstance(triad_val, dict):
+            triad_enabled = "true" if triad_val.get("enabled") else "false"
+            triad_trigger = str(triad_val.get("trigger", "")).strip()
+        elif isinstance(triad_val, str) and triad_val.strip():
+            triad_enabled = "true" if triad_val.strip().lower().startswith(("si", "sí", "true", "yes")) else "false"
+
+        # hard_nos: lista de límites | string.
+        hard_nos_val = r.get("hard_nos")
+        if isinstance(hard_nos_val, list):
+            hard_nos = [str(h).strip() for h in hard_nos_val if str(h).strip()]
+        elif isinstance(hard_nos_val, str) and hard_nos_val.strip():
+            hard_nos = [hard_nos_val.strip()]
+        else:
+            hard_nos = []
+
+        def ph(value: str, placeholder: str) -> str:
+            return value if value else placeholder
+
+        pillars_block = "\n".join(f"  - {p}" for p in pillars) if pillars else (
+            "  - [PILAR 1]\n  - [PILAR 2]\n  - [PILAR 3]"
+        )
+        hard_nos_block = "\n".join(f"- {h}" for h in hard_nos) if hard_nos else (
+            "- [NUNCA citar sentencias no verificadas en el corpus]\n"
+            "- [NUNCA recomendar allanarse sin análisis de riesgo previo]\n"
+            "- [NUNCA presentar como final un escrito sin revisión]"
+        )
+
+        return f"""# SOUL.md — {ph(firm, "[NOMBRE DEL DESPACHO]")}
+# Generado: {gen_date} · Próxima revisión: {review_date}
+# (Perfil base sin IA: generado por timeout del modelo. Refínalo desde "Mi despacho".)
+
+## identity
+- name: {ph(firm, "[NOMBRE DESPACHO]")}
+- lawyer: {ph(lawyer, "[NOMBRE] · T.P. [NÚMERO]")}
+- location: {ph(location, "[CIUDAD, PAÍS] · [TIMEZONE]")}
+- channels: {ph(_plain(r.get("identity.channels")), "[WEB, LINKEDIN, etc.]")}
+- voice: {ph(_plain(r.get("identity.voice")), "[3 ADJETIVOS DE ESTILO]")}
+
+## jurisdiction
+- base: {ph(_plain(r.get("jurisdiction.base")), "[JURISDICCIÓN PRINCIPAL]")}
+- practice_areas: {ph(_plain(r.get("jurisdiction.practice_areas")), "[ÁREAS DE PRÁCTICA]")}
+- client_type: {ph(_plain(r.get("jurisdiction.client_type")), "[TIPO DE CLIENTE]")}
+- courts: {ph(_plain(r.get("jurisdiction.courts")), "[INSTANCIAS Y TRIBUNALES]")}
+- key_courts: {ph(_plain(r.get("jurisdiction.key_courts")), "[CORTES MÁS CITADAS]")}
+
+## mission
+- headline: {ph(_plain(r.get("mission.headline")), "[UNA ORACIÓN. Si se logra este año, el año fue exitoso.]")}
+- pillars:
+{pillars_block}
+- not_in_scope: [LO QUE NO HACEMOS ESTE AÑO]
+
+## legal_voice
+- register: [FORMAL-TÉCNICO / CONCISO / ARGUMENTATIVO]
+- structure: {ph(_plain(r.get("legal_voice.structure")), "[ESTRUCTURA DE LOS ESCRITOS]")}
+- banned_words: {ph(_plain(r.get("legal_voice.banned_words")), "[PALABRAS O EXPRESIONES PROHIBIDAS]")}
+- argument_style: [DEDUCTIVO DESDE NORMA / DESDE HECHOS / DESDE JURISPRUDENCIA]
+
+## hard_nos
+{hard_nos_block}
+
+## doctrinal_stance
+- preferred_sources: {ph(_plain(r.get("doctrinal_stance.preferred_sources")), "[FUENTES PREFERIDAS]")}
+- key_jurisprudence:
+  - [JURISPRUDENCIA CLAVE]
+- discarded_args: {ph(_plain(r.get("doctrinal_stance.discarded_args")), "[ARGS QUE PROBAMOS Y NO FUNCIONARON]")}
+
+## memory
+- decisions_made:
+  - "[INTENTÉ X, no funcionó porque Y. No sugerir.]"
+- orbit:
+  - "[NOMBRE]: [ROL] · [ÚLTIMA INTERACCIÓN] · [QUÉ SE LE DEBE]"
+- tools_that_survived: {ph(_plain(r.get("memory.tools_that_survived")), "[HERRAMIENTAS DEL DÍA A DÍA]")}
+
+## rhythm
+- deep_work: {ph(deep_work, "[HORARIO DE TRABAJO PROFUNDO]")}
+- no_meetings: {ph(no_meetings, "[DÍAS SIN REUNIONES]")}
+- weekend: [SOLO URGENCIAS REALES]
+- energy_curve: [MAÑANA: producción jurídica. TARDE: reuniones. NOCHE: lectura]
+
+## triad_mode
+- enabled: {triad_enabled}
+- trigger: {ph(triad_trigger, "[CUÁNDO ACTIVARLO]")}
+"""
+
+    def save_fallback(self, tenant_id: str, responses: dict) -> str:
+        """Genera el SOUL.md SIN LLM, lo guarda y persiste las respuestas; devuelve el contenido.
+
+        Equivalente a run_interview pero por la vía determinista (sin LLM). Marca el
+        onboarding como completado (escribe el archivo que soul_status detecta).
+        """
+        content = self.generate_without_llm(responses)
+        _write_soul(tenant_id, content)
+        _write_responses(tenant_id, responses)
         return content
 
     # ── internos ────────────────────────────────────────────────────────────

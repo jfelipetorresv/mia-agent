@@ -9,6 +9,8 @@ y modelos se traducen a etiquetas amigables; nunca pgvector/tenant_id/embedding/
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -38,6 +40,12 @@ from .hitl import _resume
 from .stream import stream_matter
 
 router = APIRouter(prefix="/api", tags=["ux"])
+
+logger = logging.getLogger("mia.api.ux")
+
+# Timeout duro para la generación del SOUL.md (Ollama puede tardar mucho con el
+# modelo 32b o en cold-start). Si se supera, se cae al fallback determinista sin LLM.
+_SOUL_TIMEOUT_S = 120
 
 # Precio aproximado USD por token (mezcla entrada/salida) — solo para el estimado del dashboard.
 _USD_PER_TOKEN = 0.000009
@@ -447,10 +455,25 @@ async def onboarding_questions(request: Request):
 
 @router.post("/onboarding/complete")
 async def onboarding_complete(request: Request, body: OnboardingComplete):
-    """Genera el SOUL.md del despacho a partir de las respuestas y lo guarda."""
+    """Genera el SOUL.md del despacho a partir de las respuestas y lo guarda.
+
+    Con timeout duro de 120s: si el LLM (Ollama) no responde a tiempo o falla, se
+    construye el SOUL.md sin LLM desde las respuestas y el onboarding se marca como
+    completado igual. El abogado puede refinar su perfil luego desde 'Mi despacho'.
+    """
     tid = _tenant(request)
-    content = await SoulInterview().run_interview(tid, body.responses)
-    return {"soul_content": content, "path": f"soul_{tid}.md"}
+    interview = SoulInterview()
+    try:
+        content = await asyncio.wait_for(
+            interview.run_interview(tid, body.responses), timeout=_SOUL_TIMEOUT_S
+        )
+        return {"soul_content": content, "path": f"soul_{tid}.md", "generated_by": "llm"}
+    except asyncio.TimeoutError:
+        logger.warning("SOUL: timeout (%ss) tenant=%s — fallback sin LLM", _SOUL_TIMEOUT_S, tid)
+    except Exception as exc:  # noqa: BLE001 — cualquier fallo del gateway cae al fallback
+        logger.warning("SOUL: fallo del LLM tenant=%s (%s) — fallback sin LLM", tid, exc)
+    content = interview.save_fallback(tid, body.responses)
+    return {"soul_content": content, "path": f"soul_{tid}.md", "generated_by": "fallback"}
 
 
 @router.get("/onboarding/status")
