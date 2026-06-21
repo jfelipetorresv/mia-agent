@@ -26,17 +26,16 @@ logger = logging.getLogger("mia.agent.llm")
 # task -> alias de modelo. Los alias viven en litellm_config.yaml (fuente única);
 # el gateway resuelve el id real del proveedor. No poner ids largos aquí.
 # Mapa COMPLETO de tareas (router principal + tareas auxiliares de AuxiliaryClient).
-# OVERRIDE 2026-06-20: soul/curator/title_generation/verification + compression -> mia-local
-# (sin créditos Anthropic). session_search/web_extract/vision SIGUEN en Claude y fallarán en
-# runtime hasta que haya créditos o se migren también a mia-local.
+# OVERRIDE 2026-06-20 (decisión #23): TODOS los tasks -> mia-local (cuenta Anthropic sin
+# créditos en desarrollo). Revertir a claude-haiku/claude-sonnet cuando haya créditos.
 _TASK_MODELS: dict[str, str] = {
     "main": config.MIA_MODEL,            # razonamiento principal del agente (mia-local)
     "compression": "mia-local",          # antes claude-haiku; sin fallback -> mia-local. Sigue en _LOCKED_TASKS
-    "verification": "mia-local",          # verificación de citas legales -> mia-local (sin créditos Anthropic)
+    "verification": "mia-local",          # verificación de citas legales -> mia-local
     "title_generation": "mia-local",      # títulos de asunto -> mia-local
-    "session_search": "claude-haiku",     # resumen/búsqueda en la sesión — barato (aún en Claude)
-    "web_extract": "claude-haiku",        # extracción de contenido web — barato (aún en Claude)
-    "vision": "claude-sonnet",            # comprensión de documentos/imágenes (aún en Claude)
+    "session_search": "mia-local",        # resumen/búsqueda en la sesión -> mia-local
+    "web_extract": "mia-local",           # extracción de contenido web -> mia-local
+    "vision": "mia-local",                # comprensión de documentos/imágenes -> mia-local
     "curator": "mia-local",              # consolidación semántica de playbooks -> mia-local
     "soul": "mia-local",                 # generación del SOUL.md — la identidad del agente -> mia-local
 }

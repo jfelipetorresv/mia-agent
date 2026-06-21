@@ -258,3 +258,10 @@ DENTRO de la función (no al top) para evitar ciclos y no arrastrar el cliente L
 **Razonamiento:** Mia debe servir para cualquier jurisdicción, país, área del derecho, idioma, corte, norma o tipo de proceso. El producto es el recipiente; cada despacho lo llena con onboarding, documentos, asuntos aprobados, playbooks y correcciones. Por eso WikiManager, GEPA, Dreams, conectores y onboarding se implementan con prompts y controles genéricos.
 
 **Implicación:** las opciones fijas de país/área/cliente/cortes/herramientas se retiran del onboarding. Los módulos nuevos solo pueden guardar o recuperar conocimiento específico si ese conocimiento llegó desde el tenant: SOUL.md, wiki por tenant, trazas aprobadas, playbooks o documentos conectados.
+
+## 23 · 2026-06-20 — Todos los task models a mia-local
+**Decisión:** todos los task models de `_TASK_MODELS` (`backend/mia/agent/llm.py`) usan `mia-local`.
+
+**Razón:** cuenta Anthropic sin créditos en desarrollo. Todos los tasks usan mia-local (Ollama qwen2.5:32b). Revertir a Claude cuando se restauren los créditos.
+
+**Implicación:** anula parcialmente la invariante de la decisión #7 (`compression` ya no es claude-haiku, ahora mia-local), pero `compression` SIGUE en `_LOCKED_TASKS` — un `model` explícito se ignora, solo cambió el destino fijo. `verification`/`vision` dejan de usar claude-sonnet; `title_generation`/`session_search`/`web_extract` dejan de usar claude-haiku. Tests de gate actualizados a mia-local: `test_agent_core.py`, `test_context_compressor.py`, `test_prompt_builder.py`.

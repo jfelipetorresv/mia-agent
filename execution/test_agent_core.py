@@ -2,9 +2,9 @@
 Mia · test_agent_core.py — verificación del Módulo 1a (MiaAgent + router call_llm).
 
 Verifica OFFLINE (sin red ni proxy LiteLLM):
-  1. La INVARIANTE crítica (decisión #7): task="compression" => claude-haiku
-     SIEMPRE, incluso si se pasa otro `model` explícito (bloqueo).
-  2. El mapa task -> modelo (verification=sonnet, main/None=MIA_MODEL).
+  1. La INVARIANTE crítica (decisión #7, override #23): task="compression" =>
+     mia-local SIEMPRE, incluso si se pasa otro `model` explícito (bloqueo).
+  2. El mapa task -> modelo (verification=mia-local, main/None=MIA_MODEL).
   3. MiaAgent.run_turn: arma [system, user], usa task="main", guarda la
      respuesta y mantiene el historial entre turnos.
 
@@ -34,16 +34,18 @@ def check(name: str, ok: bool) -> None:
 
 # --- 1 + 2 · routing y la invariante de compression ----------------------------
 def test_routing() -> None:
-    check("compression -> claude-haiku", llm.resolve_model("compression") == "claude-haiku")
+    # OVERRIDE decisión #23 (2026-06-20): todos los tasks -> mia-local (sin créditos Anthropic).
+    # compression sigue BLOQUEADA en _LOCKED_TASKS; solo cambió el destino fijo a mia-local.
+    check("compression -> mia-local", llm.resolve_model("compression") == "mia-local")
     check(
-        "compression IGNORA model=claude-sonnet (bloqueo decision #7)",
-        llm.resolve_model("compression", model="claude-sonnet") == "claude-haiku",
+        "compression IGNORA model=claude-sonnet (bloqueo decision #7/#23)",
+        llm.resolve_model("compression", model="claude-sonnet") == "mia-local",
     )
     check(
-        "compression IGNORA model=claude-opus (bloqueo decision #7)",
-        llm.resolve_model("compression", model="claude-opus") == "claude-haiku",
+        "compression IGNORA model=claude-opus (bloqueo decision #7/#23)",
+        llm.resolve_model("compression", model="claude-opus") == "mia-local",
     )
-    check("verification -> claude-sonnet", llm.resolve_model("verification") == "claude-sonnet")
+    check("verification -> mia-local", llm.resolve_model("verification") == "mia-local")
     check("main -> MIA_MODEL", llm.resolve_model("main") == config.MIA_MODEL)
     check("task=None -> MIA_MODEL", llm.resolve_model(None) == config.MIA_MODEL)
     check("task desconocido -> MIA_MODEL", llm.resolve_model("xyz") == config.MIA_MODEL)

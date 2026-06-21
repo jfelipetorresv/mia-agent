@@ -2,12 +2,12 @@
 Mia · test_context_compressor.py — gate del Módulo 2c (ContextCompressor).
 
 Offline: el cliente OpenAI se reemplaza por uno falso inyectado en llm._client, así
-que el routing real call_llm→resolve_model SÍ corre y se verifica el BLOQUEO a haiku
-end-to-end (sin red). Verifica:
+que el routing real call_llm→resolve_model SÍ corre y se verifica el BLOQUEO a
+mia-local end-to-end (sin red). Verifica:
   1. No comprime bajo el threshold (55%).
   2. Comprime cuando lo supera.
   3. protect_first_n=5 y protect_last_n=30 intactos tras comprimir.
-  4. El modelo usado es SIEMPRE claude-haiku (bloqueo decisión #7).
+  4. El modelo usado es SIEMPRE mia-local (bloqueo decisión #7, override #23).
   5. Los mensajes con [VERIFICAR] no se comprimen (se preservan verbatim).
   6. El resumen está en español jurídico (+ prefijo [RESUMEN DE CONTEXTO ANTERIOR]).
   7. El evento context_compressed queda en la traza JSONL.
@@ -99,10 +99,10 @@ def main() -> int:
               out[5]["role"] == "user" and out[5]["content"].startswith(SUMMARY_PREFIX))
         check("estructura: first5 + [resumen] + last30 (sin [VERIFICAR])", len(out) == 36)
 
-        # 4 · modelo SIEMPRE haiku (bloqueo end-to-end + a nivel resolve_model)
-        check("el gateway recibió model=claude-haiku", fake.chat.completions.last["model"] == "claude-haiku")
-        check("resolve_model(compression, sonnet) IGNORA override -> haiku",
-              llm.resolve_model("compression", model="claude-sonnet") == "claude-haiku")
+        # 4 · modelo SIEMPRE mia-local (decisión #23; bloqueo end-to-end + a nivel resolve_model)
+        check("el gateway recibió model=mia-local", fake.chat.completions.last["model"] == "mia-local")
+        check("resolve_model(compression, sonnet) IGNORA override -> mia-local",
+              llm.resolve_model("compression", model="claude-sonnet") == "mia-local")
 
         # 5 · [VERIFICAR] no se comprime (se preserva verbatim)
         cc3 = ContextCompressor()

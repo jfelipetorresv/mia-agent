@@ -4,9 +4,9 @@ Mia · test_prompt_builder.py — gate del Módulo 1b (10 capas + AuxiliaryClien
 Verifica OFFLINE (sin red ni proxy LiteLLM):
   1. Las 10 capas en el ORDEN correcto (índices 1..10, nombres y tiers).
   2. Las capas 1-6 marcadas como CACHED (prefijo estable, TTL 1h); 7-10 no.
-  3. compression forzado a claude-haiku AUNQUE se pase otro `model` — tanto en
-     resolve_model como atravesando AuxiliaryClient.complete() de punta a punta
-     (con un cliente OpenAI falso, sin red).
+  3. compression forzado a mia-local (decisión #23) AUNQUE se pase otro `model` —
+     tanto en resolve_model como atravesando AuxiliaryClient.complete() de punta a
+     punta (con un cliente OpenAI falso, sin red).
   4. El mapa TASK_MODELS está completo (router + tareas auxiliares).
   5. El prompt ensamblado respeta el orden de las capas y las costuras vacías no
      aportan texto.
@@ -128,7 +128,7 @@ def test_task_models() -> None:
     }
     check("TASK_MODELS contiene todas las tareas esperadas",
           expected_tasks.issubset(set(ac.TASK_MODELS)))
-    check("compression -> claude-haiku en el mapa", ac.TASK_MODELS["compression"] == "claude-haiku")
+    check("compression -> mia-local en el mapa (decisión #23)", ac.TASK_MODELS["compression"] == "mia-local")
     check("main -> MIA_MODEL en el mapa", ac.TASK_MODELS["main"] == config.MIA_MODEL)
     # Ningún alias inexistente: solo claude-haiku, claude-sonnet o MIA_MODEL.
     valid = {"claude-haiku", "claude-sonnet", config.MIA_MODEL}
@@ -154,11 +154,11 @@ class _FakeClient:
 
 def test_compression_lock() -> None:
     # Nivel resolve_model / model_for (sin red).
-    check("model_for(compression) -> claude-haiku", ac.AuxiliaryClient.model_for("compression") == "claude-haiku")
+    check("model_for(compression) -> mia-local", ac.AuxiliaryClient.model_for("compression") == "mia-local")
     check("model_for(compression, model=sonnet) IGNORA el override",
-          ac.AuxiliaryClient.model_for("compression", "claude-sonnet") == "claude-haiku")
+          ac.AuxiliaryClient.model_for("compression", "claude-sonnet") == "mia-local")
     check("model_for(compression, model=opus) IGNORA el override",
-          ac.AuxiliaryClient.model_for("compression", "claude-opus") == "claude-haiku")
+          ac.AuxiliaryClient.model_for("compression", "claude-opus") == "mia-local")
 
     # Punta a punta a través de AuxiliaryClient.complete() con cliente falso.
     fake = _FakeClient()
@@ -167,18 +167,18 @@ def test_compression_lock() -> None:
     try:
         out = ac.aux.complete("Comprime este expediente.", task="compression", model="claude-sonnet")
         check("aux.complete devuelve texto", out == "[texto auxiliar]")
-        check("compression: el gateway recibe claude-haiku (no sonnet)",
-              fake.chat.completions.last_kwargs["model"] == "claude-haiku")
+        check("compression: el gateway recibe mia-local (no sonnet)",
+              fake.chat.completions.last_kwargs["model"] == "mia-local")
 
         # Tarea NO bloqueada: el override de model SÍ pasa.
         ac.aux.complete("Verifica esta cita.", task="verification", model="claude-haiku")
         check("verification: el override de model SÍ pasa al gateway",
               fake.chat.completions.last_kwargs["model"] == "claude-haiku")
 
-        # Sin model: la verification usa su default sonnet.
+        # Sin model: la verification usa su default mia-local (decisión #23).
         ac.aux.complete("Verifica esta otra.", task="verification")
-        check("verification sin override -> claude-sonnet",
-              fake.chat.completions.last_kwargs["model"] == "claude-sonnet")
+        check("verification sin override -> mia-local",
+              fake.chat.completions.last_kwargs["model"] == "mia-local")
     finally:
         llm._client = original
 
