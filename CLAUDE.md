@@ -13,8 +13,8 @@ PostgreSQL/pgvector + Next.js 14.
 Plataforma: Windows 11 — instalación nativa (Modo B).
 Estado: construcción activa — Fase 0 en progreso.
 
-El proyecto vive en: "D:\Codex\Mia-Super Agent\mia"
-(la ruta contiene un espacio — siempre entre comillas en comandos).
+El proyecto vive en: "D:\Inteligencia Artificial\Mia-Super Agent\mia"
+(la ruta contiene espacios — siempre entre comillas en comandos).
 
 Dos memorias separadas:
 - Esta carpeta (/memory/) = memoria de construcción (para Claude Code)
@@ -109,7 +109,7 @@ Dos memorias separadas:
 ---
 
 ## F · Referencias
-- Repos de referencia (en "D:\Codex\Mia-Super Agent\"):
+- Repos de referencia (en "D:\Inteligencia Artificial\Mia-Super Agent\"):
   hermes-ref/ (MIT) · jarvis-ref/ (Apache 2.0) · agent-os-ref/
   · claudeos-ref/
 - Hermes docs (leer antes de implementar):
@@ -123,10 +123,10 @@ Dos memorias separadas:
 ## G · Overrides específicos del proyecto
 - Este proyecto es Windows-first, Modo B (nativo). Siempre usar
   rutas y comandos de PowerShell — NO bash de macOS/Linux.
-  Proyecto en "D:\Codex\Mia-Super Agent\mia" (comillas obligatorias
-  por el espacio en la ruta).
+  Proyecto en "D:\Inteligencia Artificial\Mia-Super Agent\mia"
+  (comillas obligatorias por los espacios en la ruta).
 - Obsidian vault en Windows (Modo B nativo):
-  OBSIDIAN_VAULT_PATH=D:\Codex\Lexia-Vault-Test
+  OBSIDIAN_VAULT_PATH=D:\Inteligencia Artificial\Lexia-Vault-Test
 - El .env NUNCA se commitea. Está en .gitignore.
 - El frontend NUNCA muestra terminología técnica al usuario:
   no "HITL", no "LangGraph", no "pgvector", no "tenant_id".
