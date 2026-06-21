@@ -1,0 +1,6 @@
+{
+  "_complete": false,
+  "_note": "PROVISIONAL. Términos de referencia; verificar contra el Código General del Proceso (Ley 1564/2012), el CPACA (Ley 1437/2011) y el Decreto 2591/1991 antes de usar en cálculo de plazos con consecuencia procesal.",
+  "tutela_fallo": {"label": "Fallo de tutela (primera instancia)", "days": 10, "kind": "habil"},
+  "contestacion_demanda_cgp": {"label": "Contestación de demanda (proceso verbal, CGP)", "days": 20, "kind": "habil"}
+}

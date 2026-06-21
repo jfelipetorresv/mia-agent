@@ -562,3 +562,29 @@ del backend. Solo falta correr el ingest real (gated por `VOYAGE_API_KEY`).
 
 **Qué sigue:** llenar `VOYAGE_API_KEY` y correr el ingest real (cierra Paso 6);
 luego Módulo 1 (core del agente, 1a–1e).
+
+---
+
+## 2026-06-21 — Replan Ruta B + Fase 0 (cimientos multi-jurisdicción)
+TL;DR: replan a "Plataforma Legal Hispana + Asistente Conversacional" (ver `Plan/Plan.md`).
+Construida casi toda la Fase 0; validado el modelo. Continuación detallada en
+`Plan/Plan.md` → "ESTADO DE EJECUCIÓN".
+
+**Qué construimos:**
+- 0.B: revalidé el entorno — los tests son SCRIPTS (no pytest); línea base REAL 23/25 (no 17/17).
+- 0.C: migración 011 (versionado temporal + `audit_logs` + `matters.pending_review`), partición
+  del corpus por jurisdicción en `sat_graph.py`, abstracción de Pack en `backend/mia/jurisdiction/`,
+  y onboarding backend (`GET /api/jurisdictions` + persistencia + `resolve_jurisdictions`).
+  +4 gates nuevos verdes (`test_jurisdiction_pack` 19, `test_sat_graph_jurisdiction` 11,
+  `test_onboarding_jurisdictions` 5; `test_sat_graph` sigue 21). Cero regresiones.
+- 0.A: validación sonnet vs qwen (créditos restaurados).
+
+**Qué decidimos:**
+- #24 packs de jurisdicción instalables (refina #22); #25 corpus particionado + versionado temporal
+  (modifica #16); #26 ruteo de modelo por tier (nube=sonnet para citas; mia-local=tier soberano)
+  — qwen FABRICA citas legales y es 6-19× más lento.
+
+**Qué sigue (resto Fase 0, en orden):** 0.4 política de modelo por tenant (ContextVar en
+`resolve_model`; cierra `test_curator`), 0.5 PII en capa común de `call_llm`, 0.6 test HALT de
+privilegio, frontend onboarding (cierra `test_onboarding_horizontal`). Luego Fase 1 (núcleo
+conversacional). 0.A ya NO está bloqueado (hay créditos). Proxy LiteLLM (4000) suele estar caído.

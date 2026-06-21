@@ -1,0 +1,20 @@
+{
+  "_complete": false,
+  "_note": "PROVISIONAL. Solo festivos nacionales de fecha fija (alta confianza). Faltan los festivos trasladables a lunes (Ley 51/1983) y los de base pascual (Jueves/Viernes Santo, Ascensión, Corpus Christi, Sagrado Corazón). Completar y verificar contra el calendario oficial de la Rama Judicial antes de usar en cálculo de plazos.",
+  "2025": [
+    "2025-01-01",
+    "2025-05-01",
+    "2025-07-20",
+    "2025-08-07",
+    "2025-12-08",
+    "2025-12-25"
+  ],
+  "2026": [
+    "2026-01-01",
+    "2026-05-01",
+    "2026-07-20",
+    "2026-08-07",
+    "2026-12-08",
+    "2026-12-25"
+  ]
+}

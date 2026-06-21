@@ -158,12 +158,12 @@ async def run_gate() -> None:
         # === 12 · search_norms FTS (palabra clave en el título) ===
         await sat.add_norm(_norm("SATT-FTS", eff=date(2015, 1, 1),
                                  title="Norma de prueba SATGRAPHUNICO sobre cosas"))
-        res = await sat.search_norms("SATGRAPHUNICO")
+        res = await sat.search_norms("SATGRAPHUNICO", jurisdictions=["co"])
         check("search_norms (FTS) encuentra por palabra del título",
               any("SATGRAPHUNICO" in (r["title"] or "") for r in res))
 
         # === 13 · search_jurisprudence FTS (palabra clave en el topic) ===
-        jres = await sat.search_jurisprudence("SATJURISUNICO")
+        jres = await sat.search_jurisprudence("SATJURISUNICO", jurisdictions=["co"])
         check("search_jurisprudence (FTS) encuentra por palabra del topic",
               any("SATJURISUNICO" in (r["topic"] or "") for r in jres))
 
@@ -232,7 +232,7 @@ async def run_gate() -> None:
         check("corpus semilla: las 2 relaciones base están en la DB", rel_cnt == len(_RELATIONS))
 
         # === 21 · FTS español: búsqueda con acento ('protección') encuentra norma ===
-        acc = await sat.search_norms("protección")
+        acc = await sat.search_norms("protección", jurisdictions=["co"])
         check("FTS español: 'protección' (con acento) encuentra norma del corpus",
               len(acc) >= 1)
     finally:

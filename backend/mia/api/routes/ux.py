@@ -29,6 +29,7 @@ from ...cron import build_scheduler
 from ...db import pool
 from ...ingest.extract import extract_text
 from ...ingest.ingest import chunk_text
+from ...jurisdiction.pack import GENERIC_CODE, list_packs, load_pack
 from ...memory.gepa import GEPALoop
 from ...memory.playbook_manager import Playbook, PlaybookManager
 from ...memory.profile_manager import ProfileManager
@@ -441,9 +442,25 @@ async def skills_ranked(request: Request):
     return await GEPALoop().grade_all_skills(tid)
 
 
+# ── Jurisdicciones (Fase 0.C · packs instalados) ─────────────────────────────
+@router.get("/jurisdictions")
+async def jurisdictions(request: Request):
+    """Opciones de jurisdicción para el onboarding: packs instalados + modo genérico.
+
+    Las opciones NO son hardcodeadas (Decisión #22): se derivan de `packs/` disponibles.
+    El frontend las usa para que el abogado seleccione su(s) jurisdicción(es). Un país sin
+    pack opera en 'Otra / modo genérico' (cuña de venta: vender hoy, pack como mejora)."""
+    _tenant(request)
+    options = [{"code": c, "name": load_pack(c).name, "verified": load_pack(c).verified}
+               for c in list_packs()]
+    options.append({"code": GENERIC_CODE, "name": "Otra / modo genérico", "verified": False})
+    return {"jurisdictions": options}
+
+
 # ── Onboarding · entrevista del SOUL.md (Módulo 5) ───────────────────────────
 class OnboardingComplete(BaseModel):
     responses: dict
+    jurisdictions: list[str] | None = None
 
 
 @router.get("/onboarding/questions")
@@ -462,6 +479,19 @@ async def onboarding_complete(request: Request, body: OnboardingComplete):
     completado igual. El abogado puede refinar su perfil luego desde 'Mi despacho'.
     """
     tid = _tenant(request)
+    # Persistir la(s) jurisdicción(es) elegidas (Fase 0.C). Es la fuente del routing
+    # jurisdiccional del SAT-Graph, calendario, chunker y PII (resolve_jurisdictions).
+    if body.jurisdictions:
+        codes = [str(c).strip().lower() for c in body.jurisdictions if str(c).strip()]
+        if codes:
+            async with pool.tenant_connection(tid) as conn:
+                await conn.execute(
+                    "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET "
+                    "config = jsonb_set(tenant_settings.config, '{jurisdictions}', %s::jsonb, true), "
+                    "updated_at = now()",
+                    (tid, Json({"jurisdictions": codes}), Json(codes)),
+                )
     interview = SoulInterview()
     try:
         content = await asyncio.wait_for(

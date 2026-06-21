@@ -895,3 +895,29 @@ terminales; runbook `architecture/e2e_runbook.md`) o (b) cerrar el Riesgo #23 (l
 del primer cliente. Lista completa de riesgos abiertos en `memory/bugs-and-risks.md`.
 
 **Bloqueantes:** ninguno.
+
+---
+
+## 2026-06-21 — Replan Ruta B + Fase 0 (cimientos multi-jurisdicción)
+
+**Contexto:** replan a "Plataforma Legal Hispana + Asistente Conversacional" (ver `Plan/Plan.md`).
+Prioridad del propietario: núcleo conversacional, memoria/contexto, mucha documentación,
+plugins/Telegram/conectores, voz tipo Jarvis (Handy STT + TTS). Calculadora de plazos baja a auxiliar.
+
+**Qué construimos (Fase 0):**
+- **0.B** — Los tests son SCRIPTS (no pytest). Línea base REAL **23/25** (no "17/17"). 2 rojos
+  pre-existentes: `test_curator` (claude-sonnet vs mia-local #23) y `test_onboarding_horizontal`
+  (frontend hardcodeado). `test_rls` 12/12.
+- **0.C Pack** — `backend/mia/jurisdiction/`. Gate `test_jurisdiction_pack.py` 19/19.
+- **0.C Migración 011** — APLICADA (backup `.tmp/`, dry-run). Versionado temporal, `colombia`→`co`,
+  `jurisdiction` en jurisprudence, `matters.pending_review`, tabla `audit_logs`.
+- **0.C SAT-Graph** — acota por `jurisdictions` (enforced + `admin`). Gate
+  `test_sat_graph_jurisdiction.py` 11/11; `test_sat_graph.py` 21/21.
+- **0.C Onboarding (backend)** — `GET /api/jurisdictions` + persistencia + `resolve_jurisdictions`.
+  Gate `test_onboarding_jurisdictions.py` 5/5. Decisiones #24/#25 registradas.
+
+**Regresión:** 23/25 (cero regresiones; +3 gates nuevos verdes). `test_rls` HALT verde.
+
+**Qué sigue:** resto Fase 0 — 0.4 política de modelo/soberanía (ContextVar en `resolve_model`),
+0.5 PII en capa común de `call_llm`, 0.6 test HALT de privilegio, frontend onboarding (selector de
+jurisdicción + horizontalizar P5-P18). Luego Fase 1 (núcleo conversacional). **0.A bloqueado** (créditos Claude).

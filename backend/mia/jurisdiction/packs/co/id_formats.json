@@ -1,0 +1,6 @@
+{
+  "cedula": {"label": "Cédula de ciudadanía", "regex": "\\b\\d{6,10}\\b"},
+  "nit": {"label": "NIT", "regex": "\\b\\d{9}-?\\d?\\b"},
+  "email": {"label": "Correo electrónico", "regex": "[\\w.+-]+@[\\w-]+\\.[\\w.-]+"},
+  "phone": {"label": "Teléfono", "regex": "\\+?57[\\s-]?\\d[\\d\\s().-]{6,}\\d"}
+}

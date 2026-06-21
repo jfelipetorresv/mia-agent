@@ -32,9 +32,9 @@ _NORM_FIELDS = (
     "created_at", "updated_at",
 )
 _JURIS_FIELDS = (
-    "id", "norm_id", "court", "sala", "decision_number", "radicado", "magistrado_ponente",
-    "decision_date", "topic", "ratio_decidendi", "obiter_dicta", "keywords", "metadata",
-    "created_at",
+    "id", "norm_id", "jurisdiction", "court", "sala", "decision_number", "radicado",
+    "magistrado_ponente", "decision_date", "topic", "ratio_decidendi", "obiter_dicta",
+    "keywords", "metadata", "created_at",
 )
 
 
@@ -63,10 +63,12 @@ class SATGraph:
 
     # ── relaciones ──────────────────────────────────────────────────────────
     async def get_related_norms(self, norm_id: Any,
-                                relation_type: Optional[str] = None) -> list[dict]:
+                                relation_type: Optional[str] = None, *,
+                                jurisdictions: Optional[list[str]] = None) -> list[dict]:
         """Normas a las que `norm_id` apunta (aristas salientes). Cada dict es la norma
         destino + `relation_type`/`relation_effective_date`/`relation_notes`. Si
-        `relation_type` es None, devuelve todas."""
+        `relation_type` es None, devuelve todas. `jurisdictions` (opcional) acota las normas
+        destino a esas jurisdicciones (None = sin filtro, comportamiento previo)."""
         sql = (f"SELECT {_cols(_NORM_FIELDS, 'n')}, "
                "r.relation_type AS relation_type, "
                "r.effective_date AS relation_effective_date, "
@@ -74,17 +76,21 @@ class SATGraph:
                "FROM norm_relations r JOIN legal_norms n ON n.id = r.target_norm_id "
                "WHERE r.source_norm_id = %(id)s::uuid "
                "AND (%(rt)s::text IS NULL OR r.relation_type = %(rt)s) "
+               "AND (%(jurs)s::text[] IS NULL OR n.jurisdiction = ANY(%(jurs)s)) "
                "ORDER BY r.created_at")
+        params = {"id": str(norm_id), "rt": relation_type,
+                  "jurs": list(jurisdictions) if jurisdictions else None}
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(sql, {"id": str(norm_id), "rt": relation_type})
+                await cur.execute(sql, params)
                 return await cur.fetchall()
 
-    async def get_norm_chain(self, norm_id: Any) -> list[dict]:
+    async def get_norm_chain(self, norm_id: Any, *,
+                             jurisdictions: Optional[list[str]] = None) -> list[dict]:
         """Cadena de modificaciones desde `norm_id`: sigue `modifica_a`/`deroga_a`
         recursivamente (aristas salientes). Devuelve [norma_raíz, ...descendientes] con
         `depth` (0 = la raíz). Guardia de ciclos por camino visitado. Una hoja devuelve
-        solo la raíz."""
+        solo la raíz. `jurisdictions` (opcional) acota los descendientes (None = sin filtro)."""
         sql = (
             "WITH RECURSIVE chain AS ("
             f"  SELECT {_cols(_NORM_FIELDS, 'n')}, 0 AS depth, ARRAY[n.id] AS visited "
@@ -96,40 +102,65 @@ class SATGraph:
             "        AND r.relation_type IN ('modifica_a','deroga_a') "
             "   JOIN legal_norms n ON n.id = r.target_norm_id "
             "   WHERE NOT (n.id = ANY(c.visited)) "
+            "     AND (%(jurs)s::text[] IS NULL OR n.jurisdiction = ANY(%(jurs)s)) "
             ") "
             f"SELECT {_cols(_NORM_FIELDS)}, depth FROM chain ORDER BY depth"
         )
+        params = {"id": str(norm_id), "jurs": list(jurisdictions) if jurisdictions else None}
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(sql, {"id": str(norm_id)})
+                await cur.execute(sql, params)
                 return await cur.fetchall()
 
-    # ── búsqueda FTS (español) ──────────────────────────────────────────────
-    async def search_norms(self, query_text: str, limit: int = 10) -> list[dict]:
-        """FTS sobre legal_norms (config 'spanish'), ordenado por ts_rank."""
+    # ── búsqueda FTS (español) · ACOTADA por jurisdicción (Decisión #25) ──────
+    async def search_norms(self, query_text: str, limit: int = 10, *,
+                           jurisdictions: Optional[list[str]] = None,
+                           admin: bool = False) -> list[dict]:
+        """FTS sobre legal_norms (config 'spanish'), ordenado por ts_rank, ACOTADO a las
+        `jurisdictions` dadas. Sin `jurisdictions` exige `admin=True` (curaduría): una
+        búsqueda sin acotar devolvería el corpus de TODOS los países como autoridad → fuga
+        cross-jurisdicción (Decisión #25)."""
+        if not jurisdictions and not admin:
+            raise ValueError("search_norms requiere jurisdictions (o admin=True para curaduría)")
+        jur_clause = "AND jurisdiction = ANY(%(jurs)s) " if jurisdictions else ""
         sql = (f"SELECT {_cols(_NORM_FIELDS)}, ts_rank(fts_vector, q) AS rank "
                "FROM legal_norms, websearch_to_tsquery('spanish', %(q)s) q "
-               "WHERE fts_vector @@ q "
+               "WHERE fts_vector @@ q " + jur_clause +
                "ORDER BY rank DESC, effective_date DESC LIMIT %(lim)s")
+        params: dict[str, Any] = {"q": query_text or "", "lim": limit}
+        if jurisdictions:
+            params["jurs"] = list(jurisdictions)
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(sql, {"q": query_text or "", "lim": limit})
+                await cur.execute(sql, params)
                 return await cur.fetchall()
 
-    async def search_jurisprudence(self, query_text: str, limit: int = 10) -> list[dict]:
-        """FTS sobre jurisprudence (config 'spanish'), ordenado por ts_rank."""
+    async def search_jurisprudence(self, query_text: str, limit: int = 10, *,
+                                   jurisdictions: Optional[list[str]] = None,
+                                   admin: bool = False) -> list[dict]:
+        """FTS sobre jurisprudence (config 'spanish'), ACOTADA por jurisdicción (ver
+        `search_norms`). Sin `jurisdictions` exige `admin=True`."""
+        if not jurisdictions and not admin:
+            raise ValueError("search_jurisprudence requiere jurisdictions (o admin=True)")
+        jur_clause = "AND jurisdiction = ANY(%(jurs)s) " if jurisdictions else ""
         sql = (f"SELECT {_cols(_JURIS_FIELDS)}, ts_rank(fts_vector, q) AS rank "
                "FROM jurisprudence, websearch_to_tsquery('spanish', %(q)s) q "
-               "WHERE fts_vector @@ q "
+               "WHERE fts_vector @@ q " + jur_clause +
                "ORDER BY rank DESC, decision_date DESC LIMIT %(lim)s")
+        params: dict[str, Any] = {"q": query_text or "", "lim": limit}
+        if jurisdictions:
+            params["jurs"] = list(jurisdictions)
         async with pool.connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(sql, {"q": query_text or "", "lim": limit})
+                await cur.execute(sql, params)
                 return await cur.fetchall()
 
     # ── curaduría (escritura) ───────────────────────────────────────────────
     async def add_norm(self, data: dict) -> UUID:
-        """Upsert de una norma por (norm_number, issuing_body). Devuelve el id."""
+        """Upsert de una norma por (jurisdiction, norm_number, issuing_body, effective_date).
+        Incluir `effective_date` en la clave permite el VERSIONADO TEMPORAL: cargar la misma
+        norma con otra `effective_date` INSERTA una versión nueva en vez de sobrescribir la
+        vigente a la fecha de los hechos (antes el upsert destruía la historia). Devuelve el id."""
         sql = """
         INSERT INTO legal_norms
           (norm_type, norm_number, issuing_body, title, summary, full_text,
@@ -137,8 +168,8 @@ class SATGraph:
         VALUES
           (%(norm_type)s, %(norm_number)s, %(issuing_body)s, %(title)s, %(summary)s,
            %(full_text)s, %(effective_date)s, %(expiry_date)s,
-           COALESCE(%(jurisdiction)s, 'colombia'), %(practice_areas)s, %(metadata)s)
-        ON CONFLICT (norm_number, issuing_body) DO UPDATE SET
+           COALESCE(%(jurisdiction)s, 'co'), %(practice_areas)s, %(metadata)s)
+        ON CONFLICT (jurisdiction, norm_number, issuing_body, effective_date) DO UPDATE SET
            norm_type      = EXCLUDED.norm_type,
            title          = EXCLUDED.title,
            summary        = EXCLUDED.summary,
@@ -167,16 +198,18 @@ class SATGraph:
         return await self._insert_returning_id(sql, params)
 
     async def add_jurisprudence(self, data: dict) -> UUID:
-        """Upsert de una providencia por (decision_number, court). Devuelve el id."""
+        """Upsert de una providencia por (jurisdiction, decision_number, court). La
+        jurisdicción evita colisión de homónimos entre países (dos países pueden tener una
+        'Sentencia C-123'). Por defecto 'co'. Devuelve el id."""
         sql = """
         INSERT INTO jurisprudence
-          (norm_id, court, sala, decision_number, radicado, magistrado_ponente,
+          (norm_id, jurisdiction, court, sala, decision_number, radicado, magistrado_ponente,
            decision_date, topic, ratio_decidendi, obiter_dicta, keywords, metadata)
         VALUES
-          (%(norm_id)s, %(court)s, %(sala)s, %(decision_number)s, %(radicado)s,
-           %(magistrado_ponente)s, %(decision_date)s, %(topic)s, %(ratio_decidendi)s,
-           %(obiter_dicta)s, %(keywords)s, %(metadata)s)
-        ON CONFLICT (decision_number, court) DO UPDATE SET
+          (%(norm_id)s, COALESCE(%(jurisdiction)s, 'co'), %(court)s, %(sala)s,
+           %(decision_number)s, %(radicado)s, %(magistrado_ponente)s, %(decision_date)s,
+           %(topic)s, %(ratio_decidendi)s, %(obiter_dicta)s, %(keywords)s, %(metadata)s)
+        ON CONFLICT (jurisdiction, decision_number, court) DO UPDATE SET
            norm_id            = EXCLUDED.norm_id,
            sala               = EXCLUDED.sala,
            radicado           = EXCLUDED.radicado,
@@ -191,6 +224,7 @@ class SATGraph:
         """
         params = {
             "norm_id": str(data["norm_id"]) if data.get("norm_id") else None,
+            "jurisdiction": data.get("jurisdiction"),
             "court": data.get("court"),
             "sala": data.get("sala"),
             "decision_number": data.get("decision_number"),

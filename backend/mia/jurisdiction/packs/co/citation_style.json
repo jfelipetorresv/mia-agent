@@ -1,0 +1,4 @@
+{
+  "norm": "{norm_type} {norm_number} de {year} ({issuing_body})",
+  "ruling": "{court}, Sentencia {decision_number} de {year}, M.P. {magistrado_ponente}"
+}

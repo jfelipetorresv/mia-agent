@@ -1,0 +1,5 @@
+{
+  "norm": ["Artículo", "ARTÍCULO", "Art\\.", "Parágrafo", "PARÁGRAFO", "Inciso", "Numeral", "Literal"],
+  "contract": ["CLÁUSULA", "Cláusula", "CLAUSULA"],
+  "ruling": ["ANTECEDENTES", "CONSIDERANDO", "CONSIDERACIONES", "FUNDAMENTOS", "RESUELVE", "FALLA", "RESUÉLVESE"]
+}

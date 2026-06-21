@@ -1,0 +1,9 @@
+{
+  "code": "co",
+  "name": "Colombia",
+  "version": "0.1",
+  "verified": false,
+  "verified_at": null,
+  "sources": ["SUIN-Juriscol", "Función Pública", "Rama Judicial"],
+  "_note": "Estructura inicial del pack Colombia. Festivos y términos procesales son PROVISIONALES y deben contrastarse contra fuente oficial antes de marcar verified:true (trabajo de D.4). Mientras verified=false, los consumidores marcan supuestos no verificados."
+}

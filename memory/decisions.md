@@ -265,3 +265,46 @@ DENTRO de la función (no al top) para evitar ciclos y no arrastrar el cliente L
 **Razón:** cuenta Anthropic sin créditos en desarrollo. Todos los tasks usan mia-local (Ollama qwen2.5:32b). Revertir a Claude cuando se restauren los créditos.
 
 **Implicación:** anula parcialmente la invariante de la decisión #7 (`compression` ya no es claude-haiku, ahora mia-local), pero `compression` SIGUE en `_LOCKED_TASKS` — un `model` explícito se ignora, solo cambió el destino fijo. `verification`/`vision` dejan de usar claude-sonnet; `title_generation`/`session_search`/`web_extract` dejan de usar claude-haiku. Tests de gate actualizados a mia-local: `test_agent_core.py`, `test_context_compressor.py`, `test_prompt_builder.py`.
+
+## 24 · 2026-06-21 — Packs de jurisdicción instalables (refina la Decisión #22)
+**Decisión:** el código es AGNÓSTICO de jurisdicción. Los datos de referencia jurisdiccional
+(festivos, recesos, formatos de ID, marcadores documentales, catálogo de términos, estilo de cita)
+viven en **paquetes de jurisdicción instalables** bajo `backend/mia/jurisdiction/packs/{code}/`
+(`pack.py` los carga; `GenericPack` es el fallback de modo genérico). El conocimiento del despacho
+(voz, métodos, fuentes) sigue viniendo del tenant (SOUL/wiki/playbooks).
+**Razón:** la #22 ("cero conocimiento hardcodeado") describe bien el eje del despacho pero se
+extralimita al eje de la jurisdicción: no se le puede pedir a un despacho que teclee su calendario
+procesal (terceriza el riesgo de malpractice). Dos ejes: Jurisdicción (Pack, público, compartido por
+país) + Despacho (Eje 2). Mapea al negocio: Plataforma + Packs (foso por mercado) + Capa del despacho.
+**Modo genérico** como cuña de venta: vender hoy en cualquier país; el pack verificado es upsell.
+**Cardinal:** un pack con `verified=false` NO se presenta como autoridad verificada.
+
+## 25 · 2026-06-21 — Corpus SAT-Graph particionado por jurisdicción (modifica la Decisión #16)
+**Decisión:** el corpus sigue COMPARTIDO entre despachos del MISMO país, pero PARTICIONADO entre
+países. `legal_norms`/`jurisprudence` llevan `jurisdiction`; `search_norms`/`search_jurisprudence`
+ACOTAN por `jurisdictions` y RECHAZAN búsquedas sin jurisdicción salvo `admin=True` (curaduría).
+Migración `011`: unique de `legal_norms` pasa a `(jurisdiction, norm_number, issuing_body,
+effective_date)` — el `effective_date` habilita el **versionado temporal** (antes el upsert
+sobrescribía y destruía la historia → imposible "norma vigente a la fecha de los hechos").
+`jurisprudence` gana columna `jurisdiction` + unique `(jurisdiction, decision_number, court)`.
+**Razón:** la #16 (corpus global sin tenant_id) era correcta para un país; para multi-país es una
+fuga suave (un despacho mexicano vería normas colombianas como autoridad). Default canónico `co`.
+Autoridad persuasiva cross-border: opt-in `include_persuasive` (pendiente; documentado).
+
+## 26 · 2026-06-21 — Ruteo de modelo por tier: nube (calidad) vs soberano (local) [validación 0.A]
+**Decisión:** las tareas con contenido jurídico citable (análisis, investigación, verificación,
+curator, soul, extracción de hechos) van a **`claude-sonnet` en el tier NUBE**; `mia-local`
+(qwen2.5:32b) queda reservado al **tier SOBERANO** (despachos que exigen todo local), con
+advertencia explícita de menor disciplina de citas y HITL más estricto.
+**Evidencia (validación directa, 2026-06-21, créditos Anthropic restaurados):** en un caso de
+arrendamiento de vivienda urbana (rige **Ley 820 de 2003**), qwen **FABRICÓ** "art. 875 y 876 del
+Código Civil" con texto entrecomillado falso y régimen equivocado, **sin marcar [VERIFICAR]** pese
+a la instrucción explícita → viola la regla cardinal del producto. sonnet citó correctamente Ley
+820/2003 art. 22 y CGP arts. 384-388. Latencia: sonnet 4-11s vs qwen 60-201s (6-19× más lento;
+análisis = 3.4 min). En redacción sin citas qwen es aceptable; en hechos omitió una parte.
+**Implementación:** NO revertir `_TASK_MODELS` a sonnet de forma global (rompería 3 gates puestos a
+mia-local por la #23 y el proxy está caído). El ruteo va **por tenant** vía la política de modelo
+de la **Fase 0.4** (`ContextVar` + `tenant_settings.config['model_policy']`): `nube` = calidad por
+defecto; `soberano` = `mia-local`. El rojo de `test_curator` se cierra al implementar 0.4.
+**Implicación:** revierte el espíritu de la #23 (ya hay créditos) pero lo hace configurable, no
+hardcodeado. mia-local pasa de "parche por falta de créditos" a "tier soberano de producto".
