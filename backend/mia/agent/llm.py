@@ -7,10 +7,12 @@ hace LiteLLM (decisión #3): el proxy expone UN endpoint OpenAI-compatible y los
 modelos se nombran por alias (litellm_config.yaml). Por eso este router es
 delgado: solo mapea `task -> alias` y delega el resto al gateway.
 
-INVARIANTE CRÍTICA (CLAUDE.md §D · decisión #7):
-    call_llm(task="compression") = claude-haiku SIEMPRE. Nunca sonnet.
-    Está BLOQUEADO aquí: un `model` explícito para compression se ignora.
-    No cambiar sin documentar en memory/decisions.md.
+OVERRIDE 2026-06-20 (sin créditos Anthropic · anula parcialmente la decisión #7):
+    Las tareas soul / curator / title_generation / verification apuntan a mia-local.
+    `compression` NO tiene fallback en call_llm, así que también va a mia-local; sigue
+    BLOQUEADA en _LOCKED_TASKS (un `model` explícito se ignora), solo cambia el destino
+    fijo: mia-local en vez de claude-haiku. Revertir a claude-haiku/claude-sonnet cuando
+    haya créditos. Documentar el cambio de la invariante #7 en memory/decisions.md.
 """
 from __future__ import annotations
 
@@ -24,19 +26,19 @@ logger = logging.getLogger("mia.agent.llm")
 # task -> alias de modelo. Los alias viven en litellm_config.yaml (fuente única);
 # el gateway resuelve el id real del proveedor. No poner ids largos aquí.
 # Mapa COMPLETO de tareas (router principal + tareas auxiliares de AuxiliaryClient).
-# Solo se referencian alias que existen hoy en litellm_config.yaml: claude-haiku,
-# claude-sonnet y MIA_MODEL. Añadir una tarea con un alias inexistente sería un bug
-# latente (el gateway daría 404), así que las auxiliares baratas van a claude-haiku.
+# OVERRIDE 2026-06-20: soul/curator/title_generation/verification + compression -> mia-local
+# (sin créditos Anthropic). session_search/web_extract/vision SIGUEN en Claude y fallarán en
+# runtime hasta que haya créditos o se migren también a mia-local.
 _TASK_MODELS: dict[str, str] = {
-    "main": config.MIA_MODEL,           # razonamiento principal del agente
-    "compression": "claude-haiku",      # INVARIANTE decisión #7 — ver _LOCKED_TASKS
-    "verification": "claude-sonnet",     # verificación de citas legales (findings.md)
-    "title_generation": "claude-haiku",  # títulos de asunto — barato
-    "session_search": "claude-haiku",    # resumen/búsqueda en la sesión — barato
-    "web_extract": "claude-haiku",       # extracción de contenido web — barato
-    "vision": "claude-sonnet",           # comprensión de documentos/imágenes
-    "curator": "claude-sonnet",          # consolidación semántica de playbooks (3b, decisión #18)
-    "soul": "claude-sonnet",             # generación del SOUL.md — la identidad del agente (Módulo 5)
+    "main": config.MIA_MODEL,            # razonamiento principal del agente (mia-local)
+    "compression": "mia-local",          # antes claude-haiku; sin fallback -> mia-local. Sigue en _LOCKED_TASKS
+    "verification": "mia-local",          # verificación de citas legales -> mia-local (sin créditos Anthropic)
+    "title_generation": "mia-local",      # títulos de asunto -> mia-local
+    "session_search": "claude-haiku",     # resumen/búsqueda en la sesión — barato (aún en Claude)
+    "web_extract": "claude-haiku",        # extracción de contenido web — barato (aún en Claude)
+    "vision": "claude-sonnet",            # comprensión de documentos/imágenes (aún en Claude)
+    "curator": "mia-local",              # consolidación semántica de playbooks -> mia-local
+    "soul": "mia-local",                 # generación del SOUL.md — la identidad del agente -> mia-local
 }
 
 # Tareas cuyo modelo es un contrato fijo: un `model` explícito NO puede cambiarlo.
@@ -50,8 +52,8 @@ _client: Any = None  # openai.OpenAI — import diferido (ver _get_client)
 def resolve_model(task: str | None, model: str | None = None) -> str:
     """Resuelve el alias de modelo para un `task`.
 
-    - `compression` está bloqueado a claude-haiku (decisión #7): si llega un
-      `model` distinto, se ignora a propósito y se registra un warning.
+    - `compression` está bloqueado (decisión #7, override 2026-06-20 → mia-local):
+      si llega un `model` distinto, se ignora a propósito y se registra un warning.
     - Resto de tareas: un `model` explícito gana; si no, el del mapa; un task
       desconocido cae a 'main'.
     """
