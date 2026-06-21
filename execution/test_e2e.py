@@ -6,7 +6,7 @@ punta sobre la superficie /api/* con TestClient (sin navegador, sin red). El LLM
 los embeddings van MOCKEADOS. Si esta prueba pasa, Mia v0 está operativa.
 
 Flujo (7 pasos · >= 20 checks):
-  1. Onboarding   — 19 preguntas → genera el SOUL.md del despacho Lexia (Doc 4) y lo
+  1. Onboarding   — 15 preguntas → genera el SOUL.md del despacho Lexia (Doc 4) y lo
                     guarda en $MIA_HOME; verifica las 9 secciones + el wiring al turno.
   2. Crear asunto — POST /api/matters (status 'active').
   3. Subir doc    — PDF de 2 páginas (Ley 80/1993) → se ingiere (chunks en DB > 0).
@@ -187,11 +187,11 @@ def run_e2e(client, auth, tid) -> list[str]:
     print("\n-- Paso 1 · Onboarding (SOUL.md) --")
     r = client.get("/api/onboarding/questions", headers=auth)
     qs = r.json() if r.status_code == 200 else []
-    check("GET /api/onboarding/questions -> 19 preguntas del Doc 4",
-          r.status_code == 200 and len(qs) == 19)
+    check("GET /api/onboarding/questions -> 15 preguntas (Doc 4 menos P8/P9/P12/P13)",
+          r.status_code == 200 and len(qs) == 15)
     check("cada pregunta trae id/block/field/question/example",
           bool(qs) and all({"id", "block", "field", "question", "example"} <= set(q) for q in qs))
-    check("las 19 preguntas cubren los 5 bloques del Doc 4",
+    check("las 15 preguntas cubren los 5 bloques del Doc 4",
           {q["block"] for q in qs} == {"identity", "jurisdiction", "legal_voice", "mission_rhythm", "triad_mode"})
 
     r = client.post("/api/onboarding/complete", headers=auth, json={"responses": LEXIA})

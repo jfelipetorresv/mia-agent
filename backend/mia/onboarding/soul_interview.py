@@ -3,13 +3,15 @@
 El SOUL.md es la capa MÁS importante del sistema de prompts: la capa 1
 (identidad) que el prompt_builder antepone a todo (1b) y que el grafo carga como
 `soul_snapshot` al iniciar cada turno (Módulo 5). La entrevista lo arma de forma
-conversacional: 19 preguntas en 5 bloques → respuestas → call_llm(task="soul")
+conversacional: 15 preguntas en 5 bloques → respuestas → call_llm(task="soul")
 genera el SOUL.md en el template de 9 secciones → se guarda en
 $MIA_HOME/soul_{tenant_id}.md.
 
-Las 19 preguntas, el template y los ejemplos provienen del Doc 4 (SOUL.md
-Onboarding) — son la fuente exacta, no se inventan. La pregunta 19 (triad_mode) es
-opcional; las 18 anteriores cubren las 8 secciones obligatorias del template.
+El template y los ejemplos provienen del Doc 4 (SOUL.md Onboarding) — son la fuente
+exacta, no se inventan. Originalmente eran 19 preguntas; se suprimieron 4 que el
+agente aprende del uso (P8/P9 tribunales y cortes, P12/P13 argumentos y fuentes →
+GEPA/uso). La última (triad_mode) es opcional. Los campos del template que esas
+preguntas alimentaban quedan como placeholder hasta que emergen con el uso.
 
 Helpers de archivo (soul_path / load_soul_text / load_soul_snapshot / soul_status):
 puros (solo config + stdlib, sin LLM) para que `agents/state.py` y `agent/core.py`
@@ -27,7 +29,7 @@ from typing import Optional
 
 from .. import config
 
-# ── Las 19 preguntas del Doc 4 (5 bloques) ──────────────────────────────────
+# ── Las 15 preguntas del onboarding (5 bloques; del Doc 4, menos P8/P9/P12/P13) ──
 # Cada pregunta: id · block · field (sección/campo del template que alimenta) ·
 # question (lo que ve el abogado) · example (el ejemplo del Doc 4). Las respuestas
 # del frontend llegan como {field: respuesta}; el campo es la llave.
@@ -45,7 +47,7 @@ QUESTIONS: list[dict] = [
     {"id": "p4", "block": "identity", "field": "identity.channels",
      "question": "¿Tienes sitio web o canales públicos del despacho?",
      "example": "lexia.co — LinkedIn Lexia Abogados"},
-    # Bloque 2 — Jurisdicción (P5-P9)
+    # Bloque 2 — Jurisdicción (P5-P7)
     {"id": "p5", "block": "jurisdiction", "field": "jurisdiction.base",
      "question": "¿En qué jurisdicción trabajas principalmente?",
      "example": "Colombia — también España ocasionalmente"},
@@ -55,25 +57,17 @@ QUESTIONS: list[dict] = [
     {"id": "p7", "block": "jurisdiction", "field": "jurisdiction.client_type",
      "question": "¿Qué tipo de cliente defiende principalmente tu despacho?",
      "example": "Aseguradoras (HDI, Zurich, SURA, Seguros del Estado)"},
-    {"id": "p8", "block": "jurisdiction", "field": "jurisdiction.courts",
-     "question": "¿En qué instancias y tribunales apareces habitualmente?",
-     "example": "Tribunal Adm. Cundinamarca, Consejo de Estado, Contraloría, arbitraje"},
-    {"id": "p9", "block": "jurisdiction", "field": "jurisdiction.key_courts",
-     "question": "¿Cuáles son las cortes cuyos precedentes más citas?",
-     "example": "Corte Constitucional, Consejo de Estado, CSJ Sala Civil — en ese orden"},
-    # Bloque 3 — Voz jurídica (P10-P14)
+    # P8 (instancias/tribunales) y P9 (cortes que más cita) suprimidas: el agente las
+    # aprende del uso (asuntos aprobados, documentos), no del onboarding.
+    # Bloque 3 — Voz jurídica (P10, P11, P14)
     {"id": "p10", "block": "legal_voice", "field": "legal_voice.structure",
      "question": "¿Cómo estructuras típicamente tus escritos?",
      "example": "Párrafos narrativos continuos. Sin viñetas en escritos de fondo."},
     {"id": "p11", "block": "legal_voice", "field": "legal_voice.banned_words",
      "question": "¿Hay palabras o expresiones que nunca usas?",
      "example": "Sin latinismos. Sin 'insalvable'. Sin 'en ese orden de ideas'."},
-    {"id": "p12", "block": "legal_voice", "field": "doctrinal_stance.discarded_args",
-     "question": "¿Hay argumentos que has probado y no funcionaron?",
-     "example": "No sugerir prescripción fiscal sin verificar fecha del primer acto de investigación."},
-    {"id": "p13", "block": "legal_voice", "field": "doctrinal_stance.preferred_sources",
-     "question": "¿Hay doctrinantes o jurisprudencia que prefieres citar?",
-     "example": "Consejo de Estado antes que doctrina foránea. T-323/2024, jurisprudencia seguros CSJ."},
+    # P12 (argumentos que no funcionaron) la detecta GEPA; P13 (jurisprudencia preferida)
+    # emerge con el uso. Ambas suprimidas del onboarding.
     {"id": "p14", "block": "legal_voice", "field": "hard_nos",
      "question": "¿Qué cosas Mia nunca debe hacer en tu nombre?",
      "example": "Nunca presentar borrador sin revisión. Nunca recomendar allanarse sin análisis."},
@@ -309,7 +303,7 @@ class SoulInterview:
     """Conduce el onboarding del SOUL.md y mantiene el archivo por tenant."""
 
     async def get_questions(self) -> list[dict]:
-        """Las 19 preguntas (con id/block/field/question/example) para el frontend."""
+        """Las 15 preguntas (con id/block/field/question/example) para el frontend."""
         return [dict(q) for q in QUESTIONS]
 
     async def run_interview(self, tenant_id: str, responses: dict) -> str:

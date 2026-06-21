@@ -395,14 +395,6 @@ function QuestionInput({
     case "p7":
       return <CheckboxGroup options={CLIENT_OPTIONS} value={asList(value)} onChange={onChange} />;
 
-    // P8 — instancias/tribunales (tags libres).
-    case "p8":
-      return <TagInput value={asList(value)} onChange={onChange} placeholder="Escribe el nombre del tribunal y presiona Enter" />;
-
-    // P9 — cortes que más cita (tags libres).
-    case "p9":
-      return <TagInput value={asList(value)} onChange={onChange} placeholder="Escribe el nombre de la corte y presiona Enter" />;
-
     // P10 — estructura de escritos (radio).
     case "p10":
       return <RadioGroup options={STRUCTURE_OPTIONS} value={asText(value)} onChange={onChange} />;
@@ -410,14 +402,6 @@ function QuestionInput({
     // P11 — palabras prohibidas (tags libres).
     case "p11":
       return <TagInput value={asList(value)} onChange={onChange} placeholder="Escribe una palabra o frase y presiona Enter" />;
-
-    // P12 — argumentos que no funcionaron (textarea corto).
-    case "p12":
-      return <ShortText value={asText(value)} onChange={onChange} placeholder="Opcional. Ej: prescripción sin verificar fecha del primer acto" />;
-
-    // P13 — jurisprudencia preferida (textarea corto).
-    case "p13":
-      return <ShortText value={asText(value)} onChange={onChange} placeholder="Opcional. Ej: Corte Suprema antes que doctrina foránea" />;
 
     // P14 — hard nos (tags con sugerencias).
     case "p14":
@@ -531,18 +515,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="mb-1 block text-xs font-medium text-gray-500">{label}</span>
       {children}
     </label>
-  );
-}
-
-function ShortText({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
-  return (
-    <textarea
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-24 w-full resize-none rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-gray-400"
-      placeholder={placeholder}
-      autoFocus
-    />
   );
 }
 
