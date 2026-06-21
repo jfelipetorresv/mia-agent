@@ -1,5 +1,17 @@
 # Mia — Resúmenes de sesión
 
+## 2026-06-20 — Sesión 21 · Smoke test login + onboarding
+TL;DR: Login real funciona. Onboarding 15 preguntas ágil.
+       SOUL.md generado. Smoke test del chat pendiente.
+Qué construimos:
+- Fix CORS + rutas actualizadas a nueva ubicación
+- Todos los task models → mia-local (Ollama)
+- Timeout + fallback sin LLM para onboarding
+- Onboarding reducido a 15 preguntas ágiles
+- SOUL.md generado exitosamente con datos de Lexia
+Qué sigue: smoke test completo — crear asunto,
+  enviar mensaje en chat, verificar respuesta de Mia.
+
 ## 2026-06-20 — Pausa post-goal second brain
 TL;DR: Goal completado (23/23 suites). Smoke test del
        login pendiente — Pipe no tiene acceso al computador.
