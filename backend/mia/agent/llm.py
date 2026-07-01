@@ -17,11 +17,23 @@ OVERRIDE 2026-06-20 (sin créditos Anthropic · anula parcialmente la decisión 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from .. import config
+from .error_classifier import (
+    LLMError,
+    LLMErrorKind,
+    classify_llm_error,
+    is_retryable,
+    retry_delay,
+)
 
 logger = logging.getLogger("mia.agent.llm")
+
+# Reintentos automáticos para errores transitorios (rate limit / timeout / red).
+# Los deterministas (auth, modelo inexistente, contexto largo) NO se reintentan.
+MAX_RETRIES = 3
 
 # task -> alias de modelo. Los alias viven en litellm_config.yaml (fuente única);
 # el gateway resuelve el id real del proveedor. No poner ids largos aquí.
@@ -104,4 +116,52 @@ def call_llm(
     if tools:
         kwargs["tools"] = tools
     kwargs.update(extra)
-    return _get_client().chat.completions.create(**kwargs)
+
+    # Política de error centralizada (patrón Hermes v0.17.0, ver error_classifier.py):
+    # - transitorios (rate_limit/timeout/network) → reintento con backoff exponencial;
+    # - AUTH / MODEL_UNAVAILABLE / UNKNOWN → falla rápido con mensaje claro (LLMError);
+    # - CONTEXT_TOO_LONG → log + propaga la excepción original (la resuelve el compresor).
+    # call_llm es SÍNCRONO y se invoca vía asyncio.to_thread → time.sleep no bloquea el loop.
+    last_exc: BaseException | None = None
+    for attempt in range(MAX_RETRIES + 1):     # 1 intento inicial + hasta MAX_RETRIES reintentos
+        try:
+            return _get_client().chat.completions.create(**kwargs)
+        except Exception as exc:               # noqa: BLE001 — se clasifica y re-lanza abajo
+            kind = classify_llm_error(exc)
+            last_exc = exc
+
+            if kind is LLMErrorKind.CONTEXT_TOO_LONG:
+                logger.warning("call_llm context_too_long (task=%s model=%s): %s",
+                               task, resolved, exc)
+                raise                          # propaga original: lo maneja la compresión
+
+            if not is_retryable(kind):
+                logger.error("call_llm fallo no reintentable [%s] (task=%s model=%s): %s",
+                             kind.value, task, resolved, exc)
+                raise LLMError(kind, _clear_message(kind, resolved)) from exc
+
+            if attempt >= MAX_RETRIES:         # transitorio pero se agotaron los reintentos
+                logger.error("call_llm agotó reintentos [%s] tras %d intentos "
+                             "(task=%s model=%s): %s", kind.value, attempt + 1, task, resolved, exc)
+                raise LLMError(
+                    kind, f"El proveedor LLM falló ({kind.value}) tras {attempt + 1} intentos."
+                ) from exc
+
+            delay = retry_delay(kind, attempt)
+            logger.warning("call_llm reintento %d/%d [%s] en %.2fs (task=%s model=%s): %s",
+                           attempt + 1, MAX_RETRIES, kind.value, delay, task, resolved, exc)
+            time.sleep(delay)
+
+    # Inalcanzable (el loop siempre retorna o lanza), pero satisface el análisis estático.
+    raise LLMError(LLMErrorKind.UNKNOWN, "call_llm terminó sin resultado") from last_exc
+
+
+def _clear_message(kind: LLMErrorKind, model: str) -> str:
+    """Mensaje claro (en español, sin jerga técnica de proveedor) por tipo de error."""
+    if kind is LLMErrorKind.AUTH:
+        return (f"Credenciales inválidas o sin créditos para el modelo '{model}'. "
+                "Revisa ANTHROPIC_API_KEY / la cuenta del proveedor.")
+    if kind is LLMErrorKind.MODEL_UNAVAILABLE:
+        return (f"El modelo '{model}' no está disponible en el gateway. "
+                "Revisa litellm_config.yaml y que el proxy esté arriba.")
+    return f"Fallo del gateway LLM ({kind.value}) con el modelo '{model}'."
