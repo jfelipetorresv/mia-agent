@@ -24,6 +24,7 @@ from ... import embeddings
 from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import thread_id_for
+from ... import config
 from ...connectors import ObsidianSync, PineconeConnector, get_pinecone_connector
 from ...cron import build_scheduler
 from ...db import pool
@@ -36,7 +37,7 @@ from ...memory.profile_manager import ProfileManager
 from ...memory.trace_capture import TraceCapture
 from ...memory.wiki_manager import WikiManager
 from ...onboarding.soul_interview import SoulInterview, load_responses, soul_status
-from ._common import assert_owns_matter
+from ._common import assert_owns_matter, MAX_UPLOAD_BYTES
 from .hitl import _resume
 from .stream import stream_matter
 
@@ -144,6 +145,8 @@ async def upload_document(matter_id: str, request: Request, file: UploadFile = F
     tid = _tenant(request)
     await assert_owns_matter(tid, matter_id)
     data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="El archivo supera el límite de 50 MB.")
     try:
         text = extract_text(file.filename, data)
     except ValueError as e:
@@ -350,6 +353,10 @@ async def sync_obsidian(request: Request, body: ObsidianSyncBody):
         vault = row[0] if row else None
     if not vault:
         raise HTTPException(status_code=400, detail="Falta la ruta del vault.")
+    try:
+        vault = str(config.resolve_obsidian_vault(vault))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     start = time.perf_counter()
     stats = await ObsidianSync().sync(vault, tid)
     duration_ms = int((time.perf_counter() - start) * 1000)

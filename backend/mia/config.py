@@ -46,6 +46,40 @@ if not MIA_HOME.is_absolute():
     MIA_HOME = (PROJECT_ROOT / MIA_HOME).resolve()
 
 
+def validate_runtime_config() -> None:
+    """Falla al arrancar si faltan secretos críticos (evita JWT vacío en producción)."""
+    if not JWT_SECRET or len(JWT_SECRET) < 32:
+        raise RuntimeError(
+            "JWT_SECRET debe estar definido en .env y tener al menos 32 caracteres."
+        )
+
+
+def obsidian_vault_allowlist() -> list[Path]:
+    """Raíces permitidas para sync de Obsidian (evita lectura arbitraria del filesystem)."""
+    raw = os.getenv("OBSIDIAN_VAULT_ALLOWLIST", "") or os.getenv("OBSIDIAN_VAULT_PATH", "")
+    roots = [Path(p.strip()).resolve() for p in raw.split(";") if p.strip()]
+    return roots
+
+
+def resolve_obsidian_vault(vault_path: str) -> Path:
+    """Resuelve y valida una ruta de vault contra el allowlist."""
+    vault = Path(vault_path).expanduser().resolve()
+    if not vault.is_dir():
+        raise ValueError(f"La ruta del vault no existe o no es un directorio: {vault}")
+    allowlist = obsidian_vault_allowlist()
+    if not allowlist:
+        raise ValueError(
+            "OBSIDIAN_VAULT_PATH u OBSIDIAN_VAULT_ALLOWLIST debe estar configurado en .env"
+        )
+    for root in allowlist:
+        try:
+            vault.relative_to(root)
+            return vault
+        except ValueError:
+            continue
+    raise ValueError("La ruta del vault no está dentro de las carpetas permitidas.")
+
+
 def litellm_embed_model() -> str:
     """Nombre del modelo de embeddings con prefijo de proveedor para LiteLLM."""
     return EMBED_MODEL if "/" in EMBED_MODEL else f"voyage/{EMBED_MODEL}"

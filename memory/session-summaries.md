@@ -588,3 +588,21 @@ Construida casi toda la Fase 0; validado el modelo. Continuación detallada en
 `resolve_model`; cierra `test_curator`), 0.5 PII en capa común de `call_llm`, 0.6 test HALT de
 privilegio, frontend onboarding (cierra `test_onboarding_horizontal`). Luego Fase 1 (núcleo
 conversacional). 0.A ya NO está bloqueado (hay créditos). Proxy LiteLLM (4000) suele estar caído.
+
+## 2026-06-30 — Smoke test vivo (ruta Codex)
+TL;DR: el flujo completo funciona en vivo; 3 bugs de plataforma invisibles a los gates quedaron
+       reparados.
+Qué construimos/reparamos:
+- SelectorEventLoop para Windows (`api/run.py`) — el ProactorEventLoop rompía la conexión a la BD
+  con uvicorn≥0.36.
+- HITL fail-closed (`graph.py::confirm_node`) — decisión ausente/inválida ya no aprueba por defecto.
+- Validación de ciclo de vida de turno (`stream.py`/`hitl.py` + `_common`) — 409 si hay interrupt
+  pendiente o si se resume sin borrador; WikiManager awaited con log; SSE emite evento `error`
+  explícito en vez de colgar.
+Qué decidimos:
+- claude-sonnet es el backend de calidad confirmado para producción (HTTP 200 por el proxy, sin
+  bloqueo de créditos).
+- LiteLLM necesita su propio venv antes de cualquier reinicio en producción (Riesgo #32).
+Qué sigue: sembrar playbooks reales para observar activación (cierra #20/#31); cablear el
+  `prompt_builder` (10 capas) al grafo; corregir la ruta en `CLAUDE.md`; investigar y registrar el
+  trabajo no documentado (`gepa.py`, `dreams.py`, `second_brain_ui`) + auth real (Riesgo #23).

@@ -42,20 +42,22 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
     setBusy(true);
     try {
       await apiSend("POST", `/api/matters/${matterId}/draft/approve`, editing ? { edited_text: text } : {});
+      router.push(`/asuntos/${matterId}?confirmed=true`);
     } catch {
-      /* ignore */
+      setBusy(false);
+      alert("No se pudo confirmar el borrador. Intenta de nuevo.");
     }
-    router.push(`/asuntos/${matterId}?confirmed=true`);
   }
 
   async function reject() {
     setBusy(true);
     try {
       await apiSend("POST", `/api/matters/${matterId}/draft/reject`, { reason: "" });
+      router.push(`/asuntos/${matterId}?confirmed=true`);
     } catch {
-      /* ignore */
+      setBusy(false);
+      alert("No se pudo rechazar el borrador. Intenta de nuevo.");
     }
-    router.push(`/asuntos/${matterId}?confirmed=true`);
   }
 
   if (draft === null) {

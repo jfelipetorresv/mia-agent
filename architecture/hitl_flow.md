@@ -1,6 +1,6 @@
 # architecture/hitl_flow.md
 # Flujo HITL — LangGraph StateGraph + checkpointing + SSE (Módulo 1d)
-# Última actualización: 2026-06-13
+# Última actualización: 2026-06-30
 
 > Estado: 1d entregado. Gate `execution/test_hitl_flow.py` **19/19** (integración
 > contra la DB real + checkpointer Postgres, LLM/embeddings mockeados). Decisiones
@@ -113,3 +113,78 @@ Gate mínimo (subconjunto de los 19): interrupt detiene el grafo antes de finali
   (correcto, el estado vive en Postgres). Si la concurrencia lo exige, pasar a un
   `AsyncConnectionPool` dedicado (autocommit + dict_row).
 - **1e (Agent Hub)**: conectores a CLIs externos como nodos/herramientas del grafo.
+
+---
+
+## 6 · Lecciones del smoke test vivo (2026-06-30)
+
+El primer smoke **end-to-end en vivo** (no mockeado) destapó 2 bugs del flujo HITL que los
+gates offline no veían, porque el gate ejercía el camino feliz con decisiones siempre válidas y
+un único turno por asunto. Ambos quedaron reparados; documentados aquí como invariantes a NO
+romper.
+
+### 6.1 · La decisión HITL es **fail-closed**, no fail-open
+
+**Bug:** `confirm_node` (lo que corre tras `Command(resume=...)`) derivaba el estado así:
+
+```python
+# ANTES (fail-OPEN — peligroso):
+dec = (decision or {}).get("decision", "approved")
+status = dec if dec in ("approved", "rejected", "editing") else "approved"
+```
+
+Una decisión **ausente o inválida** (resume sin payload, valor corrupto, bug aguas arriba) caía
+por defecto en `"approved"` → un borrador jurídico podía **aprobarse solo**, sin que el abogado
+diera el visto bueno. En un agente legal eso es inaceptable: la aprobación es el acto humano que
+sostiene toda la responsabilidad.
+
+```python
+# AHORA (fail-CLOSED):
+dec = (decision or {}).get("decision")
+if dec not in ("approved", "rejected", "editing"):
+    dec = "rejected"   # sin decisión válida no se aprueba NADA
+status = dec
+```
+
+**Invariante:** en cualquier punto donde se resuelva la decisión del abogado, la ausencia de una
+decisión explícita y válida debe degradar a **`rejected`** (o pedir de nuevo), nunca a `approved`.
+La aprobación SIEMPRE es un acto positivo explícito. Verificado en vivo: las trazas
+`mia.trace.v2` registran `hitl_outcome` `approved` **y** `rejected`.
+
+### 6.2 · Guardas de **ciclo de vida del turno** (el checkpoint tiene estado entre requests)
+
+Como `interrupt()` parte el turno en dos HTTP (§3) y el estado persiste en el checkpoint entre
+ambos, el mismo `thread_id` puede estar en 3 situaciones: **(a)** sin turno / turno terminado en
+`END`, **(b)** pausado en `hitl_checkpoint` (borrador esperando revisión), **(c)** en mitad de
+intake→draft. Antes NO se validaba en qué situación estaba, lo que permitía dos carreras:
+
+- **Iniciar un turno nuevo (`stream`) con un borrador pendiente** → se pisaba el `interrupt` y se
+  perdía el borrador sin revisar.
+- **Reanudar (`approve/reject/edit`) sin un borrador pendiente** → `Command(resume=...)` corría
+  sobre un grafo que no estaba pausado, con efectos indefinidos.
+
+**Fix — dos guardas en `api/routes/_common.py`, llamadas ANTES de abrir el SSE** (el 409 debe ser
+HTTP, no un evento dentro del stream ya abierto):
+
+- `prepare_new_turn(...)` — antes de un turno nuevo: si `state.next` (hay interrupt pendiente) →
+  **409** "Tienes un borrador pendiente…". Si el turno anterior terminó en `END` (`state.values`
+  sin `next`) → **borra el thread** del checkpointer para que LangGraph rearranque
+  intake→analysis→draft limpio con el mismo `thread_id`.
+- `require_awaiting_review(...)` — antes de un resume: si el grafo **no** está pausado en
+  `hitl_checkpoint` (`not state.next`) → **409** "No hay borrador pendiente de revisión".
+
+**Robustez del stream (mismo fix):** dos higienes que evitan fallas silenciosas:
+- `WikiManager().update_from_approved_matter(...)` pasó de **fire-and-forget**
+  (`asyncio.create_task(...)`, que tragaba excepciones y la task era GC-able) a **awaited** dentro
+  de un `try/except` con `logger.exception`.
+- El generador SSE de `stream`/`hitl` envuelve el cuerpo en `try/except` y emite un evento
+  **`error`** ("Mia no pudo completar el turno…") en vez de **colgar** la conexión ante una
+  excepción no atrapada.
+
+**Invariante:** todo endpoint que arranque o reanude un grafo DEBE validar el estado del
+checkpoint (`graph.aget_state(cfg)`) **antes** de abrir el SSE, y mapear los estados imposibles a
+**409**, no a comportamiento indefinido. Complementa el Riesgo #7 (aislamiento por `thread_id`).
+
+> La causa-raíz del 3.er bug del smoke (la conexión a la BD se rompía al arrancar uvicorn en
+> Windows) NO es del flujo HITL sino del event loop de asyncio en Windows — documentada aparte en
+> `architecture/windows_notes.md`.

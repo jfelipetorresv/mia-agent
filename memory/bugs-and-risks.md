@@ -353,6 +353,15 @@ hoy estaría vacía (sus stats serían 0).
 el alta de playbooks por despacho (onboarding o import) a `PlaybookManager(pool=…).register_playbook`,
 y decidir si el prompt_builder pasa a leer el índice desde DB (`get_index`) en vez del in-memory.
 
+**Cierre PARCIAL (2026-06-30, smoke vivo):** se CONFIRMÓ que el wiring de consumo funciona end-to-end
+— `graph._prepare_playbooks` carga el índice, activa por solape (`_select_playbook_ids`, tope 3),
+`mark_used`, y `draft_node`/`finalize` emiten `activated_playbooks` a la traza (`mia.trace.v2`).
+Lo que falta es SOLO el **seeding de datos**: en el smoke las trazas salieron con
+`activated_playbooks: None` porque el tenant de prueba no tiene playbooks en DB. Cierra del todo
+cuando un onboarding/import siembre playbooks reales y se observe una traza con lista no vacía.
+Mismo cierre parcial aplica al **Riesgo #31** (las activaciones ya se registran en la traza; faltaba
+el cableado al grafo, ahora hecho — solo falta el dato).
+
 ## 🟢 Riesgo #22 — El scheduler nunca se arranca: los jobs cron NO se disparan  [CERRADO 2026-06-14, Sesión 14]
 `cron/scheduler.py` registra 3 jobs (`sync_obsidian_all_tenants` 6h, `curator_weekly` 168h,
 `feedback_daily` 24h) vía `build_scheduler()`, pero NADIE llamaba a `Scheduler.start()`: el
@@ -458,3 +467,44 @@ Por tanto:
   real del fundador.
 - El vault de jurisprudencia real se conecta solo en la instancia
   personal de producción, después de que Mia esté probada.
+
+---
+
+## 🟡 PENDIENTE DE REVISIÓN — Módulos sin registrar en progress.md  [detectado 2026-06-30]
+Hay código en el árbol que **no figura en `progress.md`** (cuya última entrada de diario es
+2026-06-21 "Replan Ruta B + Fase 0"): `backend/mia/memory/gepa.py`, `backend/mia/memory/dreams.py`,
+y la UI/tests de `second_brain_ui` (p. ej. `execution/test_gepa.py`, `execution/test_dreams.py`,
+`execution/test_second_brain_ui.py`). Esto indica **trabajo posterior a la última entrada del
+diario que no quedó documentado** en el DIARIO DE OBRA.
+
+**Riesgo:** la memoria de construcción (fuente de verdad para Claude Code entre sesiones) está
+desincronizada del código real; al retomar se pueden tomar decisiones sobre un estado mal
+entendido (qué existe, qué pasa sus tests, qué decisiones lo respaldan).
+**Acción:** revisar qué son GEPA / dreams / second_brain_ui, correr sus gates, y escribir las
+entradas faltantes en `progress.md` + `session-summaries.md` (y `decisions.md` si hubo decisiones
+de diseño). Detectado durante el smoke test vivo del 2026-06-30.
+
+---
+
+## 🔴 Riesgo #32 — LiteLLM comparte el `.venv` de la app y degrada versiones al reinstalar  [detectado 2026-06-30, smoke vivo] 🔐
+LiteLLM se ejecuta desde el MISMO `.venv` que la API de Mia (`backend/`). Reinstalar
+`litellm[proxy]` (necesario para reparar el proxy / Prisma en esta sesión) **bajó/movió versiones
+de paquetes compartidos** con FastAPI/uvicorn de la app: `uvicorn`, `sse-starlette`,
+`fastapi`/`starlette` y `python-multipart`. Como la API de Mia depende EXACTAMENTE de esas
+librerías (SSE de `stream.py`/`hitl.py`, uploads `multipart`, el ASGI server), un pin que LiteLLM
+arrastre puede romper el arranque de uvicorn o cambiar el comportamiento de SSE/streaming en
+producción de forma silenciosa.
+
+**Riesgo:** un reinstall de LiteLLM antes de un reinicio de la API en producción puede dejar la API
+con dependencias incompatibles → caída del servidor o regresión de SSE/uploads que NO se ve hasta
+el primer turno real. Es el mismo patrón que el Riesgo #4 (LiteLLM como librería vs. proxy): dos
+consumidores acoplados por el entorno.
+
+**Mitigación hoy:** el smoke vivo corre LiteLLM con `scripts/run_litellm_clean.ps1` (CWD aislado +
+DB env scrubbed), pero eso NO aísla las versiones de paquetes: el `.venv` sigue siendo uno solo.
+
+**Acción (antes de cualquier reinicio de la API en producción):** **separar LiteLLM en su PROPIO
+venv** (p. ej. `.venv-litellm/`) y arrancar el proxy desde ahí; el `.venv` de la app queda con sus
+pins intactos. Tras separarlos, re-pinear FastAPI/uvicorn/sse-starlette/starlette/python-multipart
+en `backend/pyproject.toml` a las versiones probadas y verificar el arranque de uvicorn + un turno
+SSE completo. Mientras compartan venv, NO reinstalar `litellm[proxy]` con la API productiva viva.

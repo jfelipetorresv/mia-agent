@@ -91,8 +91,13 @@ function Wiki() {
   async function open(c: Concept) {
     setSelected(c);
     setCorrection("");
-    const res = await apiGet<{ markdown: string }>(`/api/wiki/concepts/${encodeURIComponent(c.name)}`);
-    setMarkdown(res.markdown);
+    setMarkdown("");
+    try {
+      const res = await apiGet<{ markdown: string }>(`/api/wiki/concepts/${encodeURIComponent(c.name)}`);
+      setMarkdown(res.markdown);
+    } catch {
+      setSelected(null);
+    }
   }
 
   async function sendCorrection() {

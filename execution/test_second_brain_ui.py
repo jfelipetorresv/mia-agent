@@ -123,11 +123,20 @@ def main() -> int:
     original_home = config.MIA_HOME
     original_obsidian = ux.ObsidianSync
     original_pinecone = ux.PineconeConnector
+    original_resolve_vault = config.resolve_obsidian_vault
+
+    def _resolve_vault_for_test(vault_path: str) -> Path:
+        p = Path(vault_path).expanduser().resolve()
+        if not p.is_dir():
+            raise ValueError(f"La ruta del vault no existe o no es un directorio: {p}")
+        return p
+
     tenant = make_tenant()
     seed_db(tenant)
     try:
         with tempfile.TemporaryDirectory() as tmp:
             config.MIA_HOME = Path(tmp)
+            config.resolve_obsidian_vault = _resolve_vault_for_test
             asyncio.run(seed_wiki(tmp, tenant))
             ux.ObsidianSync = FakeObsidianSync
             ux.PineconeConnector = FakePineconeConnector
@@ -156,6 +165,7 @@ def main() -> int:
     finally:
         ux.ObsidianSync = original_obsidian
         ux.PineconeConnector = original_pinecone
+        config.resolve_obsidian_vault = original_resolve_vault
         config.MIA_HOME = original_home
         cleanup(tenant)
 

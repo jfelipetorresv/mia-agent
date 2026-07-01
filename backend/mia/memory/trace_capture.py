@@ -69,6 +69,7 @@ class Trace:
     draft_original: Optional[str] = None      # borrador antes de la edición del abogado
     draft_final: Optional[str] = None         # texto final (== output)
     retrieved_doc_ids: Optional[list] = None  # ids de docs citados; [] = NO_RESULT
+    activated_playbooks: Optional[list] = None  # ids activados en draft (GEPA/Dreams)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -108,14 +109,16 @@ class TraceCapture:
         draft_original: str | None = None,
         draft_final: str | None = None,
         retrieved_doc_ids: list | None = None,
+        activated_playbooks: list | None = None,
     ) -> Trace:
         """Genera una traza y la añade (append) al JSONL del tenant. Devuelve la traza.
 
         Si se pasa alguno de los campos de señal HITL (3e), el `schema` sube a
         `mia.trace.v2`; sin ellos, la traza es `mia.trace.v1` (compat hacia atrás)."""
         ts = timestamp or datetime.now(timezone.utc).isoformat()
-        is_v2 = any(v is not None for v in
-                    (hitl_outcome, draft_original, draft_final, retrieved_doc_ids))
+        is_v2 = any(v is not None for v in (
+            hitl_outcome, draft_original, draft_final, retrieved_doc_ids, activated_playbooks,
+        ))
         trace = Trace(
             tenant_id=tenant_id,
             matter_id=matter_id,
@@ -130,6 +133,7 @@ class TraceCapture:
             draft_original=draft_original,
             draft_final=draft_final,
             retrieved_doc_ids=retrieved_doc_ids,
+            activated_playbooks=activated_playbooks,
         )
         path = self._path_for(tenant_id)
         with path.open("a", encoding="utf-8") as f:

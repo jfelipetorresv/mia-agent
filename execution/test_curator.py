@@ -279,8 +279,9 @@ def main() -> int:
     init_playbooks.apply()   # idempotente: asegura la tabla (rol postgres)
 
     # checks que no tocan DB
-    check('"curator" en _TASK_MODELS apunta a "claude-sonnet"',
-          _TASK_MODELS.get("curator") == "claude-sonnet")
+    # OVERRIDE #23: curator apunta a mia-local en dev (antes claude-sonnet).
+    check('"curator" en _TASK_MODELS (mia-local o claude-sonnet)',
+          _TASK_MODELS.get("curator") in ("mia-local", "claude-sonnet"))
     check('el job "curator_weekly" está registrado en el scheduler',
           any(j["name"] == "curator_weekly" for j in build_scheduler().list_jobs()))
 

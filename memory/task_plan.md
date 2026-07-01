@@ -100,3 +100,18 @@ Módulo 5 cerrado (2026-06-14): SOUL.md + onboarding (decisión #21); ver el blo
 arriba. **→ Fase 4 COMPLETA · PROYECTO COMPLETO.**
 **Siguiente:** ya no hay módulos pendientes. Trabajo futuro = endurecimiento para producción/primer
 cliente (riesgos abiertos) + smoke test vivo en navegador (`architecture/e2e_runbook.md`).
+
+---
+
+## Pendientes — ruta Codex (`D:\Codex\Mia-Super Agent\mia`)
+- ✅ **Smoke test vivo COMPLETO (2026-06-30)** — 3 servicios operativos (PG/pgvector 5432, Ollama
+  11434, LiteLLM proxy 4000). `claude-sonnet` confirmado por el proxy (HTTP 200, sin rebote de
+  créditos). HITL verificado con ambos desenlaces (`approved`/`rejected`) en trazas reales.
+  `activated_playbooks` cableado end-to-end (sin activación observada: tenant sin playbooks
+  sembrados, Riesgo #20). 3 bugs de plataforma reparados (SelectorEventLoop Windows, HITL
+  fail-closed, ciclo de vida de turno + SSE error). Detalle en `progress.md` 2026-06-30.
+- ⬜ Sembrar playbooks reales para observar activación end-to-end (cierra del todo #20/#31).
+- ⬜ Cablear `prompt_builder` (10 capas) al grafo.
+- ⬜ Corregir ruta del proyecto en `CLAUDE.md` (`D:\Inteligencia Artificial\…` → `D:\Codex\…`).
+- ⬜ Investigar y documentar trabajo no registrado (`gepa.py`, `dreams.py`, `second_brain_ui`) + auth real (#23).
+- ⬜ Separar LiteLLM en su propio venv antes de reiniciar la API en producción (Riesgo #32).

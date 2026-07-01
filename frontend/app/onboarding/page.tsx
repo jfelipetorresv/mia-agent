@@ -41,15 +41,20 @@ const BLOCK_LABEL: Record<string, string> = {
 // Solo P1 y P2 son obligatorias; el resto es opcional.
 const REQUIRED_IDS = new Set(["p1", "p2"]);
 
-// Sugerencias clickeables por pregunta (el abogado hace click o escribe el suyo).
-const VOICE_SUGGESTIONS = ["Técnico", "Argumentativo", "Conciso", "Formal", "Directo", "Analítico", "Detallado", "Estratégico"];
-const PRACTICE_SUGGESTIONS = ["Civil", "Penal", "Laboral", "Comercial", "Constitucional", "Administrativo", "Fiscal", "Familia", "Internacional"];
-const HARD_NO_SUGGESTIONS = ["Nunca presentar sin revisión", "Nunca recomendar allanarse sin análisis", "Nunca citar sin verificar"];
-const TOOL_SUGGESTIONS = ["Obsidian", "Notion", "Linear", "Slack", "WhatsApp", "Google Drive", "Dropbox"];
+// Tipos de input por pregunta (onboarding horizontal: sin conocimiento jurídico hardcodeado).
+const TEXT_IDS = new Set(["p4", "p5", "p8", "p9", "p11", "p15"]);
+const TAG_IDS = new Set(["p3", "p6", "p7", "p14", "p18"]);
+const SELECT_OPTIONS: Record<string, string[]> = {
+  p10: ["Narrativo continuo", "Estructurado con secciones", "Depende del tipo de escrito"],
+};
+const CHECKBOX_OPTIONS: Record<string, string[]> = {
+  p17: ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"],
+};
 
-const CLIENT_OPTIONS = ["Empresas", "Personas naturales", "Sector público", "Aseguradoras", "Instituciones financieras", "Otro"];
-const STRUCTURE_OPTIONS = ["Párrafos narrativos continuos", "Estructurado con secciones y títulos", "Depende del tipo de escrito"];
-const WEEKDAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"];
+// Sugerencias genéricas (no jurisdicción, ramas del derecho ni tribunales).
+const VOICE_SUGGESTIONS = ["Técnico", "Argumentativo", "Conciso", "Formal", "Directo", "Analítico", "Detallado", "Estratégico"];
+const LIMIT_SUGGESTIONS = ["Revisión humana obligatoria", "Verificar antes de enviar", "Consultar al abogado antes de actuar"];
+const TOOL_SUGGESTIONS = ["Gestor documental", "Calendario", "Mensajería", "Notas", "Correo", "Almacenamiento en la nube"];
 
 // ── Conversores tolerantes (incluyen fallback desde strings de onboardings viejos) ──
 function asText(value: AnswerValue | undefined): string {
@@ -359,7 +364,7 @@ function QuestionInput({
               value={l.country}
               onChange={(e) => onChange({ ...l, country: e.target.value })}
               className={inputCls}
-              placeholder="Ej: Colombia"
+              placeholder="Ej: tu país"
               autoFocus
             />
           </Field>
@@ -368,48 +373,16 @@ function QuestionInput({
               value={l.city}
               onChange={(e) => onChange({ ...l, city: e.target.value })}
               className={inputCls}
-              placeholder="Ej: Bogotá"
+              placeholder="Ej: tu ciudad"
             />
           </Field>
         </div>
       );
     }
 
-    // P3 — 3 adjetivos de estilo (máx 3, con sugerencias).
+    // P3 — adjetivos de estilo (tags libres con sugerencias genéricas).
     case "p3":
       return <TagInput value={asList(value)} onChange={onChange} suggestions={VOICE_SUGGESTIONS} max={3} placeholder="Escribe un adjetivo y presiona Enter" />;
-
-    // P4 — canales (opcional, texto simple).
-    case "p4":
-      return <input value={asText(value)} onChange={(e) => onChange(e.target.value)} className={inputCls} placeholder="Ej: lexia.co — LinkedIn Lexia Abogados" autoFocus />;
-
-    // P5 — jurisdicción (texto libre).
-    case "p5":
-      return <input value={asText(value)} onChange={(e) => onChange(e.target.value)} className={inputCls} placeholder="¿En qué país y sistema jurídico trabajas?" autoFocus />;
-
-    // P6 — áreas de práctica (tags libres con sugerencias, sin límite).
-    case "p6":
-      return <TagInput value={asList(value)} onChange={onChange} suggestions={PRACTICE_SUGGESTIONS} placeholder="Escribe un área y presiona Enter" />;
-
-    // P7 — tipo de cliente (checkboxes múltiples).
-    case "p7":
-      return <CheckboxGroup options={CLIENT_OPTIONS} value={asList(value)} onChange={onChange} />;
-
-    // P10 — estructura de escritos (radio).
-    case "p10":
-      return <RadioGroup options={STRUCTURE_OPTIONS} value={asText(value)} onChange={onChange} />;
-
-    // P11 — palabras prohibidas (tags libres).
-    case "p11":
-      return <TagInput value={asList(value)} onChange={onChange} placeholder="Escribe una palabra o frase y presiona Enter" />;
-
-    // P14 — hard nos (tags con sugerencias).
-    case "p14":
-      return <TagInput value={asList(value)} onChange={onChange} suggestions={HARD_NO_SUGGESTIONS} placeholder="Escribe un límite y presiona Enter" />;
-
-    // P15 — objetivo del año (una línea).
-    case "p15":
-      return <input value={asText(value)} onChange={(e) => onChange(e.target.value)} className={inputCls} placeholder="Una oración. Si se logra, el año fue exitoso." autoFocus />;
 
     // P16 — 3 pilares (tres campos separados).
     case "p16": {
@@ -434,14 +407,14 @@ function QuestionInput({
       );
     }
 
-    // P17 — ritmo: días sin reuniones (L-V) + horario de trabajo profundo.
+    // P17 — ritmo: días sin reuniones + horario de trabajo profundo.
     case "p17": {
       const rhythm = asRhythm(value);
       return (
         <div className="space-y-5">
           <CheckboxGroup
             label="Días sin reuniones"
-            options={WEEKDAYS}
+            options={CHECKBOX_OPTIONS.p17}
             value={rhythm.no_meetings}
             onChange={(days) => onChange({ ...rhythm, no_meetings: days as string[] })}
           />
@@ -457,7 +430,7 @@ function QuestionInput({
       );
     }
 
-    // P18 — herramientas (tags con sugerencias).
+    // P18 — herramientas (tags libres).
     case "p18":
       return <TagInput value={asList(value)} onChange={onChange} suggestions={TOOL_SUGGESTIONS} placeholder="Escribe una herramienta y presiona Enter" />;
 
@@ -493,7 +466,7 @@ function QuestionInput({
                 value={triad.trigger}
                 onChange={(e) => onChange({ ...triad, trigger: e.target.value })}
                 className={inputCls}
-                placeholder="Ej: imputaciones fiscales >$1.000M COP y arbitrajes"
+                placeholder="Ej: casos de alta complejidad o montos elevados"
                 autoFocus
               />
             </Field>
@@ -502,8 +475,43 @@ function QuestionInput({
       );
     }
 
-    default:
-      return <input value={asText(value)} onChange={(e) => onChange(e.target.value)} className={inputCls} placeholder="Tu respuesta..." autoFocus />;
+    default: {
+      if (TEXT_IDS.has(question.id)) {
+        return (
+          <input
+            value={asText(value)}
+            onChange={(e) => onChange(e.target.value)}
+            className={inputCls}
+            placeholder="Tu respuesta..."
+            autoFocus
+          />
+        );
+      }
+      if (TAG_IDS.has(question.id)) {
+        const hints =
+          question.id === "p14" ? LIMIT_SUGGESTIONS : question.id === "p18" ? TOOL_SUGGESTIONS : [];
+        return (
+          <TagInput
+            value={asList(value)}
+            onChange={onChange}
+            suggestions={hints}
+            placeholder="Escribe y presiona Enter"
+          />
+        );
+      }
+      if (SELECT_OPTIONS[question.id]) {
+        return <RadioGroup options={SELECT_OPTIONS[question.id]} value={asText(value)} onChange={onChange} />;
+      }
+      return (
+        <input
+          value={asText(value)}
+          onChange={(e) => onChange(e.target.value)}
+          className={inputCls}
+          placeholder="Tu respuesta..."
+          autoFocus
+        />
+      );
+    }
   }
 }
 

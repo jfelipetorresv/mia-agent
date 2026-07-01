@@ -56,19 +56,29 @@ export default function DashboardPage() {
 
   async function syncObsidian() {
     setStatus("Sincronizando...");
-    const res = await apiSend<{ chunks_indexed: number }>("POST", "/api/connectors/obsidian/sync", { vault_path: vaultPath || null });
-    setStatus(`${res.chunks_indexed} documentos sincronizados`);
-    await load();
+    try {
+      const res = await apiSend<{ chunks_indexed: number }>("POST", "/api/connectors/obsidian/sync", {
+        vault_path: vaultPath || null,
+      });
+      setStatus(`${res.chunks_indexed} documentos sincronizados`);
+      await load();
+    } catch {
+      setStatus("No se pudo sincronizar el vault.");
+    }
   }
 
   async function connectPinecone() {
     setStatus("Conectando...");
-    const res = await apiSend<{ status: string; vectors_count: number }>("POST", "/api/connectors/pinecone/configure", {
-      api_key: pineconeKey,
-      index_name: pineconeIndex,
-    });
-    setStatus(res.status === "active" ? `${res.vectors_count} vectores disponibles` : "No se pudo activar");
-    await load();
+    try {
+      const res = await apiSend<{ status: string; vectors_count: number }>("POST", "/api/connectors/pinecone/configure", {
+        api_key: pineconeKey,
+        index_name: pineconeIndex,
+      });
+      setStatus(res.status === "active" ? `${res.vectors_count} vectores disponibles` : "No se pudo activar");
+      await load();
+    } catch {
+      setStatus("No se pudo conectar con Pinecone.");
+    }
   }
 
   if (!s) return <div className="p-10 text-gray-400">Cargando...</div>;

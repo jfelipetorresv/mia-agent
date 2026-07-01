@@ -29,8 +29,10 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const [uploading, setUploading] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [uploadSummary, setUploadSummary] = useState("");
+  const [streaming, setStreaming] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   async function loadDocs() {
     try {
@@ -43,6 +45,9 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   useEffect(() => {
     apiGet<{ name?: string }>(`/api/matters/${matterId}`).then(setMatter).catch(() => {});
     loadDocs();
+    return () => {
+      streamAbortRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matterId]);
 
@@ -81,35 +86,47 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
 
   async function send() {
     const text = input.trim();
-    if (!text) return;
+    if (!text || streaming) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", text }, { role: "mia", text: "" }]);
     setStatus("Mia esta analizando...");
     setHasDraft(false);
+    setStreaming(true);
+    streamAbortRef.current?.abort();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
     try {
       const { stream_url } = await apiSend<{ stream_url: string }>(
         "POST",
         `/api/matters/${matterId}/chat`,
         { message: text },
       );
-      await streamTurn(stream_url, (event, data) => {
-        if (event === "thinking") setStatus(data.message || "Mia esta analizando...");
-        else if (event === "draft_ready") setStatus("Mia esta redactando...");
-        else if (event === "awaiting_review") {
-          setStatus("Tienes un borrador listo");
-          setHasDraft(true);
-          setMessages((m) => {
-            const copy = [...m];
-            copy[copy.length - 1] = {
-              role: "mia",
-              text: data.draft || "He preparado un borrador para tu revision.",
-            };
-            return copy;
-          });
-        }
-      });
+      await streamTurn(
+        stream_url,
+        (event, data) => {
+          const payload = data as { message?: string; draft?: string };
+          if (event === "thinking") setStatus(payload.message || "Mia esta analizando...");
+          else if (event === "draft_ready") setStatus("Mia esta redactando...");
+          else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
+          else if (event === "awaiting_review") {
+            setStatus("Tienes un borrador listo");
+            setHasDraft(true);
+            setMessages((m) => {
+              const copy = [...m];
+              copy[copy.length - 1] = {
+                role: "mia",
+                text: payload.draft || "He preparado un borrador para tu revision.",
+              };
+              return copy;
+            });
+          }
+        },
+        controller.signal,
+      );
     } catch {
       setStatus("No se pudo completar la consulta.");
+    } finally {
+      setStreaming(false);
     }
   }
 
@@ -242,7 +259,11 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
               placeholder="Escribe tu consulta..."
               className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-2 text-sm outline-none focus:border-gray-400"
             />
-            <button onClick={send} className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">
+            <button
+              onClick={send}
+              disabled={streaming}
+              className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+            >
               Enviar
             </button>
           </div>

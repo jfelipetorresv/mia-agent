@@ -10,15 +10,18 @@ El mensaje del abogado entra como query param `message` (GET no lleva body).
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
-from ...agents.state import initial_state, thread_id_for
-from ._common import assert_owns_matter, sse
+from ...agents.state import initial_state
+from ._common import assert_owns_matter, load_profile_snapshot, prepare_new_turn, sse
 
 router = APIRouter(tags=["matters"])
+logger = logging.getLogger("mia.api.stream")
 
 
 def _interrupt_value(chunk: dict) -> dict:
@@ -39,26 +42,38 @@ async def stream_matter(
         raise HTTPException(status_code=401, detail="Sin contexto de tenant")
     await assert_owns_matter(tenant_id, matter_id)
 
+    profile_snapshot = await load_profile_snapshot(tenant_id)
+
+    # Validación de ciclo de vida ANTES de abrir el SSE (409 debe ser HTTP, no evento).
+    async with open_checkpointer() as cp:
+        graph = build_matter_graph(cp)
+        cfg = await prepare_new_turn(cp, graph, tenant_id, matter_id)
+
+    turn_input = initial_state(
+        tenant_id, matter_id, message, profile_snapshot=profile_snapshot
+    )
+
     async def gen():
         yield sse("thinking", "Mia está revisando el expediente…")
-        async with open_checkpointer() as cp:
-            graph = build_matter_graph(cp)
-            cfg = {"configurable": {"thread_id": thread_id_for(tenant_id, matter_id)}}
-            async for chunk in graph.astream(
-                initial_state(tenant_id, matter_id, message), cfg, stream_mode="updates"
-            ):
-                if "__interrupt__" in chunk:
-                    v = _interrupt_value(chunk)
-                    yield sse(
-                        "awaiting_review",
-                        v.get("message", "Borrador listo para tu aprobación."),
-                        draft=v.get("draft"),
-                    )
-                    continue
-                for node in chunk:
-                    if node == "analysis":
-                        yield sse("thinking", "Mia está analizando el problema jurídico…")
-                    elif node == "draft":
-                        yield sse("draft_ready", "Borrador listo.")
+        try:
+            async with open_checkpointer() as cp:
+                graph = build_matter_graph(cp)
+                async for chunk in graph.astream(turn_input, cfg, stream_mode="updates"):
+                    if "__interrupt__" in chunk:
+                        v = _interrupt_value(chunk)
+                        yield sse(
+                            "awaiting_review",
+                            v.get("message", "Borrador listo para tu aprobación."),
+                            draft=v.get("draft"),
+                        )
+                        continue
+                    for node in chunk:
+                        if node == "analysis":
+                            yield sse("thinking", "Mia está analizando el problema jurídico…")
+                        elif node == "draft":
+                            yield sse("draft_ready", "Borrador listo.")
+        except Exception:
+            logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)
+            yield sse("error", "Mia no pudo completar el turno. Intenta de nuevo.")
 
     return EventSourceResponse(gen())
