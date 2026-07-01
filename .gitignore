@@ -6,3 +6,7 @@ mia-data/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Artefactos de build/instalación editable (pip install -e)
+*.egg-info/
+mia_backend.egg-info/
