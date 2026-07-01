@@ -37,6 +37,19 @@ _RETRYABLE = frozenset({
     LLMErrorKind.RATE_LIMIT, LLMErrorKind.TIMEOUT, LLMErrorKind.NETWORK, LLMErrorKind.SERVER_ERROR,
 })
 
+# Kinds ante los que conviene SALTAR al siguiente proveedor de la cadena de fallback (H.5):
+# - MODEL_UNAVAILABLE: el modelo no existe en este alias → probar el siguiente ya mismo.
+# - RATE_LIMIT / TIMEOUT / NETWORK / SERVER_ERROR: transitorios; si los reintentos del alias
+#   actual se agotaron, otro proveedor puede estar sano → vale la pena saltar.
+# NO se salta en AUTH (credenciales/billing: el siguiente proveedor probablemente falle igual
+# o peor y gastaría dinero), CONTEXT_TOO_LONG (lo resuelve el compresor, no otro modelo) ni
+# UNKNOWN (no clasificable → fail-fast, no enmascarar el fallo saltando a ciegas).
+_FALLBACKABLE = frozenset({
+    LLMErrorKind.MODEL_UNAVAILABLE,
+    LLMErrorKind.RATE_LIMIT, LLMErrorKind.TIMEOUT,
+    LLMErrorKind.NETWORK, LLMErrorKind.SERVER_ERROR,
+})
+
 # Backoff exponencial: base * 2**attempt (+ jitter acotado). El jitter se mantiene por
 # debajo de `base` para que el retraso crezca de forma estrictamente monótona entre
 # intentos (min del intento n+1 > max del intento n), lo que hace el backoff testeable.
@@ -174,8 +187,17 @@ def classify_llm_error(exc: BaseException) -> LLMErrorKind:
 
 
 def is_retryable(kind: LLMErrorKind) -> bool:
-    """True si vale la pena reintentar (RATE_LIMIT, TIMEOUT, NETWORK)."""
+    """True si vale la pena reintentar (RATE_LIMIT, TIMEOUT, NETWORK, SERVER_ERROR)."""
     return kind in _RETRYABLE
+
+
+def should_fallback(kind: LLMErrorKind) -> bool:
+    """True si, agotado el proveedor actual, conviene saltar al siguiente de la cadena (H.5).
+
+    MODEL_UNAVAILABLE salta de inmediato; RATE_LIMIT/TIMEOUT/NETWORK/SERVER_ERROR saltan una vez
+    agotados los reintentos del alias. AUTH, CONTEXT_TOO_LONG y UNKNOWN NO saltan (ver _FALLBACKABLE).
+    """
+    return kind in _FALLBACKABLE
 
 
 def retry_delay(kind: LLMErrorKind, attempt: int,

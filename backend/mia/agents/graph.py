@@ -30,6 +30,9 @@ from langgraph.types import interrupt
 
 from .. import config, embeddings
 from ..agent import llm
+from ..agent.context_compressor import ContextCompressor
+from ..agent.error_classifier import LLMErrorKind, classify_llm_error
+from ..agent.turn_llm_state import TurnLLMState
 from ..gateway import hub_config
 from ..gateway.agent_hub import AgentHub
 from ..db import pool as db_pool
@@ -194,6 +197,8 @@ class MatterGraphBuilder:
                  agent_hub: Optional[AgentHub] = None) -> None:
         self.trace_capture = trace_capture or TraceCapture()
         self.hub = agent_hub or AgentHub()
+        # H.5: compresor para el rescate CONTEXT_TOO_LONG (una vez por turno, ver _llm).
+        self._compressor = ContextCompressor(trace_capture=self.trace_capture)
 
     async def _maybe_delegate(self, state: MatterState) -> Optional[str]:
         """Delegación OPCIONAL a un CLI externo (1e · PASO 4). OFF salvo que:
@@ -210,9 +215,34 @@ class MatterGraphBuilder:
         prompt = req.get("prompt") or _last_user_message(state)
         return await asyncio.to_thread(self.hub.invoke, agent_key, prompt, state["tenant_id"])
 
-    async def _llm(self, messages: list[dict], *, task: str = "main") -> tuple[str, Any]:
-        """Llama al LLM por el gateway (síncrono) sin bloquear el event loop."""
-        resp = await asyncio.to_thread(llm.call_llm, messages, task=task, model=config.MIA_MODEL)
+    async def _llm(self, messages: list[dict], *, task: str = "main",
+                   state: Optional[MatterState] = None, md: Optional[dict] = None) -> tuple[str, Any]:
+        """Llama al LLM por el gateway (cadena de fallback H.5) sin bloquear el event loop.
+
+        Ya NO se fija `model`: call_llm recorre la cadena del task (claude-sonnet→mia-local para
+        'main'). Si el prompt excede la ventana (CONTEXT_TOO_LONG) y aún no se comprimió en este
+        turno (TurnLLMState en md['llm_turn']), comprime UNA vez y reintenta desde el primer
+        proveedor de la cadena. El resto de errores se propaga tal cual (LLMError con su kind)."""
+        try:
+            resp = await asyncio.to_thread(llm.call_llm, messages, task=task)
+        except Exception as exc:  # noqa: BLE001 — solo rescatamos CONTEXT_TOO_LONG; el resto re-lanza
+            kind = exc.kind if isinstance(exc, llm.LLMError) else classify_llm_error(exc)
+            turn = TurnLLMState.from_dict((md or {}).get("llm_turn"))
+            turn.last_error_kind = kind
+            if md is not None:
+                md["llm_turn"] = turn.to_dict()
+            if md is None or not turn.should_compress(kind):
+                raise  # no es contexto, ya se comprimió, o no hay md donde coordinar → propaga
+            compressed = await asyncio.to_thread(
+                self._compressor.compress, messages, config.MIA_CONTEXT_WINDOW,
+                tenant_id=(state or {}).get("tenant_id"),
+                matter_id=(state or {}).get("matter_id"),
+            )
+            turn.mark_compressed()
+            md["llm_turn"] = turn.to_dict()
+            logger.warning("call_llm context_too_long (task=%s) → contexto comprimido, reintento "
+                           "desde el 1er proveedor de la cadena", task)
+            resp = await asyncio.to_thread(llm.call_llm, compressed, task=task)
         content = resp.choices[0].message.content or ""
         return content, getattr(resp, "usage", None)
 
@@ -230,6 +260,9 @@ class MatterGraphBuilder:
         md = dict(state.get("metadata") or {})
         if "turn_started_at" not in md:
             md["turn_started_at"] = time.perf_counter()
+        # H.5: estado LLM del turno (cadena de fallback + compresión) se crea en el nodo de
+        # contexto (intake) y viaja por metadata para que analysis/draft comprriman UNA sola vez.
+        md.setdefault("llm_turn", TurnLLMState().to_dict())
         md.update(stage="intake", retrieved=len(docs))
         delegation = await self._maybe_delegate(state)  # no-op salvo señal + habilitado
         if delegation is not None:
@@ -242,11 +275,11 @@ class MatterGraphBuilder:
         docs = state.get("documents") or []
         ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(docs)) or \
             "(sin documentos recuperados del expediente)"
+        md = dict(state.get("metadata") or {})
         diagnosis, usage = await self._llm([
             {"role": "system", "content": _system_with_soul(state, ANALYSIS_SYSTEM)},
             {"role": "user", "content": f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"},
-        ])
-        md = dict(state.get("metadata") or {})
+        ], task="main", state=state, md=md)
         md.update(stage="analysis", diagnosis=diagnosis)
         _accum_usage(md, usage)
         return {"metadata": md}
@@ -263,11 +296,11 @@ class MatterGraphBuilder:
         if playbook_txt:
             user_parts.append(playbook_txt)
         user_parts.append("Redacta el borrador del escrito.")
+        md = dict(md_in)
         draft, usage = await self._llm([
             {"role": "system", "content": _system_with_soul(state, DRAFT_SYSTEM)},
             {"role": "user", "content": "\n\n".join(user_parts)},
-        ])
-        md = dict(md_in)
+        ], task="main", state=state, md=md)
         md["stage"] = "draft"
         md["activated_playbooks"] = activated
         _accum_usage(md, usage)
@@ -302,7 +335,7 @@ class MatterGraphBuilder:
                 {"role": "system", "content": _system_with_soul(state, EDIT_SYSTEM)},
                 {"role": "user", "content": f"Borrador:\n{draft}\n\nIndicaciones del abogado:\n"
                                             f"{decision.get('edits', '')}\n\nDevuelve el borrador corregido."},
-            ])
+            ], task="main", state=state, md=md)
             _accum_usage(md, usage)
         else:
             # approved / rejected: se conserva el borrador (el rechazo queda en la traza).

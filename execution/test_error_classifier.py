@@ -160,15 +160,18 @@ def run() -> None:
         check("call_llm AUTH falla rápido (1 llamada, sin reintentos)", fc.calls == 1)
         check("call_llm AUTH lanza LLMError(kind=AUTH)", auth_kind is LLMErrorKind.AUTH)
 
-        # 6c · transitorio persistente → agota reintentos (MAX_RETRIES+1 llamadas) y lanza LLMError.
+        # 6c · transitorio persistente en un alias SIN fallback (task="verification", cadena de
+        # un solo proveedor tras H.5) → agota reintentos (MAX_RETRIES+1 llamadas) y lanza LLMError.
+        # (El agotamiento de una cadena MULTI-proveedor se cubre en test_llm_fallback.py · H.5.)
         fc = _FakeCreate(_exc("RateLimitError", "429", status_code=429), fail_n=99, sentinel=sentinel)
         _install_fake_client(fc)
         exhausted = None
         try:
-            llm.call_llm([{"role": "user", "content": "x"}], task="main")
+            llm.call_llm([{"role": "user", "content": "x"}], task="verification")
         except LLMError as e:
             exhausted = e.kind
-        check("call_llm agota reintentos (MAX_RETRIES+1 llamadas)", fc.calls == llm.MAX_RETRIES + 1)
+        check("call_llm agota reintentos en alias sin fallback (MAX_RETRIES+1 llamadas)",
+              fc.calls == llm.MAX_RETRIES + 1)
         check("call_llm tras agotar lanza LLMError(kind=RATE_LIMIT)", exhausted is LLMErrorKind.RATE_LIMIT)
 
         # 6d · CONTEXT_TOO_LONG → propaga la excepción ORIGINAL (no LLMError), 1 llamada.

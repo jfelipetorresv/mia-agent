@@ -40,7 +40,7 @@ except Exception:
 import init_playbooks                               # noqa: E402  (runner migración 005)
 from mia import embeddings                          # noqa: E402
 from mia.agent import llm                           # noqa: E402
-from mia.agent.llm import _TASK_MODELS              # noqa: E402
+from mia.agent.llm import _TASK_FALLBACK_CHAINS     # noqa: E402  (H.5: task → cadena de fallback)
 from mia.db import pool                             # noqa: E402
 from mia.memory.playbook_manager import Playbook, PlaybookManager  # noqa: E402
 from mia.memory.curator import Curator              # noqa: E402
@@ -292,9 +292,12 @@ def main() -> int:
     init_playbooks.apply()   # idempotente: asegura la tabla (rol postgres)
 
     # checks que no tocan DB
-    # OVERRIDE #23: curator apunta a mia-local en dev (antes claude-sonnet).
-    check('"curator" en _TASK_MODELS (mia-local o claude-sonnet)',
-          _TASK_MODELS.get("curator") in ("mia-local", "claude-sonnet"))
+    # H.5: "curator" tiene cadena de fallback; el proveedor preferido es claude-sonnet
+    # (cae a mia-local). Verificamos el primer eslabón y que mia-local esté en la cadena.
+    curator_chain = _TASK_FALLBACK_CHAINS.get("curator", [])
+    check('"curator" con cadena de fallback (preferido claude-sonnet o mia-local)',
+          bool(curator_chain) and curator_chain[0] in ("mia-local", "claude-sonnet")
+          and "mia-local" in curator_chain)
     check('el job "curator_weekly" está registrado en el scheduler',
           any(j["name"] == "curator_weekly" for j in build_scheduler().list_jobs()))
 
