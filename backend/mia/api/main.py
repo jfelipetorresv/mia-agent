@@ -16,11 +16,12 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
-from .routes import auth, hitl, settings, stream, ux
+from .routes import auth, curator, hitl, settings, stream, ux
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    config.validate_runtime_config()
     await pool.open_pool()
     # Arranque del scheduler de tareas periódicas (Riesgo #22): sin esto, los jobs
     # registrados (obsidian_sync 6h, curator_weekly 168h, feedback_daily 24h) NO se
@@ -62,6 +63,8 @@ app.include_router(hitl.router)
 app.include_router(settings.router)
 # Superficie /api/* de las 5 pantallas (Fase 3 backend, decisión #20).
 app.include_router(ux.router)
+# HITL del Curator (H.2, cierra Riesgo #19): propuestas de depuración de playbooks.
+app.include_router(curator.router)
 
 
 @app.get("/health")

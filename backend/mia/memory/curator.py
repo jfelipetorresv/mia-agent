@@ -12,10 +12,14 @@ event loop (mismo patrón que `agents/graph.py`).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
+from dataclasses import dataclass, field
 
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
 from .. import embeddings
 from ..agent import llm
@@ -25,6 +29,36 @@ logger = logging.getLogger("mia.curator")
 
 SIMILARITY_THRESHOLD = 0.85   # similitud coseno por encima de la cual dos playbooks se fusionan
 PRUNE_DAYS = 90               # playbooks sin uso en N días se archivan
+
+
+@dataclass
+class CuratorProposal:
+    """Propuesta de curación (dry-run, patrón Hermes v0.17.0). NO muta nada por sí misma.
+
+    `proposed_merges`   : [{"source_ids": [a, b], "target_title": str, "reason": str}]
+    `proposed_deletions`: [{"id": str, "title": str, "reason": str}]
+    `snapshot_hash`     : hash del estado de playbooks activos al momento de proponer.
+    """
+
+    tenant_id: str
+    proposed_merges: list[dict] = field(default_factory=list)
+    proposed_deletions: list[dict] = field(default_factory=list)
+    snapshot_hash: str = ""
+    id: str | None = None                 # se rellena al persistir
+    status: str = "pending"
+
+    def is_empty(self) -> bool:
+        return not self.proposed_merges and not self.proposed_deletions
+
+    def to_public(self) -> dict:
+        """Dict amigable para el endpoint (sin jerga técnica hacia el usuario, §G)."""
+        return {
+            "id": self.id,
+            "status": self.status,
+            "merges": self.proposed_merges,
+            "deletions": self.proposed_deletions,
+            "snapshot_hash": self.snapshot_hash,
+        }
 
 
 class Curator:
@@ -124,6 +158,222 @@ class Curator:
                 "WHERE status = 'active' AND last_used_at IS NOT NULL "
                 "AND last_used_at < now() - (%s * interval '1 day')", (days,))
             return cur.rowcount
+
+    # ── dry-run → HITL (Tarea H.2, cierra Riesgo #19) ─────────────────────────
+    async def _snapshot_state(self, tenant_id: str) -> list[dict]:
+        """Estado de los playbooks ACTIVOS (para snapshot/rollback y hash). Sin embedding."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT id::text, title, summary, applies_when, content, status "
+                    "FROM playbooks WHERE status = 'active' ORDER BY id")
+                return await cur.fetchall()
+
+    @staticmethod
+    def _snapshot_hash(state: list[dict]) -> str:
+        """Hash sha256 estable del estado (id+status+content). Detecta drift antes de aplicar."""
+        h = hashlib.sha256()
+        for row in sorted(state, key=lambda r: str(r["id"])):
+            h.update(f"{row['id']}|{row['status']}|{row.get('content', '')}\n".encode("utf-8"))
+        return h.hexdigest()
+
+    async def _prune_candidates(self, tenant_id: str, days: int = PRUNE_DAYS) -> list[dict]:
+        """Playbooks activos sin uso en `days` días (candidatos a poda; NO los muta)."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT id::text, title FROM playbooks "
+                    "WHERE status='active' AND last_used_at IS NOT NULL "
+                    "AND last_used_at < now() - (%s * interval '1 day') ORDER BY id", (days,))
+                return await cur.fetchall()
+
+    async def propose(self, tenant_id: str, *, threshold: float = SIMILARITY_THRESHOLD,
+                      days: int = PRUNE_DAYS, persist: bool = True) -> CuratorProposal:
+        """DRY-RUN: calcula fusiones y podas propuestas SIN ejecutarlas y (opcional) persiste
+        la propuesta como `pending`. Es el único camino que el cron y el endpoint deben usar
+        para NO mutar sin revisión humana (Riesgo #19)."""
+        state = await self._snapshot_state(tenant_id)
+        by_id = {r["id"]: r for r in state}
+
+        merges: list[dict] = []
+        for a_id, b_id, score in await self.find_candidates(tenant_id, threshold):
+            a, b = by_id.get(a_id), by_id.get(b_id)
+            if not a or not b:
+                continue
+            merges.append({
+                "source_ids": [a_id, b_id],
+                "target_title": f"Consolidado: {a['title']} + {b['title']}"[:200],
+                "reason": f"Similitud coseno {score:.3f} > {threshold} entre "
+                          f"'{a['title']}' y '{b['title']}'.",
+            })
+
+        deletions = [
+            {"id": r["id"], "title": r["title"],
+             "reason": f"Sin uso en más de {days} días."}
+            for r in await self._prune_candidates(tenant_id, days)
+        ]
+
+        proposal = CuratorProposal(
+            tenant_id=tenant_id, proposed_merges=merges, proposed_deletions=deletions,
+            snapshot_hash=self._snapshot_hash(state),
+        )
+        if persist:
+            async with pool.tenant_connection(tenant_id) as conn:
+                row = await (await conn.execute(
+                    "INSERT INTO curator_proposals "
+                    "  (tenant_id, proposed_merges, proposed_deletions, snapshot_hash, stats) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s) RETURNING id::text",
+                    (tenant_id, Json(merges), Json(deletions), proposal.snapshot_hash,
+                     Json({"merges": len(merges), "deletions": len(deletions)})),
+                )).fetchone()
+                proposal.id = row[0]
+        return proposal
+
+    async def list_proposals(self, tenant_id: str, status: str = "pending") -> list[dict]:
+        """Propuestas del tenant en un estado (default 'pending')."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT id::text, proposed_merges, proposed_deletions, snapshot_hash, "
+                    "status, stats, created_at, reviewed_at, reviewed_by "
+                    "FROM curator_proposals WHERE status = %s ORDER BY created_at DESC",
+                    (status,))
+                return await cur.fetchall()
+
+    async def apply_proposal(self, tenant_id: str, proposal_id: str, *,
+                             reviewed_by: str | None = None) -> dict:
+        """Ejecuta una propuesta `pending`: guarda snapshot, aplica fusiones+podas en UNA
+        transacción (rollback automático si algo falla) y audita. Idempotente por status."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT id::text, proposed_merges, proposed_deletions, status "
+                    "FROM curator_proposals WHERE id = %s::uuid", (proposal_id,))
+                prop = await cur.fetchone()
+        if not prop:
+            return {"status": "not_found", "error": "propuesta inexistente"}
+        if prop["status"] != "pending":
+            return {"status": prop["status"], "error": "la propuesta no está pendiente"}
+
+        # Snapshot del estado actual ANTES de mutar (rollback/audit).
+        snapshot = await self._snapshot_state(tenant_id)
+        async with pool.tenant_connection(tenant_id) as conn:
+            await conn.execute(
+                "UPDATE curator_proposals SET snapshot = %s WHERE id = %s::uuid",
+                (Json(snapshot), proposal_id))
+
+        merges = prop["proposed_merges"] or []
+        deletions = prop["proposed_deletions"] or []
+        try:
+            # UNA transacción: si algo falla, tenant_connection revierte TODO (rollback automático).
+            async with pool.tenant_connection(tenant_id) as conn:
+                m_done = 0
+                for merge in merges:
+                    m_done += await self._execute_merge(conn, tenant_id, merge)
+                d_done = 0
+                for deletion in deletions:
+                    d_done += await self._execute_deletion(conn, deletion)
+        except Exception as e:
+            logger.exception("apply_proposal falló (tenant %s, prop %s) → rollback", tenant_id, proposal_id)
+            async with pool.tenant_connection(tenant_id) as conn:
+                await conn.execute(
+                    "UPDATE curator_proposals SET status='failed', reviewed_at=now(), reviewed_by=%s "
+                    "WHERE id = %s::uuid", (reviewed_by, proposal_id))
+                await self._audit(conn, tenant_id, "curator_proposal_failed", proposal_id,
+                                  {"error": str(e)}, reviewed_by)
+            return {"status": "failed", "error": str(e), "merges_done": 0, "deletions_done": 0}
+
+        async with pool.tenant_connection(tenant_id) as conn:
+            await conn.execute(
+                "UPDATE curator_proposals SET status='approved', reviewed_at=now(), reviewed_by=%s "
+                "WHERE id = %s::uuid", (reviewed_by, proposal_id))
+            await self._audit(conn, tenant_id, "curator_proposal_approved", proposal_id,
+                              {"merges": m_done, "deletions": d_done}, reviewed_by)
+        return {"status": "approved", "merges_done": m_done, "deletions_done": d_done}
+
+    async def reject_proposal(self, tenant_id: str, proposal_id: str, *,
+                              reviewed_by: str | None = None) -> dict:
+        """Rechaza una propuesta `pending`: NO muta playbooks, solo marca rejected + audita."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT status FROM curator_proposals WHERE id = %s::uuid", (proposal_id,))
+                row = await cur.fetchone()
+            if not row:
+                return {"status": "not_found", "error": "propuesta inexistente"}
+            if row["status"] != "pending":
+                return {"status": row["status"], "error": "la propuesta no está pendiente"}
+            await conn.execute(
+                "UPDATE curator_proposals SET status='rejected', reviewed_at=now(), reviewed_by=%s "
+                "WHERE id = %s::uuid", (reviewed_by, proposal_id))
+            await self._audit(conn, tenant_id, "curator_proposal_rejected", proposal_id, {}, reviewed_by)
+        return {"status": "rejected"}
+
+    async def _execute_merge(self, conn, tenant_id: str, merge: dict) -> int:
+        """Aplica UNA fusión propuesta (misma lógica que consolidate, desde la propuesta).
+        Idempotente: si algún origen ya no está activo, se salta (devuelve 0)."""
+        source_ids = [str(s) for s in merge.get("source_ids", [])]
+        if len(source_ids) != 2:
+            return 0
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT id::text, title, summary, applies_when, content, status "
+                "FROM playbooks WHERE id = ANY(%s::uuid[])", (source_ids,))
+            rows = {r["id"]: r for r in await cur.fetchall()}
+        a, b = rows.get(source_ids[0]), rows.get(source_ids[1])
+        if not a or not b or a["status"] != "active" or b["status"] != "active":
+            return 0
+        fused = await asyncio.to_thread(self._fuse, a, b)
+        new_title = merge.get("target_title") or f"Consolidado: {a['title']} + {b['title']}"[:200]
+        new_summary = f"Fusión de '{a['title']}' y '{b['title']}'."[:1000]
+        new_applies = f"{a['applies_when']} | {b['applies_when']}"
+        vec = await asyncio.to_thread(
+            lambda: embeddings.embed_texts([f"{new_summary}\n{new_applies}"])[0])
+        await conn.execute(
+            "INSERT INTO playbooks "
+            "  (tenant_id, title, summary, applies_when, content, embedding, status, metadata) "
+            "VALUES (%s::uuid, %s, %s, %s, %s, %s, 'active', %s) "
+            "ON CONFLICT (tenant_id, title) DO NOTHING",
+            (tenant_id, new_title, new_summary, new_applies, fused, vec,
+             _json_meta(source_ids[0], source_ids[1], a, b)))
+        await conn.execute(
+            "UPDATE playbooks SET status='archived', updated_at=now() WHERE id = ANY(%s::uuid[])",
+            (source_ids,))
+        return 1
+
+    @staticmethod
+    async def _execute_deletion(conn, deletion: dict) -> int:
+        """Archiva (nunca borra) un playbook propuesto para poda. Idempotente."""
+        pid = str(deletion.get("id", ""))
+        if not pid:
+            return 0
+        cur = await conn.execute(
+            "UPDATE playbooks SET status='archived', updated_at=now() "
+            "WHERE id = %s::uuid AND status='active'", (pid,))
+        return cur.rowcount
+
+    @staticmethod
+    async def _audit(conn, tenant_id: str, action: str, entity_id: str,
+                     payload: dict, user_email: str | None) -> None:
+        """Registro append-only en audit_logs (migración 011)."""
+        await conn.execute(
+            "INSERT INTO audit_logs (tenant_id, user_email, action, entity_type, entity_id, payload) "
+            "VALUES (%s::uuid, %s, %s, 'curator_proposal', %s, %s)",
+            (tenant_id, user_email, action, entity_id, Json(payload)))
+
+    async def propose_all_tenants(self) -> dict:
+        """Como `run_all_tenants` pero SOLO propone (dry-run + persistencia). Lo usa el cron
+        semanal para cerrar el Riesgo #19: nada se muta sin que un abogado apruebe la propuesta."""
+        out: dict[str, dict] = {}
+        for tenant_id in self._list_tenant_ids():
+            try:
+                p = await self.propose(tenant_id)
+                out[tenant_id] = {"proposal_id": p.id, "merges": len(p.proposed_merges),
+                                  "deletions": len(p.proposed_deletions)}
+            except Exception as e:
+                out[tenant_id] = {"error": str(e)}
+                logger.exception("curator.propose falló (tenant %s)", tenant_id)
+        return out
 
     # ── todos los tenants (cron) ──────────────────────────────────────────────
     async def run_all_tenants(self) -> dict:
