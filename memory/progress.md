@@ -1075,3 +1075,66 @@ por tarea.
   (hitl.py, stream.py, _common.py, config.py, run.py, trace_capture.py, frontend, etc.) + los docs de
   memoria de esta sesión.
 - Riesgo cerrado: **#19** (Curator sin HITL) por H.2 (dry-run→propuesta→aprobación + cron solo-propone).
+
+---
+
+## 2026-06-30 — Correcciones Cursor C.5-C.6 + Hermes v0.17.0 H.5-H.6 (rama `feat/hermes-v017-impl`)
+
+**C.5 — Curator `run()` legacy bloqueado (commit `73acee4`)**
+- `memory/curator.py`: `run()`→`_run_legacy()`, `run_all_tenants()`→`_run_all_tenants_legacy()`.
+  Guard al inicio de `_run_legacy`: si `os.getenv("MIA_ALLOW_CURATOR_LEGACY_RUN") != "1"` → `RuntimeError`
+  (muta sin HITL; en producción se usa `propose()` + `apply_proposal()`). El ciclo mutante solo corre
+  en tests con el env var.
+- `execution/test_curator.py`: los 3 calls legacy envueltos en `MIA_ALLOW_CURATOR_LEGACY_RUN=1` (set
+  antes / `pop` después) + nuevo check fail-closed (sin el env var → `RuntimeError`).
+- `architecture/curator.md`: reescrito al flujo `propose→approve→apply`; `Curator().run()` reemplazado
+  por `propose()` + aprobación por API; nota del guard legacy.
+
+**C.6 — `traces/search` con `matter_id` obligatorio (commit `73acee4`)**
+- `api/routes/traces.py`: `matter_id: str = Query(...)` (obligatorio, sin default) + `assert_owns_matter(tid,
+  matter_id)` antes de buscar (401 si el asunto no es del tenant; 422 si falta el param).
+- `execution/test_trace_search.py`: check 422 vía `TestClient` (la validación de query ocurre antes del
+  body → no toca DB). Gate **21/21**.
+
+**H.5 — TurnRetryState + cadena de fallback de proveedor (commit `514ee68`)**
+- `agent/llm.py`: `_TASK_MODELS` (task→alias único) → `_TASK_FALLBACK_CHAINS` (task→[alias,…]).
+  `main`/`curator`: `["claude-sonnet","mia-local"]`; `compression` (bloqueada) y auxiliares: un alias.
+  `resolve_fallback_chain(task,model)` (dedupe/sin vacíos) + `resolve_model()`=chain[0] (compat).
+  `call_llm`: loop de dos niveles — reintento con backoff DENTRO del alias; al agotarse con error
+  saltable pasa al siguiente. `CONTEXT_TOO_LONG` propaga original (no avanza la cadena); `AUTH/UNKNOWN`
+  fail-fast; cadena agotada → `LLMError('ALL_PROVIDERS_EXHAUSTED')`. `_call_with_retries` extraído; log
+  estructurado por salto.
+- `agent/error_classifier.py`: `should_fallback(kind)` — `MODEL_UNAVAILABLE/RATE_LIMIT/TIMEOUT/NETWORK/
+  SERVER_ERROR`→True; `AUTH/CONTEXT_TOO_LONG/UNKNOWN`→False (`_FALLBACKABLE`).
+- `agent/turn_llm_state.py` (NUEVO): `TurnLLMState` (aliases intentados, `compression_attempted`,
+  `fallback_exhausted`, `last_error_kind`) + (de)serialización JSON-safe para viajar por `metadata`.
+- `agents/graph.py`: `_llm` ya NO fija `model=MIA_MODEL` (usa la cadena); ante `CONTEXT_TOO_LONG`
+  comprime UNA vez por turno (`ContextCompressor`) y reintenta desde chain[0]. Estado creado en
+  `intake_node` y propagado por `metadata['llm_turn']`.
+- `agent/auxiliary_client.py`: `TASK_MODELS` deriva del 1er eslabón de cada cadena.
+- Gate `execution/test_llm_fallback.py` (NUEVO): **25/25** — salto MODEL_UNAVAILABLE, CONTEXT_TOO_LONG
+  no avanza, AUTH fail-fast, RATE_LIMIT agota→salta, ALL_PROVIDERS_EXHAUSTED, `should_fallback` por kind,
+  `resolve_fallback_chain` (dedupe/locked/override). Tests alineados: `test_agent_core` 18/18,
+  `test_error_classifier` 50/50 (6c→task de cadena única), `test_prompt_builder` 32/32 (`450ef6d`).
+- ⚠️ Nota dev: con la cuenta Anthropic sin créditos, `main` intenta `claude-sonnet` primero; AUTH **no**
+  salta (por diseño) → si se quiere forzar local, usar `model="mia-local"` o ajustar la cadena.
+
+**H.6 — Playbooks `protected` (semilla/core) (commit `ce1587b`)**
+- Migración `014_playbooks_protected.sql` (NUEVA, idempotente): `protected boolean NOT NULL DEFAULT
+  false` + índice parcial `WHERE protected`. Runner `execution/init_playbooks_protected.py` (NUEVO).
+- `memory/playbook_manager.py`: `register_playbook(protected=False, force=False)` — INSERT incluye la
+  columna; ON CONFLICT NO pisa content/summary/applies_when/embedding de un protegido salvo `force=True`;
+  el flag sí se actualiza. `get_playbook` devuelve `protected`.
+- `memory/curator.py`: `find_candidates` y `_prune_candidates` excluyen protegidos; `prune` legacy
+  `AND NOT protected`; `_execute_merge` → 0 + warn si algún origen protegido; `_execute_deletion`
+  `AND NOT protected`. `propose()` los omite (usa esos métodos).
+- `memory/skill_improver.py`: `process_trace` sobre protegido → `None`; `_lookup_playbook` trae `protected`.
+- `memory/gepa.py`: `prune_unused_skills` `AND NOT protected`.
+- `api/routes/ux.py`: `apply_proposal` con target protegido → **409** (+ UPDATE `AND NOT protected`).
+- Gate `execution/test_playbooks_protected.py` (NUEVO): **19/19** — register/get, upsert-no-pisa/force,
+  find_candidates/prune_candidates excluyen, merge/deletion respetan, skill_improver None, GEPA no poda,
+  ux 409, RLS A↔B.
+
+**Regresión final (toda la suite, 32 gates):** TODO VERDE. Gates nuevos: `test_llm_fallback` 25/25,
+`test_playbooks_protected` 19/19. `test_rls` **12/12** (gate HALT) intacto. Sin fallos. Rama lista
+para merge (working tree limpio salvo `mia_backend.egg-info/` no rastreado).
