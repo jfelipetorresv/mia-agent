@@ -133,7 +133,7 @@ class SkillImprover:
         async with pool.tenant_connection(tenant_id) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    "SELECT id::text, title, content, usage_count FROM playbooks "
+                    "SELECT id::text, title, content, usage_count, protected FROM playbooks "
                     "WHERE id = %s::uuid", (playbook_id,))
                 return await cur.fetchone()
 
@@ -144,6 +144,10 @@ class SkillImprover:
         if trace.get("hitl_outcome") != "approved" or not playbooks:
             return None
         existing = await self._lookup_playbook(tenant_id, playbooks[0])
+        # H.6: un playbook protegido (semilla/core) NO se mejora automáticamente (inmune al HITL
+        # de skills). Se respeta su versión curada a mano.
+        if existing and existing.get("protected"):
+            return None
         relevance = int(existing["usage_count"]) if existing and existing.get("usage_count") is not None else 1
         candidate = extract_skill_candidate(trace, relevance=relevance)
         if candidate is None:

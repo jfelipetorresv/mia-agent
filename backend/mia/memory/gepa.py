@@ -247,7 +247,7 @@ class GEPALoop:
         async with pool.tenant_connection(tenant_id) as conn:
             rows = await (await conn.execute(
                 "UPDATE playbooks SET status = 'archived', updated_at = now() "
-                "WHERE status = 'active' "
+                "WHERE status = 'active' AND NOT protected "     # H.6: no podar semillas/core
                 "AND (last_used_at IS NULL OR last_used_at < now() - (%s * interval '1 day')) "
                 "AND created_at < now() - (%s * interval '1 day') "
                 "RETURNING id",

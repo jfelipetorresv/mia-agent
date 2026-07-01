@@ -113,10 +113,12 @@ class Curator:
         """Pares de playbooks activos con similitud coseno > threshold. Usa el operador `<=>`
         de pgvector (distancia coseno): `1 - (a.embedding <=> b.embedding)` = similitud.
         Devuelve [(id_a, id_b, score)] con id_a < id_b (sin duplicar pares ni auto-pares)."""
+        # H.6: los playbooks `protected` (semilla/core) quedan fuera de la consolidación.
         sql = (
             "SELECT a.id, b.id, 1 - (a.embedding <=> b.embedding) AS score "
             "FROM playbooks a JOIN playbooks b ON a.id < b.id "
             "WHERE a.status = 'active' AND b.status = 'active' "
+            "  AND NOT a.protected AND NOT b.protected "
             "  AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL "
             "  AND 1 - (a.embedding <=> b.embedding) > %(thr)s "
             "ORDER BY score DESC"
@@ -168,7 +170,7 @@ class Curator:
         async with pool.tenant_connection(tenant_id) as conn:
             cur = await conn.execute(
                 "UPDATE playbooks SET status = 'archived', updated_at = now() "
-                "WHERE status = 'active' AND last_used_at IS NOT NULL "
+                "WHERE status = 'active' AND NOT protected AND last_used_at IS NOT NULL "
                 "AND last_used_at < now() - (%s * interval '1 day')", (days,))
             return cur.rowcount
 
@@ -202,7 +204,7 @@ class Curator:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     "SELECT id::text, title FROM playbooks "
-                    "WHERE status='active' AND last_used_at IS NOT NULL "
+                    "WHERE status='active' AND NOT protected AND last_used_at IS NOT NULL "
                     "AND last_used_at < now() - (%s * interval '1 day') ORDER BY id", (days,))
                 return await cur.fetchall()
 
@@ -354,11 +356,17 @@ class Curator:
             return 0
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                "SELECT id::text, title, summary, applies_when, content, status "
+                "SELECT id::text, title, summary, applies_when, content, status, protected "
                 "FROM playbooks WHERE id = ANY(%s::uuid[])", (source_ids,))
             rows = {r["id"]: r for r in await cur.fetchall()}
         a, b = rows.get(source_ids[0]), rows.get(source_ids[1])
         if not a or not b or a["status"] != "active" or b["status"] != "active":
+            return 0
+        # H.6: no se fusiona si algún origen está protegido (semilla/core). Defensa en profundidad:
+        # find_candidates ya los excluye, pero una propuesta vieja podría referenciarlos.
+        if a.get("protected") or b.get("protected"):
+            logger.warning("curator._execute_merge: fusión omitida, origen protegido (%s / %s)",
+                           source_ids[0], source_ids[1])
             return 0
         fused = await asyncio.to_thread(self._fuse, a, b)
         new_title = merge.get("target_title") or f"Consolidado: {a['title']} + {b['title']}"[:200]
@@ -392,7 +400,7 @@ class Curator:
             return 0
         cur = await conn.execute(
             "UPDATE playbooks SET status='archived', updated_at=now() "
-            "WHERE id = %s::uuid AND status='active'", (pid,))
+            "WHERE id = %s::uuid AND status='active' AND NOT protected", (pid,))
         return cur.rowcount
 
     @staticmethod

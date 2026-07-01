@@ -307,8 +307,16 @@ async def apply_proposal(proposal_id: str, request: Request):
         if not p:
             raise HTTPException(status_code=404, detail="Sugerencia no encontrada o ya revisada.")
         if p["proposal_type"] == "improve_playbook" and p["target_playbook_id"]:
+            # H.6: no se puede sobrescribir un playbook protegido (semilla/core) desde una
+            # sugerencia automática. La propuesta queda pendiente; se responde 409.
+            prot = await (await conn.execute(
+                "SELECT protected FROM playbooks WHERE id = %s", (p["target_playbook_id"],))).fetchone()
+            if prot and prot[0]:
+                raise HTTPException(
+                    status_code=409,
+                    detail="El playbook está protegido y no puede modificarse automáticamente.")
             await conn.execute(
-                "UPDATE playbooks SET content = %s, updated_at = now() WHERE id = %s",
+                "UPDATE playbooks SET content = %s, updated_at = now() WHERE id = %s AND NOT protected",
                 (p["suggested_content"], p["target_playbook_id"]))
         elif p["proposal_type"] == "new_playbook":
             await conn.execute(
