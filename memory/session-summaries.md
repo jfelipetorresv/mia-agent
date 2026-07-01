@@ -588,3 +588,50 @@ Construida casi toda la Fase 0; validado el modelo. Continuación detallada en
 `resolve_model`; cierra `test_curator`), 0.5 PII en capa común de `call_llm`, 0.6 test HALT de
 privilegio, frontend onboarding (cierra `test_onboarding_horizontal`). Luego Fase 1 (núcleo
 conversacional). 0.A ya NO está bloqueado (hay créditos). Proxy LiteLLM (4000) suele estar caído.
+
+## 2026-06-30 — Smoke test vivo (ruta Codex)
+TL;DR: el flujo completo funciona en vivo; 3 bugs de plataforma invisibles a los gates quedaron
+       reparados.
+Qué construimos/reparamos:
+- SelectorEventLoop para Windows (`api/run.py`) — el ProactorEventLoop rompía la conexión a la BD
+  con uvicorn≥0.36.
+- HITL fail-closed (`graph.py::confirm_node`) — decisión ausente/inválida ya no aprueba por defecto.
+- Validación de ciclo de vida de turno (`stream.py`/`hitl.py` + `_common`) — 409 si hay interrupt
+  pendiente o si se resume sin borrador; WikiManager awaited con log; SSE emite evento `error`
+  explícito en vez de colgar.
+Qué decidimos:
+- claude-sonnet es el backend de calidad confirmado para producción (HTTP 200 por el proxy, sin
+  bloqueo de créditos).
+- LiteLLM necesita su propio venv antes de cualquier reinicio en producción (Riesgo #32).
+Qué sigue: sembrar playbooks reales para observar activación (cierra #20/#31); cablear el
+  `prompt_builder` (10 capas) al grafo; corregir la ruta en `CLAUDE.md`; investigar y registrar el
+  trabajo no documentado (`gepa.py`, `dreams.py`, `second_brain_ui`) + auth real (Riesgo #23).
+
+## 2026-06-30 — Hermes v0.17.0 (H.5/H.6) + correcciones Cursor (C.5/C.6) + merge a `main`
+TL;DR: se cerró la rama `feat/hermes-v017-impl` (fallback de proveedor + playbooks protegidos +
+       Curator legacy sellado + traces scope), 32/32 gates verdes, y se mergeó a `main`.
+Qué construimos:
+- **C.5** — `Curator.run()`→`_run_legacy()` (y `run_all_tenants()`→`_run_all_tenants_legacy()`)
+  bloqueado por guard `MIA_ALLOW_CURATOR_LEGACY_RUN=1` (solo tests): en producción es imposible
+  mutar playbooks sin el flujo HITL `propose→approve→apply`. Cierra del todo el Riesgo #19.
+- **C.6** — `GET /api/traces/search` exige `matter_id` (Query obligatorio) + `assert_owns_matter`
+  (401 si el asunto no es del tenant; 422 si falta el param). Evita buscar a ciegas sobre todo el
+  despacho.
+- **H.5** — `call_llm` recorre una CADENA de proveedores por task (`main`/`curator`:
+  claude-sonnet→mia-local); reintento con backoff dentro del alias y salto al siguiente cuando el
+  error lo amerita (`should_fallback`). `CONTEXT_TOO_LONG` no avanza la cadena; `AUTH`/`UNKNOWN`
+  fallan rápido; cadena agotada → `ALL_PROVIDERS_EXHAUSTED`. Nuevo `TurnLLMState` + wiring de
+  compresión-una-vez-por-turno en `graph.py`. Gate nuevo `test_llm_fallback` 25/25.
+- **H.6** — columna `playbooks.protected` (migración 014) que inmuniza los playbooks semilla/core
+  frente a Curator/GEPA/SkillImprover/UX (consolidación, poda, mejora automática y sobrescritura
+  quedan bloqueadas; `apply_proposal` sobre un protegido → 409). Gate nuevo `test_playbooks_protected`
+  19/19.
+Qué decidimos:
+- El fallback NO salta ante `AUTH` (por diseño: no gastar en un proveedor que fallará igual). En dev
+  sin créditos, `main` intenta claude-sonnet primero; para forzar local, `model="mia-local"`.
+- La recuperación de `CONTEXT_TOO_LONG` en el grafo quedó cableada pero es un no-op sobre prompts de
+  2 mensajes → se registró como **Riesgo #33** (trabajo de la próxima sesión), no se parchó a la
+  fuerza para no salir del alcance del checkpoint.
+- `*.egg-info/` va a `.gitignore` (artefacto de `pip install -e`).
+Qué sigue: Riesgo #33 (recuperación por nodo ante contexto largo en `graph.py`); sembrar playbooks
+  reales (cierra #20/#31); separar LiteLLM en su venv (Riesgo #32); cablear `prompt_builder` al grafo.

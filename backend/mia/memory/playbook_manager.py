@@ -124,25 +124,43 @@ class PlaybookManager:
     def _tid(self, tenant_id: str | None) -> str | None:
         return tenant_id or self._tenant_id
 
-    async def register_playbook(self, pb: Playbook, tenant_id: str | None = None) -> str:
+    async def register_playbook(self, pb: Playbook, tenant_id: str | None = None,
+                                *, protected: bool = False, force: bool = False) -> str:
         """UPSERT del playbook en DB (ON CONFLICT tenant_id+title). Genera y guarda el
         embedding de `summary + applies_when` (voyage-law-2). Devuelve el id (uuid str).
-        Sin pool/tenant → fallback in-memory (register())."""
+        Sin pool/tenant → fallback in-memory (register()).
+
+        H.6: `protected=True` marca el playbook como semilla/core (inmune al Curator/GEPA).
+        En un conflicto, si el playbook EXISTENTE está protegido NO se pisan content/summary/
+        applies_when/embedding (solo se toca updated_at) — salvo `force=True`, que sí actualiza.
+        El flag `protected` en sí se actualiza siempre (permite proteger/desproteger explícito)."""
         tid = self._tid(tenant_id)
         if self._pool is None or tid is None:
             self.register(pb)
             return pb.id
         from .. import embeddings
         vec = embeddings.embed_texts([f"{pb.summary}\n{pb.applies_when}"])[0]
+        # En conflicto: si el existente está protegido y no hay force, se conserva su contenido.
+        # `guard` es TRUE cuando debemos preservar → los CASE dejan el valor viejo.
         async with self._pool.tenant_connection(tid) as conn:
             row = await (await conn.execute(
-                "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content, embedding) "
-                "VALUES (%s::uuid, %s, %s, %s, %s, %s) "
+                "INSERT INTO playbooks "
+                "  (tenant_id, title, summary, applies_when, content, embedding, protected) "
+                "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (tenant_id, title) DO UPDATE SET "
-                "  summary = EXCLUDED.summary, applies_when = EXCLUDED.applies_when, "
-                "  content = EXCLUDED.content, embedding = EXCLUDED.embedding, updated_at = now() "
+                "  summary = CASE WHEN playbooks.protected AND NOT %s THEN playbooks.summary "
+                "                 ELSE EXCLUDED.summary END, "
+                "  applies_when = CASE WHEN playbooks.protected AND NOT %s THEN playbooks.applies_when "
+                "                 ELSE EXCLUDED.applies_when END, "
+                "  content = CASE WHEN playbooks.protected AND NOT %s THEN playbooks.content "
+                "                 ELSE EXCLUDED.content END, "
+                "  embedding = CASE WHEN playbooks.protected AND NOT %s THEN playbooks.embedding "
+                "                 ELSE EXCLUDED.embedding END, "
+                "  protected = EXCLUDED.protected, "
+                "  updated_at = now() "
                 "RETURNING id",
-                (tid, pb.title, pb.summary, pb.applies_when, pb.content, vec),
+                (tid, pb.title, pb.summary, pb.applies_when, pb.content, vec, protected,
+                 force, force, force, force),
             )).fetchone()
         return str(row[0])
 
@@ -173,7 +191,8 @@ class PlaybookManager:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
                     "SELECT id, title, summary, applies_when, content, status, usage_count, "
-                    "last_used_at FROM playbooks WHERE title = %s AND status = 'active'", (title,))
+                    "last_used_at, protected FROM playbooks WHERE title = %s AND status = 'active'",
+                    (title,))
                 return await cur.fetchone()
 
     async def mark_used(self, playbook_id: str, tenant_id: str | None = None) -> None:

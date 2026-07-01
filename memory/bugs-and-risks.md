@@ -1,6 +1,6 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-06-14
+# Última actualización: 2026-06-30
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
 
@@ -329,7 +329,16 @@ Dos cosas pendientes para que Pinecone sea utilizable en vivo:
 (noop/condicional). **Acción al activar Pinecone:** `pip install "pinecone>=3"` + pinnearlo, crear
 el índice (dim 1024, coseno), y cablear ingest/retrieval para escribir/consultar por el conector.
 
-## 🟡 Riesgo #19 — El Curator consolida y poda playbooks SIN revisión humana  [detectado 2026-06-14, Sesión 12] ⚖️
+## 🟢 Riesgo #19 — El Curator consolida y poda playbooks SIN revisión humana  [CERRADO 2026-06-30, H.2/H.5/C.5] ⚖️
+**Cierre:** H.2 introdujo el flujo HITL `propose → approve → apply` (`Curator.propose` persiste una
+propuesta en seco; la aprobación por API ejecuta la fusión/poda de forma atómica con validación de
+`snapshot_hash`), y el cron `curator_weekly` pasó a **solo proponer**. C.5 (2026-06-30) selló el
+ciclo mutante antiguo: `run()`→`_run_legacy()` bloqueado por el guard `MIA_ALLOW_CURATOR_LEGACY_RUN=1`
+(exclusivo de tests) → en producción es IMPOSIBLE mutar playbooks sin aprobación. Refuerzo H.6: los
+playbooks `protected` (semilla/core) quedan fuera de consolidación y poda aunque se apruebe una
+corrida. Gates: `test_curator_hitl` 29/29, `test_curator` 24/24, `test_playbooks_protected` 19/19.
+
+**(histórico) Estado original del riesgo:**
 `Curator.consolidate` fusiona dos playbooks con un LLM (`task=curator`) y archiva los originales
 automáticamente cuando la similitud coseno supera 0.85; `prune` archiva por antigüedad. No hay
 HITL: un playbook jurídico podría degradarse si la fusión del LLM pierde un matiz, o dos
@@ -352,6 +361,20 @@ hoy estaría vacía (sus stats serían 0).
 (igual que knowledge_chunks/Pinecone, Riesgos #16/#18). **Acción (módulo/flujo futuro):** cablear
 el alta de playbooks por despacho (onboarding o import) a `PlaybookManager(pool=…).register_playbook`,
 y decidir si el prompt_builder pasa a leer el índice desde DB (`get_index`) en vez del in-memory.
+
+**Cierre PARCIAL (2026-06-30, smoke vivo):** se CONFIRMÓ que el wiring de consumo funciona end-to-end
+— `graph._prepare_playbooks` carga el índice, activa por solape (`_select_playbook_ids`, tope 3),
+`mark_used`, y `draft_node`/`finalize` emiten `activated_playbooks` a la traza (`mia.trace.v2`).
+Lo que falta es SOLO el **seeding de datos**: en el smoke las trazas salieron con
+`activated_playbooks: None` porque el tenant de prueba no tiene playbooks en DB. Cierra del todo
+cuando un onboarding/import siembre playbooks reales y se observe una traza con lista no vacía.
+
+**Avance (2026-06-30, H.6):** se añadió la infraestructura de **playbooks `protected`** (columna
+`protected`, `register_playbook(protected=True, force=…)`) para que el seeding futuro pueda marcar
+los playbooks semilla como inmunes al mantenimiento automático. Sigue faltando el flujo de
+onboarding/import que efectivamente los inserte; H.6 deja lista la bandera que ese flujo usará.
+Mismo cierre parcial aplica al **Riesgo #31** (las activaciones ya se registran en la traza; faltaba
+el cableado al grafo, ahora hecho — solo falta el dato).
 
 ## 🟢 Riesgo #22 — El scheduler nunca se arranca: los jobs cron NO se disparan  [CERRADO 2026-06-14, Sesión 14]
 `cron/scheduler.py` registra 3 jobs (`sync_obsidian_all_tenants` 6h, `curator_weekly` 168h,
@@ -458,3 +481,69 @@ Por tanto:
   real del fundador.
 - El vault de jurisprudencia real se conecta solo en la instancia
   personal de producción, después de que Mia esté probada.
+
+---
+
+## 🟡 PENDIENTE DE REVISIÓN — Módulos sin registrar en progress.md  [detectado 2026-06-30]
+Hay código en el árbol que **no figura en `progress.md`** (cuya última entrada de diario es
+2026-06-21 "Replan Ruta B + Fase 0"): `backend/mia/memory/gepa.py`, `backend/mia/memory/dreams.py`,
+y la UI/tests de `second_brain_ui` (p. ej. `execution/test_gepa.py`, `execution/test_dreams.py`,
+`execution/test_second_brain_ui.py`). Esto indica **trabajo posterior a la última entrada del
+diario que no quedó documentado** en el DIARIO DE OBRA.
+
+**Riesgo:** la memoria de construcción (fuente de verdad para Claude Code entre sesiones) está
+desincronizada del código real; al retomar se pueden tomar decisiones sobre un estado mal
+entendido (qué existe, qué pasa sus tests, qué decisiones lo respaldan).
+**Acción:** revisar qué son GEPA / dreams / second_brain_ui, correr sus gates, y escribir las
+entradas faltantes en `progress.md` + `session-summaries.md` (y `decisions.md` si hubo decisiones
+de diseño). Detectado durante el smoke test vivo del 2026-06-30.
+
+---
+
+## 🔴 Riesgo #32 — LiteLLM comparte el `.venv` de la app y degrada versiones al reinstalar  [detectado 2026-06-30, smoke vivo] 🔐
+LiteLLM se ejecuta desde el MISMO `.venv` que la API de Mia (`backend/`). Reinstalar
+`litellm[proxy]` (necesario para reparar el proxy / Prisma en esta sesión) **bajó/movió versiones
+de paquetes compartidos** con FastAPI/uvicorn de la app: `uvicorn`, `sse-starlette`,
+`fastapi`/`starlette` y `python-multipart`. Como la API de Mia depende EXACTAMENTE de esas
+librerías (SSE de `stream.py`/`hitl.py`, uploads `multipart`, el ASGI server), un pin que LiteLLM
+arrastre puede romper el arranque de uvicorn o cambiar el comportamiento de SSE/streaming en
+producción de forma silenciosa.
+
+**Riesgo:** un reinstall de LiteLLM antes de un reinicio de la API en producción puede dejar la API
+con dependencias incompatibles → caída del servidor o regresión de SSE/uploads que NO se ve hasta
+el primer turno real. Es el mismo patrón que el Riesgo #4 (LiteLLM como librería vs. proxy): dos
+consumidores acoplados por el entorno.
+
+**Mitigación hoy:** el smoke vivo corre LiteLLM con `scripts/run_litellm_clean.ps1` (CWD aislado +
+DB env scrubbed), pero eso NO aísla las versiones de paquetes: el `.venv` sigue siendo uno solo.
+
+**Acción (antes de cualquier reinicio de la API en producción):** **separar LiteLLM en su PROPIO
+venv** (p. ej. `.venv-litellm/`) y arrancar el proxy desde ahí; el `.venv` de la app queda con sus
+pins intactos. Tras separarlos, re-pinear FastAPI/uvicorn/sse-starlette/starlette/python-multipart
+en `backend/pyproject.toml` a las versiones probadas y verificar el arranque de uvicorn + un turno
+SSE completo. Mientras compartan venv, NO reinstalar `litellm[proxy]` con la API productiva viva.
+
+## 🔴 Riesgo #33 — CONTEXT_TOO_LONG en el grafo: la recuperación por compresión es un no-op  [detectado 2026-06-30, H.5] ⚖️
+El rescate de contexto que añadió H.5 en `agents/graph.py::_llm` NO funciona para los prompts que
+realmente pueden desbordarse. Cuando una llamada falla con `CONTEXT_TOO_LONG`, `_llm` invoca
+`ContextCompressor.compress(messages, …)` y reintenta; pero los nodos `analysis_node` y `draft_node`
+arman prompts **monolíticos de solo 2 mensajes** (`[system, user]`), y el compresor protege cabeza
+(`protect_first_n=5`) y cola (`protect_last_n=30`): con 2 mensajes no hay "bloque del medio" que
+resumir → `compress()` **devuelve los mismos 2 mensajes** y el reintento falla exactamente igual.
+El material que sí pesa (los `documents` embebidos en el user de `analysis`, y el
+`diagnosis`+`playbooks` del user de `draft`) queda intacto.
+
+**Riesgo:** un expediente grande o muchos documentos recuperados pueden hacer que el turno falle con
+`CONTEXT_TOO_LONG` sin recuperación efectiva → el abogado ve un error en vez de un análisis/borrador.
+La maquinaria de H.5 (TurnLLMState, `compression_attempted`, reintento desde chain[0]) está bien
+cableada, pero le falta el paso que de verdad reduce el tamaño. **Alcance:** afecta solo la ruta de
+desbordamiento de contexto; el turno normal y el fallback de proveedor (H.5) funcionan.
+
+**Acción (próxima sesión):** añadir **truncado/recuperación por nodo** en `graph.py` antes del
+reintento — en `analysis_node` recortar/resumir `documents` (p. ej. menos docs o snippets más
+cortos vía `retrieval`), y en `draft_node` recortar `diagnosis`/`playbooks` — de modo que el
+reintento parta de un `user` genuinamente más chico. Alternativa: que `_llm` (o un helper
+`context_recovery` por nodo) reconstruya el mensaje `user` reducido en vez de delegar en
+`ContextCompressor`, que está pensado para historiales de conversación, no para prompts de 2 mensajes.
+Cubrir con un gate que fuerce `CONTEXT_TOO_LONG` en el 1er intento y verifique que el 2º manda un
+prompt más corto.

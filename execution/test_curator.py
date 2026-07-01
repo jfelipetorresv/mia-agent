@@ -40,7 +40,7 @@ except Exception:
 import init_playbooks                               # noqa: E402  (runner migración 005)
 from mia import embeddings                          # noqa: E402
 from mia.agent import llm                           # noqa: E402
-from mia.agent.llm import _TASK_MODELS              # noqa: E402
+from mia.agent.llm import _TASK_FALLBACK_CHAINS     # noqa: E402  (H.5: task → cadena de fallback)
 from mia.db import pool                             # noqa: E402
 from mia.memory.playbook_manager import Playbook, PlaybookManager  # noqa: E402
 from mia.memory.curator import Curator              # noqa: E402
@@ -247,25 +247,38 @@ async def run_gate(t: dict) -> None:
               (await status_of(t["prune"], p_new)) == "active")
 
         # === run completo (tenant con 2 playbooks distintos: sin candidatos ni poda) ===
-        await insert_pb(t["run"], "R1", vec_axis(0))
-        await insert_pb(t["run"], "R2", vec_axis(50))
-        stats = await cur.run(t["run"])
-        check("run(tenant) devuelve dict con analyzed/consolidated/pruned/errors",
-              set(stats.keys()) == {"analyzed", "consolidated", "pruned", "errors"}
-              and stats["errors"] == 0)
+        # C.5: _run_legacy() muta sin HITL; solo se permite en tests con el env guard.
+        os.environ["MIA_ALLOW_CURATOR_LEGACY_RUN"] = "1"
+        try:
+            await insert_pb(t["run"], "R1", vec_axis(0))
+            await insert_pb(t["run"], "R2", vec_axis(50))
+            stats = await cur._run_legacy(t["run"])
+            check("_run_legacy(tenant) devuelve dict con analyzed/consolidated/pruned/errors",
+                  set(stats.keys()) == {"analyzed", "consolidated", "pruned", "errors"}
+                  and stats["errors"] == 0)
 
-        # === aislamiento: el Curator de A no toca los playbooks de B ===
-        pb_b = await insert_pb(t["b"], "B intacto", vec_axis(2))
-        await cur.run(t["a"])
-        check("aislamiento: curator de A no toca playbooks de B",
-              (await status_of(t["b"], pb_b)) == "active")
+            # === aislamiento: el Curator de A no toca los playbooks de B ===
+            pb_b = await insert_pb(t["b"], "B intacto", vec_axis(2))
+            await cur._run_legacy(t["a"])
+            check("aislamiento: curator de A no toca playbooks de B",
+                  (await status_of(t["b"], pb_b)) == "active")
 
-        # === run_all_tenants (enumeración mockeada) ===
-        cur._list_tenant_ids = lambda: [t["run"], t["empty"]]
-        allstats = await cur.run_all_tenants()
-        check("run_all_tenants itera los tenants y devuelve stats por tenant",
-              set(allstats.keys()) == {t["run"], t["empty"]}
-              and all("analyzed" in v for v in allstats.values()))
+            # === _run_all_tenants_legacy (enumeración mockeada) ===
+            cur._list_tenant_ids = lambda: [t["run"], t["empty"]]
+            allstats = await cur._run_all_tenants_legacy()
+            check("_run_all_tenants_legacy itera los tenants y devuelve stats por tenant",
+                  set(allstats.keys()) == {t["run"], t["empty"]}
+                  and all("analyzed" in v for v in allstats.values()))
+        finally:
+            os.environ.pop("MIA_ALLOW_CURATOR_LEGACY_RUN", None)
+
+        # === C.5: _run_legacy sin el env guard → RuntimeError (no muta sin HITL) ===
+        guard_ok = False
+        try:
+            await cur._run_legacy(t["run"])
+        except RuntimeError:
+            guard_ok = True
+        check("_run_legacy sin MIA_ALLOW_CURATOR_LEGACY_RUN → RuntimeError (fail-closed)", guard_ok)
     finally:
         await pool.close_pool()
 
@@ -279,8 +292,12 @@ def main() -> int:
     init_playbooks.apply()   # idempotente: asegura la tabla (rol postgres)
 
     # checks que no tocan DB
-    check('"curator" en _TASK_MODELS apunta a "claude-sonnet"',
-          _TASK_MODELS.get("curator") == "claude-sonnet")
+    # H.5: "curator" tiene cadena de fallback; el proveedor preferido es claude-sonnet
+    # (cae a mia-local). Verificamos el primer eslabón y que mia-local esté en la cadena.
+    curator_chain = _TASK_FALLBACK_CHAINS.get("curator", [])
+    check('"curator" con cadena de fallback (preferido claude-sonnet o mia-local)',
+          bool(curator_chain) and curator_chain[0] in ("mia-local", "claude-sonnet")
+          and "mia-local" in curator_chain)
     check('el job "curator_weekly" está registrado en el scheduler',
           any(j["name"] == "curator_weekly" for j in build_scheduler().list_jobs()))
 

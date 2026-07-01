@@ -20,6 +20,9 @@ el gateway (decisión #3); las llamadas usan `call_llm(task=...)` (1a/1b).
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
+import time
 from typing import Any, Optional
 
 from langgraph.graph import END, START, StateGraph
@@ -27,11 +30,36 @@ from langgraph.types import interrupt
 
 from .. import config, embeddings
 from ..agent import llm
+from ..agent.context_compressor import ContextCompressor
+from ..agent.error_classifier import LLMErrorKind, classify_llm_error
+from ..agent.turn_llm_state import TurnLLMState
 from ..gateway import hub_config
 from ..gateway.agent_hub import AgentHub
+from ..db import pool as db_pool
+from ..memory.playbook_manager import Playbook, PlaybookManager
 from ..memory.trace_capture import TraceCapture
+from ..memory import trace_search
+from ..memory.skill_improver import SkillImprover
 from . import retrieval
 from .state import MatterState
+
+logger = logging.getLogger("mia.agents.graph")
+
+# Retiene las tasks fire-and-forget de skill_improver (H.4) para que no las recoja el GC
+# antes de terminar (lección de la sesión smoke: no usar create_task suelto).
+_BG_TASKS: set = set()
+
+
+async def drain_bg_tasks() -> None:
+    """Espera a las tareas fire-and-forget en vuelo (skill_improver) antes de cerrar el loop.
+
+    C.4: lo llama el shutdown del lifespan (api/main.py) ANTES de cerrar el pool, para que las
+    propuestas a medio escribir terminen y no se pierdan silenciosamente en el apagado."""
+    if _BG_TASKS:
+        await asyncio.gather(*list(_BG_TASKS), return_exceptions=True)
+
+_WORD = re.compile(r"\w+", re.UNICODE)
+_MAX_ACTIVE_PLAYBOOKS = 3
 
 # ── Prompts de sistema (Civil Law · §G: sin jerga técnica hacia el usuario) ──
 
@@ -84,6 +112,52 @@ def _system_with_soul(state: MatterState, base_system: str) -> str:
             "conforme a ella:\n\n" + soul + "\n\n---\n\n" + base_system)
 
 
+def _tokenize(text: str) -> set[str]:
+    return {w.lower() for w in _WORD.findall(text) if len(w) >= 4}
+
+
+def _score_playbook(row: dict, tokens: set[str]) -> int:
+    blob = f"{row.get('title', '')} {row.get('summary', '')} {row.get('applies_when', '')}"
+    return len(tokens & _tokenize(blob))
+
+
+def _select_playbook_ids(rows: list[dict], query: str, *, max_n: int = _MAX_ACTIVE_PLAYBOOKS) -> list[str]:
+    """Heurística ligera: activa los playbooks cuyo índice solapa con la consulta."""
+    tokens = _tokenize(query)
+    if not tokens or not rows:
+        return []
+    scored = [(str(r["id"]), _score_playbook(r, tokens)) for r in rows]
+    scored.sort(key=lambda item: -item[1])
+    return [pid for pid, score in scored[:max_n] if score >= 1]
+
+
+async def _prepare_playbooks(state: MatterState, diagnosis: str) -> tuple[str, str, list[str]]:
+    """Carga índice + activa playbooks relevantes. Devuelve (índice, activos, ids)."""
+    tenant_id = state["tenant_id"]
+    mgr = PlaybookManager(pool=db_pool, tenant_id=tenant_id)
+    index = await mgr.get_index(tenant_id)
+    if not index:
+        return "", "", []
+
+    rows = await mgr.list_active(tenant_id)
+    for row in rows:
+        mgr.register(Playbook(
+            id=str(row["id"]),
+            title=row["title"],
+            summary=row["summary"],
+            applies_when=row["applies_when"],
+            content=row["content"],
+        ))
+
+    query = f"{_last_user_message(state)}\n{diagnosis}"
+    activated = _select_playbook_ids(rows, query)
+    for pid in activated:
+        mgr.activate(pid)
+        await mgr.mark_used(pid, tenant_id)
+
+    return index, mgr.render_active(), activated
+
+
 def _render_profile(p: Optional[dict]) -> str:
     if not p:
         return "(sin perfil cargado)"
@@ -123,6 +197,8 @@ class MatterGraphBuilder:
                  agent_hub: Optional[AgentHub] = None) -> None:
         self.trace_capture = trace_capture or TraceCapture()
         self.hub = agent_hub or AgentHub()
+        # H.5: compresor para el rescate CONTEXT_TOO_LONG (una vez por turno, ver _llm).
+        self._compressor = ContextCompressor(trace_capture=self.trace_capture)
 
     async def _maybe_delegate(self, state: MatterState) -> Optional[str]:
         """Delegación OPCIONAL a un CLI externo (1e · PASO 4). OFF salvo que:
@@ -139,9 +215,34 @@ class MatterGraphBuilder:
         prompt = req.get("prompt") or _last_user_message(state)
         return await asyncio.to_thread(self.hub.invoke, agent_key, prompt, state["tenant_id"])
 
-    async def _llm(self, messages: list[dict], *, task: str = "main") -> tuple[str, Any]:
-        """Llama al LLM por el gateway (síncrono) sin bloquear el event loop."""
-        resp = await asyncio.to_thread(llm.call_llm, messages, task=task, model=config.MIA_MODEL)
+    async def _llm(self, messages: list[dict], *, task: str = "main",
+                   state: Optional[MatterState] = None, md: Optional[dict] = None) -> tuple[str, Any]:
+        """Llama al LLM por el gateway (cadena de fallback H.5) sin bloquear el event loop.
+
+        Ya NO se fija `model`: call_llm recorre la cadena del task (claude-sonnet→mia-local para
+        'main'). Si el prompt excede la ventana (CONTEXT_TOO_LONG) y aún no se comprimió en este
+        turno (TurnLLMState en md['llm_turn']), comprime UNA vez y reintenta desde el primer
+        proveedor de la cadena. El resto de errores se propaga tal cual (LLMError con su kind)."""
+        try:
+            resp = await asyncio.to_thread(llm.call_llm, messages, task=task)
+        except Exception as exc:  # noqa: BLE001 — solo rescatamos CONTEXT_TOO_LONG; el resto re-lanza
+            kind = exc.kind if isinstance(exc, llm.LLMError) else classify_llm_error(exc)
+            turn = TurnLLMState.from_dict((md or {}).get("llm_turn"))
+            turn.last_error_kind = kind
+            if md is not None:
+                md["llm_turn"] = turn.to_dict()
+            if md is None or not turn.should_compress(kind):
+                raise  # no es contexto, ya se comprimió, o no hay md donde coordinar → propaga
+            compressed = await asyncio.to_thread(
+                self._compressor.compress, messages, config.MIA_CONTEXT_WINDOW,
+                tenant_id=(state or {}).get("tenant_id"),
+                matter_id=(state or {}).get("matter_id"),
+            )
+            turn.mark_compressed()
+            md["llm_turn"] = turn.to_dict()
+            logger.warning("call_llm context_too_long (task=%s) → contexto comprimido, reintento "
+                           "desde el 1er proveedor de la cadena", task)
+            resp = await asyncio.to_thread(llm.call_llm, compressed, task=task)
         content = resp.choices[0].message.content or ""
         return content, getattr(resp, "usage", None)
 
@@ -157,6 +258,11 @@ class MatterGraphBuilder:
         else:
             docs = []
         md = dict(state.get("metadata") or {})
+        if "turn_started_at" not in md:
+            md["turn_started_at"] = time.perf_counter()
+        # H.5: estado LLM del turno (cadena de fallback + compresión) se crea en el nodo de
+        # contexto (intake) y viaja por metadata para que analysis/draft comprriman UNA sola vez.
+        md.setdefault("llm_turn", TurnLLMState().to_dict())
         md.update(stage="intake", retrieved=len(docs))
         delegation = await self._maybe_delegate(state)  # no-op salvo señal + habilitado
         if delegation is not None:
@@ -169,11 +275,11 @@ class MatterGraphBuilder:
         docs = state.get("documents") or []
         ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(docs)) or \
             "(sin documentos recuperados del expediente)"
+        md = dict(state.get("metadata") or {})
         diagnosis, usage = await self._llm([
             {"role": "system", "content": _system_with_soul(state, ANALYSIS_SYSTEM)},
             {"role": "user", "content": f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"},
-        ])
-        md = dict(state.get("metadata") or {})
+        ], task="main", state=state, md=md)
         md.update(stage="analysis", diagnosis=diagnosis)
         _accum_usage(md, usage)
         return {"metadata": md}
@@ -183,13 +289,20 @@ class MatterGraphBuilder:
         md_in = state.get("metadata") or {}
         diagnosis = md_in.get("diagnosis", "")
         profile_txt = _render_profile(state.get("profile_snapshot"))
+        pb_index, pb_active, activated = await _prepare_playbooks(state, diagnosis)
+        pb_parts = [p for p in (pb_index, pb_active) if p]
+        playbook_txt = "\n\n".join(pb_parts)
+        user_parts = [f"Diagnóstico:\n{diagnosis}", profile_txt]
+        if playbook_txt:
+            user_parts.append(playbook_txt)
+        user_parts.append("Redacta el borrador del escrito.")
+        md = dict(md_in)
         draft, usage = await self._llm([
             {"role": "system", "content": _system_with_soul(state, DRAFT_SYSTEM)},
-            {"role": "user", "content": f"Diagnóstico:\n{diagnosis}\n\n{profile_txt}\n\n"
-                                        "Redacta el borrador del escrito."},
-        ])
-        md = dict(md_in)
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ], task="main", state=state, md=md)
         md["stage"] = "draft"
+        md["activated_playbooks"] = activated
         _accum_usage(md, usage)
         return {"draft": draft, "hitl_status": "pending", "metadata": md}
 
@@ -202,8 +315,10 @@ class MatterGraphBuilder:
             "draft": state.get("draft"),
         })
         # --- de aquí en adelante solo corre TRAS reanudar con Command(resume=...) ---
-        dec = (decision or {}).get("decision", "approved")
-        status = dec if dec in ("approved", "rejected", "editing") else "approved"
+        dec = (decision or {}).get("decision")
+        if dec not in ("approved", "rejected", "editing"):
+            dec = "rejected"  # fail-closed: sin decisión válida no se aprueba
+        status = dec
         md = dict(state.get("metadata") or {})
         md["hitl_decision"] = decision
         return {"hitl_status": status, "metadata": md}
@@ -220,7 +335,7 @@ class MatterGraphBuilder:
                 {"role": "system", "content": _system_with_soul(state, EDIT_SYSTEM)},
                 {"role": "user", "content": f"Borrador:\n{draft}\n\nIndicaciones del abogado:\n"
                                             f"{decision.get('edits', '')}\n\nDevuelve el borrador corregido."},
-            ])
+            ], task="main", state=state, md=md)
             _accum_usage(md, usage)
         else:
             # approved / rejected: se conserva el borrador (el rechazo queda en la traza).
@@ -231,6 +346,10 @@ class MatterGraphBuilder:
         _OUTCOME = {"approved": "approved", "rejected": "rejected", "editing": "edited"}
         retrieved_doc_ids = [d["id"] for d in (state.get("documents") or [])
                              if isinstance(d, dict) and d.get("id")]
+        started = md.get("turn_started_at")
+        if started is not None:
+            md["latency_ms"] = (time.perf_counter() - float(started)) * 1000
+        activated = md.get("activated_playbooks") or []
         trace = self.trace_capture.capture(
             tenant_id=state["tenant_id"],
             matter_id=state["matter_id"],
@@ -243,8 +362,36 @@ class MatterGraphBuilder:
             draft_original=draft,
             draft_final=final,
             retrieved_doc_ids=retrieved_doc_ids,
+            activated_playbooks=activated or None,
         )
         trace_id = f"{state['tenant_id']}:{state['matter_id']}:{trace.timestamp}"
+        # Dual-write H.3: además del JSONL (SFT), indexa la traza en Postgres para session_search
+        # (FTS sin LLM). Best-effort: un fallo aquí (tabla ausente, DB) NO debe tumbar el turno.
+        try:
+            await trace_search.index_trace(
+                state["tenant_id"],
+                matter_id=state["matter_id"],
+                input=_last_user_message(state),
+                output=final,
+                model=config.MIA_MODEL,
+                hitl_outcome=_OUTCOME.get(status, "approved"),
+                activated_playbooks=activated,
+                retrieved_doc_ids=retrieved_doc_ids,
+                trace_ts=trace.timestamp,
+            )
+        except Exception:  # noqa: BLE001 — indexado best-effort, no crítico para el turno
+            logger.debug("index_trace falló (best-effort); la traza JSONL sí se escribió", exc_info=True)
+
+        # H.4 skill self-improving: tras registrar la traza, extrae un patrón reutilizable y (si
+        # aplica) propone una mejora de playbook con status=pending (HITL). FIRE-AND-FORGET: no
+        # bloquea el turno; la task se retiene en _BG_TASKS y process_trace_safe nunca propaga.
+        try:
+            task = asyncio.create_task(
+                SkillImprover().process_trace_safe(state["tenant_id"], trace.to_dict()))
+            _BG_TASKS.add(task)
+            task.add_done_callback(_BG_TASKS.discard)
+        except Exception:  # noqa: BLE001 — lanzar la task es best-effort
+            logger.debug("no se pudo lanzar skill_improver (best-effort)", exc_info=True)
         md.update(stage="finalize", final_status=status)
         return {
             "draft": final,

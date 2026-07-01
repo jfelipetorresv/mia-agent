@@ -4,12 +4,19 @@
 ## Qué hace el Curator
 El Curator mantiene sanos los playbooks de cada despacho: detecta los que se solapan, los
 **consolida** en uno mejor, y **poda** los que llevan tiempo sin usarse. Vive en
-`backend/mia/memory/curator.py` (clase `Curator`). Por cada tenant, `run(tenant_id)` ejecuta:
-1. `load_playbooks` — SELECT de los playbooks `status='active'`.
-2. `find_candidates` — pares con similitud coseno > 0.85 (ver abajo).
-3. `consolidate` — fusiona cada par con un LLM fuerte y archiva los originales.
-4. `prune` — archiva los que no se usan hace > 90 días.
-Devuelve `{analyzed, consolidated, pruned, errors}`. `run_all_tenants()` lo corre para todos.
+`backend/mia/memory/curator.py` (clase `Curator`). El flujo con HITL (Riesgo #19, H.2) es
+**propose → approve → apply**: el Curator NUNCA muta playbooks sin revisión humana.
+
+- `propose(tenant_id)` — analiza y **persiste una propuesta** (dry-run): pares a consolidar
+  (similitud coseno > 0.85) e ids a podar (> 90 días sin uso). No archiva ni fusiona nada.
+  `propose_all_tenants()` lo corre para todos. El job `curator_weekly` solo **propone**.
+- La aprobación ocurre por API (`/api/curator/...` → `apply_proposal`), que ejecuta la fusión
+  (`_execute_merge`) y la poda (`_execute_deletion`) de forma **atómica**, validando el
+  `snapshot_hash` para abortar si el estado cambió (drift, C.1).
+
+> ⚠️ `_run_legacy(tenant_id)` / `_run_all_tenants_legacy()` son el ciclo antiguo que **muta sin
+> HITL** (C.5). Están bloqueados con un guard: solo corren si `MIA_ALLOW_CURATOR_LEGACY_RUN=1`
+> (exclusivo para tests). En producción usar siempre `propose()` + aprobación por API.
 
 ## Cuándo corre
 Job `curator_weekly` registrado en `cron/scheduler.py`, intervalo **168h (semanal)**. Pensado
@@ -47,16 +54,20 @@ usaron** (`last_used_at NULL`) NO se podan (no se castiga un playbook nuevo por 
 `mark_used` (en PlaybookManager) actualiza `usage_count` y `last_used_at` cuando un playbook se
 usa de verdad.
 
-## Cómo forzar una corrida manual
+## Cómo forzar una corrida manual (propone; NO muta)
 ```python
 from mia.cron import build_scheduler
 sched = build_scheduler()
-await sched.run_job("curator_weekly")     # corre run_all_tenants ya mismo
+await sched.run_job("curator_weekly")     # corre propose_all_tenants ya mismo
 # o, para un solo despacho:
 from mia.memory.curator import Curator
-await Curator().run("<tenant_uuid>")
+prop = await Curator().propose("<tenant_uuid>")   # persiste la propuesta (dry-run)
+# luego aprobar por la API (HITL) para que apply_proposal ejecute la fusión/poda.
 ```
 (Requiere el pool abierto: `await mia.db.pool.open_pool()`.)
+
+> El ciclo mutante directo (`_run_legacy`) queda solo para tests con
+> `MIA_ALLOW_CURATOR_LEGACY_RUN=1`; en operación normal no se usa.
 
 ## Self-Annealing — si el gate falla, revisar en este orden
 1. **¿Corrió la migración 005?** `init_playbooks.py` debe reportar `mia_app INSERT=True

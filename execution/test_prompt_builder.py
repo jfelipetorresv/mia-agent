@@ -129,7 +129,10 @@ def test_task_models() -> None:
     check("TASK_MODELS contiene todas las tareas esperadas",
           expected_tasks.issubset(set(ac.TASK_MODELS)))
     check("compression -> mia-local en el mapa (decisión #23)", ac.TASK_MODELS["compression"] == "mia-local")
-    check("main -> MIA_MODEL en el mapa", ac.TASK_MODELS["main"] == config.MIA_MODEL)
+    # H.5: TASK_MODELS = primer eslabón (proveedor preferido) de cada cadena de fallback.
+    # main prefiere claude-sonnet (cae a mia-local en call_llm).
+    check("main -> claude-sonnet en el mapa (1er eslabón de la cadena H.5)",
+          ac.TASK_MODELS["main"] == "claude-sonnet")
     # Ningún alias inexistente: solo claude-haiku, claude-sonnet o MIA_MODEL.
     valid = {"claude-haiku", "claude-sonnet", config.MIA_MODEL}
     check("todos los alias de TASK_MODELS existen (haiku/sonnet/MIA_MODEL)",

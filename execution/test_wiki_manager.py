@@ -116,7 +116,10 @@ async def run_checks() -> None:
             check("archive_concept mueve sin borrar", (root / "concepts" / "archived" / "concepto_viejo.md").exists() and not old.exists())
 
             hitl_src = (ROOT / "backend" / "mia" / "api" / "routes" / "hitl.py").read_text(encoding="utf-8")
-            check("HITL dispara wiki en background", "asyncio.create_task" in hitl_src and "update_from_approved_matter" in hitl_src)
+            check(
+                "HITL actualiza wiki al aprobar (await con log de error)",
+                "await WikiManager().update_from_approved_matter" in hitl_src,
+            )
     finally:
         llm.call_llm = original
 

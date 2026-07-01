@@ -129,10 +129,13 @@ async def sync_obsidian_all_tenants() -> dict:
 async def curator_run_all_tenants() -> dict:
     """Mantenimiento semántico de playbooks de todos los tenants (Módulo 3b).
     Domingos 2am — el scheduler NO tiene timezone awareness en v1; el intervalo es de 168h
-    (7 días). Ajustar si se necesita la hora exacta del domingo."""
+    (7 días). Ajustar si se necesita la hora exacta del domingo.
+
+    H.2 (cierra Riesgo #19): el cron ahora solo PROPONE (dry-run + persistencia como `pending`);
+    ninguna fusión/poda se ejecuta sin que un abogado la apruebe (endpoints /api/curator/*)."""
     from ..memory.curator import Curator
 
-    return await Curator().run_all_tenants()
+    return await Curator().propose_all_tenants()
 
 
 async def feedback_run_all_tenants() -> dict:

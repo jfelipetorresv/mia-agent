@@ -7,7 +7,7 @@ decisión #9).
 """
 from __future__ import annotations
 
-import asyncio
+import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from langgraph.types import Command
@@ -18,9 +18,10 @@ from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import thread_id_for
 from ...memory.wiki_manager import WikiManager
-from ._common import assert_owns_matter, sse
+from ._common import assert_owns_matter, require_awaiting_review, sse
 
 router = APIRouter(tags=["matters"])
+logger = logging.getLogger("mia.api.hitl")
 
 
 class RejectBody(BaseModel):
@@ -39,16 +40,26 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
 
     async def gen():
         yield sse("finalizing", "Mia está finalizando el borrador…")
-        async with open_checkpointer() as cp:
-            graph = build_matter_graph(cp)
-            cfg = {"configurable": {"thread_id": thread_id_for(tenant_id, matter_id)}}
-            final_draft = None
-            async for chunk in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
-                if "finalize" in chunk:
-                    final_draft = (chunk["finalize"] or {}).get("draft")
-            if command.get("decision") == "approved":
-                asyncio.create_task(WikiManager().update_from_approved_matter(tenant_id, matter_id))
-            yield sse("done", "Listo.", draft=final_draft, status=command.get("decision"))
+        try:
+            async with open_checkpointer() as cp:
+                graph = build_matter_graph(cp)
+                cfg = {"configurable": {"thread_id": thread_id_for(tenant_id, matter_id)}}
+                await require_awaiting_review(graph, cfg)
+                final_draft = None
+                async for chunk in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
+                    if "finalize" in chunk:
+                        final_draft = (chunk["finalize"] or {}).get("draft")
+                if command.get("decision") == "approved":
+                    try:
+                        await WikiManager().update_from_approved_matter(tenant_id, matter_id)
+                    except Exception:
+                        logger.exception("wiki update falló (tenant=%s matter=%s)", tenant_id, matter_id)
+                yield sse("done", "Listo.", draft=final_draft, status=command.get("decision"))
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("resume HITL falló (tenant=%s matter=%s)", tenant_id, matter_id)
+            yield sse("error", "No se pudo finalizar el borrador. Intenta de nuevo.")
 
     return EventSourceResponse(gen())
 

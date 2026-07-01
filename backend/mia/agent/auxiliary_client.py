@@ -21,9 +21,10 @@ from typing import Any
 
 from . import llm
 
-# Mapa COMPLETO task -> alias. Fuente única: llm._TASK_MODELS (mismo paquete).
-# Se re-exporta como público para los consumidores de tareas auxiliares.
-TASK_MODELS: dict[str, str] = llm._TASK_MODELS
+# Mapa COMPLETO task -> alias PREFERIDO (primer eslabón de la cadena de fallback).
+# Fuente única: llm._TASK_FALLBACK_CHAINS (mismo paquete, H.5). Se re-exporta como público
+# para los consumidores de tareas auxiliares que solo necesitan el proveedor preferido.
+TASK_MODELS: dict[str, str] = {task: chain[0] for task, chain in llm._TASK_FALLBACK_CHAINS.items()}
 LOCKED_TASKS = llm._LOCKED_TASKS
 
 

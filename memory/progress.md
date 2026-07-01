@@ -921,3 +921,225 @@ plugins/Telegram/conectores, voz tipo Jarvis (Handy STT + TTS). Calculadora de p
 **Qué sigue:** resto Fase 0 — 0.4 política de modelo/soberanía (ContextVar en `resolve_model`),
 0.5 PII en capa común de `call_llm`, 0.6 test HALT de privilegio, frontend onboarding (selector de
 jurisdicción + horizontalizar P5-P18). Luego Fase 1 (núcleo conversacional). **0.A bloqueado** (créditos Claude).
+
+---
+
+## 2026-06-30 — Smoke test vivo COMPLETO (ruta Codex)
+
+**Contexto:** primer smoke test estructural + VIVO end-to-end en la nueva ruta del proyecto
+`D:\Codex\Mia-Super Agent\mia`. Los **3 servicios operativos**: PostgreSQL 16 + pgvector (`5432`),
+Ollama (`11434`) y LiteLLM proxy (`4000`, arrancado con el patrón limpio `run_litellm_clean` —
+CWD aislado + DB env scrubbed, sin tocar la BD interna de LiteLLM).
+
+**Smoke vivo — resultados:**
+- **claude-sonnet por el proxy → PASS.** `POST /v1/chat/completions` con `model: claude-sonnet`
+  devolvió **HTTP 200**, modelo `claude-sonnet-4-6`, contenido `"OK"`, usage 18 tokens. **Sin
+  rebote por créditos** → el alias y la `ANTHROPIC_API_KEY` están operativos; no se necesitó el
+  fallback a modelo liviano local. Confirmado: **claude-sonnet es el backend de calidad para
+  producción** (qwen/mia-local fabrica citas y es 6-19× más lento, decisión #26).
+- **HITL → verificado en trazas reales.** Las trazas `mia.trace.v2` registran **ambos desenlaces**:
+  `hitl_outcome: "approved"` y `hitl_outcome: "rejected"` (con `latency_ms` y `retrieved_doc_ids`).
+  El `rejected` ya refleja el nuevo comportamiento **fail-closed** (bug #2).
+- **activated_playbooks → cableado end-to-end, sin activación observada.** El campo viaja por toda
+  la cadena (`Trace`/`TraceCapture.capture` → schema sube a `v2`; `graph._prepare_playbooks` +
+  `_select_playbook_ids` activan por solape, `draft_node` guarda `md["activated_playbooks"]`,
+  `finalize` lo emite). En las trazas existentes sale `None` porque el tenant de prueba **no tiene
+  playbooks sembrados** (índice vacío → **Riesgo #20**). El wiring funciona; falta solo seeding de
+  datos para observar una lista no vacía → **cierre PARCIAL del Riesgo #31**.
+
+**3 bugs de plataforma reparados (invisibles a los gates offline — solo aparecen en vivo en Windows):**
+1. **ProactorEventLoop rompía la conexión a la BD** — con `uvicorn≥0.36` en Windows, el event loop
+   por defecto (Proactor) es incompatible con el pool async de psycopg. Fix en `api/run.py`:
+   forzar `WindowsSelectorEventLoopPolicy`/`SelectorEventLoop` **antes** de arrancar uvicorn.
+2. **HITL fail-open → fail-closed** (`graph.py::confirm_node`): una decisión ausente/inválida caía
+   en `"approved"` por defecto → un borrador podía **aprobarse sin decisión válida**. Ahora cae en
+   `"rejected"` (no se aprueba nada sin decisión explícita válida).
+3. **Ciclo de vida de turno sin validar** (`stream.py`/`hitl.py` + `_common.prepare_new_turn` /
+   `require_awaiting_review`): **409** si hay un `interrupt` pendiente (borrador sin revisar) o si
+   se intenta `resume` sin borrador pendiente; el checkpoint en `END` se limpia para rearrancar
+   `intake→analysis→draft`; `WikiManager` ahora **awaited** con `logger.exception` (antes era
+   fire-and-forget que tragaba errores); y el SSE emite evento `error` en vez de **colgar** ante
+   una excepción. La validación de ciclo de vida ocurre **antes** de abrir el SSE (409 = HTTP).
+
+**Endurecimiento adicional en el árbol** (fuera del trío principal): `config.validate_runtime_config`
+(JWT ≥32 chars), allowlist de vault Obsidian (`resolve_obsidian_vault`), `MAX_UPLOAD_BYTES` (50 MB,
+anti-DoS), carga de `profile_snapshot` por turno bajo RLS.
+
+**Riesgos:** **#32 NUEVO** (🔴) — LiteLLM comparte el `.venv` de la app; reinstalar `litellm[proxy]`
+degradó `uvicorn`/`sse-starlette`/`fastapi`/`starlette`/`python-multipart` → separar LiteLLM en su
+propio venv **antes de cualquier reinicio de la API en producción**. **#20** cierre parcial (wiring
+de `activated_playbooks` OK; falta seeding). **#31** cierre parcial (mismo motivo).
+
+**Qué sigue:** (1) sembrar playbooks reales para observar activación end-to-end; (2) cablear el
+`prompt_builder` (10 capas) al grafo; (3) corregir la ruta del proyecto en `CLAUDE.md`
+(dice `D:\Inteligencia Artificial\…`, real es `D:\Codex\…`); (4) investigar y documentar el trabajo
+no registrado (`gepa.py`, `dreams.py`, `second_brain_ui`) + auth real (Riesgo #23). **Bloqueantes:**
+ninguno.
+
+---
+
+## 2026-06-30 — Implementación patrones Hermes v0.17.0 (rama `feat/hermes-v017-impl`)
+
+Sesión de implementación de los patrones Hermes v0.17.0 de mayor impacto (ver `findings.md`
+§"Hermes v0.17.0"). Baseline: 26/26 suites, `test_rls` 12/12. Trabajo en rama de sesión
+`feat/hermes-v017-impl` (para no arrastrar el WIP sin commitear de la sesión smoke). Commits atómicos
+por tarea.
+
+**H.1 — Clasificador de errores LLM centralizado ✅ (commit `37d235d`)**
+- `backend/mia/agent/error_classifier.py` (NUEVO): enum `LLMErrorKind` (RATE_LIMIT, AUTH,
+  MODEL_UNAVAILABLE, TIMEOUT, NETWORK, CONTEXT_TOO_LONG, UNKNOWN); `classify_llm_error(exc)` en 4
+  capas (status HTTP → tipo de excepción → substrings de mensaje; importable sin openai/httpx);
+  `is_retryable(kind)`; `retry_delay(kind, attempt)` backoff exponencial + jitter acotado (crece
+  monótono → testeable); `LLMError(RuntimeError)` con `.kind`.
+- Cableado en `agent/llm.py::call_llm`: retry de transitorios (máx 3), fail-fast AUTH/
+  MODEL_UNAVAILABLE/UNKNOWN con mensaje claro en español, CONTEXT_TOO_LONG propaga original (lo
+  resuelve el compresor). `call_llm` es síncrono (corre en `to_thread`) → `time.sleep` no bloquea.
+- Gate `execution/test_error_classifier.py` (NUEVO, standalone sin DB): **38/38**. Verifica
+  clasificación por status/tipo/mensaje, retryable/no, backoff creciente, y el cableado (retry OK,
+  fail-fast AUTH 1 llamada, agota reintentos, CONTEXT_TOO_LONG propaga original).
+- **Regresión: 27/27 suites PASS · `test_rls` 12/12 intacto.** Bajo riesgo de regresión: las suites
+  que usan LLM mockean `call_llm`.
+
+**H.2 — Curator dry-run → HITL ✅ (commit siguiente a `37d235d`) · CIERRA Riesgo #19**
+- `db/migrations/012_curator_proposals.sql` (NUEVO) + `execution/init_curator_proposals.py`: tabla
+  `curator_proposals` (RLS por-tenant, INSERT/UPDATE a mia_app), columnas proposed_merges/
+  proposed_deletions (jsonb), snapshot_hash, snapshot, status (pending/approved/rejected/failed).
+- `memory/curator.py`: `CuratorProposal` + `propose()` (DRY-RUN: calcula fusiones/podas SIN mutar,
+  persiste `pending`), `apply_proposal()` (guarda snapshot → ejecuta merges+deletions en UNA
+  transacción `tenant_connection` con **rollback automático** si algo falla → marca `failed` +
+  audita; éxito → `approved` + audita), `reject_proposal()` (no muta), `propose_all_tenants()`.
+  `_execute_merge`/`_execute_deletion`/`_audit` (append-only a `audit_logs` de migración 011).
+- `cron/scheduler.py`: `curator_weekly` ahora llama `propose_all_tenants()` → el job autónomo
+  **solo propone**, nada se muta sin aprobación humana (cierra #19 también en el cron).
+- `api/routes/curator.py` (NUEVO) + registro en `main.py`: `POST /api/curator/run`,
+  `GET /api/curator/proposals`, `POST /api/curator/proposals/{id}/approve|reject`. Usa
+  `request.state.email` como `reviewed_by`. approve→409 si falla (revirtió), 404 si no existe.
+- Gate `execution/test_curator_hitl.py` (NUEVO): **21/21** — propose no muta, persiste, RLS A↔B,
+  approve ejecuta+audita+idempotente, reject no muta+audita, **rollback en fallo** (F1/F2 siguen
+  activos, sin consolidado a medias, audit `curator_proposal_failed`), snapshot_hash coherente.
+- **Regresión: 28/28 suites PASS · `test_rls` 12/12 · `test_curator` 23/23 (legacy) intactos.**
+- Decisión de diseño: el spec pedía `dry_run=True` default en "el método de curación"; para NO
+  regresar `test_curator` (que llama `run()` esperando mutación + keys exactas), el dry-run se
+  implementó como método `propose()` dedicado y el CRON pasó a `propose_all_tenants()`. `run()`/
+  `consolidate()`/`prune()` quedan como ejecutores internos/legacy; el camino productizado es
+  propose→approve.
+
+**H.3 — session_search FTS+BM25 sin LLM ✅**
+- `db/migrations/013_traces_search.sql` (NUEVO) + `execution/init_traces_search.py`: tabla `traces`
+  (RLS por-tenant, INSERT/SELECT a mia_app) con `content_tsv` mantenido por **TRIGGER**
+  `BEFORE INSERT/UPDATE` (`to_tsvector('spanish', input||output||playbooks||matter)`), índice **GIN**
+  + índice compuesto `(tenant_id, matter_id, trace_ts)`. Se usó trigger (no columna generada) porque
+  `to_tsvector('spanish',…)` no es inmutable (cast text→regconfig STABLE) y Postgres rechaza no-inmutables
+  en columnas generadas.
+- `memory/trace_search.py` (NUEVO): `index_trace()` (dual-write: el JSONL sigue para SFT, esta fila es
+  el índice consultable) y `search_traces()` con `websearch_to_tsquery('spanish')`, ranking
+  `ts_rank_cd` (BM-like), filtros (matter/outcome/playbook/rango de fechas), todo bajo `tenant_connection`
+  (RLS). **Cero LLM** en el camino caliente.
+- `agents/graph.py::finalize`: dual-write best-effort `await trace_search.index_trace(...)` tras
+  `capture()` (guardado con try/except → un fallo no tumba el turno). + `logger` nuevo en el módulo.
+- `api/routes/traces.py` (NUEVO) + registro en `main.py`: `GET /api/traces/search?q=…&matter_id=…`.
+- Gate `execution/test_trace_search.py` (NUEVO): **15/15** — keyword, filtro por asunto, ranking
+  (más relevante primero), filtro por outcome/playbook, query vacío→[], **RLS A↔B**, **cero llamadas LLM**
+  (tripwire sobre `llm.call_llm`).
+- **Regresión: 29/29 suites PASS · `test_rls` 12/12 · `test_hitl_flow` 19/19 · `test_e2e` 25/25 intactos.**
+- Desviación documentada: el spec asumía "la tabla de trazas existente", pero las trazas viven en
+  JSONL (`mia-data/traces/`). Se creó la tabla `traces` en Postgres con dual-write (la búsqueda con
+  RLS A↔B obliga a Postgres; el JSONL no tiene RLS). El hook dual-write en `graph.py` quedó SIN
+  commitear en el commit de H.3 (graph.py entrelazado con trabajo smoke sin commitear).
+
+**H.4 — Skills self-improving con HITL pending ✅ (commit `d5d5c1f`)**
+- `memory/skill_improver.py` (NUEVO): `extract_skill_candidate(trace)` exige los 3 requisitos
+  (`hitl_outcome=approved` + `activated_playbooks` no vacío + usado>1 vía `usage_count`; la señal
+  `memory_relevance` no existe → se usa `usage_count` del playbook). `propose_improvement()` persiste
+  en **`feedback_proposals` (status='pending')** — sin tabla nueva, mismo flujo HITL: `improve_playbook`
+  con DIFF (`difflib`) + target, o `new_playbook`; guarda procedencia (`trace_ids`).
+  `process_trace()` end-to-end; `process_trace_safe()` fire-and-forget que **nunca propaga** (loguea,
+  no traga en silencio — lección smoke). Sin LLM (determinista).
+- `agents/graph.py::finalize`: fire-and-forget `asyncio.create_task(SkillImprover().process_trace_safe(...))`
+  retenido en `_BG_TASKS` (evita GC; lección smoke: no `create_task` suelto). SIN commitear (graph.py
+  entrelazado).
+- Gate `execution/test_skill_improver.py` (NUEVO): **13/13** — los 3 requisitos, propuesta **pending
+  no auto-aprobada**, procedencia, process_trace (usa>1 propone / usa=1 no), **fire-and-forget seguro**,
+  RLS A↔B.
+- **Regresión: 30/30 suites PASS · `test_rls` 12/12 · `test_hitl_flow` 19/19 · `test_e2e` 25/25 intactos.**
+
+**Cierre de sesión Hermes v0.17.0 (rama `feat/hermes-v017-impl`):**
+- Commits atómicos: H.1 `37d235d` · H.2 (curator) · H.3 (traces) · H.4 `d5d5c1f`.
+- Regresión final: **30/30 suites verdes** (26 base + H.1/H.2/H.3/H.4 = 4 gates nuevos: 38+21+15+13).
+  `test_rls` 12/12 (gate HALT) intacto en todo momento. **No existe `test_privilege_isolation.py`**
+  (la regla del usuario lo menciona pero era trabajo futuro 0.6; se usó `test_rls` como gate HALT).
+- **PENDIENTE de commit (working tree):** `agents/graph.py` acumula 3 bloques SIN commitear —
+  (a) trabajo de la sesión smoke (activated_playbooks + 3 bugs HITL), (b) dual-write H.3
+  (`index_trace`), (c) fire-and-forget H.4 (`SkillImprover`). Recomendación: commitear los 3 juntos
+  como el commit de la sesión smoke (todo verde). También sigue sin commitear el resto del WIP smoke
+  (hitl.py, stream.py, _common.py, config.py, run.py, trace_capture.py, frontend, etc.) + los docs de
+  memoria de esta sesión.
+- Riesgo cerrado: **#19** (Curator sin HITL) por H.2 (dry-run→propuesta→aprobación + cron solo-propone).
+
+---
+
+## 2026-06-30 — Correcciones Cursor C.5-C.6 + Hermes v0.17.0 H.5-H.6 (rama `feat/hermes-v017-impl`)
+
+**C.5 — Curator `run()` legacy bloqueado (commit `73acee4`)**
+- `memory/curator.py`: `run()`→`_run_legacy()`, `run_all_tenants()`→`_run_all_tenants_legacy()`.
+  Guard al inicio de `_run_legacy`: si `os.getenv("MIA_ALLOW_CURATOR_LEGACY_RUN") != "1"` → `RuntimeError`
+  (muta sin HITL; en producción se usa `propose()` + `apply_proposal()`). El ciclo mutante solo corre
+  en tests con el env var.
+- `execution/test_curator.py`: los 3 calls legacy envueltos en `MIA_ALLOW_CURATOR_LEGACY_RUN=1` (set
+  antes / `pop` después) + nuevo check fail-closed (sin el env var → `RuntimeError`).
+- `architecture/curator.md`: reescrito al flujo `propose→approve→apply`; `Curator().run()` reemplazado
+  por `propose()` + aprobación por API; nota del guard legacy.
+
+**C.6 — `traces/search` con `matter_id` obligatorio (commit `73acee4`)**
+- `api/routes/traces.py`: `matter_id: str = Query(...)` (obligatorio, sin default) + `assert_owns_matter(tid,
+  matter_id)` antes de buscar (401 si el asunto no es del tenant; 422 si falta el param).
+- `execution/test_trace_search.py`: check 422 vía `TestClient` (la validación de query ocurre antes del
+  body → no toca DB). Gate **21/21**.
+
+**H.5 — TurnRetryState + cadena de fallback de proveedor (commit `514ee68`)**
+- `agent/llm.py`: `_TASK_MODELS` (task→alias único) → `_TASK_FALLBACK_CHAINS` (task→[alias,…]).
+  `main`/`curator`: `["claude-sonnet","mia-local"]`; `compression` (bloqueada) y auxiliares: un alias.
+  `resolve_fallback_chain(task,model)` (dedupe/sin vacíos) + `resolve_model()`=chain[0] (compat).
+  `call_llm`: loop de dos niveles — reintento con backoff DENTRO del alias; al agotarse con error
+  saltable pasa al siguiente. `CONTEXT_TOO_LONG` propaga original (no avanza la cadena); `AUTH/UNKNOWN`
+  fail-fast; cadena agotada → `LLMError('ALL_PROVIDERS_EXHAUSTED')`. `_call_with_retries` extraído; log
+  estructurado por salto.
+- `agent/error_classifier.py`: `should_fallback(kind)` — `MODEL_UNAVAILABLE/RATE_LIMIT/TIMEOUT/NETWORK/
+  SERVER_ERROR`→True; `AUTH/CONTEXT_TOO_LONG/UNKNOWN`→False (`_FALLBACKABLE`).
+- `agent/turn_llm_state.py` (NUEVO): `TurnLLMState` (aliases intentados, `compression_attempted`,
+  `fallback_exhausted`, `last_error_kind`) + (de)serialización JSON-safe para viajar por `metadata`.
+- `agents/graph.py`: `_llm` ya NO fija `model=MIA_MODEL` (usa la cadena); ante `CONTEXT_TOO_LONG`
+  comprime UNA vez por turno (`ContextCompressor`) y reintenta desde chain[0]. Estado creado en
+  `intake_node` y propagado por `metadata['llm_turn']`.
+- `agent/auxiliary_client.py`: `TASK_MODELS` deriva del 1er eslabón de cada cadena.
+- Gate `execution/test_llm_fallback.py` (NUEVO): **25/25** — salto MODEL_UNAVAILABLE, CONTEXT_TOO_LONG
+  no avanza, AUTH fail-fast, RATE_LIMIT agota→salta, ALL_PROVIDERS_EXHAUSTED, `should_fallback` por kind,
+  `resolve_fallback_chain` (dedupe/locked/override). Tests alineados: `test_agent_core` 18/18,
+  `test_error_classifier` 50/50 (6c→task de cadena única), `test_prompt_builder` 32/32 (`450ef6d`).
+- ⚠️ Nota dev: con la cuenta Anthropic sin créditos, `main` intenta `claude-sonnet` primero; AUTH **no**
+  salta (por diseño) → si se quiere forzar local, usar `model="mia-local"` o ajustar la cadena.
+
+**H.6 — Playbooks `protected` (semilla/core) (commit `ce1587b`)**
+- Migración `014_playbooks_protected.sql` (NUEVA, idempotente): `protected boolean NOT NULL DEFAULT
+  false` + índice parcial `WHERE protected`. Runner `execution/init_playbooks_protected.py` (NUEVO).
+- `memory/playbook_manager.py`: `register_playbook(protected=False, force=False)` — INSERT incluye la
+  columna; ON CONFLICT NO pisa content/summary/applies_when/embedding de un protegido salvo `force=True`;
+  el flag sí se actualiza. `get_playbook` devuelve `protected`.
+- `memory/curator.py`: `find_candidates` y `_prune_candidates` excluyen protegidos; `prune` legacy
+  `AND NOT protected`; `_execute_merge` → 0 + warn si algún origen protegido; `_execute_deletion`
+  `AND NOT protected`. `propose()` los omite (usa esos métodos).
+- `memory/skill_improver.py`: `process_trace` sobre protegido → `None`; `_lookup_playbook` trae `protected`.
+- `memory/gepa.py`: `prune_unused_skills` `AND NOT protected`.
+- `api/routes/ux.py`: `apply_proposal` con target protegido → **409** (+ UPDATE `AND NOT protected`).
+- Gate `execution/test_playbooks_protected.py` (NUEVO): **19/19** — register/get, upsert-no-pisa/force,
+  find_candidates/prune_candidates excluyen, merge/deletion respetan, skill_improver None, GEPA no poda,
+  ux 409, RLS A↔B.
+
+**Regresión final (toda la suite, 32 gates):** TODO VERDE. Gates nuevos: `test_llm_fallback` 25/25,
+`test_playbooks_protected` 19/19. `test_rls` **12/12** (gate HALT) intacto. Sin fallos.
+
+**Cierre de sesión (2026-06-30):** rama `feat/hermes-v017-impl` **mergeada a `main`**. `.gitignore`
+ahora ignora `*.egg-info/`. Riesgo #19 (Curator sin HITL) **cerrado** (H.2/H.5/C.5). Nuevo
+**Riesgo #33** registrado: la recuperación ante `CONTEXT_TOO_LONG` en `graph._llm` es un no-op sobre
+prompts monolíticos de 2 mensajes (analysis/draft) → falta truncado por nodo (trabajo próxima sesión).
+Árbol de trabajo limpio.

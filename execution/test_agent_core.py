@@ -21,6 +21,11 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))  # para `import mia.*`
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 from mia import config
 from mia.agent import core, llm
 
@@ -32,10 +37,10 @@ def check(name: str, ok: bool) -> None:
     print(("  [OK]   " if ok else "  [FAIL] ") + name)
 
 
-# --- 1 + 2 · routing y la invariante de compression ----------------------------
+# --- 1 + 2 · routing, cadena de fallback (H.5) y la invariante de compression --------
 def test_routing() -> None:
-    # OVERRIDE decisión #23 (2026-06-20): todos los tasks -> mia-local (sin créditos Anthropic).
-    # compression sigue BLOQUEADA en _LOCKED_TASKS; solo cambió el destino fijo a mia-local.
+    # H.5: task -> CADENA de fallback. resolve_model devuelve el primer eslabón (preferido).
+    # compression sigue BLOQUEADA en _LOCKED_TASKS (cadena de un alias, sin fallback).
     check("compression -> mia-local", llm.resolve_model("compression") == "mia-local")
     check(
         "compression IGNORA model=claude-sonnet (bloqueo decision #7/#23)",
@@ -45,14 +50,24 @@ def test_routing() -> None:
         "compression IGNORA model=claude-opus (bloqueo decision #7/#23)",
         llm.resolve_model("compression", model="claude-opus") == "mia-local",
     )
+    check("compression sin fallback (cadena de un alias)",
+          llm.resolve_fallback_chain("compression") == ["mia-local"])
     check("verification -> mia-local", llm.resolve_model("verification") == "mia-local")
-    check("main -> MIA_MODEL", llm.resolve_model("main") == config.MIA_MODEL)
-    check("task=None -> MIA_MODEL", llm.resolve_model(None) == config.MIA_MODEL)
-    check("task desconocido -> MIA_MODEL", llm.resolve_model("xyz") == config.MIA_MODEL)
+
+    # main/None/desconocido: cadena claude-sonnet → mia-local; resolve_model = primer eslabón.
+    check("main -> claude-sonnet (preferido)", llm.resolve_model("main") == "claude-sonnet")
+    check("main tiene fallback a mia-local",
+          llm.resolve_fallback_chain("main") == ["claude-sonnet", "mia-local"])
+    check("task=None -> cadena de main", llm.resolve_model(None) == "claude-sonnet")
+    check("task desconocido -> cadena de main", llm.resolve_model("xyz") == "claude-sonnet")
+
+    # Override explícito (tarea no bloqueada): cadena de UN alias, sin fallback.
     check(
         "verification SI acepta override (no bloqueada)",
         llm.resolve_model("verification", model="claude-haiku") == "claude-haiku",
     )
+    check("override explícito → cadena de un alias (sin fallback)",
+          llm.resolve_fallback_chain("main", model="mia-local") == ["mia-local"])
 
 
 # --- 3 · MiaAgent.run_turn ------------------------------------------------------

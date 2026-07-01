@@ -16,11 +16,12 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
-from .routes import auth, hitl, settings, stream, ux
+from .routes import auth, curator, hitl, settings, stream, traces, ux
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    config.validate_runtime_config()
     await pool.open_pool()
     # Arranque del scheduler de tareas periódicas (Riesgo #22): sin esto, los jobs
     # registrados (obsidian_sync 6h, curator_weekly 168h, feedback_daily 24h) NO se
@@ -35,6 +36,10 @@ async def lifespan(app: FastAPI):
         scheduler_task.cancel()
         with suppress(asyncio.CancelledError):
             await scheduler_task
+        # C.4: drenar las tareas fire-and-forget de skill_improver (H.4) en vuelo ANTES de cerrar
+        # el pool, para no perder propuestas a medio escribir en el shutdown.
+        from ..agents.graph import drain_bg_tasks
+        await drain_bg_tasks()
         await pool.close_pool()
 
 
@@ -62,6 +67,10 @@ app.include_router(hitl.router)
 app.include_router(settings.router)
 # Superficie /api/* de las 5 pantallas (Fase 3 backend, decisión #20).
 app.include_router(ux.router)
+# HITL del Curator (H.2, cierra Riesgo #19): propuestas de depuración de playbooks.
+app.include_router(curator.router)
+# Búsqueda FTS de trazas (H.3): session_search sin LLM.
+app.include_router(traces.router)
 
 
 @app.get("/health")
