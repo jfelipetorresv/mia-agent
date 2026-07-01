@@ -153,11 +153,33 @@ async def run_gate(t: dict) -> None:
         await pool.close_pool()
 
 
+def check_endpoint_validation() -> None:
+    """C.6: matter_id es obligatorio en GET /api/traces/search → sin él, 422.
+
+    La validación de query params de FastAPI ocurre ANTES del cuerpo del handler (y antes de
+    tocar la DB), así que montamos solo el router y verificamos el 422 sin necesidad de auth/pool.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mia.api.routes import traces as traces_route
+
+    app = FastAPI()
+    app.include_router(traces_route.router)
+    client = TestClient(app)
+
+    r_missing = client.get("/api/traces/search", params={"q": "contrato"})  # sin matter_id
+    check("endpoint: sin matter_id → 422 (obligatorio)", r_missing.status_code == 422)
+    r_missing_q = client.get("/api/traces/search", params={"matter_id": "m-1"})  # sin q
+    check("endpoint: sin q → 422 (obligatorio)", r_missing_q.status_code == 422)
+
+
 def main() -> int:
     print("== Tarea H.3 · session_search FTS (tsvector+GIN) sin LLM ==")
     if not os.getenv("PG_PASSWORD"):
         print("  [FAIL] PG_PASSWORD vacío en .env")
         return 1
+
+    check_endpoint_validation()   # C.6 · no toca DB
 
     init_traces_search.apply()
 

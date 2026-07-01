@@ -68,9 +68,18 @@ class CuratorProposal:
 class Curator:
     """Curador de playbooks. Sin estado: cada método toma una conexión del pool."""
 
-    # ── entry point por tenant ────────────────────────────────────────────────
-    async def run(self, tenant_id: str) -> dict:
-        """Ciclo completo para un tenant. Devuelve {analyzed, consolidated, pruned, errors}."""
+    # ── entry point LEGACY por tenant (muta sin HITL) ─────────────────────────
+    async def _run_legacy(self, tenant_id: str) -> dict:
+        """LEGACY: ciclo completo que MUTA playbooks sin revisión humana (fusiona/poda directo).
+
+        Reemplazado por el flujo HITL `propose()` + `apply_proposal()` (cierra Riesgo #19). Se
+        conserva solo como ejecutor interno/compat de tests; NO usar en producción. Devuelve
+        {analyzed, consolidated, pruned, errors}."""
+        if os.getenv("MIA_ALLOW_CURATOR_LEGACY_RUN") != "1":
+            raise RuntimeError(
+                "Curator._run_legacy() muta sin HITL; usar propose() + "
+                "apply_proposal(). Solo tests: MIA_ALLOW_CURATOR_LEGACY_RUN=1"
+            )
         stats = {"analyzed": 0, "consolidated": 0, "pruned": 0, "errors": 0}
         try:
             stats["analyzed"] = len(await self.load_playbooks(tenant_id))
@@ -409,16 +418,17 @@ class Curator:
                 logger.exception("curator.propose falló (tenant %s)", tenant_id)
         return out
 
-    # ── todos los tenants (cron) ──────────────────────────────────────────────
-    async def run_all_tenants(self) -> dict:
-        """Corre `run` para cada tenant. Devuelve {tenant_id: stats}."""
+    # ── todos los tenants (LEGACY, muta sin HITL) ─────────────────────────────
+    async def _run_all_tenants_legacy(self) -> dict:
+        """LEGACY: corre `_run_legacy` (mutación directa) para cada tenant. Reemplazado por
+        `propose_all_tenants()` (el cron ya usa ese). Devuelve {tenant_id: stats}."""
         out: dict[str, dict] = {}
         for tenant_id in self._list_tenant_ids():
             try:
-                out[tenant_id] = await self.run(tenant_id)
+                out[tenant_id] = await self._run_legacy(tenant_id)
             except Exception as e:   # un tenant no debe tumbar a los demás
                 out[tenant_id] = {"error": str(e)}
-                logger.exception("curator.run falló (tenant %s)", tenant_id)
+                logger.exception("curator._run_legacy falló (tenant %s)", tenant_id)
         return out
 
     def _list_tenant_ids(self) -> list[str]:
