@@ -31,6 +31,10 @@ SIMILARITY_THRESHOLD = 0.85   # similitud coseno por encima de la cual dos playb
 PRUNE_DAYS = 90               # playbooks sin uso en N días se archivan
 
 
+class _ProposalAbort(Exception):
+    """Sentinela interno: aborta la transacción de apply_proposal por drift de estado (C.1)."""
+
+
 @dataclass
 class CuratorProposal:
     """Propuesta de curación (dry-run, patrón Hermes v0.17.0). NO muta nada por sí misma.
@@ -160,14 +164,20 @@ class Curator:
             return cur.rowcount
 
     # ── dry-run → HITL (Tarea H.2, cierra Riesgo #19) ─────────────────────────
+    @staticmethod
+    async def _read_active_state(conn) -> list[dict]:
+        """Lee los playbooks ACTIVOS usando una conexión dada (para leer dentro de una
+        transacción existente y mantener la validación de hash consistente con la ejecución)."""
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT id::text, title, summary, applies_when, content, status "
+                "FROM playbooks WHERE status = 'active' ORDER BY id")
+            return await cur.fetchall()
+
     async def _snapshot_state(self, tenant_id: str) -> list[dict]:
         """Estado de los playbooks ACTIVOS (para snapshot/rollback y hash). Sin embedding."""
         async with pool.tenant_connection(tenant_id) as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    "SELECT id::text, title, summary, applies_when, content, status "
-                    "FROM playbooks WHERE status = 'active' ORDER BY id")
-                return await cur.fetchall()
+            return await self._read_active_state(conn)
 
     @staticmethod
     def _snapshot_hash(state: list[dict]) -> str:
@@ -242,54 +252,72 @@ class Curator:
 
     async def apply_proposal(self, tenant_id: str, proposal_id: str, *,
                              reviewed_by: str | None = None) -> dict:
-        """Ejecuta una propuesta `pending`: guarda snapshot, aplica fusiones+podas en UNA
-        transacción (rollback automático si algo falla) y audita. Idempotente por status."""
-        async with pool.tenant_connection(tenant_id) as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    "SELECT id::text, proposed_merges, proposed_deletions, status "
-                    "FROM curator_proposals WHERE id = %s::uuid", (proposal_id,))
-                prop = await cur.fetchone()
-        if not prop:
-            return {"status": "not_found", "error": "propuesta inexistente"}
-        if prop["status"] != "pending":
-            return {"status": prop["status"], "error": "la propuesta no está pendiente"}
+        """Ejecuta una propuesta `pending` de forma ATÓMICA end-to-end (C.1):
 
-        # Snapshot del estado actual ANTES de mutar (rollback/audit).
-        snapshot = await self._snapshot_state(tenant_id)
-        async with pool.tenant_connection(tenant_id) as conn:
-            await conn.execute(
-                "UPDATE curator_proposals SET snapshot = %s WHERE id = %s::uuid",
-                (Json(snapshot), proposal_id))
-
-        merges = prop["proposed_merges"] or []
-        deletions = prop["proposed_deletions"] or []
+        - Transición `pending → applying` con `SELECT … FOR UPDATE` en la MISMA transacción que
+          la ejecución → previene doble-approve concurrente (el 2º approver ve status != pending → 409).
+        - Valida el `snapshot_hash`: si el estado de playbooks cambió desde que se generó la
+          propuesta → `drift` (409, "regenerar"), sin mutar nada.
+        - Aplica fusiones+podas y marca `approved` + audita, TODO en una transacción (rollback
+          automático si algo falla → marca `failed`)."""
+        drift = False
+        m_done = d_done = 0
         try:
-            # UNA transacción: si algo falla, tenant_connection revierte TODO (rollback automático).
             async with pool.tenant_connection(tenant_id) as conn:
-                m_done = 0
-                for merge in merges:
-                    m_done += await self._execute_merge(conn, tenant_id, merge)
-                d_done = 0
-                for deletion in deletions:
-                    d_done += await self._execute_deletion(conn, deletion)
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    # Lock de fila + lectura de estado en la misma transacción (anti doble-approve).
+                    await cur.execute(
+                        "SELECT id::text, proposed_merges, proposed_deletions, snapshot_hash, status "
+                        "FROM curator_proposals WHERE id = %s::uuid FOR UPDATE", (proposal_id,))
+                    prop = await cur.fetchone()
+                    if not prop:
+                        return {"status": "not_found", "error": "propuesta inexistente"}
+                    if prop["status"] != "pending":
+                        return {"status": prop["status"], "error": "la propuesta no está pendiente"}
+                    await conn.execute(
+                        "UPDATE curator_proposals SET status='applying' WHERE id = %s::uuid",
+                        (proposal_id,))
+
+                    # Validación de snapshot_hash contra el estado ACTUAL (misma transacción).
+                    state = await self._read_active_state(conn)
+                    if self._snapshot_hash(state) != prop["snapshot_hash"]:
+                        drift = True
+                        raise _ProposalAbort()   # revierte la transacción (applying→pending)
+
+                    # Snapshot del estado pre-ejecución (rollback/audit).
+                    await conn.execute(
+                        "UPDATE curator_proposals SET snapshot = %s WHERE id = %s::uuid",
+                        (Json(state), proposal_id))
+
+                    for merge in (prop["proposed_merges"] or []):
+                        m_done += await self._execute_merge(conn, tenant_id, merge)
+                    for deletion in (prop["proposed_deletions"] or []):
+                        d_done += await self._execute_deletion(conn, deletion)
+
+                    await conn.execute(
+                        "UPDATE curator_proposals SET status='approved', reviewed_at=now(), "
+                        "reviewed_by=%s WHERE id = %s::uuid", (reviewed_by, proposal_id))
+                    await self._audit(conn, tenant_id, "curator_proposal_approved", proposal_id,
+                                      {"merges": m_done, "deletions": d_done}, reviewed_by)
+            return {"status": "approved", "merges_done": m_done, "deletions_done": d_done}
+
+        except _ProposalAbort:
+            pass  # drift: se maneja abajo (la transacción ya revirtió applying→pending)
         except Exception as e:
             logger.exception("apply_proposal falló (tenant %s, prop %s) → rollback", tenant_id, proposal_id)
             async with pool.tenant_connection(tenant_id) as conn:
                 await conn.execute(
                     "UPDATE curator_proposals SET status='failed', reviewed_at=now(), reviewed_by=%s "
-                    "WHERE id = %s::uuid", (reviewed_by, proposal_id))
+                    "WHERE id = %s::uuid AND status IN ('pending','applying')", (reviewed_by, proposal_id))
                 await self._audit(conn, tenant_id, "curator_proposal_failed", proposal_id,
                                   {"error": str(e)}, reviewed_by)
             return {"status": "failed", "error": str(e), "merges_done": 0, "deletions_done": 0}
 
+        # drift: el estado cambió desde que se generó la propuesta → 409, sin mutar. Se audita.
         async with pool.tenant_connection(tenant_id) as conn:
-            await conn.execute(
-                "UPDATE curator_proposals SET status='approved', reviewed_at=now(), reviewed_by=%s "
-                "WHERE id = %s::uuid", (reviewed_by, proposal_id))
-            await self._audit(conn, tenant_id, "curator_proposal_approved", proposal_id,
-                              {"merges": m_done, "deletions": d_done}, reviewed_by)
-        return {"status": "approved", "merges_done": m_done, "deletions_done": d_done}
+            await self._audit(conn, tenant_id, "curator_proposal_drift", proposal_id, {}, reviewed_by)
+        return {"status": "drift",
+                "error": "El estado cambió desde que se generó la propuesta; regenerar."}
 
     async def reject_proposal(self, tenant_id: str, proposal_id: str, *,
                               reviewed_by: str | None = None) -> dict:
@@ -329,11 +357,17 @@ class Curator:
         new_applies = f"{a['applies_when']} | {b['applies_when']}"
         vec = await asyncio.to_thread(
             lambda: embeddings.embed_texts([f"{new_summary}\n{new_applies}"])[0])
+        # C.1.3: si el título consolidado ya existe (p. ej. de una corrida previa) → DO UPDATE
+        # (reactiva + actualiza contenido) en vez de DO NOTHING, para NO dejar al tenant sin un
+        # playbook activo tras archivar los originales.
         await conn.execute(
             "INSERT INTO playbooks "
             "  (tenant_id, title, summary, applies_when, content, embedding, status, metadata) "
             "VALUES (%s::uuid, %s, %s, %s, %s, %s, 'active', %s) "
-            "ON CONFLICT (tenant_id, title) DO NOTHING",
+            "ON CONFLICT (tenant_id, title) DO UPDATE SET "
+            "  summary = EXCLUDED.summary, applies_when = EXCLUDED.applies_when, "
+            "  content = EXCLUDED.content, embedding = EXCLUDED.embedding, "
+            "  status = 'active', updated_at = now()",
             (tenant_id, new_title, new_summary, new_applies, fused, vec,
              _json_meta(source_ids[0], source_ids[1], a, b)))
         await conn.execute(

@@ -97,10 +97,33 @@ def run() -> None:
     check("CONTEXT gana sobre 400 (bad request con context length)", classify_llm_error(_exc("BadRequestError", "maximum context length exceeded", status_code=400)) is LLMErrorKind.CONTEXT_TOO_LONG)
     check("desconocido → UNKNOWN", classify_llm_error(Exception("algo raro sin pistas")) is LLMErrorKind.UNKNOWN)
 
+    # ===================== 3b · C.2 cobertura ampliada ===========================
+    check("status 500 → SERVER_ERROR", classify_llm_error(_exc("InternalServerError", "x", status_code=500)) is LLMErrorKind.SERVER_ERROR)
+    check("status 402 → AUTH (billing)", classify_llm_error(_exc("E", "x", status_code=402)) is LLMErrorKind.AUTH)
+    # C.2.3: status en la cadena __cause__ (LiteLLM envuelve el error del proveedor)
+    _inner = _exc("APIStatusError", "provider boom", status_code=429)
+    _outer = Exception("litellm: llm provider raised")
+    _outer.__cause__ = _inner
+    check("status en __cause__ (cadena) → RATE_LIMIT", classify_llm_error(_outer) is LLMErrorKind.RATE_LIMIT)
+    _outer2 = Exception("wrapper")
+    _outer2.__context__ = _exc("E", "x", status_code=500)
+    check("status en __context__ (cadena) → SERVER_ERROR", classify_llm_error(_outer2) is LLMErrorKind.SERVER_ERROR)
+    # C.2.4: 'service unavailable' NO debe ser MODEL_UNAVAILABLE (es NETWORK)
+    check("msg 'service unavailable' → NETWORK (no MODEL)", classify_llm_error(Exception("503 Service Unavailable")) is LLMErrorKind.NETWORK)
+    check("msg 'temporarily unavailable' → NETWORK", classify_llm_error(Exception("Model temporarily unavailable, retry")) is LLMErrorKind.NETWORK)
+    # C.2.5: SSL/TLS + WinError → NETWORK
+    check("SSLError → NETWORK", classify_llm_error(_exc("SSLError", "handshake failed")) is LLMErrorKind.NETWORK)
+    check("msg WinError 10054 (reset) → NETWORK", classify_llm_error(Exception("[WinError 10054] Se forzó la interrupción de una conexión")) is LLMErrorKind.NETWORK)
+    check("msg WinError 10061 (refused) → NETWORK", classify_llm_error(Exception("[WinError 10061] No se puede establecer conexión")) is LLMErrorKind.NETWORK)
+    # C.2.6: context overflow de Ollama y Bedrock
+    check("msg 'max_model_len' (Ollama) → CONTEXT_TOO_LONG", classify_llm_error(Exception("This model's max_model_len (4096) is exceeded")) is LLMErrorKind.CONTEXT_TOO_LONG)
+    check("msg 'input is too long' (Bedrock) → CONTEXT_TOO_LONG", classify_llm_error(Exception("Input is too long for requested model")) is LLMErrorKind.CONTEXT_TOO_LONG)
+
     # ===================== 4 · is_retryable =====================================
     check("RATE_LIMIT retryable", is_retryable(LLMErrorKind.RATE_LIMIT))
     check("TIMEOUT retryable", is_retryable(LLMErrorKind.TIMEOUT))
     check("NETWORK retryable", is_retryable(LLMErrorKind.NETWORK))
+    check("SERVER_ERROR retryable", is_retryable(LLMErrorKind.SERVER_ERROR))
     check("AUTH NO retryable", not is_retryable(LLMErrorKind.AUTH))
     check("MODEL_UNAVAILABLE NO retryable", not is_retryable(LLMErrorKind.MODEL_UNAVAILABLE))
     check("CONTEXT_TOO_LONG NO retryable", not is_retryable(LLMErrorKind.CONTEXT_TOO_LONG))

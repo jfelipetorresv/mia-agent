@@ -46,6 +46,15 @@ logger = logging.getLogger("mia.agents.graph")
 # antes de terminar (lección de la sesión smoke: no usar create_task suelto).
 _BG_TASKS: set = set()
 
+
+async def drain_bg_tasks() -> None:
+    """Espera a las tareas fire-and-forget en vuelo (skill_improver) antes de cerrar el loop.
+
+    C.4: lo llama el shutdown del lifespan (api/main.py) ANTES de cerrar el pool, para que las
+    propuestas a medio escribir terminen y no se pierdan silenciosamente en el apagado."""
+    if _BG_TASKS:
+        await asyncio.gather(*list(_BG_TASKS), return_exceptions=True)
+
 _WORD = re.compile(r"\w+", re.UNICODE)
 _MAX_ACTIVE_PLAYBOOKS = 3
 

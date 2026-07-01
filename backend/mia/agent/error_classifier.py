@@ -21,10 +21,11 @@ class LLMErrorKind(str, Enum):
     """Categorías de fallo del gateway LLM. `str` para logging/serialización directa."""
 
     RATE_LIMIT = "rate_limit"            # 429 / cuota / demasiadas peticiones
-    AUTH = "auth"                        # 401/403 / API key inválida / sin créditos
-    MODEL_UNAVAILABLE = "model_unavailable"  # 404 / modelo no existe / proveedor caído
+    AUTH = "auth"                        # 401/402/403 / API key inválida / sin créditos / billing
+    MODEL_UNAVAILABLE = "model_unavailable"  # 404 / modelo no existe
     TIMEOUT = "timeout"                  # timeout de request / 408 / 504
-    NETWORK = "network"                  # conexión rechazada / DNS / reset
+    NETWORK = "network"                  # conexión rechazada / DNS / reset / SSL/TLS
+    SERVER_ERROR = "server_error"        # 500 / error interno transitorio del proveedor
     CONTEXT_TOO_LONG = "context_too_long"   # prompt excede la ventana del modelo
     UNKNOWN = "unknown"                  # no clasificable → no se reintenta
 
@@ -32,7 +33,9 @@ class LLMErrorKind(str, Enum):
 # Kinds que vale la pena reintentar (transitorios). El resto es determinista: reintentar
 # no ayuda (AUTH no se arregla solo, un modelo inexistente no aparece, un contexto largo
 # sigue largo → eso lo resuelve el compresor, no el retry).
-_RETRYABLE = frozenset({LLMErrorKind.RATE_LIMIT, LLMErrorKind.TIMEOUT, LLMErrorKind.NETWORK})
+_RETRYABLE = frozenset({
+    LLMErrorKind.RATE_LIMIT, LLMErrorKind.TIMEOUT, LLMErrorKind.NETWORK, LLMErrorKind.SERVER_ERROR,
+})
 
 # Backoff exponencial: base * 2**attempt (+ jitter acotado). El jitter se mantiene por
 # debajo de `base` para que el retraso crezca de forma estrictamente monótona entre
@@ -58,18 +61,29 @@ class LLMError(RuntimeError):
 def _status_code(exc: BaseException) -> int | None:
     """Extrae un status HTTP de la excepción, sea cual sea la librería.
 
-    Cubre `openai` (`.status_code`), httpx (`.response.status_code`) y variantes
-    que exponen `.code`. Devuelve None si no hay ninguno numérico.
+    Cubre `openai` (`.status_code`), httpx (`.response.status_code`) y variantes con `.code`.
+    C.2.3: recorre la cadena `__cause__`/`__context__` porque LiteLLM suele envolver el error
+    real del proveedor (el status vive en la excepción encadenada, no en la de arriba).
     """
-    for attr in ("status_code", "code", "http_status"):
-        val = getattr(exc, attr, None)
-        if isinstance(val, int):
-            return val
-    resp = getattr(exc, "response", None)
-    if resp is not None:
-        val = getattr(resp, "status_code", None)
-        if isinstance(val, int):
-            return val
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        e = stack.pop()
+        if id(e) in seen:
+            continue
+        seen.add(id(e))
+        for attr in ("status_code", "code", "http_status"):
+            val = getattr(e, attr, None)
+            if isinstance(val, int):
+                return val
+        resp = getattr(e, "response", None)
+        if resp is not None:
+            val = getattr(resp, "status_code", None)
+            if isinstance(val, int):
+                return val
+        for chained in (getattr(e, "__cause__", None), getattr(e, "__context__", None)):
+            if chained is not None and id(chained) not in seen:
+                stack.append(chained)
     return None
 
 
@@ -88,9 +102,13 @@ def classify_llm_error(exc: BaseException) -> LLMErrorKind:
     status = _status_code(exc)
 
     # 1 · Context overflow primero: llega como 400/422 pero NO es un bad-request cualquiera.
+    # Incluye variantes de Ollama (max_model_len) y Bedrock (input is too long).
     if any(s in msg for s in (
         "context length", "context_length", "maximum context", "context window",
-        "too many tokens", "reduce the length", "prompt is too long", "string too long",
+        "context length exceeded", "too many tokens", "reduce the length",
+        "prompt is too long", "string too long",
+        "max_model_len", "maximum model length",                     # Ollama / vLLM
+        "input is too long", "input too long", "too long for", "exceeds the context",  # Bedrock/otros
     )):
         return LLMErrorKind.CONTEXT_TOO_LONG
 
@@ -98,16 +116,18 @@ def classify_llm_error(exc: BaseException) -> LLMErrorKind:
     if status is not None:
         if status == 429:
             return LLMErrorKind.RATE_LIMIT
-        if status in (401, 403):
+        if status in (401, 402, 403):        # 402 Payment Required = billing/cuota agotada
             return LLMErrorKind.AUTH
         if status == 404:
             return LLMErrorKind.MODEL_UNAVAILABLE
         if status in (408, 504):
             return LLMErrorKind.TIMEOUT
+        if status == 500:                    # error interno transitorio → reintentable
+            return LLMErrorKind.SERVER_ERROR
         if status in (502, 503):
             return LLMErrorKind.NETWORK
 
-    # 3 · Por tipo de excepción (nombres de openai/httpx/asyncio).
+    # 3 · Por tipo de excepción (nombres de openai/httpx/asyncio/ssl).
     if "timeout" in name or "timederror" in name:      # TimeoutError, APITimeoutError, ReadTimeout
         return LLMErrorKind.TIMEOUT
     if "ratelimit" in name:                             # RateLimitError
@@ -116,6 +136,8 @@ def classify_llm_error(exc: BaseException) -> LLMErrorKind:
         return LLMErrorKind.AUTH
     if "notfound" in name:                              # NotFoundError
         return LLMErrorKind.MODEL_UNAVAILABLE
+    if "ssl" in name or "certificate" in name:          # SSLError, SSLCertVerificationError
+        return LLMErrorKind.NETWORK
     if "connection" in name or "connect" in name:       # APIConnectionError, ConnectError, ConnectionError
         return LLMErrorKind.NETWORK
 
@@ -125,18 +147,26 @@ def classify_llm_error(exc: BaseException) -> LLMErrorKind:
     if any(s in msg for s in (
         "invalid api key", "invalid_api_key", "incorrect api key", "authentication",
         "unauthorized", "api key", "no credit", "insufficient", "credit balance", "billing",
+        "payment required",
     )):
         return LLMErrorKind.AUTH
+    # C.2.4: MODEL_UNAVAILABLE solo con patrones específicos de "modelo inexistente" — NO con
+    # "unavailable"/"not available" genéricos (eso suele ser 'service unavailable' → NETWORK).
     if any(s in msg for s in (
-        "model not found", "does not exist", "no such model", "unknown model",
-        "model_not_found", "unavailable", "not available",
+        "model not found", "no such model", "unknown model", "model_not_found",
+        "does not exist",
     )):
         return LLMErrorKind.MODEL_UNAVAILABLE
+    if "internal server error" in msg or "server had an error" in msg:
+        return LLMErrorKind.SERVER_ERROR
     if any(s in msg for s in ("timed out", "timeout")):
         return LLMErrorKind.TIMEOUT
+    # C.2.5: SSL/TLS + WinError 10054 (reset) / 10061 (refused) → NETWORK reintentable.
     if any(s in msg for s in (
         "connection", "network", "econnrefused", "connection refused",
         "name resolution", "dns", "reset by peer", "unreachable",
+        "service unavailable", "temporarily unavailable",
+        "ssl", "tls", "certificate", "winerror 10054", "winerror 10061", "10054", "10061",
     )):
         return LLMErrorKind.NETWORK
 

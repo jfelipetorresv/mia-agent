@@ -11,8 +11,10 @@ generada), `ORDER BY ts_rank_cd(...) DESC`. NINGUNA llamada LLM. Todo bajo `tena
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
+import psycopg
 from psycopg.rows import dict_row
 
 from ..db import pool
@@ -20,6 +22,14 @@ from ..db import pool
 logger = logging.getLogger("mia.memory.trace_search")
 
 _TS_CONFIG = "spanish"
+
+# Al menos un carácter alfanumérico (incl. acentos): una consulta de solo operadores/puntuación
+# (":", "&|!", "()") no tiene términos buscables → se rechaza como malformada (C.3).
+_MEANINGFUL = re.compile(r"[0-9A-Za-zÀ-ÿ]")
+
+
+class TraceSearchError(ValueError):
+    """Consulta de búsqueda malformada. El endpoint la mapea a 400 Bad Request (no 500)."""
 
 
 async def index_trace(
@@ -70,6 +80,8 @@ async def search_traces(
     q = (query or "").strip()
     if not q:
         return []
+    if not _MEANINGFUL.search(q):
+        raise TraceSearchError("La búsqueda no contiene términos válidos.")
 
     where = ["content_tsv @@ websearch_to_tsquery(%(cfg)s, %(q)s)"]
     params: dict[str, Any] = {"cfg": _TS_CONFIG, "q": q, "limit": max(1, min(int(limit), 200))}
@@ -96,7 +108,12 @@ async def search_traces(
         "FROM traces WHERE " + " AND ".join(where) +
         " ORDER BY rank DESC, trace_ts DESC NULLS LAST LIMIT %(limit)s"
     )
-    async with pool.tenant_connection(tenant_id) as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(sql, params)
-            return await cur.fetchall()
+    try:
+        async with pool.tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                return await cur.fetchall()
+    except (psycopg.errors.SyntaxError, psycopg.errors.DataException) as e:
+        # websearch_to_tsquery es tolerante, pero si el motor FTS rechaza la consulta →
+        # 400 (consulta del usuario), no 500 (error del backend).
+        raise TraceSearchError("Consulta de búsqueda inválida.") from e

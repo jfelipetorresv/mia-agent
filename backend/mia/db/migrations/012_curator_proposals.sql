@@ -25,11 +25,17 @@ CREATE TABLE IF NOT EXISTS curator_proposals (
   snapshot           jsonb,                      -- NULL hasta que se aprueba (estado pre-ejecución)
   stats              jsonb NOT NULL DEFAULT '{}'::jsonb,
   status             varchar(20) NOT NULL DEFAULT 'pending'
-                     CHECK (status IN ('pending', 'approved', 'rejected', 'failed')),
+                     CHECK (status IN ('pending', 'applying', 'approved', 'rejected', 'failed')),
   reviewed_at        timestamptz,
   reviewed_by        varchar(200),
   created_at         timestamptz NOT NULL DEFAULT now()
 );
+
+-- C.1: estado transitorio 'applying' (transición atómica pending→applying con FOR UPDATE, evita
+-- doble-approve). Idempotente para tablas ya creadas por una versión previa de esta migración.
+ALTER TABLE curator_proposals DROP CONSTRAINT IF EXISTS curator_proposals_status_check;
+ALTER TABLE curator_proposals ADD CONSTRAINT curator_proposals_status_check
+  CHECK (status IN ('pending', 'applying', 'approved', 'rejected', 'failed'));
 
 CREATE INDEX IF NOT EXISTS idx_curator_proposals_tenant_status
   ON curator_proposals(tenant_id, status);

@@ -157,6 +157,21 @@ async def run_gate(t: dict) -> None:
         async with pool.tenant_connection(B) as conn:
             nb = (await (await conn.execute("SELECT count(*) FROM feedback_proposals")).fetchone())[0]
         check("RLS: B no ve las propuestas de A", nb == 0)
+
+        # ===================== 7 · C.4: drain_bg_tasks espera las tareas en vuelo ==========
+        from mia.agents import graph
+        ran = {"done": False}
+
+        async def _slow():
+            await asyncio.sleep(0.05)
+            ran["done"] = True
+
+        task = asyncio.create_task(_slow())
+        graph._BG_TASKS.add(task)
+        task.add_done_callback(graph._BG_TASKS.discard)
+        await graph.drain_bg_tasks()
+        check("C.4: drain_bg_tasks espera las tareas fire-and-forget (no se pierden en shutdown)",
+              ran["done"] is True and len(graph._BG_TASKS) == 0)
     finally:
         await pool.close_pool()
 

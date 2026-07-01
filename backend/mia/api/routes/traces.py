@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from ...memory import trace_search
+from ...memory.trace_search import TraceSearchError
 
 router = APIRouter(prefix="/api/traces", tags=["traces"])
 
@@ -29,5 +30,8 @@ async def traces_search(
 ):
     """Busca en el historial de turnos del despacho por palabras clave (sin LLM)."""
     tid = _tenant(request)
-    return await trace_search.search_traces(
-        tid, q, limit=limit, matter_id=matter_id, outcome=outcome)
+    try:
+        return await trace_search.search_traces(
+            tid, q, limit=limit, matter_id=matter_id, outcome=outcome)
+    except TraceSearchError as e:
+        raise HTTPException(status_code=400, detail=str(e))

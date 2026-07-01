@@ -36,6 +36,10 @@ async def lifespan(app: FastAPI):
         scheduler_task.cancel()
         with suppress(asyncio.CancelledError):
             await scheduler_task
+        # C.4: drenar las tareas fire-and-forget de skill_improver (H.4) en vuelo ANTES de cerrar
+        # el pool, para no perder propuestas a medio escribir en el shutdown.
+        from ..agents.graph import drain_bg_tasks
+        await drain_bg_tasks()
         await pool.close_pool()
 
 

@@ -123,6 +123,20 @@ async def run_gate(t: dict) -> None:
         # === query vacío → [] ===
         check("query vacío devuelve []", (await trace_search.search_traces(A, "   ")) == [])
 
+        # === C.3: query malformada (solo operadores) → TraceSearchError (endpoint → 400) ===
+        async def _raises(q):
+            try:
+                await trace_search.search_traces(A, q)
+                return False
+            except trace_search.TraceSearchError:
+                return True
+        check("query solo-operadores ':::' → TraceSearchError (400)", await _raises(":::"))
+        check("query operadores rotos '&|!' → TraceSearchError (400)", await _raises("&|!"))
+        check("query '()' → TraceSearchError (400)", await _raises("()"))
+        # una consulta legítima con dos puntos ('contrato:') sigue funcionando (websearch tolera)
+        check("query legítima con ':' ('contrato') sigue devolviendo resultados",
+              len(await trace_search.search_traces(A, "contrato")) >= 1)
+
         # === RLS A↔B ===
         await trace_search.index_trace(B, matter_id=m1, input="contrato secreto de B",
                                        output="contenido de otro despacho", hitl_outcome="approved")

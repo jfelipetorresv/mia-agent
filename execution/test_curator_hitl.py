@@ -95,15 +95,30 @@ def vec_cos(c: float) -> list[float]:
     return v
 
 
-async def insert_pb(tenant: str, title: str, embedding, *, status="active", last_used=None) -> str:
+async def insert_pb(tenant: str, title: str, embedding, *, status="active", last_used=None,
+                    content="cuerpo") -> str:
     async with pool.tenant_connection(tenant) as conn:
         row = await (await conn.execute(
             "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content, "
             "embedding, status, last_used_at) "
-            "VALUES (%s::uuid,%s,'s','w','cuerpo',%s,%s,%s) RETURNING id",
-            (tenant, title, embedding, status, last_used),
+            "VALUES (%s::uuid,%s,'s','w',%s,%s,%s,%s) RETURNING id",
+            (tenant, title, content, embedding, status, last_used),
         )).fetchone()
     return str(row[0])
+
+
+async def pb_by_title(tenant: str, title: str) -> dict | None:
+    async with pool.tenant_connection(tenant) as conn:
+        row = await (await conn.execute(
+            "SELECT status, content FROM playbooks WHERE title=%s", (title,))).fetchone()
+    return {"status": row[0], "content": row[1]} if row else None
+
+
+async def proposal_status(tenant: str, pid: str) -> str | None:
+    async with pool.tenant_connection(tenant) as conn:
+        row = await (await conn.execute(
+            "SELECT status FROM curator_proposals WHERE id=%s::uuid", (pid,))).fetchone()
+    return row[0] if row else None
 
 
 async def status_of(tenant: str, pid: str) -> str | None:
@@ -212,6 +227,54 @@ async def run_gate(t: dict) -> None:
         recomputed = Curator._snapshot_hash(await cur._snapshot_state(t["noop"]))
         check("snapshot_hash coincide antes/después si no hay cambios",
               prop_n.snapshot_hash == recomputed)
+
+        # ===================== 8 · C.1: doble-approve concurrente → 1 gana, 1 rechazado ==========
+        cc1 = await insert_pb(t["concurrent"], "CC1", vec_axis(0))
+        cc2 = await insert_pb(t["concurrent"], "CC2", vec_cos(0.9))
+        prop_c = await cur.propose(t["concurrent"])
+        # dos aprobaciones EN PARALELO sobre la misma propuesta (FOR UPDATE serializa).
+        r_a, r_b = await asyncio.gather(
+            cur.apply_proposal(t["concurrent"], prop_c.id),
+            cur.apply_proposal(t["concurrent"], prop_c.id),
+        )
+        approved = [r for r in (r_a, r_b) if r["status"] == "approved" and not r.get("error")]
+        blocked = [r for r in (r_a, r_b) if r.get("error")]
+        check("doble-approve concurrente: exactamente 1 aplica (approved)", len(approved) == 1)
+        check("doble-approve concurrente: el 2º recibe 409 (no pendiente)",
+              len(blocked) == 1 and "no está pendiente" in (blocked[0].get("error") or ""))
+        check("doble-approve: los originales se archivaron UNA sola vez",
+              (await status_of(t["concurrent"], cc1)) == "archived"
+              and (await status_of(t["concurrent"], cc2)) == "archived"
+              and (await count_active(t["concurrent"], "Consolidado:%")) == 1)
+
+        # ===================== 9 · C.1: snapshot_hash mismatch → drift (409) =====================
+        d1 = await insert_pb(t["drift"], "D1", vec_axis(0))
+        d2 = await insert_pb(t["drift"], "D2", vec_cos(0.9))
+        prop_d = await cur.propose(t["drift"])
+        # el estado cambia DESPUÉS de proponer (se agrega un playbook activo) → hash distinto.
+        await insert_pb(t["drift"], "D3 tardío", vec_axis(70))
+        res_d = await cur.apply_proposal(t["drift"], prop_d.id)
+        check("snapshot_hash mismatch → status=drift (409) con mensaje 'regenerar'",
+              res_d["status"] == "drift" and "regenerar" in (res_d.get("error") or ""))
+        check("drift: NO se ejecutó la fusión (D1/D2 siguen activos)",
+              (await status_of(t["drift"], d1)) == "active"
+              and (await status_of(t["drift"], d2)) == "active")
+        check("drift: la propuesta vuelve a 'pending' (no quedó en 'applying')",
+              (await proposal_status(t["drift"], prop_d.id)) == "pending")
+
+        # ===================== 10 · C.1.3: ON CONFLICT DO UPDATE (no silenciar) ==================
+        await insert_pb(t["conflict"], "X", vec_axis(0))
+        await insert_pb(t["conflict"], "Y", vec_cos(0.9))
+        prop_k = await cur.propose(t["conflict"])
+        target_title = prop_k.proposed_merges[0]["target_title"]
+        # el título consolidado YA existe (archivado, contenido viejo) → DO UPDATE debe reactivarlo.
+        await insert_pb(t["conflict"], target_title, vec_axis(80), status="archived", content="VIEJO")
+        res_k = await cur.apply_proposal(t["conflict"], prop_k.id)
+        check("approve con título consolidado pre-existente → approved", res_k["status"] == "approved")
+        row_k = await pb_by_title(t["conflict"], target_title)
+        check("ON CONFLICT DO UPDATE reactiva+actualiza (no DO NOTHING)",
+              row_k is not None and row_k["status"] == "active"
+              and row_k["content"] == "CONTENIDO_FUSIONADO_MOCK")
     finally:
         await pool.close_pool()
 
@@ -227,7 +290,8 @@ def main() -> int:
     init_curator_proposals.apply()         # curator_proposals (012)
 
     drop_test_tenants()
-    t = {k: make_tenant(k) for k in ("a", "b", "merge", "reject", "fail", "noop")}
+    t = {k: make_tenant(k) for k in
+         ("a", "b", "merge", "reject", "fail", "noop", "concurrent", "drift", "conflict")}
     try:
         asyncio.run(run_gate(t))
     finally:
