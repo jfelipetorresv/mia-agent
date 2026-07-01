@@ -484,7 +484,17 @@ Por tanto:
 
 ---
 
-## 🟡 PENDIENTE DE REVISIÓN — Módulos sin registrar en progress.md  [detectado 2026-06-30]
+## 🟢 PENDIENTE DE REVISIÓN — Módulos sin registrar en progress.md  [CERRADO 2026-07-01]
+**Cierre (2026-07-01):** se revisó el código de los 3 módulos, se re-corrieron sus gates (los 3
+verdes: `test_gepa` 16/16 · `test_dreams` 16/16 · `test_second_brain_ui` 15/15, idénticos a los
+números de `task_plan.md` §Fase 5) y se escribió la entrada retroactiva en `progress.md`
+(**"## 2026-07-01 — Entradas retroactivas (módulos de sesión 20 sin documentar)"**) que documenta
+qué es cada módulo, qué hace, las decisiones de diseño visibles en el código y el resultado de su
+gate. Queda marcado explícitamente que es documentación retroactiva (los módulos son de la Sesión
+20, 2026-06-20, Fase 5). Límite del cierre: es reconstrucción por lectura de código — el
+razonamiento original de la sesión 20 (alternativas descartadas) no es recuperable.
+
+**(histórico) Estado original del riesgo:**
 Hay código en el árbol que **no figura en `progress.md`** (cuya última entrada de diario es
 2026-06-21 "Replan Ruta B + Fase 0"): `backend/mia/memory/gepa.py`, `backend/mia/memory/dreams.py`,
 y la UI/tests de `second_brain_ui` (p. ej. `execution/test_gepa.py`, `execution/test_dreams.py`,
@@ -500,7 +510,16 @@ de diseño). Detectado durante el smoke test vivo del 2026-06-30.
 
 ---
 
-## 🔴 Riesgo #32 — LiteLLM comparte el `.venv` de la app y degrada versiones al reinstalar  [detectado 2026-06-30, smoke vivo] 🔐
+## 🟢 Riesgo #32 — LiteLLM comparte el `.venv` de la app y degrada versiones al reinstalar  [detectado 2026-06-30, smoke vivo] [CERRADO 2026-07-01, CP0] 🔐
+**Resolución (2026-07-01, checkpoint CP0):** LiteLLM proxy separado en `.venv-litellm/` propio
+(`litellm[proxy]==1.74.8`); `scripts/start_litellm.ps1` arranca desde ahí. Runtime del API
+re-pineado EXACTO en `backend/pyproject.toml` (fastapi/uvicorn/starlette/sse-starlette/
+python-multipart/psycopg/psycopg-pool/litellm/websockets — websockets 13.1 era degradación
+remanente, restaurada a 15.0.1). Gate nuevo `execution/check_env_pins.py` cableado a
+`start_api.ps1` (aborta el arranque si el venv fue alterado) y a `run_tests.ps1` (aborta la
+regresión). Deuda declarada: uvicorn 0.29.0 y sse-starlette 3.0.3 quedaron pineadas a las
+versiones que dejó la degradación (funcionales, 32/32 verde); subirlas es tarea aparte y
+controlada ahora que el proxy tiene venv propio. Detalle original ↓
 LiteLLM se ejecuta desde el MISMO `.venv` que la API de Mia (`backend/`). Reinstalar
 `litellm[proxy]` (necesario para reparar el proxy / Prisma en esta sesión) **bajó/movió versiones
 de paquetes compartidos** con FastAPI/uvicorn de la app: `uvicorn`, `sse-starlette`,

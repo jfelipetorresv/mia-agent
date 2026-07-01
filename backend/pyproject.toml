@@ -4,19 +4,25 @@ version = "0.0.0"
 description = "Mia — agente legal cognitivo autónomo (backend). Módulo 0: DB + RLS + ingestión."
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.115",
-  "uvicorn[standard]>=0.30",
-  "psycopg[binary,pool]>=3.2",
+  # Runtime del API pineado EXACTO (Riesgo #32): el proxy LiteLLM vive en su
+  # propio venv (.venv-litellm) y NO debe tocar estas versiones. Gate:
+  # execution/check_env_pins.py (actualizarlo si se cambia un pin aquí).
+  "fastapi==0.115.14",
+  "uvicorn[standard]==0.29.0",           # NOTA: 0.29 quedó fijado por litellm[proxy] cuando compartía venv; subir a >=0.30 requiere reinstalar y re-verificar
+  "starlette==0.46.2",                   # base de FastAPI; pineada explícita para detectar degradaciones
+  "psycopg[binary,pool]==3.3.4",
+  "psycopg-pool==3.3.1",
   "pgvector>=0.3.6",
   "pyjwt>=2.9",
   "bcrypt>=4.2",
   "python-dotenv>=1.0",
-  "litellm==1.74.8",                     # cliente LLM; el proxy corre aparte (uv tool / start_litellm.ps1)
+  "litellm==1.74.8",                     # cliente LLM; el proxy corre aparte en .venv-litellm (start_litellm.ps1)
   "openai>=1.40",
   "langgraph>=1.2",                      # Módulo 1d: StateGraph + interrupt() (HITL)
   "langgraph-checkpoint-postgres>=3.1",  # checkpointing multi-tenant (decisión #9)
-  "sse-starlette>=3.4",                  # streaming SSE del turno (PASO 4)
-  "python-multipart>=0.0.9",             # Fase 3: subida de documentos (multipart/form-data)
+  "sse-starlette==3.0.3",                # streaming SSE del turno (PASO 4). NOTA: quedó en 3.0.3 (no 3.4) por el venv compartido con el proxy
+  "websockets==15.0.1",                  # requerida por langgraph-sdk (>=14,<16) y langsmith (>=15); 13.1 era degradación del proxy
+  "python-multipart==0.0.18",            # Fase 3: subida de documentos (multipart/form-data)
   "pymupdf>=1.24",                       # Fase 3: extracción de texto de PDF (fitz)
   "python-docx>=1.1",                    # Fase 3: extracción de texto de Word (.docx)
 ]

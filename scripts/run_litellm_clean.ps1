@@ -1,4 +1,6 @@
 # Mia - internal LiteLLM launcher with DB env scrubbed.
+# -LiteLLM debe apuntar al exe del venv DEDICADO del proxy (.venv-litellm),
+# nunca al venv de la app (.venv). Ver Riesgo #32.
 param(
   [Parameter(Mandatory = $true)][string]$LiteLLM,
   [Parameter(Mandatory = $true)][string]$Config

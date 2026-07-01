@@ -2,6 +2,7 @@
 mia-data/
 .tmp/
 .venv/
+.venv-litellm/
 
 # Python bytecode
 __pycache__/

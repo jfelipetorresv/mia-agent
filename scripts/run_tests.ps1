@@ -5,6 +5,14 @@ $py = Join-Path $root '.venv\Scripts\python.exe'
 $env:PYTHONPATH = Join-Path $root 'backend'
 Set-Location $root
 
+# Gate del Riesgo #32 primero: si el venv fue degradado, la regresion no es confiable.
+Write-Host "`n=== check_env_pins.py (gate Riesgo #32) ===" -ForegroundColor Cyan
+& $py execution\check_env_pins.py
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "`nABORTADO: pins del venv alterados (Riesgo #32)." -ForegroundColor Red
+    exit 1
+}
+
 $failed = @()
 Get-ChildItem execution\test_*.py | Sort-Object Name | ForEach-Object {
     Write-Host "`n=== $($_.Name) ===" -ForegroundColor Cyan

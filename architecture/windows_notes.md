@@ -51,13 +51,25 @@ policy por si acaso).
 
 ---
 
+## Regla: LiteLLM en venv separado
+
+- El proxy LiteLLM vive en su propio entorno virtual:
+  `"D:\Codex\Mia-Super Agent\mia\.venv-litellm"`.
+- **JAMÁS** instalar `litellm[proxy]` en el venv de la app (`.venv`): su instalación
+  degrada `uvicorn`/`fastapi`/`sse-starlette` a versiones incompatibles y rompe
+  `psycopg` en Windows (reintroduce el problema del `ProactorEventLoop` descrito en
+  la sección 1). Referencia: **Riesgo #32** en `memory/bugs-and-risks.md`.
+- Los scripts de arranque ya apuntan al venv separado; no hace falta activar nada a mano.
+
+---
+
 ## 2 · Otras trampas Windows ya registradas (referencias)
 
-- **LiteLLM comparte el `.venv` de la app** y al reinstalar `litellm[proxy]` degrada
+- **LiteLLM compartía el `.venv` de la app** y al reinstalar `litellm[proxy]` degradaba
   `uvicorn`/`sse-starlette`/`fastapi`/`starlette`/`python-multipart` → **Riesgo #32**
-  (`memory/bugs-and-risks.md`). Acción: separar LiteLLM en su propio venv antes de reiniciar la API
-  en producción. Relacionado con el punto 1: un downgrade silencioso de uvicorn podría reintroducir
-  el bug del event loop.
+  (`memory/bugs-and-risks.md`). Resuelto: LiteLLM vive ahora en `.venv-litellm` (ver
+  "Regla: LiteLLM en venv separado" arriba). Relacionado con el punto 1: un downgrade
+  silencioso de uvicorn podría reintroducir el bug del event loop.
 - **Arranque de LiteLLM con CWD aislado + DB env scrubbed** (`scripts/run_litellm_clean.ps1`):
   `Set-Location` NO cambia el CWD Win32 que heredan los procesos hijos, así que sin aislar el dir,
   `litellm.exe` corre con CWD=proyecto, su `load_dotenv()` reinyecta `DATABASE_URL` e intenta Prisma

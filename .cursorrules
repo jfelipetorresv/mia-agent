@@ -1,0 +1,25 @@
+# Reglas para Cursor — proyecto Mia (Lexia Intelligence)
+
+1. Al iniciar sesión en este repositorio, lee HANDOFF.md (en la raíz).
+   Ahí está el checkpoint más reciente: qué cambió, qué revisar y qué
+   comportamiento se espera. Al terminar tu revisión visual, devuelve
+   tus hallazgos en la sección "Hallazgos de Cursor (capa 3)" de ese
+   mismo archivo, para que quede trazabilidad de la revisión.
+
+2. La UI NUNCA muestra jerga técnica al usuario final. Prohibido en
+   pantalla: "HITL", "LangGraph", "pgvector", "tenant_id" o similares.
+   El abogado ve "asunto", "revisar borrador", "Mia está investigando".
+
+3. Cursor revisa SOLO la capa visual/frontend: mejores prácticas de
+   diseño de interfaz, accesibilidad, consistencia de experiencia de
+   usuario, datos sensibles expuestos en el cliente y formularios
+   inseguros. NO repitas la revisión de lógica de backend — esa ya la
+   hace otro revisor en la capa 2.
+
+4. Entorno: Windows 11 + PowerShell. Las rutas del proyecto contienen
+   espacios ("D:\Codex\Mia-Super Agent\mia") — siempre entre comillas
+   en cualquier comando.
+
+5. El archivo .env NUNCA se commitea. Está en .gitignore y debe seguir
+   ahí; no lo incluyas en commits ni copies su contenido a otros
+   archivos.

@@ -23,7 +23,12 @@ foreach ($dbVar in @('DATABASE_URL', 'PG_DB', 'PG_PASSWORD', 'PG_APP_PASSWORD'))
 }
 $env:LITELLM_LOCAL_MODEL_COST_MAP = "True"
 $cfg = Join-Path $root 'litellm_config.yaml'
-$litellm = Join-Path $root '.venv\Scripts\litellm.exe'
+# Riesgo #32: el proxy corre en su PROPIO venv (.venv-litellm) para que sus
+# reinstalaciones no degraden las dependencias del venv de la app (.venv).
+$litellm = Join-Path $root '.venv-litellm\Scripts\litellm.exe'
+if (-not (Test-Path $litellm)) {
+  throw "No se encontro $litellm. Crea el venv del proxy: python -m venv .venv-litellm; luego .venv-litellm\Scripts\python.exe -m pip install 'litellm[proxy]==1.74.8'"
+}
 $runtimeDir = Join-Path $env:TEMP 'mia-litellm-runtime'
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 $runtimeCfg = Join-Path $runtimeDir 'litellm_config.yaml'

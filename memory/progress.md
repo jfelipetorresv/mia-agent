@@ -1143,3 +1143,89 @@ ahora ignora `*.egg-info/`. Riesgo #19 (Curator sin HITL) **cerrado** (H.2/H.5/C
 **Riesgo #33** registrado: la recuperación ante `CONTEXT_TOO_LONG` en `graph._llm` es un no-op sobre
 prompts monolíticos de 2 mensajes (analysis/draft) → falta truncado por nodo (trabajo próxima sesión).
 Árbol de trabajo limpio.
+
+---
+
+## 2026-07-01 — Entradas retroactivas (módulos de sesión 20 sin documentar)
+
+**⚠️ DOCUMENTACIÓN RETROACTIVA escrita el 2026-07-01.** El smoke vivo del 2026-06-30 detectó 3
+módulos con código y gates verdes pero SIN entrada en este diario: `gepa.py`, `dreams.py` y
+`second_brain_ui`. Se construyeron alrededor del **2026-06-20 (Sesión 20, Fase 5 "Autoaprendizaje
+horizontal + second brain", Goal Codex autoaprendizaje)** — figuran completos en `task_plan.md`
+§Fase 5 pero nunca se escribió su entrada de diario. Esta entrada reconstruye qué son a partir de
+lectura del código el 2026-07-01 y re-ejecución de sus gates (los 3 verdes hoy). El razonamiento
+de diseño original de la sesión 20 no quedó registrado; lo que sigue son las decisiones VISIBLES
+en el código.
+
+**Módulo 1 — GEPA Loop (`backend/mia/memory/gepa.py`) · gate `test_gepa.py` 16/16 PASS (re-corrido 2026-07-01)**
+Aprendizaje procedural por tenant a partir de las trazas HITL (`TraceCapture` JSONL): Mia aprende
+los procedimientos del despacho observando qué borradores se aprueban, editan o rechazan.
+- `detect_new_skill` — agrupa trazas `approved` SIN playbook asignado por primeras 10 palabras
+  normalizadas del input; con ≥2 señales similares pide al LLM (`task="curator"`, temp 0.1) un
+  draft de procedimiento (JSON title/applies_when/content) y lo inserta en `playbooks` con
+  `status='draft'` (upsert por `(tenant_id,title)`) + propuesta `new_playbook` en `feedback_proposals`.
+- `evolve_skill` — mide approval/edit rate de un playbook desde sus trazas (30 días); si
+  approval<60% o edits>30% pide al LLM una versión mejorada y la deja como propuesta
+  `improve_playbook`. **NO aplica el cambio** (el playbook sigue `active`).
+- `grade_all_skills` — ranking de playbooks activos por approval_rate/edit_rate/activaciones.
+- `prune_unused_skills` — archiva playbooks sin uso >60 días, `AND NOT protected` (guard H.6,
+  añadido 2026-06-30: las semillas/core no se podan).
+- `run_evolution_cycle` / `run_all_tenants` — ciclo completo (detect → grade → evolve los <60% →
+  prune → top 5) por tenant.
+Decisiones de diseño visibles: (1) **todo pasa por HITL** — GEPA solo produce drafts y propuestas
+`pending`, nunca muta un playbook activo (coherente con el cierre del Riesgo #19); (2) **horizontal**
+— los prompts instruyen "No asumas jurisdicción, área, norma, corte, idioma ni tipo de proceso" y el
+gate verifica por lectura del fuente que no haya países/áreas hardcodeados; (3) **fallback
+determinista** — si el LLM falla o devuelve JSON inválido, el draft se arma con la evidencia cruda
+(no se pierde la señal); (4) señal mínima de 2 aprobaciones similares antes de proponer.
+
+**Módulo 2 — Dreams (`backend/mia/memory/dreams.py`) · gate `test_dreams.py` 16/16 PASS (re-corrido 2026-07-01)**
+Consolidación semanal profunda del second brain por tenant ("Mia sueña"): un solo job de cron
+(`dreams_weekly`; el gate verifica que NO exista un `gepa_weekly` separado) que orquesta 6 pasos
+sobre las trazas de los últimos 7 días:
+1. **Replay** — métricas de la semana (asuntos trabajados, approval/edit/rejection rate, skills
+   activados, gaps sin RAG por `retrieved_doc_ids == []`, horas de trabajo) persistidas en
+   `tenant_settings.config → {dreams,last_metrics}` (jsonb_set).
+2. **Wiki update** — por cada asunto aprobado llama `WikiManager.update_from_approved_matter`; los
+   rechazos alimentan el concepto especial "Patrones rechazados" (confidence 0.10, sección "Lo que
+   NO funciona") en la wiki del tenant.
+3. **GEPA** — corre `run_evolution_cycle` (el ciclo del Módulo 1) dentro del sueño.
+4. **Lint + archivo** — `lint_wiki` detecta conceptos stale/orphan y los archiva; poda skills viejos.
+5. **Nudges** — con ≥3 ediciones repetidas del mismo contexto, agrega una regla a la sección
+   "## Preferencias aprendidas por Mia" del SOUL.md del tenant (idempotente: no duplica reglas).
+6. **Weekly report** — resumen EN LENGUAJE DE ABOGADO ("Esta semana X trabajó N asuntos…"), sin
+   jerga, persistido como propuesta `weekly_report` en `feedback_proposals`.
+Decisiones de diseño visibles: composición por inyección (recibe `TraceCapture`/`WikiManager`/
+`GEPALoop` → testeable con tempdir); `run_all_tenants` aísla fallos por tenant (un tenant roto no
+tumba el sueño de los demás); horizontal (mismo tripwire de jurisdicciones en el gate).
+
+**Módulo 3 — Second brain UI (endpoints en `api/routes/ux.py` §"Second brain" + Pantallas 4/5) · gate `test_second_brain_ui.py` 15/15 PASS (re-corrido 2026-07-01)**
+La cara visible del second brain para el abogado + conectores de conocimiento:
+- **Endpoints** (todos bajo el middleware JWT por tenant): `GET /api/wiki/concepts` y
+  `GET /api/wiki/concepts/{name}` (leer la wiki), `POST /api/wiki/concepts/{name}/feedback`
+  (corrección del abogado → propuesta `wiki_correction` status `pending` — de nuevo HITL, no edita
+  la wiki directo), `GET /api/dreams/report` (último `weekly_report`), `GET /api/skills/ranked`
+  (ranking GEPA `grade_all_skills`), `POST /api/connectors/obsidian/sync` (sincroniza el vault —
+  ruta validada con la allowlist `config.resolve_obsidian_vault`, endurecida en el smoke del
+  2026-06-30 — y persiste `obsidian_vault_path` en `tenant_settings`), `POST
+  /api/connectors/pinecone/configure` (valida el índice con `describe_index`; si falla queda
+  `status='inactive'` en vez de 500 — degradación suave). `GET /api/dashboard/stats` se amplió con
+  el bloque `second_brain` (approval semanal, # conceptos, próximo sueño `dreams_weekly`) y
+  `connectors.models` (modelos dinámicos).
+- **Frontend**: Pantalla 4 `app/memoria/page.tsx` ganó el tab "Wiki del despacho" (+ botón
+  "Sugerir corrección") y el "Resumen semanal" destacado; Pantalla 5 `app/dashboard/page.tsx` ganó
+  la sección "Conectores" (Obsidian/Pinecone), "Salud del second brain" y selector "Modelo
+  preferido". Sin jerga técnica (regla §G de CLAUDE.md).
+El gate cubre los 8 endpoints vía `TestClient` (JWT real por tenant, conectores mockeados) + 6
+checks de contenido del frontend.
+⚠️ Nota del re-run 2026-07-01: al inicio del gate se ven reintentos `call_llm … Connection error`
+(el seeding de la wiki intenta el LLM real y el proxy no estaba arriba); el fallback determinista
+absorbe el fallo y los 15 checks pasan igual — comportamiento esperado, no un rojo.
+
+**Gates (re-corridos 2026-07-01):** `test_gepa` **16/16** · `test_dreams` **16/16** ·
+`test_second_brain_ui` **15/15** — idénticos a los números registrados en `task_plan.md` §Fase 5.
+Cierra el riesgo "PENDIENTE — Módulos sin registrar en progress.md" de `bugs-and-risks.md`.
+
+**Límites de esta entrada:** es reconstrucción por lectura de código; si la sesión 20 tomó
+decisiones que NO son visibles en el código (alternativas descartadas, razones de negocio), no
+están aquí ni en `decisions.md`.
