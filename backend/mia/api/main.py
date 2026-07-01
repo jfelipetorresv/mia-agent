@@ -16,7 +16,7 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
-from .routes import auth, curator, hitl, settings, stream, ux
+from .routes import auth, curator, hitl, settings, stream, traces, ux
 
 
 @asynccontextmanager
@@ -65,6 +65,8 @@ app.include_router(settings.router)
 app.include_router(ux.router)
 # HITL del Curator (H.2, cierra Riesgo #19): propuestas de depuración de playbooks.
 app.include_router(curator.router)
+# Búsqueda FTS de trazas (H.3): session_search sin LLM.
+app.include_router(traces.router)
 
 
 @app.get("/health")
