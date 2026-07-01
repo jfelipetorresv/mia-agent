@@ -1136,5 +1136,10 @@ por tarea.
   ux 409, RLS A↔B.
 
 **Regresión final (toda la suite, 32 gates):** TODO VERDE. Gates nuevos: `test_llm_fallback` 25/25,
-`test_playbooks_protected` 19/19. `test_rls` **12/12** (gate HALT) intacto. Sin fallos. Rama lista
-para merge (working tree limpio salvo `mia_backend.egg-info/` no rastreado).
+`test_playbooks_protected` 19/19. `test_rls` **12/12** (gate HALT) intacto. Sin fallos.
+
+**Cierre de sesión (2026-06-30):** rama `feat/hermes-v017-impl` **mergeada a `main`**. `.gitignore`
+ahora ignora `*.egg-info/`. Riesgo #19 (Curator sin HITL) **cerrado** (H.2/H.5/C.5). Nuevo
+**Riesgo #33** registrado: la recuperación ante `CONTEXT_TOO_LONG` en `graph._llm` es un no-op sobre
+prompts monolíticos de 2 mensajes (analysis/draft) → falta truncado por nodo (trabajo próxima sesión).
+Árbol de trabajo limpio.

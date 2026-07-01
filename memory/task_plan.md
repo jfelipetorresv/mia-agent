@@ -104,6 +104,18 @@ cliente (riesgos abiertos) + smoke test vivo en navegador (`architecture/e2e_run
 ---
 
 ## Pendientes — ruta Codex (`D:\Codex\Mia-Super Agent\mia`)
+- ✅ **Patrones Hermes v0.17.0 COMPLETO (2026-06-30, rama `feat/hermes-v017-impl` → merge a `main`)**
+  — H.1 taxonomía de errores LLM (`error_classifier`, gate 50/50) · H.2 Curator HITL dry-run→propuesta
+  (cierra Riesgo #19) · H.3 `session_search` FTS sin LLM (tabla `traces`+GIN, gate 21/21) · H.4 skills
+  self-improving con propuesta pending (gate 14/14) · **H.5** cadena de fallback de proveedor en
+  `call_llm` + `TurnLLMState` (gate `test_llm_fallback` 25/25) · **H.6** playbooks `protected`
+  inmunes al mantenimiento (migración 014, gate `test_playbooks_protected` 19/19).
+- ✅ **Correcciones post-review Cursor (2026-06-30)** — C.1-C.4 (commit `357ccea`) + **C.5** (Curator
+  legacy con guard `MIA_ALLOW_CURATOR_LEGACY_RUN`) + **C.6** (`traces/search` con `matter_id`
+  obligatorio + `assert_owns_matter`), commit `73acee4`.
+- ✅ **Regresión final 32/32 gates verdes** · `test_rls` 12/12 (HALT) intacto · rama mergeada a `main`.
+- ⬜ **Riesgo #33 (próxima sesión):** recuperación por nodo ante `CONTEXT_TOO_LONG` en `graph.py`
+  (el `ContextCompressor` en `_llm` es no-op sobre prompts de 2 mensajes de analysis/draft).
 - ✅ **Smoke test vivo COMPLETO (2026-06-30)** — 3 servicios operativos (PG/pgvector 5432, Ollama
   11434, LiteLLM proxy 4000). `claude-sonnet` confirmado por el proxy (HTTP 200, sin rebote de
   créditos). HITL verificado con ambos desenlaces (`approved`/`rejected`) en trazas reales.
