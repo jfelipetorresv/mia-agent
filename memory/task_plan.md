@@ -150,6 +150,6 @@ Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor indep
 | CP7 | ⬜ | Sincronización frontend: selector de motor + UI de conectores/curator/skills/import de guías | — |
 | CP-B3 | ✅ | Proactividad: recordatorios en lenguaje natural (parser determinista + regla dura de plazos procesales), aviso de borradores con debounce 24h y reporte semanal por Telegram (jobs `reminders_due` 5min / `pending_review_notify` 1h; migración 017) | `test_reminders` 64/64 |
 | CP-B4 | ⬜ | Herramientas reales del asistente (agenda, acciones) | — |
-| CP-C3 | ⬜ | Cierre del circuito GEPA (aprendizaje procedural end-to-end) | — |
+| CP-C3 | ✅ | Cierre del circuito GEPA: las propuestas de mejora apuntan al playbook que participó en las trazas rechazadas/editadas (no a uno arbitrario), se redactan sobre el contenido real, aplicar es reversible (previous_content) y el abogado ve QUÉ procedimiento se modifica. Vuelta EN VIVO pendiente de playbooks de Pipe (Riesgo #20) | `test_feedback_processor` 26/26 · `test_gepa` 18/18 · `test_trace_capture` 23/23 |
 | CP-C4 | ⬜ | Asistente de configuración guiado (onboarding técnico sin jerga) | — |
 | CP8 | ⬜ | Endurecimiento pre-cliente — EN PAUSA por decisión de prioridad (uso diario Lexia primero) | — |

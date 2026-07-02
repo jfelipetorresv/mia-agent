@@ -78,11 +78,11 @@ def drop_test_tenants() -> None:
         c.execute("DELETE FROM tenants WHERE name LIKE 'FEEDBACK_TEST%'")
 
 
-def trace_dict(tid, *, outcome=None, orig=None, final=None, docs=None) -> dict:
+def trace_dict(tid, *, outcome=None, orig=None, final=None, docs=None, playbooks=None) -> dict:
     return {"schema": TRACE_SCHEMA_V2, "trace_id": tid, "matter_id": "m",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "hitl_outcome": outcome, "draft_original": orig, "draft_final": final,
-            "retrieved_doc_ids": docs}
+            "retrieved_doc_ids": docs, "activated_playbooks": playbooks}
 
 
 async def count_proposals(tenant: str) -> int:
@@ -91,11 +91,15 @@ async def count_proposals(tenant: str) -> int:
             "SELECT count(*) FROM feedback_proposals")).fetchone())[0]
 
 
-async def insert_playbook(tenant: str, title: str) -> None:
+async def insert_playbook(tenant: str, title: str, *, protected: bool = False,
+                          usage: int = 0) -> str:
     async with pool.tenant_connection(tenant) as conn:
-        await conn.execute(
-            "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content) "
-            "VALUES (%s::uuid, %s, 's', 'w', 'c')", (tenant, title))
+        row = await (await conn.execute(
+            "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content, "
+            "protected, usage_count) "
+            "VALUES (%s::uuid, %s, 's', 'w', 'c', %s, %s) RETURNING id",
+            (tenant, title, protected, usage))).fetchone()
+    return str(row[0])
 
 
 async def db_checks(fp: FeedbackProcessor, tc: TraceCapture, t: dict) -> None:
@@ -193,6 +197,45 @@ async def db_checks(fp: FeedbackProcessor, tc: TraceCapture, t: dict) -> None:
         check("propose: 2+ NO_RESULT -> 'flag_gap'",
               len(gap) == 1 and gap[0]["type"] == "flag_gap")
 
+        # === CP-C3 (Riesgo #31): la propuesta apunta al playbook QUE FALLÓ ===
+        # analyze() acumula los activated_playbooks de las trazas con señal…
+        linked_sig = await fp.analyze([
+            trace_dict("l1", outcome="rejected", docs=["d"], playbooks=["pb-culpable"]),
+            trace_dict("l2", outcome="rejected", docs=["d"], playbooks=["pb-culpable", "pb-otro"]),
+        ])
+        check("CP-C3 analyze: la señal acumula los playbooks activados en sus trazas",
+              linked_sig["HITL_REJECTION"]["playbooks"] == {"pb-culpable": 2, "pb-otro": 1})
+
+        # …y propose() elige el MÁS activado en esas trazas, no el más usado del tenant.
+        popular = await insert_playbook(t["linked"], "PB popular", usage=99)
+        culpable = await insert_playbook(t["linked"], "PB culpable", usage=0)
+        linked_analysis = analysis("HITL_REJECTION", 2)
+        linked_analysis["HITL_REJECTION"]["playbooks"] = {culpable: 2}
+        linked = await fp.propose(t["linked"], linked_analysis)
+        check("CP-C3 propose: el target es el playbook activado en las trazas con señal",
+              len(linked) == 1 and linked[0]["type"] == "improve_playbook"
+              and linked[0]["target_playbook_id"] == culpable
+              and linked[0]["target_playbook_id"] != popular)
+        check("CP-C3 propose: la razón explica el vínculo con las trazas",
+              "estaba activo en las trazas" in linked[0]["rationale"])
+
+        # Un playbook PROTEGIDO (H.6) jamás es target: cae al no protegido más usado…
+        prot = await insert_playbook(t["prot"], "PB protegido", protected=True, usage=50)
+        libre = await insert_playbook(t["prot"], "PB libre", usage=1)
+        prot_analysis = analysis("HITL_REJECTION", 2)
+        prot_analysis["HITL_REJECTION"]["playbooks"] = {prot: 2}
+        prot_props = await fp.propose(t["prot"], prot_analysis)
+        check("CP-C3 propose: un playbook protegido NUNCA es target (cae al no protegido)",
+              len(prot_props) == 1 and prot_props[0]["target_playbook_id"] == libre)
+
+        # …y si SOLO hay protegidos, la propuesta baja a new_playbook (sin 409 sin salida).
+        await insert_playbook(t["soloprot"], "PB único protegido", protected=True)
+        sp_analysis = analysis("HITL_REJECTION", 2)
+        sp = await fp.propose(t["soloprot"], sp_analysis)
+        check("CP-C3 propose: solo playbooks protegidos -> 'new_playbook' (nunca 409)",
+              len(sp) == 1 and sp[0]["type"] == "new_playbook"
+              and sp[0]["target_playbook_id"] is None)
+
         # === run completo + idempotencia + watermark ===
         for i in range(2):
             tc.capture(tenant_id=t["run"], matter_id=f"m{i}", input="i", output="o", model="m",
@@ -254,7 +297,8 @@ def main() -> int:
     tc = TraceCapture(work / "traces")
     fp = FeedbackProcessor(traces_dir=work / "traces")
     drop_test_tenants()
-    t = {k: make_tenant(k) for k in ("a", "b", "load", "solo", "improve", "nuevo", "gap", "run")}
+    t = {k: make_tenant(k) for k in ("a", "b", "load", "solo", "improve", "nuevo", "gap",
+                                     "run", "linked", "prot", "soloprot")}
     try:
         asyncio.run(db_checks(fp, tc, t))
     finally:

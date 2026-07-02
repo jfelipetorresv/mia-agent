@@ -12,9 +12,15 @@ Qué decidimos: crear/cancelar recordatorios NUNCA depende del LLM;
   plazos procesales siempre [VERIFICAR]; "días hábiles" no se calculan.
 Regresión: 41/41 suites (test_reminders 64/64 nuevo; test_rls 12/12).
   Revisor capa 2: 2 bloqueantes + 5 mayores corregidos pre-commit.
-Qué sigue: CP-C3 (circuito GEPA) y CP6 (prompt_builder, requiere
-  diff a Pipe antes de merge). Prueba viva de Telegram espera el
-  bot de Pipe (docs/telegram-setup.md).
+Además (misma sesión): CP-C3 cerrado — las sugerencias de mejora
+  apuntan al procedimiento que participó en el trabajo rechazado,
+  se redactan sobre su contenido real y aplicarlas es reversible.
+  Gates 26/26 + 18/18 + 23/23; regresión 41/41; revisor APROBADO
+  (2 mayores pre-existentes corregidos igual).
+Qué sigue: CP6 (prompt_builder, requiere diff a Pipe antes de
+  merge) y CP7 (frontend). Pendientes de Pipe: bot de Telegram
+  (docs/telegram-setup.md) y subir sus primeras guías de trabajo
+  (desbloquea la vuelta en vivo del aprendizaje, Riesgo #20).
 
 ## 2026-06-20 — Sesión 21 · Smoke test login + onboarding
 TL;DR: Login real funciona. Onboarding 15 preguntas ágil.

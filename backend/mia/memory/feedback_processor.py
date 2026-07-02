@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..agent import llm
 from ..db import pool
+from .gepa import trace_playbook_ids
 from .trace_capture import TRACE_SCHEMA, TRACE_SCHEMA_V2, TraceCapture
 
 logger = logging.getLogger("mia.feedback")
@@ -80,25 +81,34 @@ class FeedbackProcessor:
         return out
 
     async def analyze(self, traces: list[dict]) -> dict:
-        """Cuenta las tres señales. Devuelve {SIGNAL: {count, trace_ids}}."""
+        """Cuenta las tres señales. Devuelve {SIGNAL: {count, trace_ids, playbooks}}.
+
+        CP-C3 (cierra Riesgo #31): además del conteo, cada señal de rechazo/edición
+        acumula QUÉ playbooks estaban activados en esas trazas (`activated_playbooks`,
+        traza v2) — así la propuesta apunta al procedimiento que participó en el turno
+        que falló, no a uno arbitrario."""
         signals: dict[str, dict] = {
-            "HITL_REJECTION": {"count": 0, "trace_ids": []},
-            "HITL_EDIT": {"count": 0, "trace_ids": []},
-            "NO_RESULT": {"count": 0, "trace_ids": []},
+            "HITL_REJECTION": {"count": 0, "trace_ids": [], "playbooks": {}},
+            "HITL_EDIT": {"count": 0, "trace_ids": [], "playbooks": {}},
+            "NO_RESULT": {"count": 0, "trace_ids": [], "playbooks": {}},
         }
+
+        def _hit(signal: str, trace: dict) -> None:
+            signals[signal]["count"] += 1
+            signals[signal]["trace_ids"].append(trace.get("trace_id"))
+            for pid in trace_playbook_ids(trace):
+                pbs = signals[signal]["playbooks"]
+                pbs[pid] = pbs.get(pid, 0) + 1
+
         for t in traces:
-            tid = t.get("trace_id")
             outcome = t.get("hitl_outcome")
             if outcome == "rejected":
-                signals["HITL_REJECTION"]["count"] += 1
-                signals["HITL_REJECTION"]["trace_ids"].append(tid)
+                _hit("HITL_REJECTION", t)
             elif outcome == "edited" and self._significant_edit(
                     t.get("draft_original"), t.get("draft_final")):
-                signals["HITL_EDIT"]["count"] += 1
-                signals["HITL_EDIT"]["trace_ids"].append(tid)
+                _hit("HITL_EDIT", t)
             if not t.get("retrieved_doc_ids"):   # [] o ausente/None
-                signals["NO_RESULT"]["count"] += 1
-                signals["NO_RESULT"]["trace_ids"].append(tid)
+                _hit("NO_RESULT", t)
         return signals
 
     @staticmethod
@@ -111,39 +121,103 @@ class FeedbackProcessor:
 
     async def propose(self, tenant_id: str, analysis: dict) -> list[dict]:
         """Genera una propuesta por cada señal con ≥ MIN_OCCURRENCES. El tipo depende de si el
-        tenant ya tiene playbooks (improve vs new) y de la señal (NO_RESULT → flag_gap)."""
-        active = await self._active_playbook_ids(tenant_id)
+        tenant ya tiene playbooks (improve vs new) y de la señal (NO_RESULT → flag_gap).
+
+        CP-C3 (cierra Riesgo #31): el target de 'improve_playbook' es el playbook MÁS
+        ACTIVADO en las trazas de la señal (analyze() lo trae en `playbooks`) — el que de
+        verdad participó en los turnos rechazados/editados. Sin esa evidencia se cae al
+        más usado del tenant. Los playbooks `protected` (H.6) NUNCA son target: si solo
+        hay protegidos, la propuesta baja a 'new_playbook' (nunca un 409 sin salida)."""
+        active = await self._active_playbooks(tenant_id)
         proposals: list[dict] = []
         for signal, info in analysis.items():
             if info["count"] < MIN_OCCURRENCES:
                 continue
+            linked = False
+            brief = None
             if signal == "NO_RESULT":
                 ptype, target = "flag_gap", None
-            elif active:
-                ptype, target = "improve_playbook", active[0]
             else:
-                ptype, target = "new_playbook", None
-            suggested = await asyncio.to_thread(self._draft_proposal, signal, info["count"])
+                target, linked = self._pick_target(info.get("playbooks") or {}, active)
+                ptype = "improve_playbook" if target else "new_playbook"
+                if target:
+                    brief = await self._playbook_brief(tenant_id, target)
+            rationale = f"{info['count']} ocurrencias de {signal} en el período."
+            if linked:
+                # El abogado debe saber QUÉ procedimiento se va a modificar (revisor CP-C3).
+                nombre = f" «{brief['title']}»" if brief else ""
+                rationale += (f" El procedimiento{nombre} estaba activo en las trazas "
+                              "que generaron la señal.")
+            elif brief:
+                rationale += (f" Se sugiere revisar el procedimiento «{brief['title']}» "
+                              "(el más usado del despacho; las trazas no señalan uno específico).")
+            suggested = await asyncio.to_thread(
+                self._draft_proposal, signal, info["count"], brief)
             proposals.append({
                 "type": ptype,
                 "target_playbook_id": target,
                 "suggested_content": suggested,
-                "rationale": f"{info['count']} ocurrencias de {signal} en el período.",
+                "rationale": rationale,
                 "signal_count": info["count"],
                 "trace_ids": [tid for tid in info["trace_ids"] if tid],
             })
         return proposals
 
     @staticmethod
-    def _draft_proposal(signal: str, count: int) -> str:
-        """Pide al LLM (task=curator → claude-sonnet) el contenido de la propuesta."""
+    def _pick_target(activated_counts: dict, active: list[dict]) -> tuple[str | None, bool]:
+        """Elige el playbook a mejorar → (target_id | None, vinculado_a_trazas).
+
+        Prioridad: el más activado en las trazas de la señal que siga activo y NO esté
+        protegido; fallback: el activo no protegido más usado del tenant. None si no
+        hay candidato válido (p. ej. todos protegidos)."""
+        unprotected = [str(a["id"]) for a in active if not a.get("protected")]
+        allowed = set(unprotected)
+        for pid, _n in sorted(activated_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            if str(pid) in allowed:
+                return str(pid), True
+        return (unprotected[0] if unprotected else None), False
+
+    # Cuánto del contenido actual del playbook ve el LLM al redactar la mejora.
+    _BRIEF_CONTENT_MAX_CHARS = 6000
+
+    async def _playbook_brief(self, tenant_id: str, playbook_id: str) -> dict | None:
+        """{title, content} del playbook target (bajo RLS) — para que la propuesta se
+        redacte SOBRE la metodología real y el abogado sepa qué se va a modificar."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            row = await (await conn.execute(
+                "SELECT title, content FROM playbooks WHERE id = %s::uuid",
+                (playbook_id,),
+            )).fetchone()
+        if not row:
+            return None
+        return {"title": row[0], "content": (row[1] or "")[:self._BRIEF_CONTENT_MAX_CHARS]}
+
+    @staticmethod
+    def _draft_proposal(signal: str, count: int, brief: dict | None = None) -> str:
+        """Pide al LLM (task=curator → claude-sonnet) el contenido de la propuesta.
+
+        Hallazgo del revisor CP-C3: cuando hay un playbook target, el LLM ve su
+        contenido ACTUAL y propone la versión mejorada COMPLETA (aplicar la propuesta
+        reemplaza el contenido — sin ver el original, la metodología real se perdería)."""
+        system = (
+            "Eres un curador de la metodología de un despacho. A partir de una señal "
+            "repetida en el trabajo de Mia, propones UNA mejora concreta y accionable a los "
+            "playbooks (o un playbook nuevo, o señalar un vacío de conocimiento). Devuelve "
+            "solo el texto de la propuesta.")
+        user = f"Señal: {signal}. Ocurrencias en el período: {count}."
+        if brief:
+            system = (
+                "Eres un curador de la metodología de un despacho. Un procedimiento existente "
+                "participó en trabajos que el abogado rechazó o corrigió. Devuelve la VERSIÓN "
+                "MEJORADA COMPLETA del procedimiento (tu texto reemplazará al actual si el "
+                "abogado la aprueba): conserva TODO lo que sigue siendo válido del contenido "
+                "actual y ajusta solo lo necesario según la señal. No inventes normas ni "
+                "jurisdicción. Devuelve solo el contenido mejorado.")
+            user += (f"\n\nProcedimiento a mejorar: {brief['title']}\n"
+                     f"Contenido actual:\n{brief['content']}")
         messages = [
-            {"role": "system", "content": (
-                "Eres un curador de la metodología de un despacho. A partir de una señal "
-                "repetida en el trabajo de Mia, propones UNA mejora concreta y accionable a los "
-                "playbooks (o un playbook nuevo, o señalar un vacío de conocimiento). Devuelve "
-                "solo el texto de la propuesta.")},
-            {"role": "user", "content": f"Señal: {signal}. Ocurrencias en el período: {count}."},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ]
         resp = llm.call_llm(messages, task="curator")
         return resp.choices[0].message.content or ""
@@ -194,12 +268,14 @@ class FeedbackProcessor:
                 logger.exception("feedback.run falló (tenant %s)", tenant_id)
         return out
 
-    async def _active_playbook_ids(self, tenant_id: str) -> list[str]:
+    async def _active_playbooks(self, tenant_id: str) -> list[dict]:
+        """Playbooks activos del tenant (más usados primero), con su flag `protected`."""
         async with pool.tenant_connection(tenant_id) as conn:
             rows = await (await conn.execute(
-                "SELECT id FROM playbooks WHERE status='active' ORDER BY usage_count DESC"
+                "SELECT id, protected FROM playbooks WHERE status='active' "
+                "ORDER BY usage_count DESC"
             )).fetchall()
-        return [str(r[0]) for r in rows]
+        return [{"id": str(r[0]), "protected": bool(r[1])} for r in rows]
 
     def _list_tenant_ids(self) -> list[str]:
         """Cross-tenant (operación de sistema) → conexión admin (Riesgo #15)."""

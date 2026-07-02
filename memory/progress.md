@@ -1344,3 +1344,30 @@ de avisos si algún día corren varios workers, "a la 1" = 01:00 (la confirmaci�
 
 **Bloqueantes:** ninguno. La prueba viva con el celular de Pipe queda pendiente de que él cree
 su bot (guía `docs/telegram-setup.md`) — el sistema completo es opt-in hasta entonces.
+
+**CP-C3 — Cierre del circuito de aprendizaje (misma sesión 22, rama main local)**
+El hallazgo del explorador: el cableado de `activated_playbooks` YA existía end-to-end
+(graph → traza v2 → GEPA/Dreams); la brecha real era LÓGICA — el FeedbackProcessor proponía
+mejoras contra un playbook ARBITRARIO (el primero activo del tenant), no contra el que
+participó en los turnos rechazados/editados. Qué se corrigió:
+- `analyze()` acumula por señal QUÉ playbooks estaban activados en las trazas que fallaron;
+  `propose()` apunta al MÁS activado en esas trazas (activo, no protegido), con fallback
+  honesto al más usado; solo-protegidos → `new_playbook` (nunca más un 409 sin salida).
+- La propuesta se redacta viendo el CONTENIDO REAL del playbook (antes el LLM proponía a
+  ciegas y aplicar PISABA la metodología); `apply_proposal` guarda el contenido anterior en
+  `metadata.last_improvement` (reversible) + proposal_id + fecha ISO.
+- `list_proposals` devuelve el TÍTULO del procedimiento target — el abogado ya no aprueba
+  a ciegas qué se modifica (falta pintarlo en la Pantalla 4 → CP7).
+- `gepa.trace_playbook_ids` promovido a API pública (lo usa el FeedbackProcessor).
+
+**Gates extendidos:** `test_trace_capture` 23/23 (+3: roundtrip v2 de activated_playbooks) ·
+`test_gepa` 18/18 (+2: grading con listas) · `test_feedback_processor` 26/26 (+5: vinculación
+señal→playbook, protegidos jamás target) · `test_ux` 29/29. Regresión completa 41/41.
+**Revisor (capa 2): APROBADO** — sus 2 mayores (pre-existentes, agravados por CP-C3) se
+corrigieron igual antes del commit; menores 3/5 corregidos, 2 aceptados (NO_RESULT acumula
+playbooks sin usarlos aún; decisión de producto del fallback documentada).
+
+**Riesgo #31 CERRADO** (el circuito conecta señales con el playbook correcto). **Riesgo #20
+sigue abierto**: la vuelta EN VIVO del ciclo con un caso real necesita que Pipe suba sus
+primeras guías de trabajo (`POST /api/playbooks/import`) — sin playbooks sembrados no hay
+activación que observar. El reporte semanal por Telegram quedó cubierto desde CP-B3.

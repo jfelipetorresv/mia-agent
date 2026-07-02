@@ -160,6 +160,20 @@ async def run_checks() -> None:
             check("grade_all_skills calcula approval_rate", good_grade["approval_rate"] == 1.0)
             check("grade_all_skills calcula edit_rate", bad_grade["edit_rate"] == 0.5)
 
+            # CP-C3 (Riesgo #31): las trazas REALES del grafo traen activated_playbooks
+            # (LISTA de ids, no playbook_id singular) — el grading debe contarlas igual.
+            duo_a = insert_playbook(tenant, "Skill dúo A")
+            duo_b = insert_playbook(tenant, "Skill dúo B")
+            append_trace(tc, tenant, hitl_outcome="approved", activated_playbooks=[duo_a, duo_b])
+            append_trace(tc, tenant, hitl_outcome="rejected", activated_playbooks=[duo_b])
+            grades2 = await gepa.grade_all_skills(tenant)
+            ga = next(g for g in grades2 if g["skill_id"] == duo_a)
+            gb = next(g for g in grades2 if g["skill_id"] == duo_b)
+            check("CP-C3: activated_playbooks (lista) cuenta activaciones para CADA playbook",
+                  ga["activations"] == 1 and gb["activations"] == 2)
+            check("CP-C3: rates por playbook desde activated_playbooks (A 100%, B 50%)",
+                  ga["approval_rate"] == 1.0 and gb["approval_rate"] == 0.5)
+
             no_change = await gepa.evolve_skill(tenant, good)
             check("evolve_skill no propone si desempeño alto", no_change["proposal_created"] is False)
             evolved = await gepa.evolve_skill(tenant, bad)
