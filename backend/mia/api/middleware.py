@@ -20,7 +20,20 @@ from starlette.responses import JSONResponse
 from .. import config
 from ..agent import llm
 
-OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/api/auth/register", "/api/auth/login"}
+# Rutas sin token. Las docs interactivas (/docs, /redoc, /openapi.json) solo quedan
+# abiertas en desarrollo: en producción exponen el mapa completo del API a cualquiera
+# (auditoría 2026-07; en main.py además se apagan del todo con MIA_ENV=production).
+# El callback de OAuth de calendario/correo (CP-P3) no trae Bearer: lo invoca el
+# navegador redirigido por Microsoft/Google. Su autenticidad se verifica con el `state`
+# FIRMADO (routes/mailbox.verify_state), no con el JWT de sesión.
+OPEN_PATHS = {"/health", "/api/auth/register", "/api/auth/login",
+              "/api/mailbox/oauth/callback"}
+if not config.IS_PRODUCTION:
+    OPEN_PATHS |= {"/docs", "/openapi.json", "/redoc"}
+
+# En producción el token DEBE traer expiración: un JWT sin `exp` sería una sesión
+# eterna imposible de invalidar. En dev se tolera (los gates acuñan tokens sin exp).
+_JWT_DECODE_OPTIONS = {"require": ["exp"]} if config.IS_PRODUCTION else None
 
 # Caché {tenant_id: (política, opt-in OpenRouter, monotonic_ts)} — TTL corto: un cambio
 # desde el Dashboard se aplica en ≤60s (y el PUT del endpoint lo invalida de inmediato).
@@ -65,7 +78,10 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"detail": "Falta token Bearer"}, status_code=401)
         token = auth[7:].strip()
         try:
-            payload = jwt.decode(token, config.JWT_SECRET, algorithms=[config.JWT_ALG])
+            payload = jwt.decode(
+                token, config.JWT_SECRET, algorithms=[config.JWT_ALG],
+                options=_JWT_DECODE_OPTIONS,
+            )
         except jwt.PyJWTError:
             return JSONResponse({"detail": "Token inválido"}, status_code=401)
 

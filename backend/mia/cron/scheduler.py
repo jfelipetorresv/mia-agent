@@ -372,4 +372,14 @@ def build_scheduler() -> Scheduler:
     _deadlines = watch_engine.upcoming_deadlines_watch()
     sched.register_job(_deadlines.name, lambda: watch_engine.run_watch(_deadlines),
                        interval_hours=_deadlines.interval_hours)
+    # CP-P3 (Ola 2) · conectores de calendario y correo: avisa de eventos próximos
+    # (posibles audiencias/plazos, con [VERIFICAR]) y de correos que parecen urgentes.
+    # Metadata-only (nunca el cuerpo del correo). Silencio total sin cuenta conectada,
+    # sin canal de Telegram o sin nada nuevo. at-most-once + debounce por evento/correo.
+    _calendar = watch_engine.calendar_events_watch()
+    sched.register_job(_calendar.name, lambda: watch_engine.run_watch(_calendar),
+                       interval_hours=_calendar.interval_hours)
+    _mail = watch_engine.urgent_mail_watch()
+    sched.register_job(_mail.name, lambda: watch_engine.run_watch(_mail),
+                       interval_hours=_mail.interval_hours)
     return sched

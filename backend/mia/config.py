@@ -10,11 +10,31 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 PG_DB = os.getenv("PG_DB", "mia")
 
+# Entorno de despliegue (auditoría de seguridad 2026-07): "dev" (default, laptop
+# del despacho / Modo B) o "production" (Modo A / servidor expuesto). En producción
+# se endurecen automáticamente: docs del API apagadas, exp obligatorio en el JWT.
+MIA_ENV = os.getenv("MIA_ENV", "dev").strip().lower()
+IS_PRODUCTION = MIA_ENV in ("prod", "production")
+
 # Conexión de la app: rol mia_app (RLS SÍ aplica). NUNCA el superusuario.
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_ALG = os.getenv("JWT_ALG", "HS256")
+# Vigencia del token de sesión (días). 7 por defecto; bajar en producción si se
+# despliega expuesto a internet (no hay revocación de tokens en v1).
+JWT_TTL_DAYS = int(os.getenv("MIA_JWT_TTL_DAYS", "7"))
+
+# Orígenes permitidos para CORS (auditoría 2026-07): coma-separados en .env.
+# Default: solo el frontend local. En producción DEBE ser el dominio real del
+# frontend (nunca "*": las respuestas llevan credenciales).
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "MIA_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if o.strip()
+]
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "voyage-law-2")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))
@@ -61,12 +81,41 @@ MIA_HOME = Path(os.getenv("MIA_HOME", "mia-data"))
 if not MIA_HOME.is_absolute():
     MIA_HOME = (PROJECT_ROOT / MIA_HOME).resolve()
 
+# --- Conectores de calendario y correo (CP-P3, Ola 2) ---
+# Llaves de la APP OAuth de cada proveedor. Son de la INSTALACIÓN (una app registrada
+# por despliegue de Mia en Azure AD / Google Cloud), no de un despacho: cada abogado
+# CONSIENTE y obtiene su propio token (ese sí por-tenant, en tenant_oauth_tokens). Sin
+# estas llaves, el conector del proveedor simplemente no se ofrece (degradación con
+# gracia). El client_secret es un secreto de instalación → va en .env, nunca al git.
+MS_OAUTH_CLIENT_ID = os.getenv("MS_OAUTH_CLIENT_ID", "")
+MS_OAUTH_CLIENT_SECRET = os.getenv("MS_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+# URL de callback donde el proveedor devuelve el `code` de consentimiento. Debe
+# coincidir EXACTA con la registrada en Azure/Google. Default: backend local (Modo B).
+MAILBOX_OAUTH_REDIRECT_URI = os.getenv(
+    "MAILBOX_OAUTH_REDIRECT_URI", "http://localhost:8000/api/mailbox/oauth/callback")
+
+
+def mailbox_oauth_client(provider: str) -> tuple[str, str]:
+    """(client_id, client_secret) de la app OAuth del proveedor, o ('','') si no hay."""
+    if provider == "microsoft":
+        return MS_OAUTH_CLIENT_ID, MS_OAUTH_CLIENT_SECRET
+    if provider == "google":
+        return GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET
+    return "", ""
+
 
 def validate_runtime_config() -> None:
     """Falla al arrancar si faltan secretos críticos (evita JWT vacío en producción)."""
     if not JWT_SECRET or len(JWT_SECRET) < 32:
         raise RuntimeError(
             "JWT_SECRET debe estar definido en .env y tener al menos 32 caracteres."
+        )
+    if IS_PRODUCTION and any(o == "*" for o in CORS_ORIGINS):
+        raise RuntimeError(
+            "MIA_CORS_ORIGINS no puede ser '*' en producción: las respuestas del "
+            "API llevan credenciales. Lista los dominios exactos del frontend."
         )
 
 

@@ -261,3 +261,194 @@ def upcoming_deadlines_watch(
 
     return Watch("upcoming_deadlines", DEADLINE_WATCH_INTERVAL_HOURS, check,
                  kind="no_agent", after_surface=after_surface)
+
+
+# ── vigilancias de calendario y correo (CP-P3, metadata-only, no_agent) ──────────
+CALENDAR_HEADS_UP_HOURS = 48          # avisa de eventos dentro de los próximos 2 días
+CALENDAR_WATCH_INTERVAL_HOURS = 6     # escanea cada 6h (basta para una ventana de 48h)
+MAIL_WATCH_INTERVAL_HOURS = 0.5       # correo urgente: cada 30 min (quiere rapidez)
+MAIL_MAX_SCAN = 25                    # cuántos correos recientes mirar por ciclo
+
+
+def _open_mailbox(mailbox):
+    """(servicio, ¿es propio?). Si no se inyecta, crea un MailboxService propio que
+    debe cerrarse tras usarlo (maneja su cliente httpx). Uno inyectado (gate) no se cierra."""
+    if mailbox is not None:
+        return mailbox, False
+    from ..connectors.mailbox.service import MailboxService
+    return MailboxService(), True
+
+
+def _mailbox_store(store_mod):
+    if store_mod is not None:
+        return store_mod
+    from ..connectors.mailbox import store as s
+    return s
+
+
+def _build_calendar_message(events: list) -> str:
+    from ..assistant.core import REMINDER_PROCEDURAL_WARNING
+    from ..connectors.mailbox.base import event_is_procedural
+    n = len(events)
+    encabezado = (f"Evento{'s' if n > 1 else ''} próximo{'s' if n > 1 else ''} "
+                  f"en tu calendario:")
+    lineas, hay_procesal = [], False
+    for ev in events:
+        cuando = _format_due(ev.start) if ev.start else "fecha por confirmar"
+        titulo = " ".join((ev.title or "(sin título)").split())
+        lugar = f" · {' '.join(ev.location.split())}" if getattr(ev, "location", "") else ""
+        lineas.append(f"- {titulo} — {cuando}{lugar}")
+        hay_procesal = hay_procesal or event_is_procedural(ev)
+    msg = encabezado + "\n" + "\n".join(lineas)
+    if hay_procesal:  # regla dura: si parece audiencia/plazo, el aviso lleva [VERIFICAR]
+        msg += "\n\n" + REMINDER_PROCEDURAL_WARNING
+    return msg
+
+
+def _build_urgent_mail_message(headers: list) -> str:
+    n = len(headers)
+    encabezado = (f"Correo{'s' if n > 1 else ''} que parece{'n' if n > 1 else ''} "
+                  f"urgente{'s' if n > 1 else ''} en tu bandeja:")
+    lineas = []
+    for h in headers:
+        quien = " ".join((h.sender_name or h.sender or "remitente desconocido").split())
+        asunto = " ".join((h.subject or "(sin asunto)").split())
+        lineas.append(f"- {quien}: {asunto}")
+    return (encabezado + "\n" + "\n".join(lineas)
+            + "\n\nRevisa tu bandeja para el detalle. "
+            + "(Mia solo miró el remitente y el asunto, no el contenido.)")
+
+
+def calendar_events_watch(
+    *,
+    within_hours: int = CALENDAR_HEADS_UP_HOURS,
+    resolve_tenant: Optional[Callable[[], Optional[str]]] = None,
+    mailbox: Any = None,
+    store_mod: Any = None,
+    telegram_configured: Optional[Callable[[], bool]] = None,
+) -> Watch:
+    """Vigilancia no_agent: avisa de EVENTOS próximos del calendario (posibles audiencias).
+
+    Metadata-only: lee título, fecha y lugar — nunca el detalle. REGLA DURA: un evento
+    con pinta procesal (audiencia, plazo…) se superficia con [VERIFICAR]; Mia no calcula
+    términos. Debounce: cada evento se avisa una sola vez (ledger mailbox_notifications).
+    Wake-gate: sin eventos nuevos → silencio total."""
+    async def check() -> WatchResult:
+        tc = telegram_configured
+        if tc is None:
+            from ..channels import notify
+            tc = notify.telegram_configured
+        if not tc():
+            return WatchResult(False, meta={"skipped": "canal sin configurar"})
+        tenant_id = (resolve_tenant or _resolve_notify_tenant)()
+        if not tenant_id:
+            return WatchResult(False, meta={"skipped": "sin tenant de canal"})
+
+        svc, own = _open_mailbox(mailbox)
+        try:
+            connector = await svc.connector_for(tenant_id)
+            if connector is None:
+                return WatchResult(False, meta={"skipped": "sin cuenta conectada",
+                                                "tenant_id": tenant_id})
+            events = await connector.upcoming_events(within_hours)
+        except Exception:  # noqa: BLE001 — API caída/migración ausente: no tumbar el loop
+            logger.exception("vigilancia de calendario: lectura fallida (tenant %s)", tenant_id)
+            return WatchResult(False, meta={"error": "lectura fallida"})
+        finally:
+            if own:
+                await svc.aclose()
+
+        events = [e for e in events if e.external_id and e.start]
+        if not events:
+            return WatchResult(False, meta={"tenant_id": tenant_id})   # wake-gate
+        try:
+            fresh = await _mailbox_store(store_mod).filter_unnotified(
+                tenant_id, "calendar", [e.external_id for e in events])
+        except Exception:  # noqa: BLE001 — sin debounce, peor caso: re-aviso (no callar)
+            logger.exception("vigilancia de calendario: debounce fallido (tenant %s)", tenant_id)
+            fresh = {e.external_id for e in events}
+        events = [e for e in events if e.external_id in fresh]
+        if not events:
+            return WatchResult(False, meta={"tenant_id": tenant_id})   # todo ya avisado
+        return WatchResult(True, message=_build_calendar_message(events),
+                           items=events, meta={"tenant_id": tenant_id})
+
+    async def after_surface(result: WatchResult, ok: bool) -> None:
+        if ok and result.items and result.meta.get("tenant_id"):
+            try:
+                await _mailbox_store(store_mod).mark_notified(
+                    result.meta["tenant_id"], "calendar",
+                    [e.external_id for e in result.items])
+            except Exception:  # noqa: BLE001 — marcar es best-effort
+                logger.warning("vigilancia de calendario: no se pudo marcar el debounce")
+
+    return Watch("calendar_events", CALENDAR_WATCH_INTERVAL_HOURS, check,
+                 kind="no_agent", after_surface=after_surface)
+
+
+def urgent_mail_watch(
+    *,
+    resolve_tenant: Optional[Callable[[], Optional[str]]] = None,
+    mailbox: Any = None,
+    store_mod: Any = None,
+    telegram_configured: Optional[Callable[[], bool]] = None,
+    max_scan: int = MAIL_MAX_SCAN,
+) -> Watch:
+    """Vigilancia no_agent: avisa de correos NO leídos que PARECEN urgentes.
+
+    Metadata-only (CP-P3): el wake-gate mira SOLO remitente, asunto y banderas — jamás
+    el cuerpo (el análisis con IA es opt-in y llega en CP-P4). Debounce por correo
+    (ledger). Sin correos urgentes nuevos → silencio."""
+    from ..connectors.mailbox.base import mail_looks_urgent
+
+    async def check() -> WatchResult:
+        tc = telegram_configured
+        if tc is None:
+            from ..channels import notify
+            tc = notify.telegram_configured
+        if not tc():
+            return WatchResult(False, meta={"skipped": "canal sin configurar"})
+        tenant_id = (resolve_tenant or _resolve_notify_tenant)()
+        if not tenant_id:
+            return WatchResult(False, meta={"skipped": "sin tenant de canal"})
+
+        svc, own = _open_mailbox(mailbox)
+        try:
+            connector = await svc.connector_for(tenant_id)
+            if connector is None:
+                return WatchResult(False, meta={"skipped": "sin cuenta conectada",
+                                                "tenant_id": tenant_id})
+            headers = await connector.recent_mail(max_results=max_scan, unread_only=True)
+        except Exception:  # noqa: BLE001
+            logger.exception("vigilancia de correo: lectura fallida (tenant %s)", tenant_id)
+            return WatchResult(False, meta={"error": "lectura fallida"})
+        finally:
+            if own:
+                await svc.aclose()
+
+        urgentes = [h for h in headers if h.external_id and mail_looks_urgent(h)]
+        if not urgentes:
+            return WatchResult(False, meta={"tenant_id": tenant_id})   # wake-gate
+        try:
+            fresh = await _mailbox_store(store_mod).filter_unnotified(
+                tenant_id, "mail", [h.external_id for h in urgentes])
+        except Exception:  # noqa: BLE001
+            logger.exception("vigilancia de correo: debounce fallido (tenant %s)", tenant_id)
+            fresh = {h.external_id for h in urgentes}
+        urgentes = [h for h in urgentes if h.external_id in fresh]
+        if not urgentes:
+            return WatchResult(False, meta={"tenant_id": tenant_id})
+        return WatchResult(True, message=_build_urgent_mail_message(urgentes),
+                           items=urgentes, meta={"tenant_id": tenant_id})
+
+    async def after_surface(result: WatchResult, ok: bool) -> None:
+        if ok and result.items and result.meta.get("tenant_id"):
+            try:
+                await _mailbox_store(store_mod).mark_notified(
+                    result.meta["tenant_id"], "mail",
+                    [h.external_id for h in result.items])
+            except Exception:  # noqa: BLE001
+                logger.warning("vigilancia de correo: no se pudo marcar el debounce")
+
+    return Watch("urgent_mail", MAIL_WATCH_INTERVAL_HOURS, check,
+                 kind="no_agent", after_surface=after_surface)

@@ -717,3 +717,28 @@ Residuales menores:
 4. **At-most-once solo en las vigilancias nuevas**: los jobs viejos (obsidian, curator, dreams,
    feedback, reminders_due) siguen SIN claim (Modo B single-worker). Migrarlos a run_watch/claim
    cuando haya multi-worker cierra del todo el Riesgo #22.
+
+## 🟢 Riesgo #40 — Conectores de calendario/correo (CP-P3): residuales  [registrado 2026-07-02, revisión CP-P3]
+CP-P3 quedó verde (gate test_mailbox.py 45/45; regresión 48/48; capa 2 APROBADO CON CORRECCIONES,
+sin bloqueantes). Se CORRIGIÓ el hallazgo MAYOR #1 (fijación de cuenta OAuth cross-tenant): el
+`state` firmado ahora lleva un `nonce` que también viaja en cookie HttpOnly/SameSite=Lax de la
+sesión que pulsó "conectar"; el callback exige que coincidan (secrets.compare_digest) → ata el
+consentimiento a ese navegador. Y el MENOR #3 (crecimiento sin cota del ledger mailbox_notifications):
+mark_notified autopoda las filas del tenant con notified_at > 30 días. Residuales abiertos:
+1. **#2 · `state` reusable dentro de su ventana de 10 min (no one-time estricto)**: el binding a
+   cookie del #1 lo mitiga (un state interceptado sin la cookie de la sesión no sirve). Para one-time
+   estricto haría falta un ledger de `jti` consumidos. Aceptable para Modo B; endurecer en multi-tenant.
+2. **#4 · costo/carga de la vigilancia Google cada 30 min**: Gmail hace 1+N HTTP por ciclo (listar +
+   una por mensaje, hasta 25) por tenant. Degradación ante 429 es correcta (MailboxAPIError→silencio),
+   pero es watch-out de escala/rate-limit a vigilar cuando haya varios despachos con Google conectado.
+3. **Matiz regla dura**: un evento con pinta procesal cuya fecha `parse_dt` no supo leer se DESCARTA
+   (watch_engine descarta eventos sin `start`). Es fail-safe (no inventa fecha), pero preferible
+   avisarlo con "fecha por confirmar". Aceptable v1.
+4. **CP-P3 es metadata-only**: las vigilancias leen fecha/remitente/asunto y NUNCA el cuerpo del
+   correo a un LLM. El análisis de CONTENIDO con IA (opt-in allow_content_analysis, ya cableado
+   fail-closed) es CP-P4 — ahí el cuerpo debe viajar SELLADO (untrusted.wrap_untrusted, CP-S1) y solo
+   bajo la política de modelo del tenant.
+5. **Pendiente de Pipe / frontend (Cursor)**: registrar la app OAuth en Azure (guía en
+   docs/conectar-calendario-correo.md) y pegar MS_OAUTH_CLIENT_ID/SECRET en .env; Cursor debe armar
+   el botón "Conectar Microsoft 365/Google" en la pantalla Configura a Mia (llama POST
+   /api/mailbox/connect/{provider} y redirige a la url; muestra estado con GET /api/mailbox/status).
