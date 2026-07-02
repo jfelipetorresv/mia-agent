@@ -1,5 +1,21 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-02 — Sesión 23 · CP7 Frontend sincronizado
+TL;DR: El abogado gobierna todo desde la pantalla. CP6 sigue
+       esperando la decisión de Pipe (A/B entregado).
+Qué construimos (CP7, mergeado a main):
+- Pestaña Habilidades + Importar guías + target en sugerencias
+- Propuestas del Curator con Aprobar/Rechazar (drift manejado)
+- Selector "Motor de IA" (política CP2, persiste, sin jerga)
+- Recordatorios en el panel (hora + cancelar confirmado)
+- triad_mode fuera del onboarding (Riesgo #27)
+- Panel Diagnóstico listo para el resumen de CP6 (condicional)
+Verificación: gate 26/26 · npm build ✓ · regresión 41/41 ·
+  revisor capa 2 APROBADO (2 mayores + 5 menores corregidos) ·
+  capa 3 de Cursor PENDIENTE (HANDOFF con 4 archivos).
+Qué sigue: CP-C4 (asistente de configuración guiado) y la
+  decisión de Pipe sobre CP6.
+
 ## 2026-07-01 — Sesión 22 · CP-B3 Proactividad
 TL;DR: Mia ya avisa y recuerda por Telegram. Recordatorios en
        lenguaje natural con regla dura de plazos procesales.
