@@ -51,7 +51,7 @@ except Exception:
     pass
 
 from mia import config, embeddings                          # noqa: E402
-from mia.agent import llm                                    # noqa: E402
+from mia.agent import llm, prompt_builder                    # noqa: E402
 from mia.agents import context_recovery as cr                # noqa: E402
 from mia.agents import graph as graph_mod                    # noqa: E402
 from mia.agents import retrieval                             # noqa: E402
@@ -307,12 +307,17 @@ def run_db_checks(ids: dict, obs: dict) -> None:
     check("c1 · intake sin docs ni knowledge → CERO llamadas a embeddings",
           obs["c_embed_calls"] == 0)
     check("c2 · state.knowledge queda vacío", obs["c_knowledge"] == [])
-    expected_system = graph_mod.ANALYSIS_SYSTEM
+    # CP6: el system ya no es ANALYSIS_SYSTEM monolítico — es el compuesto DETERMINISTA
+    # de la fachada de 10 capas (misma entrada → mismo prompt, byte a byte).
+    expected_system = prompt_builder.build_graph_system(
+        {"soul_snapshot": None}, "analysis",
+        matter_context=graph_mod._matter_context_for({"documents": [], "knowledge": []}))
     expected_user = (f"Consulta del abogado:\n{MSG}\n\n"
                      "Expediente:\n(sin documentos recuperados del expediente)")
     got_sys = obs["c_messages"][0]["content"]
     got_user = obs["c_messages"][1]["content"]
-    check("c3 · system prompt IDÉNTICO al de hoy (byte a byte)", got_sys == expected_system)
+    check("c3 · system prompt determinista = fachada de 10 capas (byte a byte)",
+          got_sys == expected_system and graph_mod.ANALYSIS_SYSTEM in got_sys)
     check("c4 · user prompt IDÉNTICO al de hoy (byte a byte)", got_user == expected_user)
     check("c5 · sin rastro de la sección de conocimiento",
           graph_mod.KNOWLEDGE_HEADER not in got_user and cr.KNOWLEDGE_TRIMMED_MARKER not in got_user)
@@ -405,13 +410,31 @@ def run_shrink_checks() -> None:
         # margen para la respuesta ni para la subestimación del estimador — y quemaba
         # la única compresión del turno. Ahora se recortan TAMBIÉN los documents.
         margin = int(2000 * graph_mod.SHRINK_EARLY_EXIT_FRACTION)
-        mid_docs = [{"id": f"d{i}",
-                     "content": f"[doc original {i}] " + ("hecho jurídico relevante " * 46)}
+        # CP6: el system compuesto (10 capas) es más grande que el ANALYSIS_SYSTEM
+        # monolítico — los docs se dimensionan DINÁMICAMENTE para que la premisa
+        # (85% < est ≤ 100% de la ventana) se mantenga aunque el prompt evolucione.
+
+        def _mid_docs(rep: int) -> list[dict]:
+            return [{"id": f"d{i}",
+                     "content": f"[doc original {i}] " + ("hecho jurídico relevante " * rep)}
                     for i in range(6)]
-        ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(mid_docs))
-        user_sin_know = (f"Consulta del abogado:\n{MSG}\n\nExpediente:\n{ctx}\n\n"
-                         + cr.KNOWLEDGE_TRIMMED_MARKER)
-        est = estimate_tokens(graph_mod.ANALYSIS_SYSTEM) + estimate_tokens(user_sin_know)
+
+        def _est_for(doc_list: list[dict]) -> tuple[int, str]:
+            ctx_ = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(doc_list))
+            user_ = (f"Consulta del abogado:\n{MSG}\n\nExpediente:\n{ctx_}\n\n"
+                     + cr.KNOWLEDGE_TRIMMED_MARKER)
+            sys_ = prompt_builder.build_graph_system(
+                {"soul_snapshot": None}, "analysis",
+                matter_context=graph_mod._matter_context_for(
+                    {"documents": doc_list, "knowledge": giant_know}))
+            return estimate_tokens(sys_) + estimate_tokens(user_), user_
+
+        rep = 60
+        est, user_sin_know = _est_for(_mid_docs(rep))
+        while est > 2000 and rep > 1:
+            rep -= 1
+            est, user_sin_know = _est_for(_mid_docs(rep))
+        mid_docs = _mid_docs(rep)
         check(f"e8 · premisa: sin knowledge la estimación cae entre el 85% y el 100% "
               f"de la ventana ({margin} < {est} <= 2000)", margin < est <= 2000)
         st3 = make_state("t-cp3-off", "m-cp3-off", documents=mid_docs, knowledge=giant_know)

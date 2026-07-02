@@ -161,8 +161,12 @@ def run(trace_dir: str) -> None:
     user2 = fc.messages_seen[1][1]["content"]
     check("b4 · los playbooks activos se descartan PRIMERO (texto del playbook fuera)",
           "paso metodológico del despacho" not in user2)
-    check("b5 · queda solo el índice de playbooks + marcador",
-          pb_index in user2 and cr.PLAYBOOKS_TRIMMED_MARKER in user2)
+    # CP6: el índice de playbooks vive en el SYSTEM (capa L9 de la fachada), no en el
+    # user — el marcador de recorte lo acompaña allí.
+    sys2 = fc.messages_seen[1][0]["content"]
+    check("b5 · queda solo el índice de playbooks + marcador (en el system, capa L9)",
+          pb_index in sys2 and cr.PLAYBOOKS_TRIMMED_MARKER in sys2
+          and pb_index not in user2)
     check("b6 · la CONCLUSIÓN del diagnóstico sobrevive al recorte (protect_tail)",
           CONCLUSION in user2)
     check("b7 · el diagnóstico sí se recortó (marcador de sección en el 2º prompt)",

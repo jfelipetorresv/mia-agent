@@ -22,6 +22,7 @@ from psycopg.rows import dict_row
 from pydantic import BaseModel
 
 from ... import embeddings
+from ...agent.prompt_builder import strip_diagnosis_closing
 from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import thread_id_for
@@ -203,8 +204,13 @@ async def get_draft(matter_id: str, request: Request):
         raise HTTPException(status_code=404, detail="No hay un borrador pendiente de revisión.")
     awaiting = bool(state and state.next)   # el grafo está pausado esperando la revisión
     # Riesgo #25: el diagnóstico jurídico viaja en el mismo estado del checkpoint.
-    diagnosis = (values.get("metadata") or {}).get("diagnosis")
-    return {"draft": draft, "awaiting_review": awaiting, "diagnosis": diagnosis}
+    # CP6: al abogado llega la PROSA sin el bloque de máquina `===` (§G);
+    # diagnosis_summary = cierre estructurado (problema/normas/riesgo) para la
+    # Pantalla 2; None si el modelo no emitió el bloque.
+    md = values.get("metadata") or {}
+    return {"draft": draft, "awaiting_review": awaiting,
+            "diagnosis": strip_diagnosis_closing(md.get("diagnosis") or "") or None,
+            "diagnosis_summary": md.get("diagnosis_summary")}
 
 
 class ApproveBody(BaseModel):

@@ -31,7 +31,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from .. import config, embeddings
-from ..agent import llm
+from ..agent import llm, prompt_builder
 from ..agent.context_compressor import ContextCompressor
 from ..agent.error_classifier import LLMErrorKind, classify_llm_error
 from ..agent.turn_llm_state import TurnLLMState
@@ -65,26 +65,27 @@ _WORD = re.compile(r"\w+", re.UNICODE)
 _MAX_ACTIVE_PLAYBOOKS = 3
 
 # ── Prompts de sistema (Civil Law · §G: sin jerga técnica hacia el usuario) ──
+# CP6 (Riesgo #26 · "una sola voz"): el system de cada nodo ya NO es un texto
+# monolítico propio — se compone con las 10 capas del prompt_builder vía
+# build_graph_system (L1 identidad/SOUL, L2 metodología, L3 citación, L5 §G,
+# L7 contexto del asunto, L8 instrucción del nodo, L9 índice de playbooks,
+# L10 fecha). Los nombres ANALYSIS/DRAFT/EDIT_SYSTEM se conservan como alias de
+# la capa L8 (la instrucción del nodo) — identidad y citación viven en L1/L3.
 
-ANALYSIS_SYSTEM = (
-    "Eres Mia, agente jurídica del Civil Law hispanoamericano. Analiza el problema "
-    "jurídico del abogado con los documentos del expediente. Estructura: (1) hechos "
-    "relevantes, (2) problema jurídico, (3) fundamentos de derecho con sus fuentes, "
-    "(4) conclusión y recomendación. Nunca inventas normas ni sentencias: lo que no "
-    "puedas verificar contra su fuente, márcalo con [VERIFICAR]."
-)
+ANALYSIS_SYSTEM = prompt_builder.GRAPH_NODE_INSTRUCTIONS["analysis"]
+DRAFT_SYSTEM = prompt_builder.GRAPH_NODE_INSTRUCTIONS["draft"]
+EDIT_SYSTEM = prompt_builder.GRAPH_NODE_INSTRUCTIONS["edit"]
 
-DRAFT_SYSTEM = (
-    "Eres Mia. Redacta el borrador del escrito jurídico a partir del diagnóstico, el "
-    "perfil del despacho y los playbooks aplicables. Tono profesional del oficio. "
-    "Marca con [VERIFICAR] cualquier cita que no esté confirmada. Es un borrador para "
-    "que el abogado lo apruebe."
-)
 
-EDIT_SYSTEM = (
-    "Eres Mia. Incorpora al borrador las indicaciones del abogado, conservando lo que "
-    "no se pidió cambiar. Devuelve el borrador corregido completo."
-)
+def _matter_context_for(state: MatterState) -> str:
+    """L7 · resumen situacional del asunto (ligero a propósito: el material pesado
+    —documentos, knowledge, diagnóstico— sigue viajando en el mensaje user)."""
+    docs = state.get("documents") or []
+    knowledge = state.get("knowledge") or []
+    partes = [f"Documentos del expediente recuperados en este turno: {len(docs)}."]
+    partes.append("Hay notas internas del despacho disponibles como orientación."
+                  if knowledge else "Sin notas internas del despacho en este turno.")
+    return " ".join(partes)
 
 # ── Conocimiento del despacho en el analysis (CP3 · Riesgo #16) ──────────────
 # Encabezado de la sección en el user prompt. Deja claro al modelo que las notas
@@ -117,25 +118,8 @@ def _last_user_message(state: MatterState) -> str:
     return ""
 
 
-def _render_soul(snapshot: Optional[dict]) -> str:
-    """Texto del SOUL.md del despacho (identidad del agente), o '' si no hay onboarding."""
-    if not snapshot:
-        return ""
-    return str(snapshot.get("content") or "").strip()
-
-
-def _system_with_soul(state: MatterState, base_system: str) -> str:
-    """Antepone la identidad (SOUL.md, Módulo 5) al system prompt del nodo, si existe.
-
-    Sin SOUL.md (soul_snapshot None) devuelve el system base sin cambios → el flujo del
-    grafo (y el gate 1d) se comporta igual que antes. Con SOUL.md, la identidad del
-    despacho encabeza el prompt para que el análisis y el borrador hablen con su voz.
-    """
-    soul = _render_soul(state.get("soul_snapshot"))
-    if not soul:
-        return base_system
-    return ("Esta es tu identidad y la voz del despacho (SOUL.md). Razona y redacta "
-            "conforme a ella:\n\n" + soul + "\n\n---\n\n" + base_system)
+# CP6: _system_with_soul/_render_soul se retiraron — la identidad (SOUL.md) entra
+# como capa L1 vía prompt_builder.build_graph_system (una sola fuente de verdad).
 
 
 def _tokenize(text: str) -> set[str]:
@@ -394,7 +378,12 @@ class MatterGraphBuilder:
             if know_section:
                 user += "\n\n" + know_section
             return [
-                {"role": "system", "content": _system_with_soul(state, ANALYSIS_SYSTEM)},
+                # L7 se calcula con los docs de ESTA pasada (el retry del shrink
+                # recorta docs — el conteo del contexto no debe quedar desfasado).
+                {"role": "system", "content": prompt_builder.build_graph_system(
+                    state, "analysis", matter_context=_matter_context_for(
+                        {"documents": doc_list,
+                         "knowledge": knowledge if know_section else []}))},
                 {"role": "user", "content": user},
             ]
 
@@ -420,6 +409,15 @@ class MatterGraphBuilder:
         diagnosis, usage = await self._llm(
             _messages(docs), task="main", state=state, md=md, shrink=_shrink)
         md.update(stage="analysis", diagnosis=diagnosis)
+        # CP6: cierre estructurado del diagnóstico (problema/normas/riesgo) para la
+        # Pantalla 2. Best-effort: si el modelo no emitió el bloque, summary es None
+        # y todo se comporta como antes (el diagnóstico en prosa sigue intacto).
+        summary = prompt_builder.parse_diagnosis_closing(diagnosis)
+        if summary:
+            md["diagnosis_summary"] = summary
+        else:
+            # Nunca dejar el resumen de un turno ANTERIOR junto a un diagnóstico nuevo.
+            md.pop("diagnosis_summary", None)
         _accum_usage(md, usage)
         return {"metadata": md}
 
@@ -429,17 +427,20 @@ class MatterGraphBuilder:
         diagnosis = md_in.get("diagnosis", "")
         profile_txt = _render_profile(state.get("profile_snapshot"))
         pb_index, pb_active, activated = await _prepare_playbooks(state, diagnosis)
-        pb_parts = [p for p in (pb_index, pb_active) if p]
-        playbook_txt = "\n\n".join(pb_parts)
+        # CP6: el ÍNDICE de playbooks sube al system como capa L9 (su lugar del diseño
+        # original — "índice siempre presente"); el CONTENIDO completo de los activos
+        # sigue en el user (on-demand, es material del turno).
         user_parts = [f"Diagnóstico:\n{diagnosis}", profile_txt]
-        if playbook_txt:
-            user_parts.append(playbook_txt)
+        if pb_active:
+            user_parts.append(pb_active)
         user_parts.append("Redacta el borrador del escrito.")
         md = dict(md_in)
 
-        def _messages(parts: list[str]) -> list[dict]:
+        def _messages(parts: list[str], index: str = pb_index) -> list[dict]:
             return [
-                {"role": "system", "content": _system_with_soul(state, DRAFT_SYSTEM)},
+                {"role": "system", "content": prompt_builder.build_graph_system(
+                    state, "draft", matter_context=_matter_context_for(state),
+                    playbook_index=index)},
                 {"role": "user", "content": "\n\n".join(parts)},
             ]
 
@@ -448,14 +449,12 @@ class MatterGraphBuilder:
             # índice con marcador) y LUEGO se recorta el diagnóstico preservando su FINAL
             # (la conclusión/recomendación del análisis va al final).
             budget = context_recovery.budget_for("draft", config.MIA_CONTEXT_WINDOW)
-            pb_small = (pb_index + "\n" + context_recovery.PLAYBOOKS_TRIMMED_MARKER) \
+            index_small = (pb_index + "\n" + context_recovery.PLAYBOOKS_TRIMMED_MARKER) \
                 if pb_index else ""
             diag_small = context_recovery.shrink_text(diagnosis, budget, protect_tail=True)
             parts = [f"Diagnóstico:\n{diag_small}", profile_txt]
-            if pb_small:
-                parts.append(pb_small)
             parts.append("Redacta el borrador del escrito.")
-            return _messages(parts)
+            return _messages(parts, index=index_small)
 
         draft, usage = await self._llm(
             _messages(user_parts), task="main", state=state, md=md, shrink=_shrink)
@@ -473,7 +472,11 @@ class MatterGraphBuilder:
             "draft": state.get("draft"),
             # Riesgo #25: el diagnóstico ya viaja en el estado (analysis_node);
             # se expone aquí para que la capa SSE lo muestre en la Pantalla 2.
-            "diagnosis": (state.get("metadata") or {}).get("diagnosis"),
+            # CP6 (§G): al abogado llega la PROSA sin el bloque de máquina `===`;
+            # la estructura viaja aparte en diagnosis_summary.
+            "diagnosis": prompt_builder.strip_diagnosis_closing(
+                (state.get("metadata") or {}).get("diagnosis") or "") or None,
+            "diagnosis_summary": (state.get("metadata") or {}).get("diagnosis_summary"),
         })
         # --- de aquí en adelante solo corre TRAS reanudar con Command(resume=...) ---
         dec = (decision or {}).get("decision")
@@ -493,7 +496,8 @@ class MatterGraphBuilder:
 
         if status == "editing":
             final, usage = await self._llm([
-                {"role": "system", "content": _system_with_soul(state, EDIT_SYSTEM)},
+                {"role": "system", "content": prompt_builder.build_graph_system(
+                    state, "edit", matter_context=_matter_context_for(state))},
                 {"role": "user", "content": f"Borrador:\n{draft}\n\nIndicaciones del abogado:\n"
                                             f"{decision.get('edits', '')}\n\nDevuelve el borrador corregido."},
             ], task="main", state=state, md=md)

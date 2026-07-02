@@ -73,6 +73,9 @@ async def stream_matter(
                             v.get("message", "Borrador listo para tu aprobación."),
                             draft=v.get("draft"),
                             diagnosis=v.get("diagnosis"),
+                            # CP6: cierre estructurado (problema/normas/riesgo) — el
+                            # canal en vivo lo reenvía igual que GET /draft.
+                            diagnosis_summary=v.get("diagnosis_summary"),
                         )
                         continue
                     for node in chunk:
