@@ -632,3 +632,20 @@ residuales ACEPTADOS y documentados, a resolver antes del multi-tenant real:
 5. **Canal atado a `users.email`**: si el usuario del puente se elimina y otro despacho registra
    ese mismo correo, las notificaciones cambiarían de tenant en silencio. Supuesto operativo:
    el correo del puente no se recicla entre despachos.
+
+## 🟡 Riesgo #36 — Cuarentena universal (CP-S1): residuales aceptados  [registrado 2026-07-02, revisión CP-S1]
+CP-S1 quedó verde (gate 28/28, hallazgos H1 mayor y H2 menor del revisor CORREGIDOS antes del
+commit: se eliminó la guarda anti doble-envoltura burlable y se alineó la instrucción de citas
+del especialista de hechos al sello <<<DOC n>>>). Residuales aceptados:
+1. **Overhead del sello no descontado en shrink_documents (H3)**: el encabezado de documentos
+   (~40 tokens) + sellos (~8-10/doc) no se restan del presupuesto al recortar. Caso patológico
+   (muchos docs justo en el límite tras CONTEXT_TOO_LONG) fallaría el turno con error claro, no
+   se cuelga (guard after>=before de graph.py). Preexistente a CP-S1, agravado marginalmente.
+   Fix futuro: descontar el overhead en shrink_documents o budget_for.
+2. **neutralize() solo atrapa ASCII (H4)**: homoglifos Unicode (＜＜＜ fullwidth, 〈〈〈) no se
+   neutralizan. Riesgo teórico bajo: el sello real es ASCII exacto; un lookalike no cierra el
+   bloque. Límite conocido, anotado.
+3. **Alcance deliberado**: playbooks y perfil NO se cuarentenan (contenido editorial del
+   despacho aprobado vía HITL — son instrucciones legítimas); el mensaje del abogado y su
+   Telegram privado tampoco (es el principal que da órdenes). Si en el futuro los playbooks
+   se importan de fuentes NO curadas por el despacho, revisar esta decisión.

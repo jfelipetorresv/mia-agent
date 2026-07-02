@@ -54,7 +54,7 @@ from ..memory.tokens import estimate_tokens
 from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
-from . import context_recovery, research, retrieval, verification
+from . import context_recovery, research, retrieval, untrusted, verification
 from .state import MatterState
 
 logger = logging.getLogger("mia.agents.graph")
@@ -199,8 +199,9 @@ def _render_knowledge(notes: list, window: int) -> str:
         if not isinstance(n, dict):
             continue
         src = str(n.get("source_path") or n.get("source") or "").strip()
-        fence_open = f"<<<NOTA {i + 1}" + (f" · {src}" if src else "") + ">>>"
-        fence_close = f"<<<FIN NOTA {i + 1}>>>"
+        # CP-S1: sello vía el módulo de cuarentena (mismo formato byte a byte;
+        # gana el saneo del rótulo — una ruta hostil no rompe la apertura).
+        fence_open, fence_close = untrusted.fence_markers("NOTA", index=i + 1, source=src)
         # +4 por nota: margen del estimador (ceil por pieza) + los '\n' internos del
         # fencing + el '\n\n' separador entre notas.
         overhead = estimate_tokens(fence_open) + estimate_tokens(fence_close) + 4
@@ -210,7 +211,9 @@ def _render_knowledge(notes: list, window: int) -> str:
         note_budget = remaining - overhead
         if estimate_tokens(content) > note_budget:
             content = context_recovery.shrink_text(content, note_budget)
-        piece = f"{fence_open}\n{content}\n{fence_close}"
+        # CP-S1 (anti-escape): una nota que traiga `<<<FIN NOTA n>>>` embebido ya
+        # no puede cerrar su propio sello. Mismo largo en chars → presupuesto intacto.
+        piece = f"{fence_open}\n{untrusted.neutralize(content)}\n{fence_close}"
         remaining -= estimate_tokens(piece) + 2
         parts.append(piece)
     if not parts:
@@ -383,8 +386,9 @@ class MatterGraphBuilder:
         md = dict(state.get("metadata") or {})
 
         def _messages(doc_list: list) -> list[dict]:
-            ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(doc_list)) or \
-                "(sin documentos recuperados del expediente)"
+            # CP-S1: cada documento va SELLADO (<<<DOC n>>>) — el texto de un
+            # documento subido es evidencia, nunca órdenes para el modelo.
+            ctx = untrusted.render_documents(doc_list)
             return [
                 # L7 con el knowledge REAL del turno (revisión capa 2): aunque los
                 # hechos no consumen las notas, el contexto no debe negar que existan.
@@ -456,8 +460,8 @@ class MatterGraphBuilder:
         know_txt = _render_knowledge(knowledge, config.MIA_CONTEXT_WINDOW)
 
         def _messages(doc_list: list, know_section: str = know_txt) -> list[dict]:
-            ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(doc_list)) or \
-                "(sin documentos recuperados del expediente)"
+            # CP-S1: documentos sellados (<<<DOC n>>>) igual que en facts_node.
+            ctx = untrusted.render_documents(doc_list)
             user = f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"
             # CP9: el cruce recibe el trabajo previo del equipo. Sin facts/research
             # (p. ej. checkpoints de turnos viejos) el prompt queda como antes de CP9.

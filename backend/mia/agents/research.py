@@ -21,6 +21,7 @@ from typing import Any
 from ..jurisdiction.pack import load_pack
 from ..jurisdiction.resolver import resolve_jurisdictions
 from ..rag.sat_graph import SATGraph
+from . import untrusted
 
 logger = logging.getLogger("mia.agents.research")
 
@@ -111,16 +112,18 @@ async def gather_sources(tenant_id: str, query: str) -> tuple[str, list[dict], l
         compact.append({"tipo": "norma", "referencia": ref,
                         "titulo": _clip(n.get("title"), 200)})
         body = _clip(n.get("summary") or n.get("full_text"))
-        blocks.append(f"<<<FUENTE {i} · {ref}>>>\n{_clip(n.get('title'), 200)}\n"
-                      f"{body}\n<<<FIN FUENTE {i}>>>")
+        # CP-S1: sello vía el módulo de cuarentena (mismo formato; suma el
+        # anti-escape del contenido y el saneo de la referencia).
+        blocks.append(untrusted.fence_block(
+            "FUENTE", f"{_clip(n.get('title'), 200)}\n{body}", index=i, source=ref))
     for r in rulings:
         i += 1
         ref = _ruling_reference(r)
         compact.append({"tipo": "providencia", "referencia": ref,
                         "titulo": _clip(r.get("topic"), 200)})
         body = _clip(r.get("ratio_decidendi") or r.get("obiter_dicta"))
-        blocks.append(f"<<<FUENTE {i} · {ref}>>>\n{_clip(r.get('topic'), 200)}\n"
-                      f"{body}\n<<<FIN FUENTE {i}>>>")
+        blocks.append(untrusted.fence_block(
+            "FUENTE", f"{_clip(r.get('topic'), 200)}\n{body}", index=i, source=ref))
 
     if not blocks:
         return "", [], jurisdictions

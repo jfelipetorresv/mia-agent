@@ -39,6 +39,7 @@ from types import SimpleNamespace
 from .. import config
 from ..agent import llm, prompt_builder
 from ..agent.context_compressor import ContextCompressor
+from ..agents import untrusted
 from ..db import pool
 from ..onboarding.soul_interview import load_soul_text
 from . import reminders as reminders_mod
@@ -185,10 +186,11 @@ def _sanitize_title(value, max_chars: int = _FIELD_MAX_CHARS) -> str:
     cortos de entrada de usuario (títulos de asuntos). El contenido editorial del
     servidor (guía del recorrido) es constante y confiable — se pasa `max_chars`
     amplio para no entregarlo cortado a mitad de oración en el chat.
+
+    CP-S1: delega en la cuarentena central (untrusted.sanitize_field), que suma la
+    neutralización de marcadores de sello `<<<`/`>>>` al saneo que ya existía.
     """
-    text = re.sub(r"={3,}", "", str(value or ""))
-    text = re.sub(r"\s+", " ", text).strip()
-    return text[:max_chars].strip()
+    return untrusted.sanitize_field(value, max_chars)
 
 
 def _truncate_history(history: list[dict]) -> list[dict]:

@@ -129,7 +129,8 @@ def run(trace_dir: str) -> None:
     check("a4 · los documentos truncados llevan el marcador de recorte",
           "[... documento recortado por límite de contexto" in user2)
     check("a5 · el 2º prompt conserva al menos 1 documento con contenido útil",
-          "[doc 1]" in user2 and "hecho jurídico relevante" in user2)
+          # CP-S1: los documentos van sellados (<<<DOC n>>>) en vez de "[doc n]".
+          "<<<DOC 1>>>" in user2 and "hecho jurídico relevante" in user2)
     check("a6 · la mitad de los documentos se descarta (doc 5..8 fuera)",
           "[doc original 4]" not in user2 and "[doc original 7]" not in user2)
     check("a7 · los documents del estado NO se mutan (recorte sobre copias)",
