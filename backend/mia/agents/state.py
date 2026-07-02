@@ -35,6 +35,9 @@ class MatterState(TypedDict, total=False):
     profile_snapshot: Optional[dict]  # copia frozen del perfil al inicio del asunto (2a)
 
     documents: list                   # documentos recuperados del RAG (intake_node)
+    knowledge: list[dict]             # notas del despacho (knowledge_chunks, CP3 · Riesgo #16).
+                                      # total=False → checkpoints viejos sin el campo siguen
+                                      # válidos; los nodos leen state.get("knowledge") or [].
     draft: Optional[str]              # borrador actual (None si aún no hay)
     hitl_status: HitlStatus           # pending | approved | rejected | editing
     trace_id: Optional[str]           # id de la traza JSONL activa (finalize_node)
@@ -76,6 +79,7 @@ def initial_state(
         soul_snapshot=soul_snapshot,
         profile_snapshot=profile_snapshot,
         documents=[],
+        knowledge=[],
         draft=None,
         hitl_status="pending",
         trace_id=None,

@@ -292,16 +292,22 @@ es admin. **No bloquea en Modo B** (un solo despacho). **Acción antes de multi-
 reemplazar por una función `SECURITY DEFINER` que devuelva (tenant_id, vault_path) con EXECUTE
 para `mia_app`, o un rol/servicio de cron dedicado. Documentado en `architecture/obsidian_sync.md`.
 
-## 🟡 Riesgo #16 — knowledge_chunks se indexa pero todavía NO se recupera  [detectado 2026-06-14, Sesión 10]
-El Módulo 3c llena `knowledge_chunks` (conocimiento del despacho), pero NINGÚN path lo lee aún:
-`agents/retrieval.py` (RRF) consulta solo `chunks` acotado por `documents.matter_id`. El agente
-todavía NO usa el conocimiento de Obsidian al analizar/redactar.
+## 🟢 Riesgo #16 — knowledge_chunks se indexa pero todavía NO se recupera  [CERRADO 2026-07-01, CP3]
+**Cierre:** el conocimiento del despacho ya llega al análisis (decisión #31). `retrieval.py`
+ganó `retrieve_knowledge_rrf` (mismo RRF híbrido vector+FTS que el del expediente, sobre
+`knowledge_chunks`, SIN filtro de asunto — es conocimiento transversal — y bajo
+`tenant_connection`/RLS fail-closed) y `knowledge_exists` (chequeo barato). `intake_node`
+REUSA el embedding del mensaje (cero llamadas extra a Voyage; si el asunto no tiene documentos,
+embebe solo cuando hay knowledge) y `analysis_node` añade la sección "Conocimiento del despacho"
+al prompt con presupuesto duro ≤15% de la ventana; sin knowledge el prompt queda byte a byte
+idéntico a antes. En el shrink de CONTEXT_TOO_LONG (CP1), el knowledge se recorta ANTES que los
+documents. Gate: `execution/test_retrieval_knowledge.py` 30/30 (relevancia, aislamiento A/B
+estilo test_rls, prompt idéntico sin knowledge, presupuesto, shrink); regresión
+`test_context_recovery.py` 34/34 · `test_hitl_flow.py` 19/19 · `test_rls.py` 12/12.
 
-**Riesgo:** indexar sin recuperar es valor latente; podría darse por "ya funciona" cuando aún
-no llega al grafo. **Acción (módulo futuro, fuera de 3c):** cablear la recuperación del
-conocimiento del despacho —un RRF sobre `knowledge_chunks` (HNSW + content_tsv ya están)— a una
-capa del prompt o a un nodo del grafo. Decidir cómo se mezcla con la recuperación por-asunto.
-No bloquea hoy.
+Histórico: el Módulo 3c llenaba `knowledge_chunks` (conocimiento del despacho), pero NINGÚN
+path lo leía: `agents/retrieval.py` (RRF) consultaba solo `chunks` acotado por
+`documents.matter_id`. El agente no usaba el conocimiento de Obsidian/carpetas al analizar.
 
 ## 🟡 Riesgo #17 — Pinecone: aislamiento por namespace, no por RLS (por convención)  [detectado 2026-06-14, Sesión 11] 🔐
 Pinecone NO tiene Row-Level Security. El aislamiento entre despachos en `PineconeConnector` se

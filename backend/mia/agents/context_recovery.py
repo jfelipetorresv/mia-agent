@@ -36,6 +36,8 @@ DOC_TRUNCATED_MARKER = ("\n[... documento recortado por límite de contexto — 
 TEXT_CUT_MARKER = "[... sección recortada ...]"
 PLAYBOOKS_TRIMMED_MARKER = ("[... playbooks recortados por límite de contexto — "
                             "se conserva solo el índice ...]")
+KNOWLEDGE_TRIMMED_MARKER = ("[... conocimiento del despacho recortado por límite de "
+                            "contexto — el expediente se conserva ...]")
 
 
 def budget_for(node: str, window: int) -> int:

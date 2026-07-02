@@ -94,6 +94,92 @@ async def retrieve_rrf(
     return [{"id": str(r[0]), "content": r[1], "score": float(r[2])} for r in rows]
 
 
+# ── Conocimiento del despacho (CP3 · Riesgo #16) ─────────────────────────────
+# Mismo RRF híbrido (HNSW + FTS GIN, migración 004) pero sobre `knowledge_chunks`
+# (notas de Obsidian + carpetas del abogado). SIN filtro de matter: es conocimiento
+# TRANSVERSAL del despacho, no de un asunto. El aislamiento entre despachos lo da
+# RLS bajo tenant_connection (fail-closed), igual que en `chunks`.
+_KNOWLEDGE_RRF_SQL = """
+WITH params AS (
+  SELECT %(qvec)s::vector AS qv,
+         websearch_to_tsquery('spanish', %(qtext)s) AS qq
+),
+vec AS (
+  SELECT k.id, row_number() OVER (ORDER BY k.embedding <=> p.qv) AS rnk
+  FROM knowledge_chunks k
+  CROSS JOIN params p
+  WHERE k.embedding IS NOT NULL
+  ORDER BY k.embedding <=> p.qv
+  LIMIT %(cand)s
+),
+fts AS (
+  SELECT k.id, row_number() OVER (ORDER BY ts_rank(k.content_tsv, p.qq) DESC) AS rnk
+  FROM knowledge_chunks k
+  CROSS JOIN params p
+  WHERE k.content_tsv @@ p.qq
+  ORDER BY ts_rank(k.content_tsv, p.qq) DESC
+  LIMIT %(cand)s
+),
+fused AS (
+  SELECT id, SUM(1.0 / (%(k)s + rnk)) AS score
+  FROM (SELECT id, rnk FROM vec UNION ALL SELECT id, rnk FROM fts) u
+  GROUP BY id
+)
+SELECT k.id, k.content, k.source, k.source_path, f.score
+FROM fused f
+JOIN knowledge_chunks k ON k.id = f.id
+ORDER BY f.score DESC
+LIMIT %(topk)s
+"""
+
+
+async def retrieve_knowledge_rrf(
+    tenant_id: str,
+    query_text: str,
+    query_vec: list[float],
+    *,
+    top_k: int = 4,
+    candidates: int = 12,
+) -> list[dict]:
+    """Recupera las `top_k` notas del despacho más relevantes por RRF (vector+FTS).
+
+    Opera sobre `knowledge_chunks` (conocimiento transversal del despacho — CP3,
+    Riesgo #16): NO se filtra por asunto. Devuelve
+    [{id, content, source, source_path, score}] ya filtrado por tenant (RLS
+    fail-closed bajo tenant_connection). Lista vacía si no hay nada indexado.
+    """
+    args = {
+        "qvec": _vector_literal(query_vec),
+        "qtext": query_text or "",
+        "cand": candidates,
+        "k": RRF_K,
+        "topk": top_k,
+    }
+    async with pool.tenant_connection(tenant_id) as conn:
+        rows = await (await conn.execute(_KNOWLEDGE_RRF_SQL, args)).fetchall()
+    return [
+        {"id": str(r[0]), "content": r[1], "source": r[2],
+         "source_path": r[3], "score": float(r[4])}
+        for r in rows
+    ]
+
+
+async def knowledge_exists(tenant_id: str) -> bool:
+    """True si el despacho tiene al menos una nota indexada con embedding.
+
+    Chequeo BARATO (EXISTS con índices de la 004) que permite a intake_node no
+    embeber ni consultar cuando el tenant no tiene conocimiento indexado: en ese
+    caso el turno se comporta idéntico a hoy (cero llamadas extra a Voyage).
+    Corre bajo tenant_connection -> RLS activo (mismo aislamiento que el RRF).
+    """
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM knowledge_chunks "
+            "WHERE embedding IS NOT NULL LIMIT 1)"
+        )).fetchone()
+    return bool(row[0])
+
+
 async def matter_has_chunks(tenant_id: str, matter_id: str) -> bool:
     """True si el asunto tiene al menos un chunk con embedding indexado.
 
