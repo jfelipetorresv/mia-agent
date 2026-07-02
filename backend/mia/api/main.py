@@ -18,8 +18,8 @@ from ..cron import build_scheduler
 from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, auth, curator, folders, hitl, mailbox, settings, setup,
-                     stream, traces, ux)
+from .routes import (assistant, auth, automations, curator, folders, hitl, mailbox,
+                     settings, setup, stream, traces, ux)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -139,6 +139,8 @@ app.include_router(folders.obsidian_router, prefix="/api")
 app.include_router(setup.router, prefix="/api")
 # CP-P3 (Ola 2) · conectores de calendario y correo (Microsoft 365 / Google Workspace).
 app.include_router(mailbox.router, prefix="/api")
+# CP-P2 (Ola 2) · plantillas de automatización + sugerencias consent-first.
+app.include_router(automations.router, prefix="/api")
 
 
 @app.get("/health")

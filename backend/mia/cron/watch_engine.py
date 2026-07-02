@@ -210,19 +210,37 @@ def _build_heads_up_message(items: list, within_hours: int) -> str:
     return encabezado + "\n" + "\n".join(lineas) + "\n\n" + REMINDER_PROCEDURAL_WARNING
 
 
+async def _deadline_window_for(tenant_id: str, default_hours: int) -> int:
+    """Ventana de aviso (horas) del despacho: si tiene una automatización activa
+    'deadline_heads_up' (CP-P2, plantilla "avísame N días antes"), usa esos días; si no,
+    el default. Nunca calcula un término — solo elige CUÁNTA anticipación dar al aviso."""
+    try:
+        from .suggestions import AutomationService
+        autos = await AutomationService().active_of_kind(tenant_id, "deadline_heads_up")
+    except Exception:  # noqa: BLE001 — sin tabla/automatización: usa el default
+        return default_hours
+    if autos:
+        dias = (autos[0].get("params") or {}).get("dias_antes")
+        if isinstance(dias, int) and dias > 0:
+            return dias * 24
+    return default_hours
+
+
 def upcoming_deadlines_watch(
     *,
     within_hours: int = DEADLINE_HEADS_UP_HOURS,
     resolve_tenant: Optional[Callable[[], Optional[str]]] = None,
     service: Any = None,
     telegram_configured: Optional[Callable[[], bool]] = None,
+    window_resolver: Optional[Callable[[str, int], Awaitable[int]]] = None,
 ) -> Watch:
     """Vigilancia no_agent: avisa con anticipación de los plazos procesales PRÓXIMOS.
 
     REGLA DURA: solo superficie fechas que el abogado YA fijó en sus recordatorios
     (is_procedural); NO calcula términos. Cada recordatorio recibe UN aviso anticipado
-    (heads_up_sent_at). Wake-gate: sin plazos próximos → silencio total. Dependencias
-    inyectables para el gate."""
+    (heads_up_sent_at). Wake-gate: sin plazos próximos → silencio total. La VENTANA de
+    anticipación la puede personalizar el despacho con la plantilla 'deadline_heads_up'
+    (CP-P2); sin ella, el default de 72h. Dependencias inyectables para el gate."""
     def _service():
         if service is not None:
             return service
@@ -240,14 +258,19 @@ def upcoming_deadlines_watch(
         tenant_id = rt()
         if not tenant_id:
             return WatchResult(False, meta={"skipped": "sin tenant de canal"})
+        wr = window_resolver or _deadline_window_for
         try:
-            items = await _service().upcoming_procedural(tenant_id, within_hours)
+            window = await wr(tenant_id, within_hours)
+        except Exception:  # noqa: BLE001 — resolver caído: default
+            window = within_hours
+        try:
+            items = await _service().upcoming_procedural(tenant_id, window)
         except Exception:  # noqa: BLE001 — migración ausente u otra falla: no tumbar el loop
             logger.exception("vigilancia de plazos: lectura fallida (tenant %s)", tenant_id)
             return WatchResult(False, meta={"error": "lectura fallida"})
         if not items:
             return WatchResult(False, meta={"tenant_id": tenant_id})   # wake-gate: nada próximo
-        return WatchResult(True, message=_build_heads_up_message(items, within_hours),
+        return WatchResult(True, message=_build_heads_up_message(items, window),
                            items=items, meta={"tenant_id": tenant_id})
 
     async def after_surface(result: WatchResult, ok: bool) -> None:
@@ -319,6 +342,21 @@ def _build_urgent_mail_message(headers: list) -> str:
             + "(Mia solo miró el remitente y el asunto, no el contenido.)")
 
 
+async def _calendar_window_for(tenant_id: str, default_hours: int) -> int:
+    """Ventana de aviso (horas) de eventos del calendario: si el despacho tiene una
+    automatización activa 'calendar_heads_up' (CP-P2), usa esos días; si no, el default."""
+    try:
+        from .suggestions import AutomationService
+        autos = await AutomationService().active_of_kind(tenant_id, "calendar_heads_up")
+    except Exception:  # noqa: BLE001
+        return default_hours
+    if autos:
+        dias = (autos[0].get("params") or {}).get("dias_antes")
+        if isinstance(dias, int) and dias > 0:
+            return dias * 24
+    return default_hours
+
+
 def calendar_events_watch(
     *,
     within_hours: int = CALENDAR_HEADS_UP_HOURS,
@@ -326,13 +364,15 @@ def calendar_events_watch(
     mailbox: Any = None,
     store_mod: Any = None,
     telegram_configured: Optional[Callable[[], bool]] = None,
+    window_resolver: Optional[Callable[[str, int], Awaitable[int]]] = None,
 ) -> Watch:
     """Vigilancia no_agent: avisa de EVENTOS próximos del calendario (posibles audiencias).
 
     Metadata-only: lee título, fecha y lugar — nunca el detalle. REGLA DURA: un evento
     con pinta procesal (audiencia, plazo…) se superficia con [VERIFICAR]; Mia no calcula
     términos. Debounce: cada evento se avisa una sola vez (ledger mailbox_notifications).
-    Wake-gate: sin eventos nuevos → silencio total."""
+    La VENTANA la puede personalizar el despacho con la plantilla 'calendar_heads_up'
+    (CP-P2); sin ella, el default de 48h. Wake-gate: sin eventos nuevos → silencio total."""
     async def check() -> WatchResult:
         tc = telegram_configured
         if tc is None:
@@ -344,13 +384,18 @@ def calendar_events_watch(
         if not tenant_id:
             return WatchResult(False, meta={"skipped": "sin tenant de canal"})
 
+        wr = window_resolver or _calendar_window_for
+        try:
+            window = await wr(tenant_id, within_hours)
+        except Exception:  # noqa: BLE001
+            window = within_hours
         svc, own = _open_mailbox(mailbox)
         try:
             connector = await svc.connector_for(tenant_id)
             if connector is None:
                 return WatchResult(False, meta={"skipped": "sin cuenta conectada",
                                                 "tenant_id": tenant_id})
-            events = await connector.upcoming_events(within_hours)
+            events = await connector.upcoming_events(window)
         except Exception:  # noqa: BLE001 — API caída/migración ausente: no tumbar el loop
             logger.exception("vigilancia de calendario: lectura fallida (tenant %s)", tenant_id)
             return WatchResult(False, meta={"error": "lectura fallida"})

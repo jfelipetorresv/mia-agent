@@ -766,3 +766,24 @@ política cierta). Gate mp-c5b lo prueba (policy indeterminada → 0 llamadas al
    datos reales manda el cuerpo del correo al LLM de su política. Si es 'nube'/'suscripción', eso es
    un proveedor de IA — su regla dura exige aprobación explícita por despacho. Default OFF; 'soberano'
    lo mantiene 100% local.
+
+## 🟢 Riesgo #42 — Plantillas + sugerencias consent-first (CP-P2): notas  [registrado 2026-07-02, revisión CP-P2]
+CP-P2 cierra la Ola 2 en verde (gate test_blueprints.py 24/24; regresión 49/49). Capa 2
+APROBÓ CON CORRECCIONES (2 menores de concurrencia; regla dura y RLS sólidas, sin bloqueantes).
+Corregidos ambos con un `pg_advisory_xact_lock(hashtext(tenant_id))` al inicio de propose()
+(serializa por-tenant: cierra la carrera del tope de 5 pendientes y la del dedup_key duplicado
+que propagaba un 500 por UniqueViolation). Gate bp-db16/17 lo ejercitan con asyncio.gather.
+Regla dura verificada sin fisuras: kind e is_procedural salen SIEMPRE del CATALOG (no del body),
+generate_suggestions solo PROPONE (0 automatizaciones), accept() es el único creador vía sugerencia,
+y la vigilancia solo lee fechas is_procedural con [VERIFICAR] (bp-db5 e2e). Notas:
+1. **stale_matter NO se construyó**: la tabla matters no tiene timestamp de última actividad
+   (solo created_at), así que una alerta de "asunto quieto" no es cableable sin un cambio mayor
+   (añadir last_activity_at y actualizarlo en el flujo de turnos). Se reemplazó por
+   calendar_heads_up (no procesal, cableada a la ventana de la vigilancia de calendario de CP-P3).
+   Retomar stale_matter cuando exista la señal de actividad por asunto.
+2. **Colisión de hash del advisory lock**: hashtext puede colisionar entre dos tenants → a lo
+   sumo serialización innecesaria entre ellos en propose (inofensiva; correctness intacta).
+3. **Frontend pendiente (Cursor, HANDOFF)**: pantalla de plantillas/automatizaciones + bandeja
+   de sugerencias sobre /api/automations/* (catálogo, crear, aceptar/descartar).
+4. **Solo 2 plantillas en el catálogo v1**: deadline_heads_up (procesal) y calendar_heads_up
+   (no procesal). El marco soporta más; agregarlas es declarativo + cablear su consumidor.
