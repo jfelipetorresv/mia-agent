@@ -115,24 +115,46 @@ Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref
 
 ---
 
-## OLA 3 — Voz _(requiere DECISIÓN de Pipe antes de empezar: local vs nube)_
+## OLA 3 — Voz _(DECISIÓN TOMADA por Pipe 2026-07-02: VOZ 100% LOCAL)_
 
-> **DECISIÓN PENDIENTE (alto impacto, Regla 2):** ¿voz 100% local (privacidad total, calidad
-> buena en español pero no perfecta) o se permite nube (mejor calidad, el audio sale a un
-> tercero)? Recomendación: **local por defecto**, nube solo opt-in por tenant. Resolver antes
-> de CP-Z1. Candado de privacidad `allow_cloud_audio=false` por defecto para datos sensibles.
+> **Decisión: voz LOCAL** (privacidad total; el audio nunca sale de la infraestructura del
+> despacho). Candado `allow_cloud_audio=false` por defecto; nube solo si algún tenant lo
+> habilita explícitamente. Regla 2 satisfecha.
+>
+> **Activo aportado por Pipe: LEXTER** (`C:\Users\jfeli\Downloads\lexter-x86_64-pc-windows-msvc.zip`)
+> — dictado local de escritorio que Pipe desarrolló, basado en **Handy** (open source). Empaquetado
+> Tauri (Rust). Contenido confirmado: push-to-talk global (ctrl+space), VAD **Silero**
+> (`silero_vad_v4.onnx`), aceleración local **DirectML** (GPU Windows), modelo STT descargado en
+> primer uso (vocab **GigaAM** presente; probablemente soporta Whisper/otros on-demand),
+> multi-idioma (`selected_language: auto`), y **post-proceso local con Ollama** (`clean_dictation`).
+> Escribe el texto dictado en la app activa a nivel de SO. **Cubre el STT de CP-Z1.** NO trae TTS
+> (voz de salida) → CP-Z2 sigue necesitando un TTS local (Kokoro/Piper).
+>
+> **Respuestas de Pipe (2026-07-02):** (a) CÓDIGO FUENTE disponible en
+> `https://github.com/jfelipetorresv/Lexter-Voice-Command.git` (repo propio, acceso concedido).
+> (b) Español jurídico: **probado, va bien** — no hace falta cambiar el modelo STT. (c) Integración
+> **NATIVA dentro de Mia** (botón de micrófono propio), no como app aparte.
+>
+> **Consecuencia de diseño (CP-Z1):** el objetivo es un botón de micrófono en la web de Mia
+> (Web Audio en Next.js) → endpoint FastAPI → motor STT en Python que **reusa los MISMOS modelos y
+> parámetros que Lexter ya validó en español** (Silero VAD + modelo STT ONNX vía onnxruntime, con
+> `onnxruntime-directml` para GPU Windows). El código Rust de Lexter es la REFERENCIA de qué modelos,
+> sample rate y preproceso usar (los que ya funcionan), no código a copiar literal. El post-proceso
+> "clean_dictation" con Ollama local de Lexter encaja con el gateway de Mia (que ya habla Ollama).
+> Análisis detallado del repo → `docs/analisis-lexter.md` (pendiente en este cierre).
 
-### CP-Z1 · Dictado en la web (STT local)
-- **Qué:** botón de micrófono en la pantalla actual; el abogado dicta, Mia transcribe con
-  **faster-whisper local** (el audio no sale del servidor). Batch (graba→sube→transcribe) como
-  MVP.
-- **Referencia OpenJarvis:** `src/openjarvis/speech/` (registry + `_discovery.py` local-first +
-  `SpeechConfig`), endpoint `/v1/speech/transcribe` en `server/api_routes.py` (~L748),
-  frontend `hooks/useSpeech.ts` + `components/Chat/MicButton.tsx`.
-- **Dónde en Mia:** `backend/mia/speech/` (nuevo, patrón registry) + endpoint FastAPI +
-  botón en Next.js (HANDOFF).
+### CP-Z1 · Voz-a-texto local (base: Lexter/Handy)
+- **Qué:** dictado local para el abogado. Dos caminos según respuesta de Pipe:
+  - **Rápido (recomendado para arrancar):** usar Lexter como app de dictado a nivel de SO — el
+    abogado dicta en el chat/campos de Mia hoy mismo, sin desarrollo. Se documenta y se prueba.
+  - **Integrado:** portar el motor de Lexter (Silero VAD + STT ONNX + DirectML) o el patrón
+    registry de OpenJarvis a `backend/mia/speech/` con endpoint FastAPI + botón de micrófono en
+    Next.js. Motor local; candado de privacidad por tenant.
+- **Referencia:** Lexter (activo de Pipe, base Handy) + OpenJarvis `src/openjarvis/speech/`
+  (registry + `_discovery.py` local-first + `SpeechConfig`), endpoint `/v1/speech/transcribe`
+  (`server/api_routes.py` ~L748), frontend `hooks/useSpeech.ts` + `components/Chat/MicButton.tsx`.
 - **Gate:** `test_speech_stt.py` (incluye candado de privacidad por tenant).
-- **Valor alto · esfuerzo bajo.**
+- **Valor alto · esfuerzo bajo** (Lexter ya resuelve el motor).
 
 ### CP-Z2 · Respuesta hablada (TTS local) + streaming incremental
 - **Qué:** voz de salida local (Kokoro/Piper, validar español) y sintetizar por frases
@@ -191,8 +213,9 @@ Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref
 
 ---
 
-## Decisiones de Pipe pendientes (recordatorio)
-1. **Voz local vs. nube** — antes de CP-Z1 (Ola 3).
+## Decisiones de Pipe
+1. **Voz local vs. nube → RESUELTO 2026-07-02: LOCAL.** Activo: Lexter (ver Ola 3). Pendiente solo
+   caracterizar Lexter (código fuente / modelo / modo de integración) al llegar a CP-Z1.
 2. Plazos procesales = siempre sugerencia con confirmación (ya es política; se mantiene).
 3. Datos reales de cliente para eval (CP-E4) = requieren su aprobación.
 
