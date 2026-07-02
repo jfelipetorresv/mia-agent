@@ -206,6 +206,32 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     check("s5 · consultar el estado NO escribe nada (solo lectura)",
           table_counts(tenant_a) == before)
 
+    # ── (g) CP-C4b: el recorrido EXPLICA como un onboarding ──
+    guias = {p["id"]: p.get("guia") for p in body["pasos"]}
+    check("g1 · cada paso trae su guía completa (qué es · para qué · cómo paso a paso)",
+          all(isinstance(g, dict) and g.get("que_es") and g.get("para_que")
+              and isinstance(g.get("como"), list) and len(g["como"]) >= 3
+              for g in guias.values()))
+    check("g2 · la guía explica en clave de negocio (el 'para qué' habla del despacho)",
+          all("despacho" in (g["para_que"] + g["que_es"]).lower()
+              or "celular" in (g["para_que"] + g["que_es"]).lower()
+              for g in guias.values()))
+    check("g3 · la guía de Telegram trae el paso a paso del bot (@BotFather)",
+          any("@BotFather" in paso for paso in guias["telegram"]["como"]))
+    check("g4 · la guía de Obsidian dice cómo se instala (paso a paso, no solo enlace)",
+          any("instala" in paso.lower() for paso in guias["obsidian"]["como"]))
+    texto_guias = " ".join(
+        f"{g['que_es']} {g['para_que']} " + " ".join(g["como"]) for g in guias.values())
+    secciones = body.get("secciones") or []
+    texto_secciones = " ".join(f"{x['titulo']} {x['que_es']} {x['para_que']}" for x in secciones)
+    check("g5 · §G: las guías y el mapa de secciones tampoco traen jerga técnica",
+          not _FORBIDDEN_RE.search(texto_guias + " " + texto_secciones))
+    check("g6 · el mapa de secciones de Mia explica las pantallas (Asuntos, Conocimiento, Panel…)",
+          len(secciones) >= 5
+          and all(x.get("que_es") and x.get("para_que") for x in secciones)
+          and any("Asuntos" in x["titulo"] for x in secciones)
+          and any("Conocimiento" in x["titulo"] for x in secciones))
+
     # ── (s) detección simulada: cada componente cambia su paso ──
     det.obsidian = True
     r2 = client.get("/api/setup/status", headers=auth_a).json()
@@ -268,6 +294,18 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     check("a1 · el modelo ve el bloque con el estado real de configuración",
           rc.status_code == 200 and SETUP_BLOCK_HEADER in last_user
           and "carpetas" in last_user.lower())
+    check("a3 · CP-C4b: el modelo ve la GUÍA del siguiente paso (qué es/para qué/cómo)",
+          "Guía del siguiente paso pendiente:" in last_user
+          and "Qué es:" in last_user and "Cómo, paso 1:" in last_user)
+    # L1 (revisión capa 2): la guía llega COMPLETA al chat, no cortada a 150 chars.
+    # El siguiente pendiente aquí es "perfil" (los demás quedaron listos en s7/s9); su
+    # 'para_que' supera los 150 chars y debe aparecer entero en el bloque del sistema.
+    status_now = client.get("/api/setup/status", headers=auth_a).json()
+    guia_sig = next(p["guia"] for p in status_now["pasos"]
+                    if p["id"] == status_now["siguiente"])
+    para_que_full = guia_sig["para_que"]
+    check("a4 · L1: la guía NO se entrega truncada a mitad de oración (llega completa)",
+          len(para_que_full) > 150 and para_que_full in last_user.replace("\n", " "))
     with sb() as c:
         persisted = c.execute(
             "SELECT content FROM assistant_messages WHERE conversation_id=%s::uuid "
@@ -283,11 +321,16 @@ def run_frontend_checks() -> None:
     sidebar = (ROOT / "frontend" / "app" / "_components" / "Sidebar.tsx").read_text(encoding="utf-8")
     check("f1 · página /configurar consume /api/setup/status con skip y retomar",
           "/api/setup/status" in page and "Dejar para después" in page and "Retomar" in page)
-    check("f2 · la guía de Telegram está en la página y remite al chat (sin rutas técnicas, §G)",
-          "@BotFather" in page and "telegram-setup.md" not in page
-          and "por el chat" in page)
+    check("f2 · CP-C4b: la página pinta la guía del servidor (qué es/para qué/cómo) y "
+          "el mapa de secciones — sin rutas técnicas (§G)",
+          "¿Qué es esto?" in page and "guia.como" in page
+          and "¿Qué hace cada sección de Mia?" in page
+          and "telegram-setup.md" not in page)
     check("f3 · el Sidebar enlaza 'Configura a Mia'",
           "/configurar" in sidebar and "Configura a Mia" in sidebar)
+    check("f4 · accesibilidad: barra de progreso con role y valores (hallazgo capa 3 diferido)",
+          'role="progressbar"' in page and "aria-valuenow" in page
+          and "aria-expanded" in page)
 
 
 def main() -> int:

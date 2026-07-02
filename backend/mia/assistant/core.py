@@ -173,17 +173,22 @@ def _asks_about_matters(message: str) -> bool:
     return bool(_MATTERS_QUERY_RE.search(message or ""))
 
 
-def _sanitize_title(value) -> str:
+def _sanitize_title(value, max_chars: int = _FIELD_MAX_CHARS) -> str:
     """Sanea un campo que se interpola en un bloque del sistema (defensa de prompt).
 
     Un título hostil con saltos de línea o '===' podría "cerrar" el bloque
     === ESTADO ACTUAL DE TUS ASUNTOS === y fabricar instrucciones con autoridad del
     sistema. Se colapsa TODO el whitespace (incluidos \\n \\r) a espacios simples, se
-    eliminan secuencias de 3+ '=' y se trunca a un largo razonable.
+    eliminan secuencias de 3+ '=' y se trunca a `max_chars`.
+
+    CP-C4b (revisión capa 2, L1): el tope por defecto (150) está pensado para campos
+    cortos de entrada de usuario (títulos de asuntos). El contenido editorial del
+    servidor (guía del recorrido) es constante y confiable — se pasa `max_chars`
+    amplio para no entregarlo cortado a mitad de oración en el chat.
     """
     text = re.sub(r"={3,}", "", str(value or ""))
     text = re.sub(r"\s+", " ", text).strip()
-    return text[:_FIELD_MAX_CHARS].strip()
+    return text[:max_chars].strip()
 
 
 def _truncate_history(history: list[dict]) -> list[dict]:
@@ -586,11 +591,26 @@ class AssistantService:
                 f"- {_sanitize_title(paso.get('titulo'))} · {paso.get('estado')} · "
                 f"{_sanitize_title(paso.get('detalle'))}"
             )
+        # CP-C4b: la guía COMPLETA del siguiente paso pendiente (qué es, para qué,
+        # cómo) para que el asistente acompañe como un onboarding, no solo enumere.
+        siguiente = status.get("siguiente")
+        guia = next((p.get("guia") for p in status.get("pasos", [])
+                     if p.get("id") == siguiente), None) if siguiente else None
+        if guia:
+            # L1: contenido editorial del servidor (confiable) → sin truncar a 150,
+            # pero igual saneado contra '===' y saltos de línea (defensa de prompt).
+            lines.append("Guía del siguiente paso pendiente:")
+            lines.append(f"  Qué es: {_sanitize_title(guia.get('que_es'), 400)}")
+            lines.append(f"  Para qué sirve: {_sanitize_title(guia.get('para_que'), 400)}")
+            for i, paso_como in enumerate(guia.get("como") or [], start=1):
+                lines.append(f"  Cómo, paso {i}: {_sanitize_title(paso_como, 400)}")
         lines.append("=== FIN DEL ESTADO DE CONFIGURACIÓN ===")
         lines.append(
             "(Bloque generado por el sistema con el estado real de la configuración; "
-            "guía al abogado paso a paso con estos hechos. La guía de Telegram está en "
-            "docs/telegram-setup.md; los demás pasos se hacen desde las pantallas de Mia.)"
+            "acompaña al abogado como un onboarding: explica qué es cada pieza, para "
+            "qué le sirve al despacho y el paso a paso, con estos hechos. Los pasos "
+            "se hacen desde las pantallas de Mia; el bot de Telegram se crea con la "
+            "guía integrada.)"
         )
         return "\n".join(lines)
 
