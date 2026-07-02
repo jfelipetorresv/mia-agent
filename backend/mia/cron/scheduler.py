@@ -20,6 +20,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
+from . import watch_engine
+
 logger = logging.getLogger("mia.cron")
 
 Job = Callable[[], Awaitable]
@@ -363,4 +365,11 @@ def build_scheduler() -> Scheduler:
     # no-op silenciosos si Telegram no está configurado (opt-in de CP-B2).
     sched.register_job("reminders_due", reminders_due_dispatch, interval_hours=5 / 60)
     sched.register_job("pending_review_notify", pending_review_notify, interval_hours=1)
+    # CP-P1 (Ola 2) · motor de vigilancia: aviso ANTICIPADO de plazos procesales
+    # próximos (no_agent, cero LLM). Corre con at-most-once (claim CAS) y wake-gate —
+    # sin plazos próximos, silencio total. La vigilancia solo superficie fechas que el
+    # abogado YA fijó (regla dura: Mia no calcula términos).
+    _deadlines = watch_engine.upcoming_deadlines_watch()
+    sched.register_job(_deadlines.name, lambda: watch_engine.run_watch(_deadlines),
+                       interval_hours=_deadlines.interval_hours)
     return sched
