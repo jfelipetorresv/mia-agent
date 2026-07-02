@@ -31,6 +31,17 @@ def _is_uuid(s: str) -> bool:
         return False
 
 
+def require_uuid(value: str, field: str = "identificador") -> str:
+    """CP-S3: valida que un id de ruta sea un UUID ANTES de tocar la DB.
+
+    Un id mal formado se rechaza con 400 en lugar de llegar crudo a SQL (donde
+    provocaría un 500 técnico o, sin RLS, una lectura indebida). Complementa la
+    barrera de RLS: forma correcta + aislamiento por tenant."""
+    if not _is_uuid(value):
+        raise HTTPException(status_code=400, detail=f"El {field} no es válido.")
+    return str(value)
+
+
 async def assert_owns_matter(tenant_id: str, matter_id: str) -> None:
     """401 si el tenant del JWT no es dueño del asunto.
 

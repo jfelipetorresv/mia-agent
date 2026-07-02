@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from ...memory.curator import Curator
+from ._common import require_uuid
 
 router = APIRouter(prefix="/api/curator", tags=["curator"])
 logger = logging.getLogger("mia.api.curator")
@@ -49,6 +50,7 @@ async def curator_approve(proposal_id: str, request: Request):
     """Aprueba una propuesta pendiente: aplica las fusiones/archivados con snapshot + rollback
     automático si algo falla, y deja registro de auditoría."""
     tid = _tenant(request)
+    proposal_id = require_uuid(proposal_id, "propuesta")
     result = await Curator().apply_proposal(tid, proposal_id, reviewed_by=_reviewer(request))
     if result.get("status") == "not_found":
         raise HTTPException(status_code=404, detail="Propuesta no encontrada")
@@ -64,6 +66,7 @@ async def curator_approve(proposal_id: str, request: Request):
 async def curator_reject(proposal_id: str, request: Request):
     """Rechaza una propuesta pendiente: no toca ningún playbook, solo la marca rechazada."""
     tid = _tenant(request)
+    proposal_id = require_uuid(proposal_id, "propuesta")
     result = await Curator().reject_proposal(tid, proposal_id, reviewed_by=_reviewer(request))
     if result.get("status") == "not_found":
         raise HTTPException(status_code=404, detail="Propuesta no encontrada")

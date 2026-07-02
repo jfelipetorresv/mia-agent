@@ -25,6 +25,12 @@ VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY", "")
 # Los nombres de modelo son los alias de litellm_config.yaml (claude-haiku, claude-sonnet).
 LITELLM_BASE_URL = os.getenv("LITELLM_BASE_URL", "http://localhost:4000")
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", "sk-mia-local")
+# CP-S3 · OpenRouter: acceso a decenas de modelos con UNA clave, como red de respaldo
+# en la nube (política "nube"). OPCIONAL: sin clave, el proveedor no se ofrece y las
+# cadenas de fallback quedan como estaban. La clave la pasa LiteLLM al upstream
+# (litellm_config.yaml lee os.environ/OPENROUTER_API_KEY). Costo de pago → poner tope
+# de gasto en el panel de OpenRouter al crearla (regla de operación segura).
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 # Modelo de razonamiento principal del agente (alias del gateway). Configurable
 # por despacho/entorno. compression y verification tienen su propio modelo fijo
 # en agent/llm.py (decisión #7) y NO usan esta variable.
