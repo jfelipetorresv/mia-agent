@@ -27,10 +27,25 @@ type Stats = {
   };
 };
 
+type MotorPolicy = { politica: string; nombre: string; opciones: { id: string; nombre: string }[] };
+type Reminder = { id: string; text: string; due_at: string; is_procedural: boolean };
+
 function fmt(s?: string | null): string {
   if (!s) return "—";
   try {
     return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return "—";
+  }
+}
+
+// Para los recordatorios la HORA importa ("mañana a las 9" no es "mañana").
+function fmtHora(s?: string | null): string {
+  if (!s) return "—";
+  try {
+    return new Date(s).toLocaleString("es-CO", {
+      day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+    });
   } catch {
     return "—";
   }
@@ -42,17 +57,49 @@ export default function DashboardPage() {
   const [pineconeKey, setPineconeKey] = useState("");
   const [pineconeIndex, setPineconeIndex] = useState("");
   const [status, setStatus] = useState("");
-  const [model, setModel] = useState("");
+  // CP7 (CP2 · decisión #27): motor de IA por política del despacho, sin nombres
+  // de modelos (§G) — "Mi suscripción / Nube / Todo en mi equipo".
+  const [policy, setPolicy] = useState<MotorPolicy | null>(null);
+  const [policyMsg, setPolicyMsg] = useState("");
+  // CP-B3: recordatorios pendientes del despacho.
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [reminderMsg, setReminderMsg] = useState("");
 
   async function load() {
     const data = await apiGet<Stats>("/api/dashboard/stats");
     setS(data);
-    if (!model && data.connectors?.models?.[0]) setModel(data.connectors.models[0]);
+    apiGet<MotorPolicy>("/settings/model-policy")
+      .then(setPolicy)
+      .catch(() => setPolicyMsg("No se pudo cargar el motor de IA. Recarga la página."));
+    apiGet<Reminder[]>("/api/assistant/reminders").then(setReminders).catch(() => setReminders([]));
   }
 
   useEffect(() => {
     load().catch(() => {});
   }, []);
+
+  async function changePolicy(id: string) {
+    setPolicyMsg("");
+    try {
+      const res = await apiSend<MotorPolicy>("PUT", "/settings/model-policy", { politica: id });
+      setPolicy(res);
+      setPolicyMsg(`Listo: Mia trabajará con "${res.nombre}".`);
+    } catch {
+      setPolicyMsg("No se pudo cambiar el motor. Intenta de nuevo.");
+    }
+  }
+
+  async function cancelReminder(id: string) {
+    // Solo se quita de la lista si el servidor CONFIRMÓ la cancelación — un
+    // recordatorio ligado a un plazo jamás debe "desaparecer" sin cancelarse.
+    setReminderMsg("");
+    try {
+      await apiSend("POST", `/api/assistant/reminders/${id}/cancel`);
+      setReminders((rs) => rs.filter((r) => r.id !== id));
+    } catch {
+      setReminderMsg("No se pudo cancelar el recordatorio. Intenta de nuevo.");
+    }
+  }
 
   async function syncObsidian() {
     setStatus("Sincronizando...");
@@ -126,19 +173,50 @@ export default function DashboardPage() {
               <button onClick={connectPinecone} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700">Conectar</button>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
-              <input value={pineconeKey} onChange={(e) => setPineconeKey(e.target.value)} placeholder="API key" className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
+              <input type="password" autoComplete="off" value={pineconeKey} onChange={(e) => setPineconeKey(e.target.value)} placeholder="Clave de acceso" className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
               <input value={pineconeIndex} onChange={(e) => setPineconeIndex(e.target.value)} placeholder="Index" className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
             </div>
           </div>
 
           <div className="rounded-lg border border-gray-100 p-4">
-            <label className="mb-1 block text-sm font-medium text-gray-700">Modelo preferido</label>
-            <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400">
-              {(c.models || []).map((m) => <option key={m}>{m}</option>)}
+            <label className="mb-1 block text-sm font-medium text-gray-700">Motor de IA</label>
+            <p className="mb-2 text-sm text-gray-500">Con qué trabaja Mia. Puedes cambiarlo cuando quieras.</p>
+            <select
+              value={policy?.politica || ""}
+              onChange={(e) => changePolicy(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+            >
+              {(policy?.opciones || []).map((o) => (
+                <option key={o.id} value={o.id}>{o.nombre}</option>
+              ))}
             </select>
+            {policyMsg ? <p className="mt-2 text-sm text-gray-600">{policyMsg}</p> : null}
           </div>
           {status ? <p className="text-sm text-gray-500">{status}</p> : null}
         </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Recordatorios</h2>
+        {reminderMsg ? <p className="mb-2 text-sm text-amber-700">{reminderMsg}</p> : null}
+        {reminders.length === 0 ? (
+          <p className="text-sm text-gray-400">No tienes recordatorios pendientes. Pídelos en el chat: «recuérdame radicar la tutela mañana a las 9».</p>
+        ) : (
+          <ul className="space-y-2">
+            {reminders.map((r) => (
+              <li key={r.id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{r.text}</div>
+                  <div className="text-sm text-gray-500">
+                    Para el {fmtHora(r.due_at)}
+                    {r.is_procedural ? " · plazo procesal: confirma tú la fecha" : ""}
+                  </div>
+                </div>
+                <button onClick={() => cancelReminder(r.id)} className="shrink-0 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancelar</button>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section>

@@ -1390,3 +1390,20 @@ suscripción real): DESPUÉS más enfocado (34 vs 76 menciones normativas, anál
 separados limpios, resumen ejecutivo de 3 líneas) — entregada a Pipe. **Merge pendiente de su
 aprobación.** Nota honesta registrada: ambas versiones dejan 5-6 sentencias específicas sin
 [VERIFICAR] al lado — riesgo pre-existente que ataca CP8c (en pausa).
+
+
+**CP7 — Sincronización del frontend (rama `feat/cp7-sincronizacion-frontend`, 2026-07-02)**
+El abogado gobierna todo desde la pantalla: pestaña **Habilidades** (skills/ranked con % de
+aprobación), botón **Importar guías** (playbooks/import multipart con detalle en llano por
+archivo), las sugerencias muestran **qué procedimiento se modificaría** (target de CP-C3),
+sección **"Orden del conocimiento"** (propuestas del Curator con Aprobar/Rechazar y manejo
+del drift 409), selector **"Motor de IA"** que consume la política CP2 (reemplaza al selector
+de modelos crudos que violaba §G y NO persistía), sección **Recordatorios** (CP-B3: listar con
+hora + cancelar solo con confirmación del servidor), `triad_mode` FUERA del onboarding
+(Riesgo #27 cerrado en UI, filtro HIDDEN_QUESTION_IDS) y el panel Diagnóstico pinta el resumen
+estructurado de CP6 cuando exista (condicional, inofensivo sin merge de CP6).
+Gate `test_second_brain_ui` **26/26** (+11: UI + contratos API reales) · `npm run build` ✓ ·
+regresión **41/41**. Revisor capa 2: APROBADO CON CORRECCIONES — 1 mayor (falso éxito al
+cancelar recordatorios) + 1 mayor preexistente (API key de Pinecone visible → type=password)
++ 5 menores: TODOS corregidos pre-commit. Capa 3 (Cursor) PENDIENTE vía HANDOFF.md (4 archivos).
+Deuda §G anotada: textos "second brain"/"vault"/"Pinecone" del dashboard viejo.

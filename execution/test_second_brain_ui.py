@@ -99,12 +99,33 @@ def seed_db(tenant_id: str) -> str:
 def run_frontend_checks() -> None:
     memoria = (ROOT / "frontend" / "app" / "memoria" / "page.tsx").read_text(encoding="utf-8")
     dashboard = (ROOT / "frontend" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
+    onboarding = (ROOT / "frontend" / "app" / "onboarding" / "page.tsx").read_text(encoding="utf-8")
+    asunto = (ROOT / "frontend" / "app" / "asuntos" / "[id]" / "page.tsx").read_text(encoding="utf-8")
     check("frontend: tab Wiki del despacho", "Wiki del despacho" in memoria)
     check("frontend: sugerir corrección", "Sugerir corrección" in memoria)
     check("frontend: reporte semanal destacado", "Resumen semanal" in memoria)
     check("frontend: sección Conectores", "Conectores" in dashboard and "Obsidian" in dashboard and "Pinecone" in dashboard)
     check("frontend: salud second brain", "Salud del second brain" in dashboard)
-    check("frontend: selector modelos", "Modelo preferido" in dashboard and "/api/dashboard/stats" in dashboard)
+    # CP7 · el selector de motor consume la política CP2 (sin nombres de modelos, §G)
+    check("frontend CP7: selector 'Motor de IA' consume /settings/model-policy (PUT al cambiar)",
+          "Motor de IA" in dashboard and "/settings/model-policy" in dashboard
+          and "Modelo preferido" not in dashboard)
+    check("frontend CP7: tab Habilidades consume /api/skills/ranked",
+          "Habilidades" in memoria and "/api/skills/ranked" in memoria)
+    check("frontend CP7: botón Importar guías → /api/playbooks/import (multipart)",
+          "Importar guías" in memoria and "/api/playbooks/import" in memoria)
+    check("frontend CP7: la sugerencia muestra el procedimiento que se modificaría (target)",
+          "Procedimiento que se modificaría" in memoria and "p.target" in memoria)
+    check("frontend CP7: propuestas del Curator con Aprobar/Rechazar",
+          "/api/curator/proposals" in memoria and "Orden del conocimiento" in memoria)
+    check("frontend CP7: recordatorios en el panel (listar + cancelar, CP-B3)",
+          "/api/assistant/reminders" in dashboard and "Recordatorios" in dashboard)
+    check("frontend CP7 (Riesgo #27): triad_mode FUERA del onboarding (sin toggle ni "
+          "etiqueta; la pregunta p19 queda filtrada)",
+          'case "p19"' not in onboarding and "Modo profundo" not in onboarding
+          and "HIDDEN_QUESTION_IDS" in onboarding and '"p19"' in onboarding)
+    check("frontend CP7: panel Diagnóstico pinta el resumen estructurado si existe",
+          "diagnosis_summary" in asunto and "Problema jurídico" in asunto)
 
 
 def main() -> int:
@@ -161,6 +182,23 @@ def main() -> int:
                 body = r.json()
                 check("dashboard incluye second_brain", r.status_code == 200 and "second_brain" in body)
                 check("dashboard incluye modelos dinámicos", bool(body.get("connectors", {}).get("models")))
+                # CP7 · contratos que consume la UI nueva
+                r = client.get("/api/curator/proposals", headers=auth)
+                check("GET /api/curator/proposals (lista para la UI)",
+                      r.status_code == 200 and isinstance(r.json(), list))
+                r = client.get("/settings/model-policy", headers=auth)
+                pol = r.json() if r.status_code == 200 else {}
+                check("GET /settings/model-policy trae política + 3 opciones con nombre",
+                      r.status_code == 200 and pol.get("politica")
+                      and len(pol.get("opciones", [])) == 3
+                      and all("nombre" in o for o in pol["opciones"]))
+                r = client.put("/settings/model-policy", headers=auth, json={"politica": "soberano"})
+                check("PUT /settings/model-policy persiste el cambio (el selector escribe)",
+                      r.status_code == 200 and r.json().get("politica") == "soberano")
+                r = client.get("/api/proposals", headers=auth)
+                check("GET /api/proposals incluye el campo target (CP-C3, lo pinta la UI)",
+                      r.status_code == 200
+                      and all("target" in p for p in r.json()))
         run_frontend_checks()
     finally:
         ux.ObsidianSync = original_obsidian
