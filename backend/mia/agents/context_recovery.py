@@ -18,6 +18,8 @@ from ..memory.tokens import estimate_tokens
 # Fracción de la ventana del modelo destinada al MATERIAL pesado del user prompt del
 # nodo (el resto queda para system/SOUL, la consulta del abogado y la respuesta).
 NODE_BUDGET_FRACTION: dict[str, float] = {
+    "facts": 0.60,      # documentos del expediente embebidos en el user de facts (CP9)
+    "research": 0.40,   # hechos del especialista en el user de research (CP9)
     "analysis": 0.60,   # documentos del expediente embebidos en el user de analysis
     "draft": 0.50,      # diagnóstico (+ perfil/playbooks) en el user de draft
 }

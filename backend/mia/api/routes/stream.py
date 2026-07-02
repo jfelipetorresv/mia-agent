@@ -76,12 +76,25 @@ async def stream_matter(
                             # CP6: cierre estructurado (problema/normas/riesgo) — el
                             # canal en vivo lo reenvía igual que GET /draft.
                             diagnosis_summary=v.get("diagnosis_summary"),
+                            # CP9: informe del especialista de verificación de citas.
+                            verification=v.get("verification"),
                         )
                         continue
                     for node in chunk:
-                        if node == "analysis":
-                            yield sse("thinking", "Mia está analizando el problema jurídico…")
+                        # CP9: el avance del equipo de especialistas, en frases del
+                        # oficio (§G). El evento de un nodo llega cuando ese nodo
+                        # TERMINA → cada mensaje anuncia el paso que ARRANCA.
+                        if node == "intake":
+                            yield sse("thinking", "Mia está estableciendo los hechos del expediente…")
+                        elif node == "facts":
+                            yield sse("thinking", "Mia está investigando normas y jurisprudencia aplicables…")
+                        elif node == "research":
+                            yield sse("thinking", "Mia está cruzando los hechos con el derecho…")
+                        elif node == "analysis":
+                            yield sse("thinking", "Mia está redactando el borrador…")
                         elif node == "draft":
+                            yield sse("thinking", "Mia está verificando las citas del borrador…")
+                        elif node == "verification":
                             yield sse("draft_ready", "Borrador listo.")
         except Exception:
             logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)

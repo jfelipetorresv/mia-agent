@@ -195,7 +195,10 @@ def main() -> int:
 
         # 1 · interrupt detiene el grafo antes de finalizar
         check("interrupt() dispara __interrupt__ y detiene el grafo", obs["interrupted"])
-        check("nodos corren en orden hasta draft", obs["nodes1"] == ["intake", "analysis", "draft"])
+        # CP9: el equipo de especialistas completo corre antes de la pausa HITL.
+        check("nodos corren en orden hasta draft",
+              obs["nodes1"] == ["intake", "facts", "research", "analysis",
+                                "draft", "verification"])
         check("borrador generado antes del checkpoint", (obs["draft1"] or "").startswith("BORRADOR"))
         check("grafo pausado EN hitl_checkpoint (antes de finalize)", "hitl_checkpoint" in obs["next1"])
         check("sin traza antes de aprobar (no llegó a finalize)", obs["trace1"] == 0)
