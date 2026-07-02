@@ -25,6 +25,7 @@ dependencies = [
   "python-multipart==0.0.18",            # Fase 3: subida de documentos (multipart/form-data)
   "pymupdf>=1.24",                       # Fase 3: extracción de texto de PDF (fitz)
   "python-docx>=1.1",                    # Fase 3: extracción de texto de Word (.docx)
+  "python-telegram-bot~=21.0",           # CP-B2: puente de Telegram (canal opt-in); ~= a propósito, no está en los pins críticos del Riesgo #32
 ]
 
 # Proyecto "virtual": no se empaqueta; las deps se instalan en mia/.venv con uv.
