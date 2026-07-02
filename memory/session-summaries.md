@@ -17,10 +17,14 @@ Además (misma sesión): CP-C3 cerrado — las sugerencias de mejora
   se redactan sobre su contenido real y aplicarlas es reversible.
   Gates 26/26 + 18/18 + 23/23; regresión 41/41; revisor APROBADO
   (2 mayores pre-existentes corregidos igual).
-Qué sigue: CP6 (prompt_builder, requiere diff a Pipe antes de
-  merge) y CP7 (frontend). Pendientes de Pipe: bot de Telegram
-  (docs/telegram-setup.md) y subir sus primeras guías de trabajo
-  (desbloquea la vuelta en vivo del aprendizaje, Riesgo #20).
+Además: CP6 IMPLEMENTADO en rama feat/cp6-una-sola-voz (una sola
+  voz: fachada de 10 capas en los 3 nodos, cierre estructurado del
+  diagnóstico, SOUL validado con reintento+fallback). Regresión
+  41/41; revisor APROBADO (3 mayores + 3 menores corregidos).
+  A/B EN VIVO entregado a Pipe — SIN MERGE hasta su aprobación.
+Qué sigue: decisión de Pipe sobre CP6 → CP7 (frontend) y CP-C4.
+  Pendientes de Pipe: bot de Telegram (docs/telegram-setup.md) y
+  subir sus guías de trabajo (Riesgo #20).
 
 ## 2026-06-20 — Sesión 21 · Smoke test login + onboarding
 TL;DR: Login real funciona. Onboarding 15 preguntas ágil.
