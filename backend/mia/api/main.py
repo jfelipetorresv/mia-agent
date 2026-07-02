@@ -15,12 +15,20 @@ if sys.platform == "win32":
 from .. import config
 from ..cron import build_scheduler
 from ..db import pool
+from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
 from .routes import assistant, auth, curator, folders, hitl, settings, setup, stream, traces, ux
+
+# CP-S2: redacción de credenciales en logs desde el import del entrypoint —
+# nada que se loguee durante el arranque debe salir sin pasar por el redactor.
+install_redacting_logging()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # CP-S2 (segunda pasada, idempotente): uvicorn instala sus handlers DESPUÉS
+    # del import del módulo — aquí ya existen y quedan envueltos también.
+    install_redacting_logging()
     config.validate_runtime_config()
     await pool.open_pool()
     # Arranque del scheduler de tareas periódicas (Riesgo #22): sin esto, los jobs

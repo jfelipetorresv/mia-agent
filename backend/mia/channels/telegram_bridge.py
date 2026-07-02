@@ -346,9 +346,14 @@ def main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    # CP-S2: el redactor envuelve el handler del basicConfig — aunque el token
+    # del bot acabe en un traceback (httpx lo lleva EN LA URL), sale enmascarado.
+    from ..security import install_redacting_logging
+    install_redacting_logging()
     # httpx loguea a INFO la URL completa de cada request de polling, que incluye
     # el TOKEN del bot (…api.telegram.org/bot<TOKEN>/getUpdates) — silenciarlo
-    # (hallazgo mayor de la revisión CP-B2).
+    # (hallazgo mayor de la revisión CP-B2; CP-S2 añade la redacción como segunda
+    # capa, pero no loguear de más sigue siendo la primera).
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     # Carga .env del proyecto (mismo patrón que el resto del backend).

@@ -27,7 +27,7 @@ from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import thread_id_for
 from ... import config
-from ...connectors import ObsidianSync, PineconeConnector, get_pinecone_connector
+from ...connectors import ObsidianSync, PineconeConnector
 from ...cron import build_scheduler
 from ...db import pool
 from ...ingest.extract import extract_text
@@ -756,7 +756,10 @@ async def dashboard_stats(request: Request):
         "cost_month_usd": cost_month_usd,
         "connectors": {
             "knowledge_base": {"active": last_sync is not None, "last_sync": last_sync, "chunks": knowledge_items},
-            "external_store": {"active": bool(pinecone_cfg.get("status") == "active") or get_pinecone_connector().is_configured,
+            # CP-S2: el estado sale SOLO de la configuración del tenant (RLS) —
+            # antes un PINECONE_API_KEY global del entorno marcaba "activo" para
+            # todos los despachos (clave de la instalación, no del despacho).
+            "external_store": {"active": bool(pinecone_cfg.get("status") == "active"),
                                "vectors_count": (((pinecone_cfg.get("stats") or {}).get("total_vector_count")) or 0)},
             "models": _available_models(),
         },
