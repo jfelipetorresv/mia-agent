@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { apiGet, apiSend } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { apiGet, apiSend, apiUploadMany } from "@/lib/api";
 
-type Tab = "despacho" | "wiki" | "saber" | "sugerencias";
+type Tab = "despacho" | "wiki" | "saber" | "habilidades" | "sugerencias";
 
 export default function MemoriaPage() {
   const [tab, setTab] = useState<Tab>("despacho");
@@ -14,11 +14,13 @@ export default function MemoriaPage() {
         <TabBtn active={tab === "despacho"} onClick={() => setTab("despacho")}>Mi despacho</TabBtn>
         <TabBtn active={tab === "wiki"} onClick={() => setTab("wiki")}>Wiki del despacho</TabBtn>
         <TabBtn active={tab === "saber"} onClick={() => setTab("saber")}>Lo que Mia sabe</TabBtn>
+        <TabBtn active={tab === "habilidades"} onClick={() => setTab("habilidades")}>Habilidades</TabBtn>
         <TabBtn active={tab === "sugerencias"} onClick={() => setTab("sugerencias")}>Sugerencias de Mia</TabBtn>
       </div>
       {tab === "despacho" ? <Despacho /> : null}
       {tab === "wiki" ? <Wiki /> : null}
       {tab === "saber" ? <Saber /> : null}
+      {tab === "habilidades" ? <Habilidades /> : null}
       {tab === "sugerencias" ? <Sugerencias /> : null}
     </div>
   );
@@ -177,13 +179,58 @@ function Saber() {
     await load();
   }
 
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [importDetail, setImportDetail] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+
+  async function importFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setImporting(true);
+    setImportMsg(null);
+    setImportDetail([]);
+    try {
+      const res = await apiUploadMany<{ importados: string[]; omitidos: string[]; errores: string[] }>(
+        "/api/playbooks/import", Array.from(files)
+      );
+      const n = res.importados?.length || 0;
+      const om = res.omitidos?.length || 0;
+      const er = res.errores?.length || 0;
+      setImportMsg(
+        `Se importaron ${n} guía${n === 1 ? "" : "s"}` +
+        (om ? ` · ${om} ya existía${om === 1 ? "" : "n"} y se conservaron` : "") +
+        (er ? ` · ${er} archivo${er === 1 ? "" : "s"} no se pudieron leer` : "") + "."
+      );
+      // El backend explica cada omisión/error en lenguaje llano — se muestran tal cual.
+      setImportDetail([...(res.errores || []), ...(res.omitidos || []).map((t) => `${t}: ya existía; se conservó la versión guardada.`)]);
+      await load();
+    } catch {
+      setImportMsg("No se pudieron importar las guías. Intenta de nuevo.");
+    } finally {
+      setImporting(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  }
+
   return (
     <div>
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex items-center justify-end gap-2">
+        <input ref={fileInput} type="file" multiple accept=".md,.txt,.docx" className="hidden"
+               onChange={(e) => importFiles(e.target.files)} />
+        <button onClick={() => fileInput.current?.click()} disabled={importing}
+                className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
+          {importing ? "Importando…" : "Importar guías"}
+        </button>
         <button onClick={() => setModal(true)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50">Agregar conocimiento</button>
       </div>
+      {importMsg ? <p className="mb-1 text-sm text-gray-600">{importMsg}</p> : null}
+      {importDetail.length > 0 ? (
+        <ul className="mb-3 space-y-0.5 text-sm text-gray-500">
+          {importDetail.map((d, i) => <li key={i}>· {d}</li>)}
+        </ul>
+      ) : null}
       {items.length === 0 ? (
-        <p className="py-8 text-center text-gray-400">Mia todavía no tiene conocimiento guardado.</p>
+        <p className="py-8 text-center text-gray-400">Mia todavía no tiene conocimiento guardado. Puedes importar las guías de trabajo del despacho (.md, .txt o Word).</p>
       ) : (
         <ul className="space-y-2">
           {items.map((p) => (
@@ -213,14 +260,74 @@ function Saber() {
   );
 }
 
-type Proposal = { id: string; type: string; suggestion: string; reason: string };
+type Skill = { skill_id: string; title: string; approval_rate: number; edit_rate: number; activations: number };
+
+function Habilidades() {
+  const [items, setItems] = useState<Skill[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    apiGet<Skill[]>("/api/skills/ranked")
+      .then(setItems)
+      .catch(() => setItems([]))
+      .finally(() => setLoaded(true));
+  }, []);
+
+  if (!loaded) {
+    return <p className="py-8 text-center text-gray-400">Cargando…</p>;
+  }
+  if (items.length === 0) {
+    return <p className="py-8 text-center text-gray-400">Mia todavía no tiene habilidades medidas. Se construyen a medida que apruebas o corriges su trabajo.</p>;
+  }
+
+  return (
+    <div>
+      <p className="mb-4 text-sm text-gray-500">Qué tan bien le va a Mia con cada procedimiento del despacho, según tus aprobaciones y correcciones.</p>
+      <ul className="space-y-2">
+        {items.map((s) => (
+          <li key={s.skill_id} className="rounded-xl border border-gray-100 px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="truncate font-medium">{s.title}</div>
+                <div className="text-sm text-gray-500">
+                  Usada {s.activations} {s.activations === 1 ? "vez" : "veces"}
+                  {s.activations > 0 ? ` · corregida el ${Math.round((s.edit_rate || 0) * 100)}%` : ""}
+                </div>
+              </div>
+              <div className="w-28 shrink-0">
+                <div className="h-1.5 rounded-full bg-gray-100">
+                  <div className="h-1.5 rounded-full bg-gray-900" style={{ width: `${Math.round((s.approval_rate || 0) * 100)}%` }} />
+                </div>
+                <div className="mt-1 text-right text-xs text-gray-400">{Math.round((s.approval_rate || 0) * 100)}% aprobado</div>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+type Proposal = { id: string; type: string; suggestion: string; reason: string; target?: string | null };
+type CuratorMerge = { target_title?: string; reason?: string };
+type CuratorDeletion = { title?: string; reason?: string };
+type CuratorProposal = {
+  id: string;
+  merges?: CuratorMerge[];
+  proposed_merges?: CuratorMerge[];
+  deletions?: CuratorDeletion[];
+  proposed_deletions?: CuratorDeletion[];
+};
 
 function Sugerencias() {
   const [items, setItems] = useState<Proposal[]>([]);
+  const [curator, setCurator] = useState<CuratorProposal[]>([]);
   const [report, setReport] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
   async function load() {
     setItems(await apiGet<Proposal[]>("/api/proposals").catch(() => []));
+    setCurator(await apiGet<CuratorProposal[]>("/api/curator/proposals").catch(() => []));
     const weekly = await apiGet<{ report: string | null }>("/api/dreams/report").catch(() => ({ report: null }));
     setReport(weekly.report);
   }
@@ -229,11 +336,25 @@ function Sugerencias() {
   }, []);
 
   async function act(id: string, action: "apply" | "ignore") {
-    await apiSend("POST", `/api/proposals/${id}/${action}`);
+    await apiSend("POST", `/api/proposals/${id}/${action}`).catch(() => {});
     await load();
   }
 
-  if (items.length === 0 && !report) {
+  async function curatorAct(id: string, action: "approve" | "reject") {
+    setMsg(null);
+    try {
+      await apiSend("POST", `/api/curator/proposals/${id}/${action}`);
+    } catch (e) {
+      // 409 = el conocimiento cambió desde que se generó (drift); otro error = genérico.
+      const drift = e instanceof Error && e.message.includes("409");
+      setMsg(drift
+        ? "El conocimiento cambió desde que se generó esta propuesta y ya no se puede aplicar tal cual. Recházala: Mia generará una nueva actualizada en su próxima revisión."
+        : "No se pudo procesar la propuesta. Intenta de nuevo.");
+    }
+    await load();
+  }
+
+  if (items.length === 0 && curator.length === 0 && !report) {
     return <p className="py-8 text-center text-gray-400">Mia aún no tiene sugerencias. Aparecerán con el uso.</p>;
   }
 
@@ -249,6 +370,9 @@ function Sugerencias() {
         {items.map((p) => (
           <li key={p.id} className="rounded-xl border border-gray-100 px-4 py-3">
             <div className="mb-1 inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">{p.type}</div>
+            {p.target ? (
+              <div className="mb-1 text-sm font-medium text-gray-800">Procedimiento que se modificaría: {p.target}</div>
+            ) : null}
             <div className="mb-2 whitespace-pre-wrap text-sm text-gray-700">{p.suggestion}</div>
             <div className="text-sm text-gray-500">{p.reason}</div>
             <div className="mt-3 flex gap-2">
@@ -258,6 +382,36 @@ function Sugerencias() {
           </li>
         ))}
       </ul>
+      {curator.length > 0 ? (
+        <div>
+          <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-gray-400">Orden del conocimiento</h3>
+          {msg ? <p className="mb-2 text-sm text-amber-700">{msg}</p> : null}
+          <ul className="space-y-3">
+            {curator.map((c) => {
+              const merges = c.merges || c.proposed_merges || [];
+              const deletions = c.deletions || c.proposed_deletions || [];
+              return (
+                <li key={c.id} className="rounded-xl border border-gray-100 px-4 py-3">
+                  <div className="mb-2 text-sm text-gray-700">
+                    Mia propone ordenar el conocimiento del despacho:
+                    {merges.length > 0 ? ` unir ${merges.length} pareja${merges.length === 1 ? "" : "s"} de guías muy parecidas` : ""}
+                    {merges.length > 0 && deletions.length > 0 ? " y" : ""}
+                    {deletions.length > 0 ? ` archivar ${deletions.length} guía${deletions.length === 1 ? "" : "s"} sin uso` : ""}.
+                  </div>
+                  <ul className="mb-2 space-y-1 text-sm text-gray-500">
+                    {merges.map((m, i) => <li key={`m${i}`}>· {m.target_title || m.reason}</li>)}
+                    {deletions.map((d, i) => <li key={`d${i}`}>· Archivar: {d.title}</li>)}
+                  </ul>
+                  <div className="flex gap-2">
+                    <button onClick={() => curatorAct(c.id, "approve")} className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700">Aprobar</button>
+                    <button onClick={() => curatorAct(c.id, "reject")} className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Rechazar</button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

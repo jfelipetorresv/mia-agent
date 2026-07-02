@@ -35,8 +35,12 @@ const BLOCK_LABEL: Record<string, string> = {
   jurisdiction: "Contexto",
   legal_voice: "Voz",
   mission_rhythm: "Ritmo",
-  triad_mode: "Modo profundo",
 };
+
+// Riesgo #27 (CP7): el "modo profundo" (triad_mode) NO está implementado — no se
+// ofrece en la UI. Se filtra la pregunta si el backend aún la envía; se
+// reintroduce cuando exista la funcionalidad.
+const HIDDEN_QUESTION_IDS = new Set(["p19"]);
 
 // Solo P1 y P2 son obligatorias; el resto es opcional.
 const REQUIRED_IDS = new Set(["p1", "p2"]);
@@ -98,13 +102,6 @@ function asRhythm(value: AnswerValue | undefined): { no_meetings: string[]; hour
   return { no_meetings: [], hours: typeof value === "string" ? value : "" };
 }
 
-function asTriad(value: AnswerValue | undefined): { enabled: boolean; trigger: string } {
-  if (value && typeof value === "object" && !Array.isArray(value) && "enabled" in value) {
-    return { enabled: Boolean(value.enabled), trigger: value.trigger || "" };
-  }
-  return { enabled: typeof value === "string" ? value.toLowerCase().startsWith("si") : false, trigger: "" };
-}
-
 // Una pregunta está "completa" si cumple su requisito. Solo P1/P2 son obligatorias.
 function isComplete(question: Question, value: AnswerValue | undefined): boolean {
   if (question.id === "p1") {
@@ -137,7 +134,7 @@ export default function OnboardingPage() {
           apiGet<Question[]>("/api/onboarding/questions"),
           apiGet<Status>("/api/onboarding/status"),
         ]);
-        setQuestions(qs);
+        setQuestions(qs.filter((q) => !HIDDEN_QUESTION_IDS.has(q.id)));
         if (st.completed) {
           setAlreadyDone(true);
           if (st.responses) setAnswers(st.responses);
@@ -434,46 +431,7 @@ function QuestionInput({
     case "p18":
       return <TagInput value={asList(value)} onChange={onChange} suggestions={TOOL_SUGGESTIONS} placeholder="Escribe una herramienta y presiona Enter" />;
 
-    // P19 — triad mode (toggle grande + descripción + trigger condicional).
-    case "p19": {
-      const triad = asTriad(value);
-      return (
-        <div className="space-y-4">
-          <button
-            type="button"
-            onClick={() => onChange({ ...triad, enabled: !triad.enabled })}
-            className={`flex w-full items-center justify-between rounded-xl border-2 px-5 py-4 text-left transition-colors ${
-              triad.enabled ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white text-gray-700 hover:border-gray-400"
-            }`}
-          >
-            <div>
-              <div className="text-base font-semibold">Modo de análisis profundo</div>
-              <div className={`mt-1 text-sm ${triad.enabled ? "text-gray-300" : "text-gray-500"}`}>
-                Análisis profundo con múltiples modelos para casos de alta complejidad. Más tiempo y costo, mayor calidad.
-              </div>
-            </div>
-            <span
-              className={`ml-4 flex h-7 w-12 shrink-0 items-center rounded-full px-1 transition-colors ${
-                triad.enabled ? "bg-white" : "bg-gray-300"
-              }`}
-            >
-              <span className={`h-5 w-5 rounded-full transition-transform ${triad.enabled ? "translate-x-5 bg-gray-900" : "bg-white"}`} />
-            </span>
-          </button>
-          {triad.enabled ? (
-            <Field label="¿Cuándo activarlo?">
-              <input
-                value={triad.trigger}
-                onChange={(e) => onChange({ ...triad, trigger: e.target.value })}
-                className={inputCls}
-                placeholder="Ej: casos de alta complejidad o montos elevados"
-                autoFocus
-              />
-            </Field>
-          ) : null}
-        </div>
-      );
-    }
+    // P19 (triad_mode) se retiró de la UI — Riesgo #27: no ofrecer lo no implementado.
 
     default: {
       if (TEXT_IDS.has(question.id)) {

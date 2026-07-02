@@ -27,6 +27,9 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const [status, setStatus] = useState("");
   const [hasDraft, setHasDraft] = useState(false);
   const [diagnosis, setDiagnosis] = useState("");
+  // CP7: cierre estructurado del diagnostico (problema/normas/riesgo) cuando el
+  // backend lo emite (CP6); si no viene, el panel muestra solo la prosa como antes.
+  const [summary, setSummary] = useState<DiagnosisSummary | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [uploadSummary, setUploadSummary] = useState("");
@@ -47,9 +50,10 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     apiGet<{ name?: string }>(`/api/matters/${matterId}`).then(setMatter).catch(() => {});
     loadDocs();
     // Si el asunto ya tiene un borrador en curso, recupera tambien su diagnostico.
-    apiGet<{ diagnosis?: string; awaiting_review?: boolean }>(`/api/matters/${matterId}/draft`)
+    apiGet<{ diagnosis?: string; awaiting_review?: boolean; diagnosis_summary?: DiagnosisSummary | null }>(`/api/matters/${matterId}/draft`)
       .then((d) => {
         if (d.diagnosis) setDiagnosis(d.diagnosis);
+        if (d.diagnosis_summary) setSummary(d.diagnosis_summary);
         if (d.awaiting_review) setHasDraft(true);
       })
       .catch(() => {
@@ -114,7 +118,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       await streamTurn(
         stream_url,
         (event, data) => {
-          const payload = data as { message?: string; draft?: string; diagnosis?: string };
+          const payload = data as { message?: string; draft?: string; diagnosis?: string; diagnosis_summary?: DiagnosisSummary | null };
           if (event === "thinking") setStatus(payload.message || "Mia esta analizando...");
           else if (event === "draft_ready") setStatus("Mia esta redactando...");
           else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
@@ -122,6 +126,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
             setStatus("Tienes un borrador listo");
             setHasDraft(true);
             if (payload.diagnosis) setDiagnosis(payload.diagnosis);
+            if (payload.diagnosis_summary) setSummary(payload.diagnosis_summary);
             setMessages((m) => {
               const copy = [...m];
               copy[copy.length - 1] = {
@@ -284,13 +289,34 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       <div className="flex w-[280px] shrink-0 flex-col border-l border-gray-100 px-5 py-6">
         <h3 className="mb-3 text-sm font-semibold text-gray-700">Diagnóstico</h3>
         {diagnosis ? (
-          <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-lg bg-[#f8f9fa] px-3 py-3 text-sm text-gray-700">
-            {diagnosis}
+          <div className="min-h-0 flex-1 overflow-auto">
+            {summary ? (
+              <div className="mb-3 space-y-2">
+                <SummaryRow label="Problema jurídico" text={summary.problema} />
+                <SummaryRow label="Normas y fuentes" text={summary.normas} />
+                <SummaryRow label="Riesgo y recomendación" text={summary.riesgo} />
+              </div>
+            ) : null}
+            <div className="whitespace-pre-wrap rounded-lg bg-[#f8f9fa] px-3 py-3 text-sm text-gray-700">
+              {diagnosis}
+            </div>
           </div>
         ) : (
           <p className="text-sm text-gray-400">Mia aún no ha analizado este asunto.</p>
         )}
       </div>
+    </div>
+  );
+}
+
+type DiagnosisSummary = { problema?: string; normas?: string; riesgo?: string };
+
+function SummaryRow({ label, text }: { label: string; text?: string }) {
+  if (!text) return null;
+  return (
+    <div className="rounded-lg border border-gray-100 px-3 py-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="text-sm text-gray-700">{text}</div>
     </div>
   );
 }

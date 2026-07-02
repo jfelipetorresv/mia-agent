@@ -62,6 +62,16 @@ export async function apiUpload<T = unknown>(path: string, file: File): Promise<
   return res.json();
 }
 
+// CP7: subida de VARIOS archivos en una sola petición (campo "files" repetido),
+// para importar las guías de trabajo del despacho (POST /api/playbooks/import).
+export async function apiUploadMany<T = unknown>(path: string, files: File[]): Promise<T> {
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+  const res = await fetch(`${API}${path}`, { method: "POST", headers: authHeaders(), body: fd });
+  await checkResponse(res);
+  return res.json();
+}
+
 export type SseHandler = (event: string, data: unknown) => void;
 
 // Consume un SSE (event/data) sobre fetch para poder mandar el header Authorization.
