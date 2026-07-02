@@ -61,6 +61,19 @@ MATTERS_BLOCK_HEADER = "=== ESTADO ACTUAL DE TUS ASUNTOS ==="
 # (La CREACIÓN de recordatorios es determinista — parse_reminder — y no pasa por aquí.)
 _REMINDERS_QUERY_RE = re.compile(r"\brecordatorios?\b", re.IGNORECASE)
 
+# CP-C4: el abogado pide ayuda para configurar/conectar algo → el modelo ve el
+# estado REAL del recorrido de configuración y guía con hechos, no de memoria.
+# OJO (revisor CP-C4): "configurar"/"conectar" a secas son verbos del español
+# JURÍDICO ("se configura la causal…") — el disparador exige un sustantivo del
+# dominio de configuración o la frase dirigida a Mia; nunca el verbo solo.
+_SETUP_QUERY_RE = re.compile(
+    r"(\bobsidian\b|\btelegram\b|\bonedrive\b|google\s*drive|\bmis\s+carpetas\b|"
+    r"\bconfig[uú]ra(?:r|me)?\s+a?\s*mia\b|\bconfiguraci[oó]n\s+de\s+mia\b)",
+    re.IGNORECASE,
+)
+
+SETUP_BLOCK_HEADER = "=== ESTADO DE LA CONFIGURACIÓN DE MIA ==="
+
 # CP-B3: cancelar por chat también es determinista ("cancela el recordatorio de la
 # tutela") — el modelo JAMÁS confirma una cancelación que no ocurrió (hallazgo M4).
 _REMINDER_CANCEL_RE = re.compile(
@@ -374,6 +387,17 @@ class AssistantService:
                     "content": f"{history[-1]['content']}\n\n{reminders_block}",
                 }
 
+        # CP-C4: pide ayuda para configurar/conectar → el modelo ve el estado real
+        # del recorrido de configuración (qué está listo y qué falta) y guía con
+        # hechos. Solo en el mensaje que viaja al modelo, nunca en el persistido.
+        if _SETUP_QUERY_RE.search(text):
+            setup_block = await self._setup_block(tenant_id)
+            if setup_block:
+                history[-1] = {
+                    "role": "user",
+                    "content": f"{history[-1]['content']}\n\n{setup_block}",
+                }
+
         # (d) compresión ANTES de llamar: compresor NUEVO por turno (nunca compartido
         # entre requests/tenants — ver docstring de la clase). Decide con su umbral
         # (55% de la ventana) y devuelve el historial intacto si no aplica. Corre en
@@ -543,6 +567,31 @@ class AssistantService:
         ]
         lines.append("Dime, por ejemplo: «cancela el recordatorio de "
                      f"{pending[0]['text'][:40]}».")
+        return "\n".join(lines)
+
+    async def _setup_block(self, tenant_id: str) -> str:
+        """Bloque factual con el estado de configuración de Mia (CP-C4, bajo RLS)."""
+        try:
+            # Import perezoso: evita acoplar el módulo del asistente a la capa API
+            # en tiempo de import (la capa API sí importa al asistente).
+            from ..api.routes.setup import collect_setup_status
+
+            status = await collect_setup_status(tenant_id)
+        except Exception:  # noqa: BLE001 — la herramienta v1 no debe tumbar el turno
+            logger.exception("asistente: no se pudo leer el estado de configuración")
+            return ""
+        lines = [SETUP_BLOCK_HEADER, _sanitize_title(status.get("mensaje"))]
+        for paso in status.get("pasos", []):
+            lines.append(
+                f"- {_sanitize_title(paso.get('titulo'))} · {paso.get('estado')} · "
+                f"{_sanitize_title(paso.get('detalle'))}"
+            )
+        lines.append("=== FIN DEL ESTADO DE CONFIGURACIÓN ===")
+        lines.append(
+            "(Bloque generado por el sistema con el estado real de la configuración; "
+            "guía al abogado paso a paso con estos hechos. La guía de Telegram está en "
+            "docs/telegram-setup.md; los demás pasos se hacen desde las pantallas de Mia.)"
+        )
         return "\n".join(lines)
 
     async def _reminders_block(self, tenant_id: str) -> str:
