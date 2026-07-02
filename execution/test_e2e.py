@@ -292,6 +292,65 @@ def run_e2e(client, auth, tid) -> list[str]:
     return threads
 
 
+def run_soul_validation_checks() -> None:
+    """CP6 (Riesgo #26): el SOUL generado se VALIDA; inválido → 1 reintento → fallback.
+
+    Offline (guionando llm.call_llm): el abogado SIEMPRE termina el onboarding con
+    un SOUL.md de 9 secciones bien formadas — del LLM, del reintento o del fallback."""
+    print("\n-- CP6 · validación del SOUL: inválido → reintento correctivo → fallback --")
+    from mia.onboarding.soul_interview import SoulInterview, validate_soul
+
+    invalid = "## identity\nSolo una sección — el resto se perdió."
+    saved_llm = llm.call_llm
+
+    def scripted(outputs: list):
+        calls: list[list[dict]] = []
+
+        def fake(messages, *, task=None, model=None, **kw):
+            calls.append(messages)
+            out = outputs.pop(0)
+            if isinstance(out, Exception):
+                raise out
+            return _resp(out)
+        return fake, calls
+
+    check("cp6-s0 · validate_soul detecta secciones faltantes y acepta el fixture",
+          len(validate_soul(invalid)) == 8 and validate_soul(_SOUL_FIXTURE) == [])
+
+    si = SoulInterview()
+    try:
+        # inválido → el reintento correctivo devuelve un SOUL válido → se usa ese
+        llm.call_llm, calls = scripted([invalid, _SOUL_FIXTURE])
+        content = asyncio.run(si.run_interview("t-soul-valid-a", dict(LEXIA)))
+        retry_user = calls[1][-1]["content"] if len(calls) > 1 else ""
+        check("cp6-s1 · SOUL inválido → UN reintento correctivo que nombra lo que falta",
+              len(calls) == 2 and "INCOMPLETO" in retry_user and "## mission" in retry_user)
+        check("cp6-s2 · el reintento válido se usa (9 secciones presentes)",
+              validate_soul(content) == [] and "Lexia" in content)
+
+        # inválido → reintento TAMBIÉN inválido → fallback determinista (sin LLM)
+        llm.call_llm, calls = scripted([invalid, invalid])
+        content2 = asyncio.run(si.run_interview("t-soul-valid-b", dict(LEXIA)))
+        check("cp6-s3 · reintento también inválido → fallback determinista con 9 secciones",
+              len(calls) == 2 and validate_soul(content2) == [])
+
+        # el LLM lanza (timeout/caída) → fallback determinista, nunca sin SOUL
+        llm.call_llm, calls = scripted([RuntimeError("LLM caído (simulado)")])
+        content3 = asyncio.run(si.run_interview("t-soul-valid-c", dict(LEXIA)))
+        check("cp6-s4 · el LLM falla → fallback determinista (el onboarding no se cae)",
+              validate_soul(content3) == [])
+
+        # update_soul (revisión trimestral) pasa por el MISMO circuito: un output
+        # malformado del LLM JAMÁS sobrescribe un SOUL.md sano (corrección del revisor).
+        llm.call_llm, calls = scripted([invalid, invalid])
+        content4 = asyncio.run(si.update_soul(
+            "t-soul-valid-a", {"firm_name": "Lexia Abogados renovada"}))
+        check("cp6-s5 · update_soul con LLM malformado → el SOUL queda VÁLIDO (9 secciones)",
+              len(calls) == 2 and validate_soul(content4) == [])
+    finally:
+        llm.call_llm = saved_llm
+
+
 def main() -> int:
     print("== GATE FINAL · test_e2e — recorrido completo del abogado ==")
     if not os.getenv("PG_PASSWORD") or not config.JWT_SECRET:
@@ -315,6 +374,7 @@ def main() -> int:
     try:
         with TestClient(app) as client:
             threads = run_e2e(client, auth, tid)
+        run_soul_validation_checks()   # CP6 (offline, usa el mismo tempdir de MIA_HOME)
     finally:
         cleanup(tid, threads)
         shutil.rmtree(mia_home, ignore_errors=True)

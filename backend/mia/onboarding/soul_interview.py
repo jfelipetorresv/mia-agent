@@ -22,12 +22,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from .. import config
+
+logger = logging.getLogger("mia.onboarding.soul")
 
 # ── Las 15 preguntas del onboarding (5 bloques; del Doc 4, menos P8/P9/P12/P13) ──
 # Cada pregunta: id · block · field (sección/campo del template que alimenta) ·
@@ -169,6 +172,30 @@ SOUL_SECTIONS: tuple[str, ...] = (
 
 # Modelo de la tarea (decisión: sonnet — la identidad del agente es importante).
 SOUL_TASK = "soul"
+
+
+def validate_soul(content: str) -> list[str]:
+    """Secciones FALTANTES o VACÍAS del SOUL.md generado (CP6 · Riesgo #26).
+
+    Una sección es válida si su encabezado está presente y tiene ALGÚN contenido
+    debajo (aunque sean placeholders entre corchetes — el fallback determinista los
+    conserva a propósito y es válido por construcción). Devuelve [] si el SOUL está
+    bien formado."""
+    text = content or ""
+    problems: list[str] = []
+    for i, section in enumerate(SOUL_SECTIONS):
+        start = text.find(section)
+        if start == -1:
+            problems.append(section)
+            continue
+        # Cuerpo = texto entre este encabezado y el siguiente encabezado presente.
+        body_start = start + len(section)
+        next_positions = [text.find(s, body_start) for s in SOUL_SECTIONS]
+        next_positions = [p for p in next_positions if p != -1]
+        body = text[body_start:(min(next_positions) if next_positions else None)]
+        if not body.strip():
+            problems.append(section)
+    return problems
 
 _GEN_SYSTEM = (
     "Eres un asistente que redacta el archivo SOUL.md de un despacho de abogados del "
@@ -312,8 +339,43 @@ class SoulInterview:
         `responses` es {field: respuesta del abogado}. Usa call_llm(task="soul") para
         rellenar el template de 9 secciones; los campos sin respuesta quedan como
         placeholder. Escribe en $MIA_HOME/soul_{tenant_id}.md.
+
+        CP6 (Riesgo #26 — el "alma" siempre bien formada): el resultado del LLM se
+        VALIDA contra las 9 secciones (validate_soul). Si quedó incompleto, UN
+        reintento correctivo que nombra lo que falta; si sigue mal (o el LLM falla),
+        fallback al render determinista existente (generate_without_llm) — el abogado
+        SIEMPRE termina el onboarding con un SOUL.md válido.
         """
-        content = await self._generate(self._build_messages(responses))
+        messages = self._build_messages(responses)
+        try:
+            content = await self._generate(messages)
+            problems = validate_soul(content)
+            if problems:
+                logger.warning(
+                    "SOUL.md incompleto (faltan/vacías: %s) — reintento correctivo (tenant=%s)",
+                    ", ".join(problems), tenant_id,
+                )
+                retry = messages + [
+                    {"role": "assistant", "content": content},
+                    {"role": "user", "content": (
+                        "El SOUL.md que devolviste quedó INCOMPLETO: faltan o están vacías "
+                        f"estas secciones: {', '.join(problems)}. Devuelve el SOUL.md "
+                        "COMPLETO otra vez, con las 9 secciones y sus encabezados exactos; "
+                        "si no tienes información para un campo, conserva su placeholder "
+                        "entre corchetes.")},
+                ]
+                content = await self._generate(retry)
+                problems = validate_soul(content)
+            if problems:
+                logger.warning(
+                    "SOUL.md sigue incompleto tras el reintento — fallback determinista "
+                    "(tenant=%s)", tenant_id,
+                )
+                content = self.generate_without_llm(responses)
+        except Exception:  # noqa: BLE001 — LLM caído/timeout: nunca sin SOUL
+            logger.exception(
+                "generación del SOUL.md falló — fallback determinista (tenant=%s)", tenant_id)
+            content = self.generate_without_llm(responses)
         _write_soul(tenant_id, content)
         _write_responses(tenant_id, responses)   # para 'Revisar mi perfil' / revisión trimestral
         return content
@@ -340,9 +402,36 @@ class SoulInterview:
                 "Devuelve el SOUL.md completo y actualizado."
             )},
         ]
-        content = await self._generate(messages)
-        _write_soul(tenant_id, content)
+        # CP6 (hallazgo mayor del revisor): la actualización pasa por el MISMO circuito
+        # validación → reintento → fallback que la entrevista — un output malformado
+        # del LLM JAMÁS sobrescribe un SOUL.md sano.
         merged = {**load_responses(tenant_id), **updates}   # respuestas previas + cambios
+        try:
+            content = await self._generate(messages)
+            problems = validate_soul(content)
+            if problems:
+                logger.warning(
+                    "SOUL.md actualizado incompleto (faltan/vacías: %s) — reintento "
+                    "correctivo (tenant=%s)", ", ".join(problems), tenant_id)
+                retry = messages + [
+                    {"role": "assistant", "content": content},
+                    {"role": "user", "content": (
+                        "El SOUL.md que devolviste quedó INCOMPLETO: faltan o están vacías "
+                        f"estas secciones: {', '.join(problems)}. Devuelve el SOUL.md "
+                        "COMPLETO otra vez, con las 9 secciones y sus encabezados exactos.")},
+                ]
+                content = await self._generate(retry)
+                problems = validate_soul(content)
+            if problems:
+                logger.warning(
+                    "SOUL.md actualizado sigue incompleto — render determinista desde las "
+                    "respuestas fusionadas (tenant=%s)", tenant_id)
+                content = self.generate_without_llm(merged)
+        except Exception:  # noqa: BLE001 — LLM caído: nunca romper el SOUL existente
+            logger.exception(
+                "actualización del SOUL.md falló — render determinista (tenant=%s)", tenant_id)
+            content = self.generate_without_llm(merged)
+        _write_soul(tenant_id, content)
         _write_responses(tenant_id, merged)
         return content
 
