@@ -153,3 +153,9 @@ Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor indep
 | CP-C3 | ✅ | Cierre del circuito GEPA: las propuestas de mejora apuntan al playbook que participó en las trazas rechazadas/editadas (no a uno arbitrario), se redactan sobre el contenido real, aplicar es reversible (previous_content) y el abogado ve QUÉ procedimiento se modifica. Vuelta EN VIVO pendiente de playbooks de Pipe (Riesgo #20) | `test_feedback_processor` 26/26 · `test_gepa` 18/18 · `test_trace_capture` 23/23 |
 | CP-C4 | ✅ | "Configura a Mia": GET /api/setup/status (6 pasos detectados fail-soft, caché 60s, solo lectura), skip/unskip retomable en tenant_settings.config['setup'], página /configurar + guía por chat del asistente. Recorrido vivo cronometrado con Pipe PENDIENTE de él. Capa 3 Cursor pendiente | `test_setup_wizard` 21/21 |
 | CP8 | ⬜ | Endurecimiento pre-cliente — EN PAUSA por decisión de prioridad (uso diario Lexia primero) | — |
+
+
+## Encargo directo de Pipe (2026-07-02, próxima sesión — PRIORIDAD)
+| Tarea | Estado | Qué pidió |
+|----|--------|--------|
+| CP-C4b | ⬜ | El wizard "Configura a Mia" debe EXPLICAR TODO como un onboarding: para cada paso, qué es esa herramienta/sección, para qué le sirve al despacho, cómo se instala/implementa paso a paso (no solo detectar y enlazar). Hoy el checklist da una línea por paso; Pipe quiere acompañamiento completo estilo entrevista de onboarding. Incluir: qué hace cada sección de Mia, cómo instalar cada cosa, con lenguaje de negocio. |
