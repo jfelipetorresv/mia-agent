@@ -1424,3 +1424,38 @@ Gate `test_setup_wizard` **21/21** · `npm run build` ✓ · regresión **42/42*
 APROBADO CON CORRECCIONES (3 mayores + 3 menores corregidos; residual aceptado: carrera menor
 en skip con doble clic). Capa 3 (Cursor) pendiente. **Recorrido vivo cronometrado con Pipe:
 pendiente de él** (gate del plan).
+
+---
+
+## 2026-07-02 â€” SesiÃ³n 24 Â· CP6 aprobado y mergeado + CP9 equipo de especialistas
+
+**CP6:** Pipe aprobÃ³ la comparaciÃ³n A/B ("gran avance") â†’ merge a `main` (4d5b875), gates
+post-merge verdes (rls 12/12, prompt_builder 46/46, e2e 31/31, retrieval 35/35, recovery
+34/34). Push a origin PENDIENTE de aprobaciÃ³n de permisos.
+
+**CP9 (encargo de Pipe):** equipo de especialistas en rama `feat/cp9-equipo-especialistas`
+(a22b72c): grafo intakeâ†’factsâ†’researchâ†’analysis(cruce)â†’draftâ†’verificationâ†’HITLâ†’finalize.
+- `agents/research.py`: SAT-Graph acotado por jurisdicciÃ³n del tenant (fail-soft), fuentes
+  fenceadas anti-inyecciÃ³n; patrones de cita extra por pack (`citation_style.json`).
+- `agents/verification.py`: escÃ¡ner determinista de citas (sin LLM); cita sin marca ni
+  respaldo â†’ se anota [VERIFICAR]; informe {citas,marcadas,respaldadas,anotadas,detalle}
+  al SSE, al endpoint del borrador y a metadata. Corre en to_thread.
+- `output/docx_export.py` + endpoint `draft.docx`: borrador â†’ Word con formato de escrito.
+- Capa 2: APROBADO CON CORRECCIONES â€” M1 cupo de compresiÃ³n POR NODO (TurnLLMState.
+  compressed_stages, compat pre-CP9) porque el cupo global mataba el turno en expedientes
+  grandes con 4 nodos LLM; M2 ReDoS real en el patrÃ³n de artÃ­culos (16s con input de 52
+  chars) â†’ regex sin ambigÃ¼edad + to_thread. Checks cp9-37..41.
+- Gates: test_document_pipeline 41/41 Â· test_hitl_flow actualizado (19/19) Â· regresiÃ³n
+  43/43 (test_rls HALT verde).
+- **A/B EN VIVO** (mismo expediente/pregunta de CP6, motor suscripciÃ³n): ANTES 5,2min /
+  DESPUÃ‰S 5,9min; borrador final ANTES con 3 citas sin marca vs DESPUÃ‰S **0** (el
+  verificador anotÃ³ las 2 que se escaparon); borrador mÃ¡s enfocado (13,8k vs 19,8k chars);
+  resumen ejecutivo se conserva. Persistido en `docs/comparacion-cp9.md` + muestra Word.
+- Deuda anotada: el diagnÃ³stico no pasa por el verificador (solo el borrador); artÃ­culos
+  con numerales intercalados pueden escapar al detector; corpus semilla no arrojÃ³ fuentes
+  (0 respaldadas â€” se activarÃ¡ con corpus real).
+
+**PENDIENTE de Pipe:** decisiÃ³n de merge de CP9 con `docs/comparacion-cp9.md`. Luego:
+CP-C4b (wizard explicativo, encargo previo), frontend de CP9 (botÃ³n Word + informe de
+verificaciÃ³n, ya en HANDOFF.md para Cursor), y el push de main.
+
