@@ -34,7 +34,18 @@ async function checkResponse(res: Response): Promise<void> {
     handleUnauthorized();
     throw new Error("Sesión expirada");
   }
-  if (!res.ok) throw new Error(`Error ${res.status}`);
+  if (!res.ok) {
+    // El backend redacta `detail` en lenguaje llano para el abogado (§G):
+    // si viene, se usa como mensaje del error en vez del código HTTP.
+    let detail = "";
+    try {
+      const body = await res.clone().json();
+      if (body && typeof body.detail === "string") detail = body.detail;
+    } catch {
+      /* respuesta sin cuerpo JSON */
+    }
+    throw new Error(detail || `Error ${res.status}`);
+  }
 }
 
 export async function apiGet<T = unknown>(path: string): Promise<T> {
@@ -70,6 +81,22 @@ export async function apiUploadMany<T = unknown>(path: string, files: File[]): P
   const res = await fetch(`${API}${path}`, { method: "POST", headers: authHeaders(), body: fd });
   await checkResponse(res);
   return res.json();
+}
+
+// Descarga un archivo autenticado (el header Authorization no viaja en un <a href>,
+// así que se baja por fetch y se entrega como Blob al navegador).
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const res = await fetch(`${API}${path}`, { headers: authHeaders(), cache: "no-store" });
+  await checkResponse(res);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export type SseHandler = (event: string, data: unknown) => void;

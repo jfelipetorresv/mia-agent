@@ -401,7 +401,54 @@ mismos listados en el checkpoint actual).
 
 ## Hallazgos de Cursor (capa 3)
 
-(Vacío. Cursor: escribe aquí tus hallazgos de la revisión visual —
-diseño de interfaz, accesibilidad, consistencia de UX y superficies de
-seguridad visibles en frontend. Si no hay frontend que revisar en el
-checkpoint, déjalo indicado explícitamente.)
+### 2026-07-02 — CP9 + CP-C4b: UI pendiente construida + revisión visual
+
+**Qué se construyó (las 3 piezas pendientes):**
+
+1. **Pantalla de revisión de borrador** (`frontend/app/asuntos/[id]/revisar/page.tsx`):
+   - Botón "Descargar en Word" en la cabecera → `GET /api/matters/{id}/draft.docx`.
+     Nota técnica: la descarga NO puede ser un enlace directo porque el endpoint
+     exige el header Authorization — se añadió `apiDownload()` en `lib/api.ts`
+     (fetch → Blob → descarga). El error se muestra inline en ámbar, sin jerga.
+   - Informe de verificación de citas bajo el borrador: línea sobria ("Mia revisó
+     N citas; M quedaron marcadas para tu verificación") con detalle expandible
+     cita por cita (`aria-expanded` en el botón). Cada estado se comunica con
+     texto + color (no solo color): "Verifícala tú" / "Con respaldo" / "Anotada".
+     Si `verification` es null (borradores previos a CP9) no se muestra nada.
+
+2. **Panel de control · sección "Carpetas de trabajo"** (`frontend/app/dashboard/page.tsx`):
+   - Lista las nubes detectadas (OneDrive/Google Drive) con botón "Registrar"
+     (o sello "Registrada"), las carpetas registradas con "Quitar", y un
+     formulario para registrar por ruta (con nombre opcional).
+   - "Quitar" pide confirmación explícita porque borra el conocimiento indexado
+     de esa carpeta ("Mia… olvidará lo que leyó de ella") — acción destructiva.
+   - Botón "Revisar carpetas ahora" → `POST /api/folders/sync`; el mensaje del
+     servidor (en lenguaje llano) se muestra tal cual.
+   - Texto de privacidad visible: "Mia solo lee las carpetas que tú registres
+     aquí. Nunca revisa nada fuera de ellas."
+
+3. **Panel de control · tarjeta Obsidian** (`frontend/app/dashboard/page.tsx`):
+   - Botón "Instalar Obsidian" (solo aparece si `GET /api/obsidian/status`
+     reporta que NO está instalado) con confirmación explícita en un panel
+     ámbar (`role="alertdialog"`) antes de llamar `POST /api/obsidian/install`
+     con `{"confirmar": true}`. Cancelar no instala nada.
+   - Se muestra el `message` del status en lenguaje llano bajo el título.
+   - Jerga corregida (§G): "Ruta del vault" → label "Ubicación de tu espacio de
+     notas"; el error de sync "No se pudo sincronizar el vault." → "…tu espacio
+     de notas."
+
+**Hallazgo transversal corregido:** `lib/api.ts` descartaba el `detail` que el
+backend redacta en lenguaje llano — todo error llegaba al abogado como
+"Error 400". Ahora `checkResponse` lee el `detail` del cuerpo JSON y lo usa
+como mensaje, así los textos cuidados del backend (p. ej. por qué una carpeta
+no es segura, o la confirmación que exige instalar) por fin se ven en pantalla.
+
+**Deuda §G que sigue abierta (ya anotada en CP7, no se tocó aquí):** la tarjeta
+"Pinecone" (con "vectores", "Index") y la sección "Salud del second brain"
+("Skills activos/archivados") del panel de control siguen con jerga técnica.
+
+**Consistencia pendiente (menor):** la pantalla de revisión usa `alert()` del
+navegador para errores de Aprobar/Rechazar (patrón pre-existente); el resto de
+la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
+
+**Verificación:** `npm run build` verde (11/11 páginas, sin errores de tipos).

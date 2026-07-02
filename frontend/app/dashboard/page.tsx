@@ -30,6 +30,15 @@ type Stats = {
 type MotorPolicy = { politica: string; nombre: string; opciones: { id: string; nombre: string }[] };
 type Reminder = { id: string; text: string; due_at: string; is_procedural: boolean };
 
+// Carpetas de trabajo (GET /api/folders/detected): nubes espejo detectadas en el
+// equipo + carpetas ya registradas por el despacho.
+type DetectedCloud = { label: string; path: string; registered: boolean };
+type FolderSource = { id: string; path: string; label: string; kind: string; enabled: boolean };
+type FoldersData = { detected: DetectedCloud[]; sources: FolderSource[] };
+
+// Estado de Obsidian en este equipo (GET /api/obsidian/status).
+type ObsidianStatus = { installed: boolean; vault_configured: boolean; vault_path?: string | null; message: string };
+
 function fmt(s?: string | null): string {
   if (!s) return "—";
   try {
@@ -64,6 +73,24 @@ export default function DashboardPage() {
   // CP-B3: recordatorios pendientes del despacho.
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [reminderMsg, setReminderMsg] = useState("");
+  // CP-C4b: carpetas de trabajo registradas + nubes detectadas en este equipo.
+  const [folders, setFolders] = useState<FoldersData | null>(null);
+  const [folderPath, setFolderPath] = useState("");
+  const [folderLabel, setFolderLabel] = useState("");
+  const [folderMsg, setFolderMsg] = useState("");
+  const [folderBusy, setFolderBusy] = useState(false);
+  // CP-C4b: estado de Obsidian + instalación guiada (con confirmación explícita).
+  const [obsidian, setObsidian] = useState<ObsidianStatus | null>(null);
+  const [installConfirm, setInstallConfirm] = useState(false);
+  const [installBusy, setInstallBusy] = useState(false);
+
+  async function loadFolders() {
+    try {
+      setFolders(await apiGet<FoldersData>("/api/folders/detected"));
+    } catch {
+      setFolders(null);
+    }
+  }
 
   async function load() {
     const data = await apiGet<Stats>("/api/dashboard/stats");
@@ -72,6 +99,8 @@ export default function DashboardPage() {
       .then(setPolicy)
       .catch(() => setPolicyMsg("No se pudo cargar el motor de IA. Recarga la página."));
     apiGet<Reminder[]>("/api/assistant/reminders").then(setReminders).catch(() => setReminders([]));
+    loadFolders();
+    apiGet<ObsidianStatus>("/api/obsidian/status").then(setObsidian).catch(() => setObsidian(null));
   }
 
   useEffect(() => {
@@ -110,7 +139,69 @@ export default function DashboardPage() {
       setStatus(`${res.chunks_indexed} documentos sincronizados`);
       await load();
     } catch {
-      setStatus("No se pudo sincronizar el vault.");
+      setStatus("No se pudo sincronizar tu espacio de notas.");
+    }
+  }
+
+  async function installObsidian() {
+    // Instalar software exige confirmación explícita (el backend también la exige:
+    // body {"confirmar": true}); el clic accidental nunca instala nada.
+    setInstallBusy(true);
+    setStatus("Instalando Obsidian… puede tardar unos minutos.");
+    try {
+      const res = await apiSend<{ installed: boolean; message: string }>(
+        "POST", "/api/obsidian/install", { confirmar: true },
+      );
+      setStatus(res.message);
+      apiGet<ObsidianStatus>("/api/obsidian/status").then(setObsidian).catch(() => {});
+    } catch (e) {
+      setStatus(e instanceof Error && e.message && !e.message.startsWith("Error ")
+        ? e.message
+        : "No se pudo instalar Obsidian en este momento. Intenta de nuevo más tarde.");
+    } finally {
+      setInstallBusy(false);
+      setInstallConfirm(false);
+    }
+  }
+
+  async function addFolder(path: string, label?: string) {
+    setFolderMsg("");
+    setFolderBusy(true);
+    try {
+      await apiSend("POST", "/api/folders", { path, label: label || null, kind: "knowledge" });
+      setFolderPath("");
+      setFolderLabel("");
+      setFolderMsg("Carpeta registrada. Mia la revisará en la próxima sincronización.");
+      await loadFolders();
+    } catch (e) {
+      setFolderMsg(e instanceof Error && e.message && !e.message.startsWith("Error ")
+        ? e.message
+        : "No se pudo registrar la carpeta. Revisa la ruta e intenta de nuevo.");
+    } finally {
+      setFolderBusy(false);
+    }
+  }
+
+  async function removeFolder(id: string, label: string) {
+    // Quitar una carpeta borra lo que Mia aprendió de ella — se confirma antes.
+    if (!window.confirm(`¿Quitar "${label}"? Mia dejará de usar esa carpeta y olvidará lo que leyó de ella.`)) return;
+    setFolderMsg("");
+    try {
+      await apiSend("DELETE", `/api/folders/${id}`);
+      setFolderMsg("Carpeta retirada.");
+      await loadFolders();
+    } catch {
+      setFolderMsg("No se pudo quitar la carpeta. Intenta de nuevo.");
+    }
+  }
+
+  async function syncFoldersNow() {
+    setFolderMsg("");
+    try {
+      const res = await apiSend<{ message: string }>("POST", "/api/folders/sync");
+      setFolderMsg(res.message || "Estoy revisando tus carpetas.");
+    } catch {
+      setFolderMsg("No se pudo iniciar la revisión de carpetas. Intenta de nuevo.");
     }
   }
 
@@ -157,9 +248,45 @@ export default function DashboardPage() {
                   {c.knowledge_base?.active ? `Activo · última sync ${fmt(c.knowledge_base.last_sync)}` : "Inactivo"}
                 </div>
               </div>
-              <button onClick={syncObsidian} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700">Sincronizar</button>
+              <div className="flex shrink-0 gap-2">
+                {obsidian && !obsidian.installed ? (
+                  <button
+                    onClick={() => setInstallConfirm(true)}
+                    disabled={installBusy}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Instalar Obsidian
+                  </button>
+                ) : null}
+                <button onClick={syncObsidian} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700">Sincronizar</button>
+              </div>
             </div>
-            <input value={vaultPath} onChange={(e) => setVaultPath(e.target.value)} placeholder="Ruta del vault" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
+            {obsidian ? <p className="mb-2 text-sm text-gray-500">{obsidian.message}</p> : null}
+            {installConfirm ? (
+              <div role="alertdialog" aria-label="Confirmar instalación de Obsidian" className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-sm text-amber-800">
+                  Esta acción descarga e instala el programa Obsidian en este equipo. ¿Quieres continuar?
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={installObsidian}
+                    disabled={installBusy}
+                    className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                  >
+                    {installBusy ? "Instalando…" : "Sí, instalar"}
+                  </button>
+                  <button
+                    onClick={() => setInstallConfirm(false)}
+                    disabled={installBusy}
+                    className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <label htmlFor="vault-path" className="mb-1 block text-sm text-gray-600">Ubicación de tu espacio de notas</label>
+            <input id="vault-path" value={vaultPath} onChange={(e) => setVaultPath(e.target.value)} placeholder="Ej.: D:\Notas del despacho" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
           </div>
 
           <div className="rounded-lg border border-gray-100 p-4">
@@ -194,6 +321,112 @@ export default function DashboardPage() {
           </div>
           {status ? <p className="text-sm text-gray-500">{status}</p> : null}
         </div>
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Carpetas de trabajo</h2>
+          <button
+            onClick={syncFoldersNow}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Revisar carpetas ahora
+          </button>
+        </div>
+        <p className="mb-3 text-sm text-gray-500">
+          Mia solo lee las carpetas que tú registres aquí. Nunca revisa nada fuera de ellas.
+        </p>
+        {folderMsg ? <p role="status" className="mb-3 text-sm text-amber-700">{folderMsg}</p> : null}
+
+        {folders === null ? (
+          <p className="text-sm text-gray-400">No se pudieron cargar tus carpetas. Recarga la página.</p>
+        ) : (
+          <div className="space-y-4">
+            {folders.detected.length > 0 ? (
+              <div>
+                <h3 className="mb-2 text-sm font-medium text-gray-600">Detectadas en este equipo</h3>
+                <ul className="space-y-2">
+                  {folders.detected.map((d) => (
+                    <li key={d.path} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">{d.label}</div>
+                        <div className="truncate text-sm text-gray-500" title={d.path}>{d.path}</div>
+                      </div>
+                      {d.registered ? (
+                        <span className="shrink-0 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">Registrada</span>
+                      ) : (
+                        <button
+                          onClick={() => addFolder(d.path, d.label)}
+                          disabled={folderBusy}
+                          className="shrink-0 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                        >
+                          Registrar
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-gray-600">Registradas</h3>
+              {folders.sources.filter((f) => f.enabled).length === 0 ? (
+                <p className="text-sm text-gray-400">Aún no has registrado ninguna carpeta.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {folders.sources.filter((f) => f.enabled).map((f) => (
+                    <li key={f.id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">{f.label}</div>
+                        <div className="truncate text-sm text-gray-500" title={f.path}>{f.path}</div>
+                      </div>
+                      <button
+                        onClick={() => removeFolder(f.id, f.label)}
+                        className="shrink-0 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                      >
+                        Quitar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (folderPath.trim()) addFolder(folderPath.trim(), folderLabel.trim() || undefined);
+              }}
+              className="rounded-lg border border-gray-100 p-4"
+            >
+              <h3 className="mb-2 text-sm font-medium text-gray-600">Registrar otra carpeta</h3>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                <input
+                  value={folderPath}
+                  onChange={(e) => setFolderPath(e.target.value)}
+                  aria-label="Ubicación de la carpeta"
+                  placeholder="Ej.: D:\Guías del despacho"
+                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+                />
+                <input
+                  value={folderLabel}
+                  onChange={(e) => setFolderLabel(e.target.value)}
+                  aria-label="Nombre para identificarla (opcional)"
+                  placeholder="Nombre (opcional)"
+                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+                />
+                <button
+                  type="submit"
+                  disabled={folderBusy || !folderPath.trim()}
+                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                >
+                  Registrar
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </section>
 
       <section>
