@@ -54,7 +54,7 @@ from mia import config, embeddings                          # noqa: E402
 from mia.agent import llm, prompt_builder                    # noqa: E402
 from mia.agents import context_recovery as cr                # noqa: E402
 from mia.agents import graph as graph_mod                    # noqa: E402
-from mia.agents import retrieval                             # noqa: E402
+from mia.agents import retrieval, untrusted                  # noqa: E402
 from mia.agents.graph import MatterGraphBuilder              # noqa: E402
 from mia.db import pool                                      # noqa: E402
 from mia.memory.tokens import estimate_tokens                # noqa: E402
@@ -287,7 +287,8 @@ def run_db_checks(ids: dict, obs: dict) -> None:
     check("a9 · la nota del método está en el prompt (contenido + ruta)",
           "término de dos años" in up and "metodos/caducidad.md" in up)
     check("a10 · el expediente sigue presente (los docs no se desplazan)",
-          "[doc 1]" in up and "Demanda de reparación directa" in up)
+          # CP-S1: los documentos van sellados (<<<DOC n>>>) en vez de "[doc n]".
+          "<<<DOC 1>>>" in up and "Demanda de reparación directa" in up)
 
     print("\n-- b · AISLAMIENTO: B nunca ve el knowledge de A --")
     kb = obs["kb"]
@@ -420,7 +421,8 @@ def run_shrink_checks() -> None:
                     for i in range(6)]
 
         def _est_for(doc_list: list[dict]) -> tuple[int, str]:
-            ctx_ = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(doc_list))
+            # CP-S1: la réplica usa el MISMO render sellado que el nodo real.
+            ctx_ = untrusted.render_documents(doc_list)
             user_ = (f"Consulta del abogado:\n{MSG}\n\nExpediente:\n{ctx_}\n\n"
                      + cr.KNOWLEDGE_TRIMMED_MARKER)
             sys_ = prompt_builder.build_graph_system(

@@ -38,6 +38,7 @@ except Exception:
 import mia.gateway.agent_hub as ah                  # noqa: E402
 from mia.gateway import hub_config                  # noqa: E402
 from mia.gateway.agent_hub import AgentHub          # noqa: E402
+from mia.agents import untrusted                    # noqa: E402
 from mia.db import pool                             # noqa: E402
 
 _results: list[tuple[str, bool]] = []
@@ -132,7 +133,12 @@ def test_space_path_and_failures():
     try:
         hub = AgentHub(env={"MIA_ANTIGRAVITY_BIN": binp}, runner=recorder, cwd=project_with_space)
         out = hub.invoke_antigravity("investiga esto", "t-1")
-        check("override por env detecta el binario (ruta con espacio)", out == "salida del agente")
+        # CP-S1: el stdout de un CLI externo ya no viaja crudo — llega SELLADO
+        # como contenido no confiable (cuarentena universal, agents/untrusted.py).
+        check("override por env detecta el binario (ruta con espacio)", "salida del agente" in out)
+        check("CP-S1: el stdout del CLI llega sellado como contenido externo",
+              out.lstrip().startswith(untrusted.UNTRUSTED_NOTICE[:40])
+              and f"<<<{untrusted.GENERIC_LABEL}" in out and "<<<FIN" in out)
         check("la ruta con espacio va INTACTA como primer arg (1 elemento)",
               captured["args"][0] == binp and " " in captured["args"][0])
         check("args en lista: prompt como elemento aparte", captured["args"][-1] == "investiga esto")

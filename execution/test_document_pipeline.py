@@ -102,8 +102,8 @@ async def run_gate() -> None:
     user_facts = captured["last"][1]["content"]
     check("cp9-09 · facts_node guarda los hechos en metadata['facts'] y stage='facts'",
           facts_md.get("facts") == "SALIDA-DOBLADA" and facts_md.get("stage") == "facts")
-    check("cp9-10 · el prompt de hechos lleva la consulta y el expediente [doc n]",
-          "¿Operó la caducidad?" in user_facts and "[doc 1]" in user_facts)
+    check("cp9-10 · el prompt de hechos lleva la consulta y el expediente sellado (CP-S1)",
+          "¿Operó la caducidad?" in user_facts and "<<<DOC 1>>>" in user_facts)
     check("cp9-11 · el system de hechos usa la instrucción del especialista",
           pb.GRAPH_NODE_INSTRUCTIONS["facts"] in captured["last"][0]["content"])
 

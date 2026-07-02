@@ -30,6 +30,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from ..agents import untrusted
+
 logger = logging.getLogger("mia.gateway.agent_hub")
 
 DEFAULT_TIMEOUT = 120  # segundos
@@ -152,8 +154,14 @@ class AgentHub:
 
         if code != 0:
             logger.warning("conector %s exit=%s stderr=%s", key, code, (stderr or "")[:300])
-            return f"[error] '{c.display_name}' terminó con código {code}: {(stderr or '').strip()[:300]}"
-        return stdout
+            # CP-S1: el stderr es salida EXTERNA — saneado antes de interpolarlo
+            # (un CLI comprometido no fabrica instrucciones dentro del mensaje).
+            return (f"[error] '{c.display_name}' terminó con código {code}: "
+                    f"{untrusted.sanitize_field(stderr, 300)}")
+        # CP-S1 (cuarentena universal): la salida de un CLI externo es contenido
+        # NO confiable — viaja sellada ("datos, no órdenes") hacia cualquier
+        # prompt o metadata que la consuma (hoy md['delegation']; mañana lo que sea).
+        return untrusted.wrap_untrusted(f"salida de '{c.display_name}'", stdout)
 
     # -- métodos nombrados (los 5 del spec) -------------------------------------
     def invoke_hermes(self, prompt: str, tenant_id: str) -> str:
