@@ -394,8 +394,6 @@ un solo chat autorizado, sin datos en el bot, todo pasa por el API autenticado.
 amable, chat no autorizado ignorado, POST correcto con Bearer, hilo persistente + /nueva,
 adjunto .md, re-login ante 401, /apagar, errores de red sin tumbar el loop, cero contenido en logs).
 
-# Decisiones CP-C1 (temporal — el orquestador fusiona esto en memory/decisions.md)
-
 ## #30 — 2026-07-01 · Conector de carpetas de trabajo (disco local + nubes espejo) con allowlist fail-closed de dos capas
 
 **Decisión.** Mia conoce las carpetas de trabajo del abogado — disco local, OneDrive y
