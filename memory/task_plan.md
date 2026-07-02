@@ -156,6 +156,31 @@ Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor indep
 | CP9 | 🟡 | Equipo de especialistas (encargo de Pipe 2026-07-02 tras aprobar CP6): facts → research (SAT-Graph por jurisdicción) → cruce → redacción → verificación determinista de citas (anota [VERIFICAR] sin marca/respaldo) → emisión Word (draft.docx). IMPLEMENTADO en rama `feat/cp9-equipo-especialistas` (commit a22b72c); capa 2 APROBADO CON CORRECCIONES (M1 cupo compresión por nodo · M2 ReDoS) — corregidas con checks cp9-37..41. Regresión 43/43. **PENDIENTE: comparación A/B en vivo + decisión de Pipe para merge** | `test_document_pipeline` 41/41 · `test_hitl_flow` 19/19 |
 
 
+## Roadmap 5 olas (aprobado por Pipe 2026-07-02) — plan completo en `docs/plan-ejecucion-olas.md`
+De los análisis de Hermes/ClaudeOS/OpenJarvis (`docs/analisis-referencias-2026-07.md`). Pipe
+aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
+
+| CP | Ola | Qué es | Ref |
+|----|-----|--------|-----|
+| CP-S1 | 1 Confidencialidad | Cuarentena universal de contenido no confiable (generalizar el fencing a todo lo externo) | hermes `agent/tool_dispatch_helpers.py` |
+| CP-S2 | 1 | Aislamiento fail-closed de secretos + redacción congelada de logs | hermes `agent/secret_scope.py`, `redact.py` |
+| CP-S3 | 1 | Endurecimiento de conectores/streaming (argv-exec, tripwire de secretos, heartbeat SSE) | claudeos `vite.config.ts` |
+| CP-P1 | 2 Plazos | Motor de vigilancia programada (wake-gate, jobs no_agent) | hermes `cron/scheduler.py` |
+| CP-P2 | 2 | Blueprints + sugerencias consent-first (plazos procesales = confirmación humana) | hermes `cron/blueprint_catalog.py`, `suggestions.py` |
+| CP-V1 | 4 Valor | "Valor entregado" = horas ahorradas × tarifa − costo, en el panel | claudeos `src/lib/time-saved.ts` |
+| CP-V2 | 4 | Auto-diagnóstico prescriptivo riguroso (severidad×impacto×certeza, anti-invención) | claudeos `skills/dream/SKILL.md` |
+| CP-Z1 | 3 Voz | Dictado web con STT local (faster-whisper) — **DECISIÓN Pipe: local vs nube** | openjarvis `src/openjarvis/speech/` |
+| CP-Z2 | 3 | Respuesta hablada (TTS local) + streaming incremental por frases | openjarvis `speech/tts.py`, `server/stream_bridge.py` |
+| CP-Z3 | 3 | (Opcional) Overlay de escritorio omnipresente (cliente delgado) | openjarvis `frontend/src-tauri/src/lib.rs` |
+| CP-E1 | 5 Escala | Observer hooks (auditoría) + middleware (políticas por tenant) | hermes `docs/observability/`, `docs/middleware/` |
+| CP-E2 | 5 | Adjuntar pruebas por referencia (@expediente/@carpeta) | hermes `agent/context_references.py` |
+| CP-E3 | 5 | Personas jurídicas especializadas editables | claudeos Pantheon |
+| CP-E4 | 5 | Banco de pruebas de calidad (eval) — **datos reales = aprobación Pipe** | hermes `batch_runner.py` |
+| CP-E5 | 5 | Delegación multi-agente + tablero de misión por expediente | hermes `tools/delegate_tool.py`, kanban |
+| CP-E6 | 5 | Relay multi-canal (WhatsApp/correo) + MCP con seguridad | hermes `gateway/relay/`, `tools/mcp_tool.py` |
+
+**Orden de ejecución:** Ola 1 → Ola 2 → Ola 4 → Ola 3 → Ola 5.
+
 ## Encargo directo de Pipe (2026-07-02, próxima sesión — PRIORIDAD)
 | Tarea | Estado | Qué pidió |
 |----|--------|--------|

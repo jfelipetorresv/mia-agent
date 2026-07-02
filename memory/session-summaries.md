@@ -708,3 +708,28 @@ Qué sigue:
 - CP6: prompt_builder→grafo (ALTO IMPACTO — requiere diff a Pipe antes de ejecutar).
 - CP8: endurecimiento pre-cliente — EN PAUSA.
 - Pendientes de Pipe: crear su bot de Telegram con docs/telegram-setup.md; subir sus primeras guías con /playbooks/import; decidir privacidad de conversaciones del asistente (hoy: nivel despacho) y visibilidad del diagnóstico tras aprobar.
+
+## 2026-07-02 â€” SesiÃ³n 24 (cierre)
+TL;DR: se cerraron CP6, CP9 y CP-C4b (con su UI de Cursor y una correcciÃ³n); y se trazÃ³ el
+roadmap de 5 olas a partir del anÃ¡lisis de Hermes/ClaudeOS/OpenJarvis.
+QuÃ© construimos:
+- CP6 (una sola voz) aprobado por Pipe y mergeado a main.
+- CP9 (equipo de especialistas: hechosâ†’investigaciÃ³nâ†’cruceâ†’redacciÃ³nâ†’verificaciÃ³n de citasâ†’Word)
+  aprobado con A/B en vivo (docs/comparacion-cp9.md), capa 2 con M1/M2 corregidos, mergeado.
+- CP-C4b (wizard "Configura a Mia" explicativo): guÃ­as por paso + mapa de secciones; capa 2 con
+  L1/U1-U8 corregidos (guÃ­as reescritas a la realidad del producto), mergeado.
+- Cursor construyÃ³ la UI pendiente (botÃ³n Word + informe de verificaciÃ³n, secciÃ³n Carpetas,
+  botÃ³n Instalar Obsidian; arreglÃ³ lib/api.ts para mostrar los mensajes del backend). Claude Code
+  verificÃ³ la entrega y corrigiÃ³ un defecto de exactitud del resumen del verificador
+  (marcadas+anotadas, commit 5fca19e).
+- AnÃ¡lisis a fondo de los 3 repos de referencia (3 subagentes) â†’ docs/analisis-referencias-2026-07.md
+  y docs/plan-ejecucion-olas.md (roadmap de 16 checkpoints en 5 olas).
+QuÃ© decidimos:
+- Pipe aprobÃ³ ejecutar LAS 5 OLAS completas, orden: confidencialidad â†’ plazos â†’ valor visible â†’
+  voz â†’ escala. Empezar por CP-S1.
+QuÃ© sigue (TERMINAL NUEVA, contexto en 0):
+- Leer docs/plan-ejecucion-olas.md y arrancar CP-S1 (cuarentena universal de contenido no confiable).
+- DecisiÃ³n pendiente de Pipe antes de Ola 3 (voz): local vs nube.
+- Pendientes de Pipe sin cambio: bot de Telegram, subir guÃ­as reales, corpus jurÃ­dico real,
+  privacidad de conversaciones del asistente, deuda Â§G del dashboard (Pinecone/second brain).
+
