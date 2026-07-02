@@ -369,3 +369,69 @@ historial, RLS entre tenants, compresión, bloque de asuntos, 404 fail-closed).
 `chat()` (nunca compartido entre requests — su resumen iterativo en memoria mezclaría contexto
 de despachos distintos: aislamiento en memoria además del RLS); si la compresión falla, el turno
 NO se cae: truncado duro sin LLM (primeros 2 + últimos 30 mensajes con marcador) y continúa.
+
+## 29 · 2026-07-01 — CANAL TELEGRAM: bot privado single-chat, puente → API con JWT, opt-in [CP-B2]
+**Decisión:** Mia llega al celular del abogado por Telegram con un puente standalone estilo
+ClaudeClaw (`backend/mia/channels/telegram_bridge.py`, `python -m mia.channels.telegram_bridge`,
+arranque: `scripts/start_telegram.ps1`). Arquitectura: el puente NO toca la DB ni el motor —
+cada mensaje va como POST a `/api/assistant/chat` (CP-B1) con un JWT obtenido vía
+`/api/auth/login` (MIA_BRIDGE_EMAIL/PASSWORD; re-login automático ante 401), así RLS y la
+política de modelo aplican idéntico al frontend. **Seguridad single-chat:** solo responde al
+chat_id de `TELEGRAM_ALLOWED_CHAT_ID`; cualquier otro chat se IGNORA por completo (ni respuesta;
+solo se loguea el chat_id — NUNCA contenido del abogado en logs, solo métricas/ids). `/apagar`
+desde el chat autorizado detiene el puente (frase de emergencia); `/nueva` resetea el hilo
+(conversation_id en memoria). **Resiliencia:** timeout HTTP 300s (el motor por suscripción tarda
+1-3 min), errores de red/API → mensaje amable ("Mia está teniendo un problema técnico...") y el
+loop sigue; polling con reconexión y backoff. Respuestas > ~3900 chars → archivo .md adjunto
+(límite de Telegram ~4096). **Opt-in:** NO está en start_all.ps1; se activa completando las
+variables comentadas en .env (guía sin jerga: `docs/telegram-setup.md`). Dependencia:
+`python-telegram-bot~=21.0` (~=, no está en los pins críticos del Riesgo #32; gate de pins
+verificado 9/9 tras instalar). La lógica es inyectable (MiaClient con HTTP falso, TelegramBridge
+con callbacks) — python-telegram-bot solo se importa al arrancar el bot real.
+**Razón:** el abogado necesita a Mia fuera del escritorio sin abrir superficie nueva de ataque:
+un solo chat autorizado, sin datos en el bot, todo pasa por el API autenticado.
+**Gate:** `execution/test_telegram_bridge.py` (22 checks, TODO offline/mockeado: config faltante
+amable, chat no autorizado ignorado, POST correcto con Bearer, hilo persistente + /nueva,
+adjunto .md, re-login ante 401, /apagar, errores de red sin tumbar el loop, cero contenido en logs).
+
+# Decisiones CP-C1 (temporal — el orquestador fusiona esto en memory/decisions.md)
+
+## #30 — 2026-07-01 · Conector de carpetas de trabajo (disco local + nubes espejo) con allowlist fail-closed de dos capas
+
+**Decisión.** Mia conoce las carpetas de trabajo del abogado — disco local, OneDrive y
+Google Drive — leyendo las carpetas ESPEJO de escritorio que esos servicios ya mantienen
+en Windows (no APIs de nube en v1: sin OAuth, sin credenciales nuevas, sin superficie de
+red adicional). La indexación calca el patrón probado de Obsidian (decisión #17): hash
+sha256 incremental por archivo, chunking (encabezados para .md, troceo con overlap para
+.txt/.pdf/.docx vía extract_text), embeddings voyage-law-2 en batch por la librería
+LiteLLM, y persistencia en `knowledge_chunks` con `source = 'local:<source_id>'` para
+distinguir el origen sin tocar el esquema existente.
+
+**Allowlist fail-closed de DOS CAPAS (privacidad primero).** Mia NUNCA escanea nada que
+el despacho no haya registrado explícitamente en `local_folder_sources` (migración 016,
+RLS fail-closed estándar):
+1. **Al registrar** (`validate_source_path`): se rechazan rutas inexistentes, raíces de
+   unidad (C:\, D:\) y directorios de sistema (Windows, Program Files, AppData, ...);
+   la ruta se guarda ya resuelta (sin symlinks ni `..`).
+2. **Al sincronizar**: la raíz se re-resuelve y re-valida en cada corrida, y cada archivo
+   se resuelve con `Path.resolve()` — si su ruta real apunta fuera de la carpeta
+   registrada (symlink de escape), se omite con log.
+Límites defensivos: archivos > 20 MB se omiten; máximo 2000 archivos por sincronización.
+
+**Alcance v1.** `kind = 'knowledge'` únicamente: todo lo indexado alimenta el
+conocimiento general del despacho (`knowledge_chunks`). La clasificación de carpetas de
+EXPEDIENTES (`kind = 'matters'`, que exigiría mapear archivos a asuntos concretos) queda
+para una fase posterior — la columna `kind` ya lo deja preparado.
+
+**Piezas.** Migración `016_local_folders.sql` (+ `execution/init_local_folders.py`),
+conector `backend/mia/connectors/local_folders.py` (LocalFolderSync, detect_cloud_folders,
+register/list/disable_source), router `/api/folders/*` (detected / registrar / deshabilitar
+/ sync en segundo plano), job diario `sync_local_folders_all_tenants` en el scheduler
+(hereda el Riesgo #15: la enumeración de tenants usa conexión admin, igual que Obsidian),
+y gate `execution/test_local_folders.py`.
+
+**Deshabilitar = olvidar.** Al quitar una carpeta (`DELETE /api/folders/{id}`) se borran
+de inmediato sus chunks y hashes: el contenido deja de estar en el conocimiento de Mia
+sin esperar al siguiente sync (re-registrarla la re-indexa completa).
+
+**Refuerzos post-revisión (2026-07-01, misma fecha).** Tras revisión independiente se endurecieron tres puntos: (1) PRIVACIDAD — los directorios de sistema (_FORBIDDEN_PARTS: Windows, AppData, ProgramData, ...) se excluyen también durante el descenso recursivo del scan, no solo al validar la raíz (registrar C:\Users\<usuario> ya no puede arrastrar AppData a embeddings); (2) SIN PÉRDIDA DE CONOCIMIENTO — el límite de 2000 pasó a ser una ventana SOLO sobre archivos nuevos/cambiados (pasada previa barata de hashes); los diferidos quedan sin hash y se retoman en la corrida siguiente, y si la enumeración se trunca (tope duro MAX_SCAN_FILES=50000) NO se poda nada (ni chunks ni hashes) en esa corrida; (3) UNIQUE (tenant_id, path, kind) en local_folder_sources a nivel de DB, con register_source atómico vía ON CONFLICT. Gate ampliado a 39/39 checks (test_local_folders.py) y test_obsidian_sync.py 22/22 sin regresión.

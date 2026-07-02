@@ -11,7 +11,57 @@ quede trazabilidad de ambas revisiones.
 
 ---
 
-## Checkpoint actual: CP5 + CP-B1 — Diagnóstico visible y modo asistente (2026-07-01)
+## Checkpoint actual: CP-B2 + CP-C1 — Telegram y carpetas del abogado (2026-07-01)
+
+### Qué cambió (lenguaje simple)
+
+- CP-B2: Mia ya puede atender por Telegram — un bot privado que solo
+  responde al chat del abogado autorizado, con comando de apagado de
+  emergencia. Guía de activación en 5 pasos: docs/telegram-setup.md
+  (requiere que Pipe cree su bot con @BotFather — 3 minutos).
+- CP-C1: Mia puede conocer las carpetas de trabajo del abogado (disco
+  local, OneDrive y Google Drive vía sus carpetas de escritorio) y
+  mantener su conocimiento al día sola — SOLO las carpetas que el
+  abogado autorice expresamente, nunca escanea por su cuenta.
+
+### Frontend a revisar (Cursor — capa 3)
+
+- Ninguno todavía: los endpoints /api/folders/* y el puente de Telegram
+  no tienen pantalla aún (la UI de conectores llega en CP7).
+
+### Comportamiento esperado
+
+- Con el bot configurado: escribirle al bot en Telegram = hablar con la
+  asistente de Mia; cualquier otro chat es ignorado por completo.
+- Registrar una carpeta → sus documentos quedan en el conocimiento del
+  despacho; carpetas del sistema (AppData, Windows...) se rechazan y
+  excluyen SIEMPRE, incluso en subcarpetas.
+
+### Bugs conocidos / fuera de alcance
+
+- El puente de Telegram queda apagado (opt-in) hasta que Pipe cree el
+  bot y ponga sus 2 claves en la configuración.
+- La detección de "Tu Google Drive" puede sugerir una unidad equivocada
+  con nombre parecido (el registro sigue siendo manual y validado).
+- Sync de carpetas muy grandes puede ralentizar la API mientras corre
+  (patrón heredado del sync de Obsidian; anotado para endurecimiento).
+
+### Resultado de verificación (3 capas)
+
+- Capa 1 (automatizada): gates test_telegram_bridge 22/22 y
+  test_local_folders 39/39; test_obsidian_sync 22/22 sin regresión;
+  pins 9/9 tras instalar la librería de Telegram; regresión completa
+  al cierre (ver commit).
+- Capa 2 (revisores independientes): CP-B2 aprobado con 2 mayores
+  CORREGIDOS (el token del bot se filtraba en los registros de consola;
+  el instructivo fallaba por los espacios de la ruta). CP-C1 aprobado
+  con reservas y 2 mayores CORREGIDOS (subcarpetas de sistema ahora se
+  excluyen también en el descenso recursivo; carpetas con más de 2000
+  archivos ya no pierden conocimiento indexado) + UNIQUE anti-duplicado.
+  Revisión por lectura de patrones, no auditoría con herramientas.
+- Capa 3 (Cursor): no aplica — sin frontend en estos checkpoints.
+
+### Checkpoint anterior: CP5 + CP-B1 — Diagnóstico visible y modo asistente (2026-07-01)
 
 ### Qué cambió (lenguaje simple)
 

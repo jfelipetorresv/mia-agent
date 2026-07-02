@@ -16,7 +16,7 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
-from .routes import assistant, auth, curator, hitl, settings, stream, traces, ux
+from .routes import assistant, auth, curator, folders, hitl, settings, stream, traces, ux
 
 
 @asynccontextmanager
@@ -73,6 +73,8 @@ app.include_router(curator.router)
 app.include_router(traces.router)
 # MODO ASISTENTE (CP-B1, Pilar B): conversación libre fuera de un asunto → /api/assistant/*.
 app.include_router(assistant.router, prefix="/api")
+# CARPETAS DE TRABAJO (CP-C1, Pilar C): allowlist de carpetas locales/nubes → /api/folders/*.
+app.include_router(folders.router, prefix="/api")
 
 
 @app.get("/health")

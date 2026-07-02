@@ -126,6 +126,50 @@ async def sync_obsidian_all_tenants() -> dict:
     return out
 
 
+def _enumerate_local_folder_tenants() -> list[str]:
+    """Tenants con al menos una carpeta de trabajo registrada y habilitada (CP-C1).
+    Hereda el Riesgo #15: enumerar tenants es una operación de SISTEMA, cross-tenant,
+    invisible bajo RLS fail-closed desde `mia_app` — se usa conexión admin (`postgres`)
+    SOLO para leer qué tenants sincronizar; la escritura por tenant sigue pasando por
+    `pool.tenant_connection` (RLS). Acotar (SECURITY DEFINER o rol dedicado) queda para
+    multi-tenant en producción, igual que el job de Obsidian."""
+    import psycopg
+
+    pw = os.getenv("PG_PASSWORD", "")
+    if not pw:
+        logger.warning("PG_PASSWORD vacío: el job de carpetas locales no puede enumerar tenants")
+        return []
+    kw = dict(host=os.getenv("PG_HOST", "127.0.0.1"), port=os.getenv("PG_PORT", "5432"),
+              dbname=os.getenv("PG_DB", "mia"), user="postgres", password=pw)
+    try:
+        with psycopg.connect(autocommit=True, **kw) as c:
+            rows = c.execute(
+                "SELECT DISTINCT tenant_id FROM local_folder_sources WHERE enabled"
+            ).fetchall()
+    except psycopg.errors.UndefinedTable:
+        # migración 016 aún no aplicada — no hay nada que sincronizar.
+        return []
+    return [str(r[0]) for r in rows]
+
+
+async def sync_local_folders_all_tenants() -> dict:
+    """Sincroniza las carpetas de trabajo registradas (allowlist) de cada tenant (CP-C1).
+    Devuelve {tenant_id: stats}. La enumeración de tenants usa conexión admin (hereda el
+    Riesgo #15 — ver _enumerate_local_folder_tenants); la escritura por tenant pasa por
+    RLS (LocalFolderSync). NUNCA se escanea nada fuera de las fuentes registradas."""
+    from ..connectors.local_folders import LocalFolderSync
+
+    sync = LocalFolderSync()
+    out: dict[str, dict] = {}
+    for tenant_id in _enumerate_local_folder_tenants():
+        try:
+            out[tenant_id] = await sync.sync_tenant(tenant_id)
+        except Exception as e:  # un tenant no debe tumbar a los demás
+            out[tenant_id] = {"error": str(e)}
+            logger.exception("sync de carpetas locales falló para tenant %s", tenant_id)
+    return out
+
+
 async def curator_run_all_tenants() -> dict:
     """Mantenimiento semántico de playbooks de todos los tenants (Módulo 3b).
     Domingos 2am — el scheduler NO tiene timezone awareness en v1; el intervalo es de 168h
@@ -164,6 +208,10 @@ def build_scheduler() -> Scheduler:
     """Scheduler con los jobs del sistema (Obsidian 6h, Curator 168h, Feedback 24h)."""
     sched = Scheduler()
     sched.register_job("sync_obsidian_all_tenants", sync_obsidian_all_tenants, interval_hours=6)
+    # carpetas de trabajo (CP-C1): diaria — cadencia menor que Obsidian a propósito
+    # (carpetas grandes con PDF/Word; la incremental por hash hace barato el re-sync).
+    sched.register_job("sync_local_folders_all_tenants", sync_local_folders_all_tenants,
+                       interval_hours=24)
     # domingos 2am — sin timezone en v1; intervalo semanal de 168h (decisión #18).
     sched.register_job("curator_weekly", curator_run_all_tenants, interval_hours=168)
     # domingos 4am — Dreams llama GEPA internamente; no hay job GEPA separado.
