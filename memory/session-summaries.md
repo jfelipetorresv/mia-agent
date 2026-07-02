@@ -13,8 +13,14 @@ Qué construimos (CP7, mergeado a main):
 Verificación: gate 26/26 · npm build ✓ · regresión 41/41 ·
   revisor capa 2 APROBADO (2 mayores + 5 menores corregidos) ·
   capa 3 de Cursor PENDIENTE (HANDOFF con 4 archivos).
-Qué sigue: CP-C4 (asistente de configuración guiado) y la
-  decisión de Pipe sobre CP6.
+Además (misma sesión): CP-C4 mergeado — página "Configura a
+  Mia" (6 pasos detectados, retomable) + guía por chat; gate
+  21/21; regresión 42/42; revisor APROBADO (3 mayores + 3
+  menores corregidos). PILAR C COMPLETO.
+Qué sigue: SOLO quedan cosas que dependen de Pipe — decisión de
+  CP6 (A/B entregado), bot de Telegram, subir guías, recorrido
+  vivo de "Configura a Mia", y la capa 3 de Cursor (HANDOFF).
+  CP8 y CP-B4 en pausa por decisión suya.
 
 ## 2026-07-01 — Sesión 22 · CP-B3 Proactividad
 TL;DR: Mia ya avisa y recuerda por Telegram. Recordatorios en
