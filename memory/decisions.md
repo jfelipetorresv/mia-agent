@@ -341,3 +341,31 @@ plan es grande y lento escribiendo documentos extensos (>300s → timeout); sin 
 CLI usa ahora `MIA_CLI_MODEL` (default `sonnet`). Resultado medido: turno completo en 176s con
 borrador de 19.098 chars, citas correctas (fuero de maternidad, art. 239 CST) y 47 [VERIFICAR],
 todo por suscripción (el proxy no registró ninguna llamada de completions).
+
+## 28 · 2026-07-01 — MODO ASISTENTE: una sola Mia, conversación libre fuera del asunto [CP-B1]
+**Decisión:** Mia deja de vivir SOLO dentro de un expediente. El nuevo modo asistente
+(`backend/mia/assistant/core.py` + router `/api/assistant/*`) le da al abogado una conversación
+libre — agenda, recordatorios, investigación, el despacho — con la MISMA alma e infraestructura:
+**una sola Mia**, no un segundo agente. Piezas: (1) identidad = SOUL.md del tenant (capa L1 del
+prompt_builder) + comunicación sin jerga (L5) + una instrucción propia (asistente personal;
+NUNCA da por definitivo un plazo procesal sin marcarlo [VERIFICAR] para el abogado);
+(2) **historial persistente por tenant + usuario** en `assistant_conversations` /
+`assistant_messages` (015_assistant.sql, RLS fail-closed estándar); (3) el **ContextCompressor
+queda cableado a su propósito original** — historial creciente: si la conversación supera el 55%
+de la ventana, se comprime ANTES de llamar al modelo; (4) motor = `call_llm(task="main")` con la
+política del tenant (CP2/#27) que ya fija el middleware.
+**v1 SIN SSE:** el proveedor por suscripción (CLI de Claude Code) responde en bloque, no
+streamea; el endpoint devuelve JSON completo. Telegram (CP-B2) tampoco necesita streaming.
+**Herramienta v1 acotada, sin framework:** si el mensaje pregunta por asuntos/borradores
+pendientes (keywords), se consulta `matters` bajo RLS y se inyecta un bloque
+"=== ESTADO ACTUAL DE TUS ASUNTOS ===" en el mensaje que ve el modelo (el persistido es el
+original). Las **herramientas reales llegan con CP-B4**; la escritura de memoria a la wiki del
+despacho llega con CP-C2 (TODO en core.py).
+**Razón:** es la base del asistente personal estilo ClaudeClaw (Pilar B) que se conecta a
+Telegram en CP-B2, sin duplicar identidad, memoria ni política de modelo.
+**Gate:** `execution/test_assistant.py` (DB real, LLM mockeado: 32 checks — persistencia,
+historial, RLS entre tenants, compresión, bloque de asuntos, 404 fail-closed).
+**Refuerzo post-revisión (2026-07-01):** el ContextCompressor se crea NUEVO por turno dentro de
+`chat()` (nunca compartido entre requests — su resumen iterativo en memoria mezclaría contexto
+de despachos distintos: aislamiento en memoria además del RLS); si la compresión falla, el turno
+NO se cae: truncado duro sin LLM (primeros 2 + últimos 30 mensajes con marcador) y continúa.

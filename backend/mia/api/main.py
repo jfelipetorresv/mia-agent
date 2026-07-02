@@ -16,7 +16,7 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
-from .routes import auth, curator, hitl, settings, stream, traces, ux
+from .routes import assistant, auth, curator, hitl, settings, stream, traces, ux
 
 
 @asynccontextmanager
@@ -71,6 +71,8 @@ app.include_router(ux.router)
 app.include_router(curator.router)
 # Búsqueda FTS de trazas (H.3): session_search sin LLM.
 app.include_router(traces.router)
+# MODO ASISTENTE (CP-B1, Pilar B): conversación libre fuera de un asunto → /api/assistant/*.
+app.include_router(assistant.router, prefix="/api")
 
 
 @app.get("/health")

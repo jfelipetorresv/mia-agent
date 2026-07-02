@@ -11,7 +11,64 @@ quede trazabilidad de ambas revisiones.
 
 ---
 
-## Checkpoint actual: CP1 + CP4 — Expedientes grandes e importación de guías (2026-07-01)
+## Checkpoint actual: CP5 + CP-B1 — Diagnóstico visible y modo asistente (2026-07-01)
+
+### Qué cambió (lenguaje simple)
+
+- CP5: el diagnóstico jurídico de Mia por fin se VE en pantalla — la
+  pantalla del asunto muestra un panel "Diagnóstico" con el análisis
+  completo, y la lista de asuntos marca con un punto naranja los que
+  tienen un borrador esperando la revisión del abogado.
+- CP-B1: nace el modo asistente — ahora se le puede hablar a Mia de lo
+  que sea (no solo dentro de un expediente): recuerda la conversación,
+  conoce el estado de los asuntos del despacho, y nunca da un plazo
+  procesal como definitivo sin marcarlo para verificación. Es la base
+  para tenerla en el celular por Telegram (próximo checkpoint).
+
+### Frontend a revisar (Cursor — capa 3)
+
+- `frontend/app/page.tsx`: punto naranja en la lista de asuntos cuando
+  hay borrador pendiente (title="Borrador esperando tu revisión").
+- `frontend/app/asuntos/[id]/page.tsx`: panel "Diagnóstico" nuevo
+  (reemplaza los 3 paneles que siempre estaban vacíos); texto con
+  scroll interno; estado vacío: "Mia aún no ha analizado este asunto."
+- El chat del asistente personal NO tiene pantalla aún (llega con CP7/
+  CP-B2); por ahora es solo API.
+
+### Comportamiento esperado
+
+- Al preguntar algo en un asunto y llegar el borrador, el panel
+  Diagnóstico se llena y el asunto queda marcado con el punto naranja
+  hasta que el abogado apruebe o rechace.
+
+### Bugs conocidos / fuera de alcance
+
+- Dos ventanas de carrera de milisegundos anotadas por el revisor de
+  CP5 (punto naranja que podría quedar desactualizado si la conexión
+  se corta justo en el instante equivocado — se autocorrige al abrir
+  el asunto o completar el siguiente turno).
+- El panel puede mostrar el diagnóstico del último turno ya decidido
+  (decisión de producto pendiente: ¿ocultarlo tras aprobar?).
+- Conversaciones del asistente: hoy son visibles a nivel de despacho
+  (cualquier abogado del despacho puede verlas) — decisión de producto
+  pendiente con Pipe; anotado por el revisor.
+
+### Resultado de verificación (3 capas)
+
+- Capa 1 (automatizada): regresión completa en curso al cierre — gates
+  individuales: test_ux 29/29 (incluye npm run build), test_hitl_flow
+  19/19, test_assistant 32/32, test_rls 12/12 HALT PASS.
+- Capa 2 (subagente revisor independiente): CP5 aprobado (4 menores
+  anotados arriba). CP-B1: el revisor encontró 1 BLOQUEANTE de
+  confidencialidad entre despachos (el compresor de conversaciones
+  compartía memoria entre clientes) + 2 mayores (inyección por título
+  de asunto, conversaciones gigantes) — LOS 4 CORREGIDOS y cubiertos
+  con 6 checks nuevos antes del commit. Revisión por lectura de
+  patrones, no auditoría con herramientas.
+- Capa 3 (Cursor): PENDIENTE — revisar los 2 archivos de frontend de
+  arriba y devolver hallazgos en la sección final.
+
+### Checkpoint anterior: CP1 + CP4 — Expedientes grandes e importación de guías (2026-07-01)
 
 ### Qué cambió (lenguaje simple)
 
