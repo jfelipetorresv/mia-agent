@@ -1,20 +1,31 @@
-"""Mia · agents.graph — el StateGraph de un asunto: 5 nodos + HITL (1d · PASO 2).
+"""Mia · agents.graph — el StateGraph de un asunto: equipo de especialistas + HITL (CP9).
 
-Flujo:   intake → analysis → draft → hitl_checkpoint → finalize → END
-                                         │
-                                         └─ interrupt() es la PRIMERA línea del
-                                            nodo (decisión #10): el grafo se pausa
-                                            al ENTRAR, antes de procesar la decisión.
+Flujo:   intake → facts → research → analysis → draft → verification
+                                                             → hitl_checkpoint → finalize → END
+                                                                │
+                                                                └─ interrupt() es la PRIMERA
+                                                                   línea del nodo (decisión #10).
 
 Nodos (async; los clientes LLM/embeddings son síncronos → se llaman vía
-asyncio.to_thread para no bloquear el event loop):
+asyncio.to_thread para no bloquear el event loop). CP9: cada nodo es un ESPECIALISTA
+del equipo — todos comparten las mismas 10 capas (CP6, una sola voz/estilo del
+despacho) y cada uno se limita a su oficio:
   1. intake_node   — recupera documentos del asunto por RAG (RRF, RLS activo) y el
                      conocimiento del despacho (knowledge_chunks, CP3 · Riesgo #16).
-  2. analysis_node — diagnóstico jurídico estructurado con los documentos (+ sección
-                     de conocimiento del despacho, presupuesto ≤15% de la ventana).
-  3. draft_node    — borrador usando el perfil frozen (2a) y los playbooks (2b).
-  4. hitl_checkpoint_node — interrupt(): espera la decisión del abogado.
-  5. finalize_node — incorpora el feedback, finaliza y guarda la traza JSONL (2d).
+  2. facts_node    — especialista de HECHOS: hechos relevantes anclados a los
+                     documentos, inconsistencias y datos faltantes.
+  3. research_node — especialista de INVESTIGACIÓN: normas/jurisprudencia por la
+                     jurisdicción del despacho (SAT-Graph primero, [VERIFICAR] el resto).
+  4. analysis_node — especialista de CRUCE: confronta hechos × investigación y emite
+                     el diagnóstico con cierre estructurado (+ conocimiento del
+                     despacho, presupuesto ≤15% de la ventana).
+  5. draft_node    — especialista de REDACCIÓN: borrador con el perfil frozen (2a)
+                     y los playbooks (2b).
+  6. verification_node — especialista de VERIFICACIÓN (determinista, sin LLM):
+                     citas sin marca ni respaldo en corpus → se anotan [VERIFICAR];
+                     informe a la pantalla.
+  7. hitl_checkpoint_node — interrupt(): espera la decisión del abogado.
+  8. finalize_node — incorpora el feedback, finaliza y guarda la traza JSONL (2d).
 
 DI: `MatterGraphBuilder` recibe `trace_capture` (testable). Los modelos LLM van por
 el gateway (decisión #3); las llamadas usan `call_llm(task=...)` (1a/1b).
@@ -43,7 +54,7 @@ from ..memory.tokens import estimate_tokens
 from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
-from . import context_recovery, retrieval
+from . import context_recovery, research, retrieval, verification
 from .state import MatterState
 
 logger = logging.getLogger("mia.agents.graph")
@@ -266,7 +277,8 @@ class MatterGraphBuilder:
 
     async def _llm(self, messages: list[dict], *, task: str = "main",
                    state: Optional[MatterState] = None, md: Optional[dict] = None,
-                   shrink: Optional[Callable[[], list[dict]]] = None) -> tuple[str, Any]:
+                   shrink: Optional[Callable[[], list[dict]]] = None,
+                   node: str = "") -> tuple[str, Any]:
         """Llama al LLM por el gateway (cadena de fallback H.5) sin bloquear el event loop.
 
         Ya NO se fija `model`: call_llm recorre la cadena del task (claude-sonnet→mia-local para
@@ -278,8 +290,11 @@ class MatterGraphBuilder:
         Los nodos con prompt monolítico de 2 mensajes (analysis/draft) lo pasan para recortar su
         MATERIAL (documentos/diagnóstico/playbooks) — ContextCompressor no puede reducir 2
         mensajes (protege first=5/last=30). Sin `shrink`, se conserva el camino del compresor
-        (nodos con historial, p. ej. finalize/EDIT). Ambos caminos consumen el mismo cupo
-        una-sola-compresión-por-turno (turn.mark_compressed())."""
+        (nodos con historial, p. ej. finalize/EDIT).
+
+        CP9 (revisión capa 2, M1): el cupo de compresión es POR NODO (`node`), no global —
+        con 4 nodos LLM en el turno, cada especialista conserva su propio rescate. Dentro
+        del MISMO nodo sigue siendo una sola compresión (anti-bucle intacto)."""
         try:
             resp = await asyncio.to_thread(llm.call_llm, messages, task=task)
         except Exception as exc:  # noqa: BLE001 — solo rescatamos CONTEXT_TOO_LONG; el resto re-lanza
@@ -288,8 +303,8 @@ class MatterGraphBuilder:
             turn.last_error_kind = kind
             if md is not None:
                 md["llm_turn"] = turn.to_dict()
-            if md is None or not turn.should_compress(kind):
-                raise  # no es contexto, ya se comprimió, o no hay md donde coordinar → propaga
+            if md is None or not turn.should_compress(kind, node):
+                raise  # no es contexto, ese nodo ya comprimió, o no hay md donde coordinar → propaga
             if shrink is not None:
                 # CP1 (Riesgo #33): el nodo reconstruye su prompt con el material recortado.
                 reduced = shrink()
@@ -309,7 +324,7 @@ class MatterGraphBuilder:
                     tenant_id=(state or {}).get("tenant_id"),
                     matter_id=(state or {}).get("matter_id"),
                 )
-            turn.mark_compressed()
+            turn.mark_compressed(node)
             md["llm_turn"] = turn.to_dict()
             logger.warning("call_llm context_too_long (task=%s) → contexto %s, reintento "
                            "desde el 1er proveedor de la cadena", task,
@@ -361,12 +376,81 @@ class MatterGraphBuilder:
             md["delegation"] = delegation
         return {"documents": docs, "knowledge": knowledge, "metadata": md}
 
-    # ── 2 · analysis ────────────────────────────────────────────────────────
+    # ── 2 · facts (CP9 · especialista de HECHOS) ─────────────────────────────
+    async def facts_node(self, state: MatterState) -> dict:
+        msg = _last_user_message(state)
+        docs = state.get("documents") or []
+        md = dict(state.get("metadata") or {})
+
+        def _messages(doc_list: list) -> list[dict]:
+            ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(doc_list)) or \
+                "(sin documentos recuperados del expediente)"
+            return [
+                # L7 con el knowledge REAL del turno (revisión capa 2): aunque los
+                # hechos no consumen las notas, el contexto no debe negar que existan.
+                {"role": "system", "content": prompt_builder.build_graph_system(
+                    state, "facts", matter_context=_matter_context_for(
+                        {"documents": doc_list,
+                         "knowledge": state.get("knowledge") or []}))},
+                {"role": "user", "content": f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"},
+            ]
+
+        def _shrink() -> list[dict]:
+            budget = context_recovery.budget_for("facts", config.MIA_CONTEXT_WINDOW)
+            return _messages(context_recovery.shrink_documents(docs, budget))
+
+        facts, usage = await self._llm(
+            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="facts")
+        md.update(stage="facts", facts=facts)
+        _accum_usage(md, usage)
+        return {"metadata": md}
+
+    # ── 3 · research (CP9 · especialista de INVESTIGACIÓN) ───────────────────
+    async def research_node(self, state: MatterState) -> dict:
+        msg = _last_user_message(state)
+        md = dict(state.get("metadata") or {})
+        facts = str(md.get("facts") or "")
+        # Consulta FTS: el mensaje del abogado + el arranque de los hechos (websearch
+        # tolera texto libre; los hechos completos diluirían el ranking).
+        query = (msg + "\n" + facts[:300]).strip()
+        sources_txt, sources, jurisdictions = await research.gather_sources(
+            state["tenant_id"], query)
+
+        def _messages(facts_txt: str) -> list[dict]:
+            parts = [f"Consulta del abogado:\n{msg}"]
+            if facts_txt:
+                parts.append("Hechos establecidos por el especialista de hechos:\n" + facts_txt)
+            parts.append(sources_txt if sources_txt else research.NO_SOURCES_NOTE)
+            parts.append("Elabora la memoria de investigación.")
+            return [
+                {"role": "system", "content": prompt_builder.build_graph_system(
+                    state, "research", matter_context=_matter_context_for(state))},
+                {"role": "user", "content": "\n\n".join(parts)},
+            ]
+
+        def _shrink() -> list[dict]:
+            budget = context_recovery.budget_for("research", config.MIA_CONTEXT_WINDOW)
+            # protect_tail: la lista de "Datos faltantes por confirmar" cierra los hechos.
+            return _messages(context_recovery.shrink_text(facts, budget, protect_tail=True))
+
+        memo, usage = await self._llm(
+            _messages(facts), task="main", state=state, md=md, shrink=_shrink, node="research")
+        md.update(stage="research", research=memo)
+        # Fuentes compactas: las consume el especialista de verificación (respaldo de
+        # citas) y quedan en la traza; las jurisdicciones usadas, por transparencia.
+        md["research_sources"] = sources
+        md["research_jurisdictions"] = jurisdictions
+        _accum_usage(md, usage)
+        return {"metadata": md}
+
+    # ── 4 · analysis (CP9 · especialista de CRUCE) ───────────────────────────
     async def analysis_node(self, state: MatterState) -> dict:
         msg = _last_user_message(state)
         docs = state.get("documents") or []
         knowledge = state.get("knowledge") or []
         md = dict(state.get("metadata") or {})
+        facts = str(md.get("facts") or "")
+        research_memo = str(md.get("research") or "")
         # CP3 (Riesgo #16): sección de conocimiento del despacho, presupuesto ≤15% de la
         # ventana. Sin knowledge devuelve '' → el prompt queda byte a byte como hoy.
         know_txt = _render_knowledge(knowledge, config.MIA_CONTEXT_WINDOW)
@@ -375,6 +459,13 @@ class MatterGraphBuilder:
             ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(doc_list)) or \
                 "(sin documentos recuperados del expediente)"
             user = f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"
+            # CP9: el cruce recibe el trabajo previo del equipo. Sin facts/research
+            # (p. ej. checkpoints de turnos viejos) el prompt queda como antes de CP9.
+            if facts:
+                user += "\n\nHechos establecidos por el especialista de hechos:\n" + facts
+            if research_memo:
+                user += ("\n\nMemoria de investigación del especialista de "
+                         "investigación:\n" + research_memo)
             if know_section:
                 user += "\n\n" + know_section
             return [
@@ -407,7 +498,7 @@ class MatterGraphBuilder:
             return _messages(context_recovery.shrink_documents(docs, budget), know_small)
 
         diagnosis, usage = await self._llm(
-            _messages(docs), task="main", state=state, md=md, shrink=_shrink)
+            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="analysis")
         md.update(stage="analysis", diagnosis=diagnosis)
         # CP6: cierre estructurado del diagnóstico (problema/normas/riesgo) para la
         # Pantalla 2. Best-effort: si el modelo no emitió el bloque, summary es None
@@ -421,7 +512,7 @@ class MatterGraphBuilder:
         _accum_usage(md, usage)
         return {"metadata": md}
 
-    # ── 3 · draft ───────────────────────────────────────────────────────────
+    # ── 5 · draft (especialista de REDACCIÓN) ───────────────────────────────
     async def draft_node(self, state: MatterState) -> dict:
         md_in = state.get("metadata") or {}
         diagnosis = md_in.get("diagnosis", "")
@@ -457,13 +548,38 @@ class MatterGraphBuilder:
             return _messages(parts, index=index_small)
 
         draft, usage = await self._llm(
-            _messages(user_parts), task="main", state=state, md=md, shrink=_shrink)
+            _messages(user_parts), task="main", state=state, md=md, shrink=_shrink, node="draft")
         md["stage"] = "draft"
         md["activated_playbooks"] = activated
         _accum_usage(md, usage)
         return {"draft": draft, "hitl_status": "pending", "metadata": md}
 
-    # ── 4 · hitl_checkpoint (interrupt PRIMERO, decisión #10) ────────────────
+    async def _verify_draft(self, state: MatterState, md: dict, text: str) -> str:
+        """Pasa el especialista de verificación sobre `text` y deja el informe en md.
+
+        El escaneo corre en asyncio.to_thread (revisión capa 2, M2): es CPU-bound
+        sobre texto que puede venir de documentos de terceros — nunca debe ocupar el
+        event loop del servidor."""
+        extra = await research.citation_patterns_for(state["tenant_id"])  # fail-soft
+        annotated, report = await asyncio.to_thread(
+            verification.annotate_draft, text,
+            sources=md.get("research_sources"), extra_patterns=extra)
+        md["verification"] = report
+        return annotated
+
+    # ── 6 · verification (CP9 · especialista de VERIFICACIÓN, determinista) ──
+    async def verification_node(self, state: MatterState) -> dict:
+        """Sin LLM: escáner de citas + anotación [VERIFICAR] (agents/verification.py).
+
+        Nunca borra texto del borrador — solo AÑADE marcas donde una cita quedó sin
+        marca y sin respaldo en las fuentes del corpus recuperadas en el turno. El
+        informe viaja en metadata a la Pantalla 2/3 (transparencia hacia el abogado)."""
+        md = dict(state.get("metadata") or {})
+        annotated = await self._verify_draft(state, md, state.get("draft") or "")
+        md["stage"] = "verification"
+        return {"draft": annotated, "metadata": md}
+
+    # ── 7 · hitl_checkpoint (interrupt PRIMERO, decisión #10) ────────────────
     async def hitl_checkpoint_node(self, state: MatterState) -> dict:
         # interrupt() ES LA PRIMERA LÍNEA: el grafo se pausa al ENTRAR al nodo,
         # antes de procesar nada. El valor surge a la capa SSE como 'awaiting_review'.
@@ -477,6 +593,8 @@ class MatterGraphBuilder:
             "diagnosis": prompt_builder.strip_diagnosis_closing(
                 (state.get("metadata") or {}).get("diagnosis") or "") or None,
             "diagnosis_summary": (state.get("metadata") or {}).get("diagnosis_summary"),
+            # CP9: informe del especialista de verificación (citas y su estado).
+            "verification": (state.get("metadata") or {}).get("verification"),
         })
         # --- de aquí en adelante solo corre TRAS reanudar con Command(resume=...) ---
         dec = (decision or {}).get("decision")
@@ -487,7 +605,7 @@ class MatterGraphBuilder:
         md["hitl_decision"] = decision
         return {"hitl_status": status, "metadata": md}
 
-    # ── 5 · finalize ─────────────────────────────────────────────────────────
+    # ── 8 · finalize ─────────────────────────────────────────────────────────
     async def finalize_node(self, state: MatterState) -> dict:
         status = state.get("hitl_status", "approved")
         decision = (state.get("metadata") or {}).get("hitl_decision") or {}
@@ -500,8 +618,11 @@ class MatterGraphBuilder:
                     state, "edit", matter_context=_matter_context_for(state))},
                 {"role": "user", "content": f"Borrador:\n{draft}\n\nIndicaciones del abogado:\n"
                                             f"{decision.get('edits', '')}\n\nDevuelve el borrador corregido."},
-            ], task="main", state=state, md=md)
+            ], task="main", state=state, md=md, node="edit")
             _accum_usage(md, usage)
+            # CP9: la edición pudo introducir citas nuevas — el especialista de
+            # verificación pasa de nuevo (determinista, solo añade marcas).
+            final = await self._verify_draft(state, md, final)
         else:
             # approved / rejected: se conserva el borrador (el rechazo queda en la traza).
             final = draft
@@ -570,15 +691,21 @@ class MatterGraphBuilder:
         """Compila el grafo con el checkpointer (AsyncPostgresSaver en runtime)."""
         g = StateGraph(MatterState)
         g.add_node("intake", self.intake_node)
+        g.add_node("facts", self.facts_node)
+        g.add_node("research", self.research_node)
         g.add_node("analysis", self.analysis_node)
         g.add_node("draft", self.draft_node)
+        g.add_node("verification", self.verification_node)
         g.add_node("hitl_checkpoint", self.hitl_checkpoint_node)
         g.add_node("finalize", self.finalize_node)
 
         g.add_edge(START, "intake")
-        g.add_edge("intake", "analysis")
+        g.add_edge("intake", "facts")
+        g.add_edge("facts", "research")
+        g.add_edge("research", "analysis")
         g.add_edge("analysis", "draft")
-        g.add_edge("draft", "hitl_checkpoint")
+        g.add_edge("draft", "verification")
+        g.add_edge("verification", "hitl_checkpoint")
         g.add_edge("hitl_checkpoint", "finalize")
         g.add_edge("finalize", END)
 

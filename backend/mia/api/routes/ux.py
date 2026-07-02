@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from psycopg.types.json import Json
 from psycopg.rows import dict_row
 from pydantic import BaseModel
@@ -39,6 +39,7 @@ from ...memory.profile_manager import ProfileManager
 from ...memory.trace_capture import TraceCapture
 from ...memory.wiki_manager import WikiManager
 from ...onboarding.soul_interview import SoulInterview, load_responses, soul_status
+from ...output.docx_export import draft_to_docx
 from ._common import assert_owns_matter, MAX_UPLOAD_BYTES
 from .hitl import _resume
 from .stream import stream_matter
@@ -210,7 +211,45 @@ async def get_draft(matter_id: str, request: Request):
     md = values.get("metadata") or {}
     return {"draft": draft, "awaiting_review": awaiting,
             "diagnosis": strip_diagnosis_closing(md.get("diagnosis") or "") or None,
-            "diagnosis_summary": md.get("diagnosis_summary")}
+            "diagnosis_summary": md.get("diagnosis_summary"),
+            # CP9: informe del especialista de verificación de citas (None en
+            # borradores de turnos anteriores a CP9).
+            "verification": md.get("verification")}
+
+
+@router.get("/matters/{matter_id}/draft.docx")
+async def download_draft_docx(matter_id: str, request: Request):
+    """CP9 · emisión Word: el borrador actual como .docx con formato de escrito.
+
+    Disponible para el borrador pendiente Y para el aprobado (el checkpoint conserva
+    el último borrador del asunto). 404 si el asunto aún no tiene borrador."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    cfg = {"configurable": {"thread_id": thread_id_for(tid, matter_id)}}
+    async with open_checkpointer() as cp:
+        graph = build_matter_graph(cp)
+        state = await graph.aget_state(cfg)
+    values = (state.values or {}) if state else {}
+    draft = values.get("draft")
+    if not draft:
+        raise HTTPException(status_code=404, detail="El asunto aún no tiene un borrador.")
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT title FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
+    title = (row[0] if row and row[0] else "Borrador")
+    data = draft_to_docx(draft, title=title, author="Mia")
+    # filename ASCII-safe + variante UTF-8 (RFC 5987) para títulos con tildes.
+    safe = "".join(c if c.isalnum() or c in "-_ " else "" for c in title).strip() or "borrador"
+    headers = {
+        "Content-Disposition":
+            f'attachment; filename="{safe[:60]}.docx"; '
+            f"filename*=UTF-8''{quote(title[:60], safe='')}.docx"
+    }
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=headers,
+    )
 
 
 class ApproveBody(BaseModel):

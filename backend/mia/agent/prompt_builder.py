@@ -251,13 +251,42 @@ DIAGNOSIS_CLOSING_FOOTER = "=== FIN DEL CIERRE ==="
 # L8 · instrucción de CADA nodo del grafo — SOLO la tarea del turno: la identidad,
 # la metodología (estructura hechos/problema/fundamentos/conclusión), la regla
 # [VERIFICAR] y el tono §G ya viven en L1/L2/L3/L5 (no se duplican aquí).
+# CP9 (equipo de especialistas): facts → research → analysis (cruce) → draft →
+# verificación determinista. Cada especialista comparte las MISMAS 10 capas (una
+# sola voz, estilo del despacho) y se limita a SU oficio del turno.
 GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
+    "facts": (
+        "## Tarea de este turno — HECHOS\n"
+        "Eres el especialista de hechos del equipo. Extrae del expediente los hechos "
+        "relevantes para la consulta del abogado: numerados, en orden cronológico, "
+        "cada uno anclado a su fuente ([doc n]). Señala expresamente las "
+        "inconsistencias entre documentos y las fechas o datos determinantes. NO "
+        "analices el derecho aplicable ni recomiendes estrategia: eso corresponde a "
+        "otro turno del equipo. Cierra con una lista breve titulada 'Datos faltantes "
+        "por confirmar' con lo que el expediente NO acredita."
+    ),
+    "research": (
+        "## Tarea de este turno — INVESTIGACIÓN\n"
+        "Eres el especialista de investigación del equipo. Identifica las normas, la "
+        "jurisprudencia y las decisiones aplicables al problema planteado, según la "
+        "jurisdicción del despacho. Si se te entregan fuentes recuperadas del corpus "
+        "del sistema, apóyate PRIMERO en ellas y cítalas indicando que están "
+        "respaldadas en el corpus; todo lo que provenga solo de tu conocimiento va "
+        "con [VERIFICAR]. Estructura tu memoria de investigación en: (1) normas "
+        "aplicables y por qué aplican, (2) jurisprudencia y decisiones relevantes, "
+        "(3) qué falta por confirmar contra la fuente oficial. NO redactes el "
+        "escrito ni el diagnóstico completo: eso corresponde a otro turno del equipo."
+    ),
     "analysis": (
-        "## Tarea de este turno — ANÁLISIS\n"
-        "Analiza el problema jurídico que plantea el abogado con los documentos del "
-        "expediente (y, si aparece, el conocimiento del despacho como orientación de "
-        "método, nunca en reemplazo de la fuente normativa). Cierra SIEMPRE tu "
-        "análisis con este bloque, en este formato exacto:\n"
+        "## Tarea de este turno — CRUCE Y DIAGNÓSTICO\n"
+        "Eres el especialista de cruce del equipo. Confronta los hechos establecidos "
+        "por el especialista de hechos con la memoria de investigación normativa: "
+        "qué norma o providencia aplica a qué hecho, qué favorece y qué perjudica la "
+        "posición del cliente, y qué vacíos impiden una conclusión definitiva. "
+        "Apóyate en el expediente como evidencia y, si aparece, en el conocimiento "
+        "del despacho como orientación de método (nunca en reemplazo de la fuente "
+        "normativa). Cierra SIEMPRE tu análisis con este bloque, en este formato "
+        "exacto:\n"
         f"{DIAGNOSIS_CLOSING_HEADER}\n"
         "Problema jurídico: <una o dos frases>\n"
         "Normas y fuentes: <las normas y providencias clave, con [VERIFICAR] donde aplique>\n"
