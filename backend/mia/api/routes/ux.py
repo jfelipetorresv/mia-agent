@@ -28,6 +28,7 @@ from ...agents.graph import build_matter_graph
 from ...agents.state import thread_id_for
 from ... import config
 from ...connectors import ObsidianSync, PineconeConnector
+from ...security import assert_no_stray_secret
 from ...cron import build_scheduler
 from ...db import pool
 from ...ingest.extract import extract_text
@@ -555,6 +556,12 @@ class PineconeConfigBody(BaseModel):
 @router.post("/connectors/pinecone/configure")
 async def configure_pinecone(request: Request, body: PineconeConfigBody):
     tid = _tenant(request)
+    # CP-S3 (tripwire): la api_key va en su campo designado; una credencial pegada
+    # por error en el NOMBRE del índice se rechaza antes de tocar la DB.
+    try:
+        assert_no_stray_secret({"index_name": body.index_name})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     connector = PineconeConnector(body.api_key, body.index_name, "tenant")
     vectors_count = 0
     status = "active"

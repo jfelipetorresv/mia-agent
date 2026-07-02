@@ -19,6 +19,8 @@ conectores y puntos de entrada sin riesgo de ciclos.
 """
 from .redact import (  # noqa: F401
     RedactingFormatter,
+    assert_no_stray_secret,
+    contains_secret,
     install_redacting_logging,
     mask_secret,
     redact_text,
@@ -33,6 +35,8 @@ from .secret_scope import (  # noqa: F401
 
 __all__ = [
     "RedactingFormatter",
+    "assert_no_stray_secret",
+    "contains_secret",
     "install_redacting_logging",
     "mask_secret",
     "redact_text",

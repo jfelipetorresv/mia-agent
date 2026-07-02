@@ -167,6 +167,46 @@ def redact_text(text: str) -> str:
     return s
 
 
+# Solo las formas AUTOCONTENIDAS (un token identificable por sí mismo), NO las
+# contextuales (ENV assign, campo JSON): el tripwire escanea valores sueltos, donde
+# "password=..." no aplica pero un "sk-..." pegado por error sí. Evita falsos
+# positivos sobre texto de negocio que mencione "api_key" sin traer una clave.
+_STANDALONE_SECRET_RE = re.compile(
+    "|".join([f"(?:{p})" for p in _PREFIX_PATTERNS]
+             + [_TELEGRAM_RE.pattern, _JWT_RE.pattern,
+                _PRIVATE_KEY_RE.pattern, _DB_CONNSTR_RE.pattern]),
+    re.DOTALL,
+)
+
+
+def contains_secret(value) -> bool:
+    """CP-S3 (tripwire): True si el valor trae una credencial identificable por forma.
+
+    Base del guardado seguro de config: detecta una clave pegada por error en un
+    campo que no es para secretos (perfil, nota, nombre de índice…). Escanea solo
+    formas autocontenidas para no marcar texto de negocio que mencione 'api_key'."""
+    return bool(_STANDALONE_SECRET_RE.search(str(value or "")))
+
+
+def assert_no_stray_secret(obj, *, allow_paths: tuple = (), _path: str = "") -> None:
+    """Recorre un dict/lista de config y lanza si halla una credencial en un path NO
+    permitido (CP-S3 tripwire anti-persistencia). `allow_paths` lista los paths donde
+    una clave SÍ va a propósito (p. ej. 'pinecone.api_key'). Lanza ValueError con el
+    path (sin el valor: no filtrar el secreto al mensaje de error ni al log)."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            assert_no_stray_secret(v, allow_paths=allow_paths,
+                                   _path=f"{_path}.{k}" if _path else str(k))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            assert_no_stray_secret(v, allow_paths=allow_paths, _path=f"{_path}[{i}]")
+    elif isinstance(obj, str):
+        if _path not in allow_paths and contains_secret(obj):
+            raise ValueError(
+                f"Se detectó lo que parece una credencial en el campo '{_path}', que "
+                f"no es un campo para claves. No se guardó nada.")
+
+
 class RedactingFormatter(logging.Formatter):
     """Formatter que redacta credenciales en TODO lo formateado — mensaje,
     argumentos ya interpolados y traceback (exc_info) incluido."""

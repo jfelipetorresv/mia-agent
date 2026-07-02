@@ -22,10 +22,10 @@ from ..agent import llm
 
 OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/api/auth/register", "/api/auth/login"}
 
-# Caché {tenant_id: (política, monotonic_ts)} — TTL corto: un cambio desde el Dashboard
-# se aplica en ≤60s (y el PUT del endpoint lo invalida de inmediato).
+# Caché {tenant_id: (política, opt-in OpenRouter, monotonic_ts)} — TTL corto: un cambio
+# desde el Dashboard se aplica en ≤60s (y el PUT del endpoint lo invalida de inmediato).
 _POLICY_TTL_SECONDS = 60.0
-_policy_cache: dict[str, tuple[str, float]] = {}
+_policy_cache: dict[str, tuple[str, bool, float]] = {}
 
 
 def invalidate_policy_cache(tenant_id: str | None = None) -> None:
@@ -37,16 +37,18 @@ def invalidate_policy_cache(tenant_id: str | None = None) -> None:
         _policy_cache.pop(tenant_id, None)
 
 
-async def _tenant_policy(tenant_id: str) -> str:
-    """Política del tenant con caché TTL. `model_policy_for` ya valida contra
-    {suscripcion, nube, soberano} y cae al default de config ante todo lo demás."""
+async def _tenant_ctx(tenant_id: str) -> tuple[str, bool]:
+    """Política de modelo + opt-in de OpenRouter del tenant, con caché TTL. Ambos
+    se leen de `tenant_settings.config`; sus helpers validan y caen a un default
+    seguro (política → config; opt-in OpenRouter → False)."""
     now = time.monotonic()
     hit = _policy_cache.get(tenant_id)
-    if hit is not None and (now - hit[1]) < _POLICY_TTL_SECONDS:
-        return hit[0]
+    if hit is not None and (now - hit[2]) < _POLICY_TTL_SECONDS:
+        return hit[0], hit[1]
     policy = await llm.model_policy_for(tenant_id)
-    _policy_cache[tenant_id] = (policy, now)
-    return policy
+    allow_or = await llm.openrouter_allowed_for(tenant_id)
+    _policy_cache[tenant_id] = (policy, allow_or, now)
+    return policy, allow_or
 
 
 class TenantContextMiddleware(BaseHTTPMiddleware):
@@ -73,9 +75,13 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         request.state.tenant_id = tenant_id
         request.state.email = payload.get("email")
 
-        # CP2: política de modelo del tenant para TODO lo que corra en este request.
-        policy_token = llm.set_model_policy(await _tenant_policy(tenant_id))
+        # CP2: política de modelo + CP-S3: opt-in de OpenRouter del tenant, para TODO
+        # lo que corra en este request. Ambos se resetean en finally.
+        policy, allow_or = await _tenant_ctx(tenant_id)
+        policy_token = llm.set_model_policy(policy)
+        or_token = llm.set_openrouter_allowed(allow_or)
         try:
             return await call_next(request)
         finally:
+            llm.reset_openrouter_allowed(or_token)
             llm.reset_model_policy(policy_token)

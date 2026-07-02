@@ -23,6 +23,7 @@ así que no se ejercitan. Confirmar antes de invocar en vivo (decisión D3).
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import shutil
@@ -77,11 +78,37 @@ def slug_to_key(slug: str) -> Optional[str]:
     return _SLUG_TO_KEY.get(slug)
 
 
-def _default_runner(args: list[str], *, cwd: Optional[str], timeout: int) -> tuple[int, str, str]:
+def _default_runner(args: list[str], *, cwd: Optional[str], timeout: int,
+                    env: Optional[dict] = None) -> tuple[int, str, str]:
     """Corre el subproceso con `shell=False` (args en lista → espacios seguros)."""
     proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                          cwd=cwd, shell=False)
+                          cwd=cwd, shell=False, env=env)
     return proc.returncode, proc.stdout, proc.stderr
+
+
+# CP-S3: nombres de entorno que un CLI externo SÍ necesita para arrancar (rutas del
+# SO, temp, config del usuario). Todo lo que NO esté aquí — en particular claves y
+# credenciales de la instalación (ANTHROPIC_API_KEY, VOYAGE_API_KEY, PG_PASSWORD,
+# DATABASE_URL, JWT_SECRET, TELEGRAM_BOT_TOKEN…) — NO se hereda al subproceso: un CLI
+# de terceros comprometido no puede leer los secretos de Mia del entorno. Nombres en
+# MAYÚSCULA; el match es case-insensitive (Windows usa 'SystemRoot', 'Path').
+_ENV_ALLOWLIST = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "OS",
+    "TEMP", "TMP", "TMPDIR", "HOME", "HOMEDRIVE", "HOMEPATH", "USERPROFILE",
+    "USERNAME", "USER", "LOGNAME", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "PROGRAMFILES", "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE", "LANG", "LC_ALL", "TZ", "MIA_HOME", "PYTHONUNBUFFERED",
+})
+
+
+def sanitize_subprocess_env(env: dict) -> dict:
+    """Entorno mínimo para el subproceso: solo la allowlist del SO + MIA_HOME.
+
+    Excluye TODA credencial de la instalación (heredarlas al CLI de un tercero era el
+    hueco de CP-S3). Fuerza PYTHONUNBUFFERED=1 para que el stdout llegue sin buffering."""
+    out = {k: v for k, v in env.items() if k.upper() in _ENV_ALLOWLIST}
+    out["PYTHONUNBUFFERED"] = "1"
+    return out
 
 
 class AgentHub:
@@ -98,6 +125,12 @@ class AgentHub:
         self._env = env if env is not None else os.environ
         self._cwd = cwd
         self._timeout = timeout
+        # CP-S3: ¿el runner acepta `env`? Se decide UNA vez por la firma (no con un
+        # except en caliente que confundiría un TypeError legítimo con "no soporta env").
+        try:
+            self._runner_accepts_env = "env" in inspect.signature(self._runner).parameters
+        except (ValueError, TypeError):
+            self._runner_accepts_env = False
 
     # -- detección de binarios --------------------------------------------------
     def resolve_binary(self, key: str) -> Optional[str]:
@@ -143,8 +176,16 @@ class AgentHub:
             return f"[no disponible] '{c.display_name}' no está instalado en este equipo."
 
         args = [binary, *c.build_args(prompt)]  # ruta intacta como primer arg (espacios OK)
+        # CP-S3: el subproceso recibe SOLO el entorno saneado (sin las claves de la
+        # instalación). Se decide con la FIRMA del runner si acepta `env` (revisión
+        # capa 2, H5: un `except TypeError` reintentaría el subprocess DOS veces si el
+        # runner lanzara TypeError por otra razón — doble efecto para un CLI que actúa).
+        env = sanitize_subprocess_env(dict(self._env))
+        kwargs = {"cwd": self._cwd, "timeout": self._timeout}
+        if self._runner_accepts_env:
+            kwargs["env"] = env
         try:
-            code, stdout, stderr = self._runner(args, cwd=self._cwd, timeout=self._timeout)
+            code, stdout, stderr = self._runner(args, **kwargs)
         except subprocess.TimeoutExpired:
             logger.warning("conector %s: timeout %ss (tenant=%s)", key, self._timeout, tenant_id)
             return f"[error] '{c.display_name}' no respondió en {self._timeout}s."

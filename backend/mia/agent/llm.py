@@ -111,6 +111,29 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     "soberano": {t: ["mia-local"] for t in ("main", "curator", "compression", *_AUX_TASKS)},
 }
 
+# CP-S3 · OpenRouter como red de respaldo en la política 'nube'. OpenRouter da acceso
+# a decenas de modelos con UNA clave; aquí entra como fallback de la API directa de
+# Anthropic para el razonamiento (main/curator) ANTES de caer al modelo local. El
+# alias debe existir en litellm_config.yaml. Se inserta SOLO si hay OPENROUTER_API_KEY
+# configurada — sin clave, incluirlo rompería la cadena con un error de auth (que no
+# salta de proveedor); con la ausencia, el alias simplemente no aparece.
+OPENROUTER_ALIAS = "openrouter-sonnet"
+_OPENROUTER_TASKS = ("main", "curator")
+
+
+def _with_openrouter_fallback(chains: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Inserta OPENROUTER_ALIAS justo antes de 'mia-local' en main/curator (o al final
+    si no está). No muta el dict recibido."""
+    out = dict(chains)
+    for task in _OPENROUTER_TASKS:
+        chain = list(out.get(task, ()))
+        if OPENROUTER_ALIAS in chain:
+            continue
+        idx = chain.index("mia-local") if "mia-local" in chain else len(chain)
+        chain.insert(idx, OPENROUTER_ALIAS)
+        out[task] = chain
+    return out
+
 # Alias CLI → hint de modelo para subscription_llm ("cli-claude" usa el default de la
 # suscripción; "cli-claude-haiku" pide el modelo pequeño para tareas auxiliares baratas).
 _CLI_MODEL_HINTS: dict[str, str | None] = {"cli-claude": None, "cli-claude-haiku": "haiku"}
@@ -162,6 +185,43 @@ def reset_model_policy(token: Token) -> None:
     _model_policy.reset(token)
 
 
+# CP-S3 · opt-in de OpenRouter por tenant (decisión de confidencialidad, regla 2).
+_allow_openrouter: ContextVar[bool] = ContextVar("mia_allow_openrouter", default=False)
+
+
+def set_openrouter_allowed(allowed: bool) -> Token:
+    """Fija el opt-in de OpenRouter del contexto actual (middleware por request / cron)."""
+    return _allow_openrouter.set(bool(allowed))
+
+
+def openrouter_allowed() -> bool:
+    """True si el despacho del contexto activo autorizó enrutar a OpenRouter."""
+    return bool(_allow_openrouter.get())
+
+
+def reset_openrouter_allowed(token: Token) -> None:
+    _allow_openrouter.reset(token)
+
+
+async def openrouter_allowed_for(tenant_id: str) -> bool:
+    """Opt-in de OpenRouter del tenant, de `tenant_settings.config['allow_openrouter']`
+    (RLS). Sin fila, valor ausente o error → False (fail-closed: no se enruta a un
+    tercero salvo autorización explícita)."""
+    try:
+        from ..db import pool  # import diferido (mismo criterio que model_policy_for)
+
+        async with pool.tenant_connection(tenant_id) as conn:
+            row = await (await conn.execute(
+                "SELECT config->>'allow_openrouter' FROM tenant_settings WHERE tenant_id = %s::uuid",
+                (tenant_id,),
+            )).fetchone()
+        return bool(row and str(row[0] or "").strip().lower() in ("true", "1", "yes", "on"))
+    except Exception:  # noqa: BLE001 — un fallo de DB no habilita un tercero: default False
+        logger.exception("openrouter_allowed_for: no se pudo leer el opt-in del tenant %s",
+                         tenant_id)
+        return False
+
+
 async def model_policy_for(tenant_id: str) -> str:
     """Política del tenant leída de `tenant_settings.config['model_policy']` (RLS).
 
@@ -188,9 +248,11 @@ async def tenant_model_policy(tenant_id: str):
     """Context manager async: fija la política del tenant y la restaura al salir.
     Para envolver jobs por-tenant de cron/background que llamen al LLM."""
     token = set_model_policy(await model_policy_for(tenant_id))
+    or_token = set_openrouter_allowed(await openrouter_allowed_for(tenant_id))
     try:
         yield
     finally:
+        reset_openrouter_allowed(or_token)
         reset_model_policy(token)
 
 
@@ -224,7 +286,16 @@ def _active_chains() -> dict[str, list[str]]:
     con las cadenas de la política activa (CP2). Los tasks estándar los decide la política;
     un task extra inyectado en el mapa base (p. ej. por un gate) se conserva."""
     merged = dict(_TASK_FALLBACK_CHAINS)
-    merged.update(_POLICY_CHAINS[get_model_policy()])
+    policy = get_model_policy()
+    merged.update(_POLICY_CHAINS[policy])
+    # CP-S3: OpenRouter entra SOLO si se cumplen TRES condiciones — política 'nube',
+    # clave global configurada (operador) Y opt-in explícito del despacho. El opt-in
+    # por tenant satisface la regla 2: enrutar los datos del cliente a un TERCERO
+    # adicional (OpenRouter, con su propia política de datos) es decisión informada
+    # del despacho, no un efecto colateral de que exista una clave global.
+    if (policy == "nube" and getattr(config, "OPENROUTER_API_KEY", "")
+            and openrouter_allowed()):
+        merged = _with_openrouter_fallback(merged)
     return merged
 
 
@@ -394,6 +465,15 @@ def _call_with_retries(
                 )
                 logger.warning("call_llm salta de proveedor [%s] task=%s %s→%s (tras %d intentos)",
                                kind.value, task, alias, next_alias, attempt + 1)
+                raise _FallbackNeeded(kind, exc) from exc
+
+            # CP-S3 (revisión capa 2, H2): OpenRouter es un respaldo OPCIONAL. Si su
+            # clave es inválida o no tiene saldo (AUTH/402 → no saltable) y hay un
+            # proveedor DESPUÉS en la cadena (mia-local), no debe matar el turno: se
+            # salta al siguiente. Sin next_alias sí falla claro (era el último recurso).
+            if alias == OPENROUTER_ALIAS and next_alias:
+                logger.warning("call_llm: el respaldo opcional %s falló [%s]; se salta a "
+                               "%s (task=%s)", alias, kind.value, next_alias, task)
                 raise _FallbackNeeded(kind, exc) from exc
 
             # No saltable (AUTH/UNKNOWN): falla rápido con mensaje claro.

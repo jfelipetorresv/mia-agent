@@ -11,6 +11,7 @@ El mensaje del abogado entra como query param `message` (GET no lleva body).
 from __future__ import annotations
 
 import logging
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
@@ -24,12 +25,87 @@ from ._common import assert_owns_matter, load_profile_snapshot, prepare_new_turn
 router = APIRouter(tags=["matters"])
 logger = logging.getLogger("mia.api.stream")
 
+# CP-S3: latido del SSE. sse-starlette envía un comentario ":ping" cada N segundos
+# — mantiene viva la conexión a través de proxies durante los minutos que tarda un
+# turno, y es el mecanismo con el que detecta que el navegador se fue (al fallar el
+# envío, cancela el generador → se corta el turno, ver _stream_turn_events).
+SSE_PING_SECONDS = 15
+
 
 def _interrupt_value(chunk: dict) -> dict:
     try:
         return chunk["__interrupt__"][0].value or {}
     except Exception:
         return {}
+
+
+# Avance del equipo de especialistas → frases del oficio (§G). El evento de un nodo
+# llega cuando ese nodo TERMINA, así que cada mensaje anuncia el paso que ARRANCA.
+_NODE_PROGRESS = {
+    "intake": "Mia está estableciendo los hechos del expediente…",
+    "facts": "Mia está investigando normas y jurisprudencia aplicables…",
+    "research": "Mia está cruzando los hechos con el derecho…",
+    "analysis": "Mia está redactando el borrador…",
+    "draft": "Mia está verificando las citas del borrador…",
+}
+
+
+async def _stream_turn_events(
+    graph: Any,
+    turn_input: dict,
+    cfg: dict,
+    tenant_id: str,
+    matter_id: str,
+    is_disconnected: Callable[[], Awaitable[bool]],
+    checkpointer: Any = None,
+) -> AsyncIterator[dict]:
+    """Consume el grafo y traduce su avance a eventos SSE (§G).
+
+    CP-S3 (kill-on-disconnect): antes de procesar cada actualización del grafo se
+    comprueba si el navegador se desconectó; si es así, se ROMPE el bucle — sin
+    consumidor no tiene sentido gastar minutos de razonamiento (ni el costo del
+    modelo). Extraído del endpoint para poder verificarlo con dobles en el gate.
+
+    CP-S3 (revisión capa 2, bloqueante): el checkpointer PERSISTE el estado tras
+    cada nodo. Si se corta a mitad (p. ej. tras `facts`), el thread queda con un
+    nodo normal pendiente que `prepare_new_turn` confundiría con "borrador esperando
+    revisión" (409 engañoso) y dejaría el asunto atascado sin salida. Por eso, al
+    cortar por desconexión se BORRA el checkpoint del thread: el asunto vuelve a
+    limpio y el próximo turno arranca de cero (el trabajo a medias no se guarda —
+    es exactamente lo que el abogado abandonó al cerrar la pestaña)."""
+    async for chunk in graph.astream(turn_input, cfg, stream_mode="updates"):
+        if await is_disconnected():
+            logger.info("stream: navegador desconectado; se corta el turno "
+                        "(tenant=%s matter=%s)", tenant_id, matter_id)
+            if checkpointer is not None:
+                try:
+                    await checkpointer.adelete_thread(cfg["configurable"]["thread_id"])
+                except Exception:  # noqa: BLE001 — la limpieza no debe tumbar el corte
+                    logger.exception("stream: no se pudo limpiar el checkpoint a medias "
+                                     "(tenant=%s matter=%s)", tenant_id, matter_id)
+            break
+        if "__interrupt__" in chunk:
+            v = _interrupt_value(chunk)
+            # Riesgo #25: marcar el asunto como "borrador esperando revisión"
+            # (RLS activo: el tenant ya fue validado con assert_owns_matter).
+            async with pool.tenant_connection(tenant_id) as conn:
+                await conn.execute(
+                    "UPDATE matters SET pending_review = true "
+                    "WHERE id = %s::uuid", (matter_id,))
+            yield sse(
+                "awaiting_review",
+                v.get("message", "Borrador listo para tu aprobación."),
+                draft=v.get("draft"),
+                diagnosis=v.get("diagnosis"),
+                diagnosis_summary=v.get("diagnosis_summary"),
+                verification=v.get("verification"),
+            )
+            continue
+        for node in chunk:
+            if node in _NODE_PROGRESS:
+                yield sse("thinking", _NODE_PROGRESS[node])
+            elif node == "verification":
+                yield sse("draft_ready", "Borrador listo.")
 
 
 @router.get("/matters/{matter_id}/stream")
@@ -59,45 +135,13 @@ async def stream_matter(
         try:
             async with open_checkpointer() as cp:
                 graph = build_matter_graph(cp)
-                async for chunk in graph.astream(turn_input, cfg, stream_mode="updates"):
-                    if "__interrupt__" in chunk:
-                        v = _interrupt_value(chunk)
-                        # Riesgo #25: marcar el asunto como "borrador esperando revisión"
-                        # (RLS activo: el tenant ya fue validado con assert_owns_matter).
-                        async with pool.tenant_connection(tenant_id) as conn:
-                            await conn.execute(
-                                "UPDATE matters SET pending_review = true "
-                                "WHERE id = %s::uuid", (matter_id,))
-                        yield sse(
-                            "awaiting_review",
-                            v.get("message", "Borrador listo para tu aprobación."),
-                            draft=v.get("draft"),
-                            diagnosis=v.get("diagnosis"),
-                            # CP6: cierre estructurado (problema/normas/riesgo) — el
-                            # canal en vivo lo reenvía igual que GET /draft.
-                            diagnosis_summary=v.get("diagnosis_summary"),
-                            # CP9: informe del especialista de verificación de citas.
-                            verification=v.get("verification"),
-                        )
-                        continue
-                    for node in chunk:
-                        # CP9: el avance del equipo de especialistas, en frases del
-                        # oficio (§G). El evento de un nodo llega cuando ese nodo
-                        # TERMINA → cada mensaje anuncia el paso que ARRANCA.
-                        if node == "intake":
-                            yield sse("thinking", "Mia está estableciendo los hechos del expediente…")
-                        elif node == "facts":
-                            yield sse("thinking", "Mia está investigando normas y jurisprudencia aplicables…")
-                        elif node == "research":
-                            yield sse("thinking", "Mia está cruzando los hechos con el derecho…")
-                        elif node == "analysis":
-                            yield sse("thinking", "Mia está redactando el borrador…")
-                        elif node == "draft":
-                            yield sse("thinking", "Mia está verificando las citas del borrador…")
-                        elif node == "verification":
-                            yield sse("draft_ready", "Borrador listo.")
+                async for ev in _stream_turn_events(
+                    graph, turn_input, cfg, tenant_id, matter_id,
+                    request.is_disconnected, checkpointer=cp,
+                ):
+                    yield ev
         except Exception:
             logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)
             yield sse("error", "Mia no pudo completar el turno. Intenta de nuevo.")
 
-    return EventSourceResponse(gen())
+    return EventSourceResponse(gen(), ping=SSE_PING_SECONDS)

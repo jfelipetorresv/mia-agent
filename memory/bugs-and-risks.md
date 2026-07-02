@@ -667,3 +667,32 @@ corregidos). Residuales:
    envolver con tenant_secret_scope — no hay enforcement automático en la capa de request.
 4. **Handlers tardíos**: un handler de logging agregado DESPUÉS del startup del lifespan queda
    sin redactor (se instala en import + lifespan; librerías que agreguen handlers luego escapan).
+
+## 🟡 Riesgo #38 — Endurecimiento y OpenRouter (CP-S3): residuales aceptados  [registrado 2026-07-02, revisión CP-S3]
+CP-S3 quedó verde (gate 36/36; el revisor RECHAZÓ la v1 por un BLOQUEANTE — el corte por
+desconexión dejaba el checkpoint a medias y el asunto atascado con un 409 engañoso; CORREGIDO
+borrando el checkpoint del thread al cortar, con checks s3-04b/c). También corregidos H2 (un
+OpenRouter sin saldo/clave inválida ya NO mata la cadena: salta a mia-local — check s3-22),
+H3/confidencialidad (OpenRouter es OPT-IN por despacho vía tenant_settings.config['allow_openrouter'],
+default OFF — no basta la clave global; checks s3-18b) y H5 (doble invocación del subprocess
+evitada con inspect.signature). Residuales:
+1. **Env por-conector (H4)**: sanitize_subprocess_env quita TODA credencial al subproceso de los
+   CLIs de delegación (hermes/codex/antigravity/openclaw). Un CLI que autentique por variable de
+   entorno (p. ej. Codex con OPENAI_API_KEY) quedaría inutilizable. HOY sin impacto: la delegación
+   NO tiene caller de producción y sus build_args están [VERIFICAR]. Al cablear un CLI real,
+   añadir una allowlist POR conector de las vars que ese CLI necesita (no volver a la global).
+2. **Corte solo en frontera de nodo (H6)**: el kill-on-disconnect se evalúa cuando un nodo termina;
+   la llamada LLM de analysis/draft (minutos) corre hasta el final aunque el navegador ya se fue.
+   El ahorro es parcial, no instantáneo. Aceptable.
+3. **Tripwire de cobertura mínima (H7)**: hoy solo cablea configure_pinecone (index_name). El perfil
+   del despacho, notas y playbooks —donde un abogado realistamente pegaría una clave— no están
+   cubiertos. Extender assert_no_stray_secret a esas escrituras en una ola futura.
+4. **DECISIÓN DE PIPE**: OpenRouter enruta datos del cliente a un TERCERO adicional (con su propia
+   política de datos/entrenamiento). Está listo pero OFF por despacho. Antes de encenderlo para un
+   despacho con datos reales: revisar la política de privacidad de OpenRouter y desactivar el
+   logging/entrenamiento en la cuenta (regla 2). La clave necesita tope de gasto en su panel.
+5. **Menores de la re-verificación (capa 2, no bloqueantes)**: (a) si la DB falla JUSTO en el corte
+   por desconexión, adelete_thread falla y el asunto podría re-atascarse (requiere desconexión +
+   fallo de DB simultáneos; lo mejor alcanzable sin un reaper de fondo). (b) La detección de `env`
+   del runner (inspect.signature) no cubre runners con `**kwargs` — ninguno existe hoy; si se
+   introduce, detectar también VAR_KEYWORD.
