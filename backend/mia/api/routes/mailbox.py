@@ -112,6 +112,9 @@ async def connect(provider: str, request: Request, response: Response):
             status_code=503,
             detail=f"La conexión con {_PROVIDER_LABELS[provider]} no está habilitada en "
                    f"este servidor todavía.")
+    # ?content=1 pide además la lectura del CUERPO del correo (análisis con IA, CP-P4).
+    # En Google exige reconsentir (gmail.readonly); en Microsoft Mail.Read ya lo cubre.
+    content = str(request.query_params.get("content") or "").strip().lower() in ("1", "true", "yes", "on")
     nonce = secrets.token_urlsafe(24)
     state = sign_state(tenant_id, provider, nonce)
     # SameSite=Lax: la cookie viaja en la navegación de nivel superior con que el
@@ -123,7 +126,7 @@ async def connect(provider: str, request: Request, response: Response):
     url = oauth.authorize_url(
         provider, client_id=client_id,
         redirect_uri=config.MAILBOX_OAUTH_REDIRECT_URI, state=state,
-        login_hint=getattr(request.state, "email", "") or "")
+        login_hint=getattr(request.state, "email", "") or "", content=content)
     return {"url": url, "proveedor_nombre": _PROVIDER_LABELS[provider]}
 
 

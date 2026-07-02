@@ -8,7 +8,10 @@ Solo lectura. `http` (get async estilo httpx) se inyecta para probar sin red. An
 cualquier error de API se lanza `MailboxAPIError`; la vigilancia de arriba degrada."""
 from __future__ import annotations
 
+import base64
+import html as _html
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
@@ -76,10 +79,27 @@ class MicrosoftMailbox:
             ))
         return out
 
+    async def fetch_body(self, external_id: str) -> str:
+        """Cuerpo de UN correo en texto plano (CP-P4, solo si el despacho lo autorizó).
+
+        Graph devuelve body.content en HTML o text según contentType; si es HTML se
+        despoja a texto. Es contenido NO confiable: quien lo consuma (analyze.py) lo
+        SELLA antes de dárselo a un LLM."""
+        data = await _get(self._http, f"{self._base}/me/messages/{quote(external_id)}",
+                          token=self._creds.access_token, params={"$select": "body"})
+        body = data.get("body") or {}
+        content = str(body.get("content") or "")
+        if str(body.get("contentType") or "").lower() == "html":
+            content = strip_html(content)
+        return content.strip()
+
     async def recent_mail(self, max_results: int = 25,
                           unread_only: bool = True) -> list[MailHeader]:
+        # CP-P3 metadata-only: NO se pide bodyPreview (es una porción del cuerpo). La
+        # vigilancia decide urgencia por remitente/asunto/bandera; el cuerpo solo se
+        # trae con fetch_body cuando el despacho autorizó el análisis con IA (CP-P4).
         params = {
-            "$select": "id,subject,from,receivedDateTime,isRead,importance,hasAttachments,bodyPreview",
+            "$select": "id,subject,from,receivedDateTime,isRead,importance,hasAttachments",
             "$orderby": "receivedDateTime desc",
             "$top": str(max_results),
         }
@@ -100,7 +120,7 @@ class MicrosoftMailbox:
                 is_unread=not bool(m.get("isRead")),
                 importance=str(m.get("importance") or "normal").lower(),
                 has_attachments=bool(m.get("hasAttachments")),
-                snippet=str(m.get("bodyPreview") or "")[:200],
+                snippet="",   # metadata-only: no se trae vista previa del cuerpo
             ))
         return out
 
@@ -145,6 +165,14 @@ class GoogleMailbox:
                 is_all_day=is_all_day,
             ))
         return out
+
+    async def fetch_body(self, external_id: str) -> str:
+        """Cuerpo de UN correo en texto plano (CP-P4). Gmail `format=full` trae el árbol
+        MIME; se prefiere text/plain, con fallback a text/html despojado. Contenido NO
+        confiable — analyze.py lo SELLA antes del LLM."""
+        data = await _get(self._http, f"{self._gmail_base}/users/me/messages/{quote(external_id)}",
+                          token=self._creds.access_token, params={"format": "full"})
+        return _extract_gmail_body(data.get("payload") or {})
 
     async def recent_mail(self, max_results: int = 25,
                           unread_only: bool = True) -> list[MailHeader]:
@@ -209,6 +237,58 @@ def _epoch_ms_to_iso(ms: Optional[str]) -> Optional[str]:
         return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).isoformat()
     except (TypeError, ValueError):
         return None
+
+
+_TAG_RE = re.compile(r"(?s)<[^>]+>")
+_SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style)\b.*?</\1>")
+_WS_RE = re.compile(r"\s+")
+
+
+def strip_html(s: str) -> str:
+    """HTML → texto plano legible: quita script/style, etiquetas, desescapa entidades."""
+    s = _SCRIPT_STYLE_RE.sub(" ", s or "")
+    s = _TAG_RE.sub(" ", s)
+    s = _html.unescape(s)
+    return _WS_RE.sub(" ", s).strip()
+
+
+def _b64url_decode(data: str) -> str:
+    try:
+        pad = "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(data + pad).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 — cuerpo ilegible: mejor vacío que reventar
+        return ""
+
+
+def _find_part(payload: dict, mime: str) -> Optional[str]:
+    """Busca (recursivo) el `body.data` del primer part con este mimeType."""
+    if payload.get("mimeType") == mime:
+        data = (payload.get("body") or {}).get("data")
+        if data:
+            return data
+    for part in payload.get("parts") or []:
+        found = _find_part(part, mime)
+        if found:
+            return found
+    return None
+
+
+def _extract_gmail_body(payload: dict) -> str:
+    """Texto del cuerpo desde el árbol MIME de Gmail: prefiere text/plain; si no, HTML."""
+    plain = _find_part(payload, "text/plain")
+    if plain:
+        return _b64url_decode(plain).strip()
+    html_data = _find_part(payload, "text/html")
+    if html_data:
+        return strip_html(_b64url_decode(html_data)).strip()
+    # cuerpo simple (sin parts): el data está en el propio payload
+    data = (payload.get("body") or {}).get("data")
+    if data:
+        text = _b64url_decode(data)
+        if payload.get("mimeType") == "text/html":
+            text = strip_html(text)
+        return text.strip()
+    return ""
 
 
 def build_connector(creds: OAuthCreds, *, http):

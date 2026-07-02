@@ -60,9 +60,16 @@ y el *Client Secret*.
 - **Bajo en calendario** (solo fechas y títulos). **Medio en correo**: aunque Mia solo
   mira remitente y asunto, esa metadata ya es sensible — por eso los permisos son de
   *solo lectura* y los tokens de acceso quedan cifrables y aislados por despacho.
-- El **contenido** de los correos (leerlo/resumirlo con IA) es una decisión aparte que
-  **tú** activas explícitamente más adelante (CP-P4), con las salvaguardas de nube que
-  definimos. Hoy está **apagado**.
+- El **contenido** de los correos (que Mia lo lea y te lo **resuma con IA**) es una
+  decisión aparte, un **interruptor que TÚ enciendes** (apagado por defecto). Cuando lo
+  prendes: Mia trae el cuerpo del correo urgente, lo trata como dato "en cuarentena"
+  (para que un correo no pueda darle órdenes ocultas), y lo resume **bajo la política de
+  IA de tu despacho** — si eliges "todo en mi equipo", el texto **nunca sale a la nube**.
+  El resumen siempre te dice "revisa tu bandeja antes de actuar" y marca **[VERIFICAR]**
+  si menciona un plazo. Mia **no responde ni actúa** el correo, solo te lo resume.
+  - En **Microsoft 365** el permiso de lectura ya cubre el cuerpo: con conectar basta.
+  - En **Google** leer el cuerpo pide un permiso extra: hay que **reconectar** eligiendo
+    "incluir contenido" (el botón lo contempla).
 
 ## Nota técnica (para el que configure el servidor)
 Variables en `.env` (ver `config.py`):

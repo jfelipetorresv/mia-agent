@@ -386,19 +386,86 @@ def calendar_events_watch(
                  kind="no_agent", after_surface=after_surface)
 
 
+def _build_summary_message(headers: list, summary: str) -> str:
+    n = len(headers)
+    encabezado = (f"Correo{'s' if n > 1 else ''} urgente{'s' if n > 1 else ''} "
+                  f"(resumen de Mia):")
+    return (encabezado + "\n" + summary.strip()
+            + "\n\nMia leyó el contenido solo para resumir; revisa tu bandeja antes de actuar.")
+
+
+async def _summarize_urgent_mail(tenant_id: str, headers: list, mailbox, summarize_fn,
+                                 policy_fn=None) -> Optional[str]:
+    """Trae el cuerpo de los correos urgentes, lo SELLA y lo resume con IA bajo la política
+    de modelo del tenant. None si no se pudo (el llamador degrada a aviso metadata)."""
+    from ..agent import llm
+    from ..connectors.mailbox import analyze
+
+    # Política de modelo del tenant, PRIMERO y de forma ESTRICTA (revisión capa 2,
+    # BLOQUEANTE): si no se puede determinar con certeza (error de DB), se ABORTA el
+    # resumen y se degrada a metadata — NUNCA se cae al default de config, que sería
+    # fail-OPEN (un tenant 'soberano'/local terminaría mandando el cuerpo a la nube por un
+    # timeout de DB). Solo con la política CIERTA se lee el cuerpo y se llama al LLM.
+    pf = policy_fn or llm.model_policy_for_strict
+    try:
+        policy = await pf(tenant_id)
+    except Exception:  # noqa: BLE001 — sin política cierta NO se arriesga la confidencialidad
+        logger.exception("resumen de correo: política del tenant %s indeterminada; se ABORTA "
+                         "el análisis de contenido (fail-closed, degrada a metadata)", tenant_id)
+        return None
+
+    svc, own = _open_mailbox(mailbox)
+    try:
+        connector = await svc.connector_for(tenant_id)
+        if connector is None or not hasattr(connector, "fetch_body"):
+            return None
+        items = []
+        for h in headers:
+            try:
+                body = await connector.fetch_body(h.external_id)
+            except Exception:  # noqa: BLE001 — un correo ilegible no tumba el resumen
+                body = ""
+            items.append((h, body))
+    except Exception:  # noqa: BLE001
+        logger.exception("resumen de correo: no se pudo leer el cuerpo (tenant %s)", tenant_id)
+        return None
+    finally:
+        if own:
+            await svc.aclose()
+
+    # El ContextVar de política se propaga al hilo de call_llm (asyncio.to_thread copia el
+    # contexto), así el resumen corre por la cadena que el despacho eligió (soberano=local).
+    token = llm.set_model_policy(policy)
+    try:
+        summary = await analyze.summarize_urgent(items, llm_fn=summarize_fn)
+    except Exception:  # noqa: BLE001 — LLM caído: degrada a metadata, nunca revienta
+        logger.exception("resumen de correo urgente falló (tenant %s)", tenant_id)
+        return None
+    finally:
+        llm.reset_model_policy(token)
+    return summary or None
+
+
 def urgent_mail_watch(
     *,
     resolve_tenant: Optional[Callable[[], Optional[str]]] = None,
     mailbox: Any = None,
     store_mod: Any = None,
     telegram_configured: Optional[Callable[[], bool]] = None,
+    notify_fn: Optional[Callable[[str], Awaitable[bool]]] = None,
+    content_allowed: Optional[Callable[[str], Awaitable[bool]]] = None,
+    summarize_fn: Optional[Callable[[list], str]] = None,
+    policy_fn: Optional[Callable[[str], Awaitable[str]]] = None,
     max_scan: int = MAIL_MAX_SCAN,
 ) -> Watch:
-    """Vigilancia no_agent: avisa de correos NO leídos que PARECEN urgentes.
+    """Vigilancia 'agent': avisa de correos NO leídos que PARECEN urgentes.
 
-    Metadata-only (CP-P3): el wake-gate mira SOLO remitente, asunto y banderas — jamás
-    el cuerpo (el análisis con IA es opt-in y llega en CP-P4). Debounce por correo
-    (ledger). Sin correos urgentes nuevos → silencio."""
+    WAKE-GATE (check, BARATO, metadata-only): mira SOLO remitente, asunto y banderas —
+    jamás el cuerpo; sin correos urgentes nuevos → silencio, sin gastar LLM.
+    ON_SURFACE (tras el wake-gate): si el despacho AUTORIZÓ el análisis de contenido
+    (CP-P4, opt-in fail-closed), trae el cuerpo, lo SELLA (CP-S1) y lo resume con IA bajo
+    la política del tenant; si no, envía el aviso metadata de siempre. Debounce por correo.
+    Si el resumen con IA falla, degrada al aviso metadata (nunca se queda sin avisar)."""
     from ..connectors.mailbox.base import mail_looks_urgent
 
     async def check() -> WatchResult:
@@ -438,17 +505,37 @@ def urgent_mail_watch(
         urgentes = [h for h in urgentes if h.external_id in fresh]
         if not urgentes:
             return WatchResult(False, meta={"tenant_id": tenant_id})
-        return WatchResult(True, message=_build_urgent_mail_message(urgentes),
-                           items=urgentes, meta={"tenant_id": tenant_id})
+        return WatchResult(True, items=urgentes, meta={"tenant_id": tenant_id})
 
-    async def after_surface(result: WatchResult, ok: bool) -> None:
-        if ok and result.items and result.meta.get("tenant_id"):
+    async def on_surface(result: WatchResult) -> dict:
+        tenant_id = result.meta.get("tenant_id")
+        headers = result.items
+        nf = notify_fn or _default_notify
+        ca = content_allowed or _mailbox_store(store_mod).content_analysis_allowed
+        use_content = False
+        if tenant_id:
+            try:
+                use_content = bool(await ca(tenant_id))
+            except Exception:  # noqa: BLE001 — fail-closed: sin certeza, metadata
+                use_content = False
+
+        message, summarized = None, False
+        if use_content:
+            summary = await _summarize_urgent_mail(tenant_id, headers, mailbox, summarize_fn,
+                                                   policy_fn=policy_fn)
+            if summary:
+                message, summarized = _build_summary_message(headers, summary), True
+        if message is None:   # opt-in apagado o resumen fallido → aviso metadata
+            message = _build_urgent_mail_message(headers)
+
+        ok = await nf(message)
+        if ok and tenant_id:   # debounce SOLO si el aviso se entregó (si falló, se reintenta)
             try:
                 await _mailbox_store(store_mod).mark_notified(
-                    result.meta["tenant_id"], "mail",
-                    [h.external_id for h in result.items])
+                    tenant_id, "mail", [h.external_id for h in headers])
             except Exception:  # noqa: BLE001
                 logger.warning("vigilancia de correo: no se pudo marcar el debounce")
+        return {"sent": bool(ok), "summarized": summarized, "count": len(headers)}
 
     return Watch("urgent_mail", MAIL_WATCH_INTERVAL_HOURS, check,
-                 kind="no_agent", after_surface=after_surface)
+                 kind="agent", on_surface=on_surface)

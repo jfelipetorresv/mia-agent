@@ -742,3 +742,27 @@ mark_notified autopoda las filas del tenant con notified_at > 30 días. Residual
    docs/conectar-calendario-correo.md) y pegar MS_OAUTH_CLIENT_ID/SECRET en .env; Cursor debe armar
    el botón "Conectar Microsoft 365/Google" en la pantalla Configura a Mia (llama POST
    /api/mailbox/connect/{provider} y redirige a la url; muestra estado con GET /api/mailbox/status).
+
+## 🟢 Riesgo #41 — Análisis de contenido de correo con IA (CP-P4): notas  [registrado 2026-07-02, revisión CP-P4]
+CP-P4 quedó verde (gate test_mailbox.py 56/56; regresión 48/48). Capa 2 RECHAZÓ v1 por un
+BLOQUEANTE de confidencialidad y luego APROBÓ el fix: **fail-OPEN de la política de modelo** —
+`model_policy_for` TRAGA el error de DB y devuelve el default de config ('suscripcion'=nube), así
+que un tenant 'soberano' cuya lectura de política fallara habría mandado el CUERPO del correo del
+cliente a la nube. FIX: `llm.model_policy_for_strict` (lee sin try/except → LANZA ante error de DB;
+fila ausente/valor inválido = estado real → default). `_summarize_urgent_mail` lee la política
+PRIMERO con el strict; si lanza → aborta el resumen y degrada a metadata (el cuerpo ni se toca sin
+política cierta). Gate mp-c5b lo prueba (policy indeterminada → 0 llamadas al LLM). Notas abiertas:
+1. **Google requiere reconsentir para contenido**: gmail.metadata NO lee el cuerpo; hay que
+   reconectar con content=1 (gmail.readonly). Si el tenant activó allow_content_analysis pero
+   conectó solo-metadata, fetch_body falla → degrada a metadata (no rompe). Microsoft (Mail.Read)
+   ya trae el cuerpo, sin reconsentir.
+2. **Garantía por prompt, no estructural**: que Mia "no responda ni actúe" el correo y marque
+   [VERIFICAR] en plazos se sostiene en el SYSTEM_PROMPT; no hay superficie de acción real (solo
+   envía texto por Telegram), así que el riesgo es acotado, pero es guía por prompt.
+3. **Costo del resumen**: cada ciclo con opt-in ON y correos urgentes nuevos gasta LLM (bajo la
+   política del tenant). Acotado por el wake-gate (solo urgentes-no-avisados) y el debounce, pero
+   vigilar si un despacho recibe muchos institucionales/día.
+4. **PENDIENTE DE PIPE (confidencialidad)**: encender allow_content_analysis para un despacho con
+   datos reales manda el cuerpo del correo al LLM de su política. Si es 'nube'/'suscripción', eso es
+   un proveedor de IA — su regla dura exige aprobación explícita por despacho. Default OFF; 'soberano'
+   lo mantiene 100% local.

@@ -52,6 +52,18 @@ PROVIDER_OAUTH: dict[str, dict] = {
     },
 }
 
+# Scopes para el ANÁLISIS DE CONTENIDO con IA (CP-P4, opt-in): incluyen la LECTURA del
+# cuerpo del correo. En Google, gmail.readonly reemplaza a gmail.metadata (metadata no
+# puede leer el cuerpo → reconectar con estos scopes). En Microsoft, Mail.Read ya
+# devuelve el cuerpo, así que los scopes de contenido son los MISMOS que los de metadata
+# (no hace falta reconsentir).
+_CONTENT_SCOPES: dict[str, tuple[str, ...]] = {
+    "microsoft": PROVIDER_OAUTH["microsoft"]["scopes"],
+    "google": ("https://www.googleapis.com/auth/calendar.readonly",
+               "https://www.googleapis.com/auth/gmail.readonly",
+               "openid", "email"),
+}
+
 
 def _cfg(provider: str) -> dict:
     cfg = PROVIDER_OAUTH.get(provider)
@@ -60,20 +72,24 @@ def _cfg(provider: str) -> dict:
     return cfg
 
 
-def scopes_for(provider: str) -> tuple[str, ...]:
-    """Scopes de lectura por defecto (calendario + metadata de correo)."""
+def scopes_for(provider: str, content: bool = False) -> tuple[str, ...]:
+    """Scopes de lectura. `content=False` (default) = calendario + metadata de correo
+    (CP-P3). `content=True` = incluye la lectura del cuerpo del correo (CP-P4, opt-in)."""
+    if content:
+        return tuple(_CONTENT_SCOPES.get(provider) or _cfg(provider)["scopes"])
     return tuple(_cfg(provider)["scopes"])
 
 
 def authorize_url(provider: str, *, client_id: str, redirect_uri: str, state: str,
-                  login_hint: str = "") -> str:
-    """URL de consentimiento a la que el abogado va una vez para conectar su cuenta."""
+                  login_hint: str = "", content: bool = False) -> str:
+    """URL de consentimiento a la que el abogado va una vez para conectar su cuenta.
+    `content=True` pide además la lectura del cuerpo del correo (análisis con IA, CP-P4)."""
     cfg = _cfg(provider)
     params = {
         "client_id": client_id,
         "response_type": "code",
         "redirect_uri": redirect_uri,
-        "scope": " ".join(cfg["scopes"]),
+        "scope": " ".join(scopes_for(provider, content)),
         "state": state,
         **cfg.get("extra_authorize", {}),
     }

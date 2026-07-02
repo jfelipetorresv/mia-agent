@@ -243,6 +243,27 @@ async def model_policy_for(tenant_id: str) -> str:
     return _default_policy()
 
 
+async def model_policy_for_strict(tenant_id: str) -> str:
+    """Como model_policy_for pero SIN tragar errores: si la lectura de DB falla, LANZA
+    (no cae al default de config).
+
+    Para flujos donde asumir el default de la instalación ante un ERROR sería fail-OPEN
+    de confidencialidad — en particular el análisis de contenido de correo (CP-P4): un
+    tenant 'soberano' (todo local) JAMÁS debe terminar enviando el cuerpo de un correo a
+    la nube porque un timeout de DB hizo caer la política al default 'suscripcion'. El
+    llamador debe ABORTAR (degradar) si esto lanza. Fila ausente o valor inválido (estado
+    REAL, no error) sí caen al default de config, como en model_policy_for."""
+    from ..db import pool
+
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT config->>'model_policy' FROM tenant_settings WHERE tenant_id = %s::uuid",
+            (tenant_id,),
+        )).fetchone()
+    p = ((row[0] if row else None) or "").strip().lower()
+    return p if p in VALID_POLICIES else _default_policy()
+
+
 @asynccontextmanager
 async def tenant_model_policy(tenant_id: str):
     """Context manager async: fija la política del tenant y la restaura al salir.
