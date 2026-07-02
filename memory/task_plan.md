@@ -148,7 +148,7 @@ Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor indep
 | CP3 | ✅ | Conocimiento del despacho al análisis (cierra Riesgo #16; decisión #31) — APROBADO por Pipe con A/B en vivo | `test_retrieval_knowledge` 35/35 |
 | CP6 | ⬜ | `prompt_builder` (10 capas) cableado al grafo — ALTO IMPACTO, requiere diff a Pipe antes de ejecutar | — |
 | CP7 | ⬜ | Sincronización frontend: selector de motor + UI de conectores/curator/skills/import de guías | — |
-| CP-B3 | ⬜ | Proactividad: recordatorios y avisos por Telegram | — |
+| CP-B3 | ✅ | Proactividad: recordatorios en lenguaje natural (parser determinista + regla dura de plazos procesales), aviso de borradores con debounce 24h y reporte semanal por Telegram (jobs `reminders_due` 5min / `pending_review_notify` 1h; migración 017) | `test_reminders` 64/64 |
 | CP-B4 | ⬜ | Herramientas reales del asistente (agenda, acciones) | — |
 | CP-C3 | ⬜ | Cierre del circuito GEPA (aprendizaje procedural end-to-end) | — |
 | CP-C4 | ⬜ | Asistente de configuración guiado (onboarding técnico sin jerga) | — |

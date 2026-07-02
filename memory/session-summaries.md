@@ -1,5 +1,21 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-01 — Sesión 22 · CP-B3 Proactividad
+TL;DR: Mia ya avisa y recuerda por Telegram. Recordatorios en
+       lenguaje natural con regla dura de plazos procesales.
+Qué construimos:
+- Recordatorios por chat (parser determinista, sin LLM) + cancelación
+- Aviso de borradores pendientes (debounce 24h) + reporte semanal
+- notify.py (canal Telegram opt-in, fail-soft, solo tenant dueño)
+- Migración 017 (tabla reminders RLS + debounce en matters)
+Qué decidimos: crear/cancelar recordatorios NUNCA depende del LLM;
+  plazos procesales siempre [VERIFICAR]; "días hábiles" no se calculan.
+Regresión: 41/41 suites (test_reminders 64/64 nuevo; test_rls 12/12).
+  Revisor capa 2: 2 bloqueantes + 5 mayores corregidos pre-commit.
+Qué sigue: CP-C3 (circuito GEPA) y CP6 (prompt_builder, requiere
+  diff a Pipe antes de merge). Prueba viva de Telegram espera el
+  bot de Pipe (docs/telegram-setup.md).
+
 ## 2026-06-20 — Sesión 21 · Smoke test login + onboarding
 TL;DR: Login real funciona. Onboarding 15 preguntas ágil.
        SOUL.md generado. Smoke test del chat pendiente.
