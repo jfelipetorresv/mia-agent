@@ -5,8 +5,9 @@ NO requiere Pinecone real ni red: usa `NoopPineconeConnector` y un índice FALSO
 `PineconeConnector._index`. La librería `pinecone` se importa de forma perezosa dentro del
 conector, así que el gate corre aunque el paquete no esté instalado.
 
-Manipula `os.environ['PINECONE_API_KEY']` para probar la factory en ambos modos (con/sin key)
-y lo restaura al final.
+CP-S2: la factory ya NO lee `PINECONE_API_KEY` del entorno — exige el scope de
+secretos del tenant (fail-closed): sin scope lanza UnscopedSecretError; con scope
+sin clave devuelve Noop; la clave sale de lo que el despacho configuró (RLS).
 
 HALT: si este gate falla, NO se avanza (CLAUDE.md §G). Salida: exit 0 = PASS · exit 1 = FAIL.
 
@@ -34,6 +35,11 @@ from mia.connectors.pinecone_connector import (   # noqa: E402
     PineconeConnector,
     PineconeConnectorBase,
     get_pinecone_connector,
+)
+from mia.security import (   # noqa: E402
+    UnscopedSecretError,
+    secrets_from_tenant_config,
+    tenant_secret_scope,
 )
 
 _results: list[tuple[str, bool]] = []
@@ -82,12 +88,29 @@ def main() -> int:
     print("== Módulo 3d · Pinecone connector (store externo opcional) ==")
     original_key = os.environ.get("PINECONE_API_KEY")
     try:
-        # === factory: sin key -> Noop ===
-        os.environ.pop("PINECONE_API_KEY", None)
-        c_noop = get_pinecone_connector()
-        check("sin PINECONE_API_KEY -> get_pinecone_connector() devuelve Noop",
+        # === CP-S2 · factory fail-closed: SIN scope de tenant -> excepción ===
+        try:
+            get_pinecone_connector()
+            unscoped_raised = False
+        except UnscopedSecretError:
+            unscoped_raised = True
+        check("CP-S2: sin scope de tenant la factory lanza UnscopedSecretError",
+              unscoped_raised)
+
+        # === factory: scope activo pero el despacho no configuró clave -> Noop ===
+        with tenant_secret_scope("t-1", {}):
+            c_noop = get_pinecone_connector()
+        check("con scope y sin clave del despacho -> Noop",
               isinstance(c_noop, NoopPineconeConnector))
         check("noop.is_configured == False", c_noop.is_configured is False)
+
+        # === CP-S2 · la clave GLOBAL del entorno ya no activa el conector ===
+        os.environ["PINECONE_API_KEY"] = "clave-global-de-la-instalacion"
+        with tenant_secret_scope("t-1", secrets_from_tenant_config({})):
+            c_env = get_pinecone_connector()
+        check("CP-S2: PINECONE_API_KEY del entorno NO activa el conector del tenant",
+              isinstance(c_env, NoopPineconeConnector))
+        os.environ.pop("PINECONE_API_KEY", None)
 
         # === noop: ninguna operación lanza, query devuelve [] ===
         up = run(c_noop.upsert("t-1", [{"id": "a", "values": [0.0] * 8, "metadata": {}}]))
@@ -122,11 +145,13 @@ def main() -> int:
         check("cada batch va al namespace del tenant",
               all(u["namespace"] == "tenant_t-9" for u in fake.upserts))
 
-        # === factory con key (mock) -> conector real, sin red ===
-        os.environ["PINECONE_API_KEY"] = "fake-key-en-test"
-        c_real = get_pinecone_connector()
-        check("con PINECONE_API_KEY -> get_pinecone_connector() devuelve PineconeConnector",
-              isinstance(c_real, PineconeConnector) and c_real.is_configured is True)
+        # === factory con la clave DEL TENANT (de su tenant_settings) -> real ===
+        cfg = {"pinecone": {"api_key": "fake-key-en-test", "index_name": "mia-legal"}}
+        with tenant_secret_scope("t-1", secrets_from_tenant_config(cfg)):
+            c_real = get_pinecone_connector()
+        check("con la clave del despacho en el scope -> PineconeConnector",
+              isinstance(c_real, PineconeConnector) and c_real.is_configured is True
+              and c_real.api_key == "fake-key-en-test" and c_real.index_name == "mia-legal")
 
         # === metadata preservada intacta en el upsert ===
         c, fake = _connector_with_fake()

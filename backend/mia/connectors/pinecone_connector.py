@@ -1,9 +1,13 @@
 """Mia · connectors.pinecone_connector — store vectorial EXTERNO y OPCIONAL (Módulo 3d).
 
 Pinecone es un store secundario OPCIONAL (decisión #2): el primario sigue siendo
-PostgreSQL + pgvector. Este conector es CONDICIONAL — solo se activa si `PINECONE_API_KEY`
-está en el entorno; si no, `get_pinecone_connector()` devuelve un `NoopPineconeConnector` que
-implementa la misma interfaz, no hace nada y loggea un aviso.
+PostgreSQL + pgvector. Este conector es CONDICIONAL — se activa con la clave POR
+TENANT (la que el despacho configuró en su pantalla, guardada en tenant_settings
+bajo RLS y leída vía el scope de secretos de CP-S2); sin clave en el scope,
+`get_pinecone_connector()` devuelve un `NoopPineconeConnector` que implementa la
+misma interfaz, no hace nada y loggea un aviso. Sin SCOPE activo, lanza
+`UnscopedSecretError` (fail-closed): antes de CP-S2 se leía `PINECONE_API_KEY`
+del entorno — una clave de la instalación compartida entre TODOS los despachos.
 
 AISLAMIENTO: Pinecone NO tiene RLS. El aislamiento entre despachos se hace por **namespace**:
 `{namespace_prefix}_{tenant_id}`. Cada operación va acotada a su namespace. (La metadata del
@@ -18,8 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from abc import ABC, abstractmethod
+
+from ..security import get_tenant_secret
 
 logger = logging.getLogger("mia.connectors.pinecone")
 
@@ -125,7 +130,7 @@ class NoopPineconeConnector(PineconeConnectorBase):
     """Sin Pinecone configurado: misma interfaz, no hace nada, loggea un aviso."""
 
     is_configured = False
-    _MSG = "Pinecone no configurado (sin PINECONE_API_KEY); operación ignorada."
+    _MSG = "Pinecone no configurado para este despacho; operación ignorada."
 
     async def upsert(self, tenant_id: str, vectors: list[dict]) -> dict:
         logger.info(self._MSG)
@@ -146,14 +151,18 @@ class NoopPineconeConnector(PineconeConnectorBase):
 
 
 def get_pinecone_connector() -> PineconeConnectorBase:
-    """Factory: PineconeConnector si hay PINECONE_API_KEY; si no, NoopPineconeConnector.
+    """Factory: PineconeConnector con la clave DEL TENANT del scope activo; sin
+    clave configurada → NoopPineconeConnector (solo pgvector).
 
-    Lee el entorno EN CADA LLAMADA (no cachea) — `PINECONE_API_KEY`, `PINECONE_INDEX_NAME`
-    (default 'mia-legal') y `PINECONE_NAMESPACE_PREFIX` (default 'tenant')."""
-    api_key = os.getenv("PINECONE_API_KEY")
+    CP-S2 (fail-closed): requiere un `tenant_secret_scope(...)` activo — sin
+    scope lanza UnscopedSecretError en vez de leer `PINECONE_API_KEY` del
+    entorno (esa clave era de la instalación, no del despacho: compartirla
+    entre tenants es una fuga de credenciales entre clientes)."""
+    api_key = get_tenant_secret("pinecone_api_key")
     if not api_key:
-        logger.info("Pinecone no configurado: se usa NoopPineconeConnector (solo pgvector).")
+        logger.info("Pinecone no configurado para este despacho: NoopPineconeConnector "
+                    "(solo pgvector).")
         return NoopPineconeConnector()
-    index_name = os.getenv("PINECONE_INDEX_NAME", DEFAULT_INDEX_NAME)
-    namespace_prefix = os.getenv("PINECONE_NAMESPACE_PREFIX", DEFAULT_NAMESPACE_PREFIX)
-    return PineconeConnector(api_key, index_name, namespace_prefix)
+    index_name = get_tenant_secret("pinecone_index_name", DEFAULT_INDEX_NAME)
+    return PineconeConnector(api_key, index_name or DEFAULT_INDEX_NAME,
+                             DEFAULT_NAMESPACE_PREFIX)

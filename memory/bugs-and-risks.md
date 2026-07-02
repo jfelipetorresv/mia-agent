@@ -649,3 +649,21 @@ del especialista de hechos al sello <<<DOC n>>>). Residuales aceptados:
    despacho aprobado vía HITL — son instrucciones legítimas); el mensaje del abogado y su
    Telegram privado tampoco (es el principal que da órdenes). Si en el futuro los playbooks
    se importan de fuentes NO curadas por el despacho, revisar esta decisión.
+
+## 🟡 Riesgo #37 — Secretos y logs (CP-S2): residuales y decisión pendiente  [registrado 2026-07-02, revisión CP-S2]
+CP-S2 quedó verde (gate 39/39; el revisor RECHAZÓ la primera versión por H1 — el instalador del
+redactor rompía los formatters de uvicorn y apagaba la redacción en los access logs — CORREGIDO
+con wrapper que envuelve el formatter original sin reemplazarlo + checks s2-17b/c/d con los
+formatters reales de uvicorn; H3 libpq, H5 floor de máscara y H6 falsos positivos también
+corregidos). Residuales:
+1. **DECISIÓN DE PIPE PENDIENTE (H2)**: la clave de Pinecone que el despacho configura se guarda
+   EN CLARO en tenant_settings (JSONB, protegida por RLS). Un dump/backup de la BD la expone.
+   Opciones: cifrarla en reposo (pgcrypto — requiere decidir gestión de la llave de cifrado) o
+   aceptar el texto plano en v1 como deuda declarada. En logs SÍ queda enmascarada.
+2. **Límite conocido (H4)**: JWT_SECRET es una cadena sin forma — si un log lo interpola desnudo,
+   ningún patrón lo atrapa (hoy ningún logger lo hace; PyJWT no lo incluye en sus errores).
+3. **Sin llamador vivo (H7)**: get_pinecone_connector() fail-closed no tiene caller de producción
+   aún (Pinecone es opcional, fuera de la ruta caliente). Al cablear ingest/query de Pinecone,
+   envolver con tenant_secret_scope — no hay enforcement automático en la capa de request.
+4. **Handlers tardíos**: un handler de logging agregado DESPUÉS del startup del lifespan queda
+   sin redactor (se instala en import + lifespan; librerías que agreguen handlers luego escapan).
