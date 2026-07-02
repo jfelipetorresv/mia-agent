@@ -10,7 +10,7 @@ type Matter = {
   description?: string;
   status?: string;
   created_at?: string;
-  pending?: boolean;
+  pending_review?: boolean;
 };
 
 function fmtDate(s?: string): string {
@@ -91,8 +91,8 @@ export default function AsuntosPage() {
                 onClick={() => router.push(`/asuntos/${m.id}`)}
                 className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:-translate-y-px hover:bg-gray-50"
               >
-                {m.pending ? (
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-orange-500" title="Borrador pendiente de revisar" />
+                {m.pending_review ? (
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-orange-500" title="Borrador esperando tu revisión" />
                 ) : (
                   <span className="h-2.5 w-2.5 shrink-0" />
                 )}

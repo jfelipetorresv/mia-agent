@@ -230,6 +230,46 @@ def run_checks(client, auth, tid) -> list[str]:
     leaked = [w for w in FORBIDDEN if w in blob]
     check(f"§G: respuestas sin jerga técnica (fugas: {leaked or 'ninguna'})", not leaked)
 
+    # ── CP5 · Riesgo #25: pending_review + diagnosis ─────────────────────────
+    def _pending(matter_id: str):
+        for it in client.get("/api/matters", headers=auth).json():
+            if it["id"] == matter_id:
+                return it.get("pending_review")
+        return None
+
+    # 18 · pending_review viaja en la lista de asuntos
+    r = client.get("/api/matters", headers=auth)
+    check("GET /api/matters incluye pending_review (#25)",
+          r.status_code == 200 and all("pending_review" in it for it in r.json()))
+
+    # 19 · pending_review = true al pausarse el turno en awaiting_review
+    mD = client.post("/api/matters", headers=auth, json={"name": "Asunto pendiente"}).json()["id"]
+    mE = client.post("/api/matters", headers=auth, json={"name": "Asunto pendiente 2"}).json()["id"]
+    threads += [thread_id_for(tid, mD), thread_id_for(tid, mE)]
+    with client.stream("GET", f"/api/matters/{mD}/stream", params={"message": "¿Caducó?"},
+                       headers=auth) as s:
+        body_d = "".join(s.iter_text())
+    check("pending_review = true al llegar a awaiting_review (#25)",
+          "awaiting_review" in body_d and _pending(mD) is True)
+
+    # 20 · el borrador expone el diagnóstico jurídico
+    r = client.get(f"/api/matters/{mD}/draft", headers=auth)
+    check("GET draft incluye diagnosis con el diagnóstico (#25)",
+          r.status_code == 200 and "DIAGNÓSTICO" in (r.json().get("diagnosis") or ""))
+
+    # 21 · pending_review vuelve a false tras approve y tras reject
+    with client.stream("POST", f"/api/matters/{mD}/draft/approve", headers=auth, json={}) as s:
+        _ = "".join(s.iter_text())
+    ok_after_approve = _pending(mD) is False
+    with client.stream("GET", f"/api/matters/{mE}/stream", params={"message": "Otra consulta"},
+                       headers=auth) as s:
+        _ = "".join(s.iter_text())
+    with client.stream("POST", f"/api/matters/{mE}/draft/reject", headers=auth,
+                       json={"reason": "No aplica"}) as s:
+        _ = "".join(s.iter_text())
+    check("pending_review = false tras approve y tras reject (#25)",
+          ok_after_approve and _pending(mE) is False)
+
     return threads
 
 

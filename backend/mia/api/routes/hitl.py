@@ -17,6 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import thread_id_for
+from ...db import pool
 from ...memory.wiki_manager import WikiManager
 from ._common import assert_owns_matter, require_awaiting_review, sse
 
@@ -49,6 +50,12 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
                 async for chunk in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
                     if "finalize" in chunk:
                         final_draft = (chunk["finalize"] or {}).get("draft")
+                # Riesgo #25: la decisión quedó tomada (approve/reject/edit) —
+                # el asunto ya no tiene borrador esperando revisión.
+                async with pool.tenant_connection(tenant_id) as conn:
+                    await conn.execute(
+                        "UPDATE matters SET pending_review = false "
+                        "WHERE id = %s::uuid", (matter_id,))
                 if command.get("decision") == "approved":
                     try:
                         await WikiManager().update_from_approved_matter(tenant_id, matter_id)

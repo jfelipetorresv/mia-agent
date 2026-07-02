@@ -18,6 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import initial_state
+from ...db import pool
 from ._common import assert_owns_matter, load_profile_snapshot, prepare_new_turn, sse
 
 router = APIRouter(tags=["matters"])
@@ -61,10 +62,17 @@ async def stream_matter(
                 async for chunk in graph.astream(turn_input, cfg, stream_mode="updates"):
                     if "__interrupt__" in chunk:
                         v = _interrupt_value(chunk)
+                        # Riesgo #25: marcar el asunto como "borrador esperando revisión"
+                        # (RLS activo: el tenant ya fue validado con assert_owns_matter).
+                        async with pool.tenant_connection(tenant_id) as conn:
+                            await conn.execute(
+                                "UPDATE matters SET pending_review = true "
+                                "WHERE id = %s::uuid", (matter_id,))
                         yield sse(
                             "awaiting_review",
                             v.get("message", "Borrador listo para tu aprobación."),
                             draft=v.get("draft"),
+                            diagnosis=v.get("diagnosis"),
                         )
                         continue
                     for node in chunk:

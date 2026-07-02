@@ -26,6 +26,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
   const [hasDraft, setHasDraft] = useState(false);
+  const [diagnosis, setDiagnosis] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [uploadSummary, setUploadSummary] = useState("");
@@ -45,6 +46,15 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   useEffect(() => {
     apiGet<{ name?: string }>(`/api/matters/${matterId}`).then(setMatter).catch(() => {});
     loadDocs();
+    // Si el asunto ya tiene un borrador en curso, recupera tambien su diagnostico.
+    apiGet<{ diagnosis?: string; awaiting_review?: boolean }>(`/api/matters/${matterId}/draft`)
+      .then((d) => {
+        if (d.diagnosis) setDiagnosis(d.diagnosis);
+        if (d.awaiting_review) setHasDraft(true);
+      })
+      .catch(() => {
+        /* sin borrador todavia */
+      });
     return () => {
       streamAbortRef.current?.abort();
     };
@@ -104,13 +114,14 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       await streamTurn(
         stream_url,
         (event, data) => {
-          const payload = data as { message?: string; draft?: string };
+          const payload = data as { message?: string; draft?: string; diagnosis?: string };
           if (event === "thinking") setStatus(payload.message || "Mia esta analizando...");
           else if (event === "draft_ready") setStatus("Mia esta redactando...");
           else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
           else if (event === "awaiting_review") {
             setStatus("Tienes un borrador listo");
             setHasDraft(true);
+            if (payload.diagnosis) setDiagnosis(payload.diagnosis);
             setMessages((m) => {
               const copy = [...m];
               copy[copy.length - 1] = {
@@ -270,24 +281,16 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      <div className="w-[280px] shrink-0 border-l border-gray-100 px-5 py-6">
-        <h3 className="mb-3 text-sm font-semibold text-gray-700">Diagnostico</h3>
-        <div className="space-y-4 text-sm">
-          <DiagField label="Problema juridico" />
-          <DiagField label="Normas aplicables" />
-          <DiagField label="Riesgo estimado" />
-        </div>
-        <p className="mt-6 text-xs text-gray-400">El diagnostico se completara a medida que Mia analice el asunto.</p>
+      <div className="flex w-[280px] shrink-0 flex-col border-l border-gray-100 px-5 py-6">
+        <h3 className="mb-3 text-sm font-semibold text-gray-700">Diagnóstico</h3>
+        {diagnosis ? (
+          <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-lg bg-[#f8f9fa] px-3 py-3 text-sm text-gray-700">
+            {diagnosis}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">Mia aún no ha analizado este asunto.</p>
+        )}
       </div>
-    </div>
-  );
-}
-
-function DiagField({ label }: { label: string }) {
-  return (
-    <div>
-      <div className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</div>
-      <div className="mt-1 text-gray-300">-</div>
     </div>
   );
 }

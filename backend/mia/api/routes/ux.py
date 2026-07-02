@@ -97,10 +97,10 @@ async def list_matters(request: Request):
     tid = _tenant(request)
     async with pool.tenant_connection(tid) as conn:
         rows = await (await conn.execute(
-            "SELECT id, title, description, status, created_at FROM matters "
+            "SELECT id, title, description, status, created_at, pending_review FROM matters "
             "ORDER BY created_at DESC")).fetchall()
     return [{"id": str(r[0]), "name": r[1], "description": r[2], "status": r[3],
-             "created_at": r[4]} for r in rows]
+             "created_at": r[4], "pending_review": bool(r[5])} for r in rows]
 
 
 @router.post("/matters", status_code=201)
@@ -201,7 +201,9 @@ async def get_draft(matter_id: str, request: Request):
     if not draft:
         raise HTTPException(status_code=404, detail="No hay un borrador pendiente de revisión.")
     awaiting = bool(state and state.next)   # el grafo está pausado esperando la revisión
-    return {"draft": draft, "awaiting_review": awaiting}
+    # Riesgo #25: el diagnóstico jurídico viaja en el mismo estado del checkpoint.
+    diagnosis = (values.get("metadata") or {}).get("diagnosis")
+    return {"draft": draft, "awaiting_review": awaiting, "diagnosis": diagnosis}
 
 
 class ApproveBody(BaseModel):

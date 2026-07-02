@@ -368,6 +368,9 @@ class MatterGraphBuilder:
         decision = interrupt({
             "message": "Borrador listo para tu aprobación.",
             "draft": state.get("draft"),
+            # Riesgo #25: el diagnóstico ya viaja en el estado (analysis_node);
+            # se expone aquí para que la capa SSE lo muestre en la Pantalla 2.
+            "diagnosis": (state.get("metadata") or {}).get("diagnosis"),
         })
         # --- de aquí en adelante solo corre TRAS reanudar con Command(resume=...) ---
         dec = (decision or {}).get("decision")
