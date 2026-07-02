@@ -146,7 +146,7 @@ Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor indep
 | CP-C1 | ✅ | Conector carpetas disco/OneDrive/Google Drive (migración 016; decisión #30) | `test_local_folders` 39/39 |
 | CP-C2 | ✅ | Vault Obsidian bidireccional (Mia escribe bajo `Mia/`) + instalación guiada (decisión #32) | `test_vault_write` 34/34 |
 | CP3 | ✅ | Conocimiento del despacho al análisis (cierra Riesgo #16; decisión #31) — APROBADO por Pipe con A/B en vivo | `test_retrieval_knowledge` 35/35 |
-| CP6 | ⬜ | `prompt_builder` (10 capas) cableado al grafo — ALTO IMPACTO, requiere diff a Pipe antes de ejecutar | — |
+| CP6 | 🟡 | IMPLEMENTADO en rama `feat/cp6-una-sola-voz` (commit eceb59a): fachada de 10 capas para analysis/draft/edit, cierre estructurado del diagnóstico, validación del SOUL con reintento+fallback (también en update_soul). Regresión 41/41; revisor capa 2 APROBADO (3 mayores + 3 menores corregidos). Comparación A/B EN VIVO entregada a Pipe — **PENDIENTE su aprobación para merge** | `test_prompt_builder` 46/46 · `test_e2e` 31/31 |
 | CP7 | ⬜ | Sincronización frontend: selector de motor + UI de conectores/curator/skills/import de guías | — |
 | CP-B3 | ✅ | Proactividad: recordatorios en lenguaje natural (parser determinista + regla dura de plazos procesales), aviso de borradores con debounce 24h y reporte semanal por Telegram (jobs `reminders_due` 5min / `pending_review_notify` 1h; migración 017) | `test_reminders` 64/64 |
 | CP-B4 | ⬜ | Herramientas reales del asistente (agenda, acciones) | — |

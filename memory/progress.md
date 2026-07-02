@@ -1371,3 +1371,22 @@ playbooks sin usarlos aún; decisión de producto del fallback documentada).
 sigue abierto**: la vuelta EN VIVO del ciclo con un caso real necesita que Pipe suba sus
 primeras guías de trabajo (`POST /api/playbooks/import`) — sin playbooks sembrados no hay
 activación que observar. El reporte semanal por Telegram quedó cubierto desde CP-B3.
+
+
+**CP6 — Una sola voz (rama `feat/cp6-una-sola-voz`, commit eceb59a — SIN MERGE, alto impacto)**
+Los 3 nodos del grafo componen su system con la fachada `build_graph_system` (10 capas del
+prompt_builder): identidad "Eres Mia" + SOUL del despacho (L1), metodología (L2), citación
+[VERIFICAR] (L3), §G (L5), contexto del asunto (L7), instrucción del nodo (L8, ex
+ANALYSIS/DRAFT/EDIT_SYSTEM), índice de playbooks con fencing anti-inyección (L9), fecha (L10).
+Cierre estructurado del diagnóstico (problema/normas/riesgo) parseado determinista →
+`diagnosis_summary` en HITL/SSE/GET draft; la prosa que ve el abogado va sin el bloque de
+máquina. SOUL validado (9 secciones) con reintento correctivo y fallback determinista, también
+en la revisión trimestral (update_soul). Gates: prompt_builder 46/46 (+14) · e2e 31/31 (+6) ·
+context_recovery 34/34 · retrieval_knowledge 35/35 · hitl 19/19 · agent_core 26/26; regresión
+41/41. Revisor capa 2: APROBADO CON CORRECCIONES — 3 mayores (update_soul sin validar; bloque
+`===` visible al abogado; SSE no reenviaba el resumen) y 3 menores, TODOS corregidos pre-commit.
+**Comparación A/B EN VIVO ejecutada** (mismo expediente de reparación directa, motor de
+suscripción real): DESPUÉS más enfocado (34 vs 76 menciones normativas, análisis/borrador
+separados limpios, resumen ejecutivo de 3 líneas) — entregada a Pipe. **Merge pendiente de su
+aprobación.** Nota honesta registrada: ambas versiones dejan 5-6 sentencias específicas sin
+[VERIFICAR] al lado — riesgo pre-existente que ataca CP8c (en pausa).
