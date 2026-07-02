@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import uuid
+from datetime import datetime
 from types import SimpleNamespace
 
 from .. import config
@@ -39,6 +41,7 @@ from ..agent import llm, prompt_builder
 from ..agent.context_compressor import ContextCompressor
 from ..db import pool
 from ..onboarding.soul_interview import load_soul_text
+from . import reminders as reminders_mod
 
 logger = logging.getLogger("mia.assistant.core")
 
@@ -53,6 +56,56 @@ _MATTERS_QUERY_RE = re.compile(
 )
 
 MATTERS_BLOCK_HEADER = "=== ESTADO ACTUAL DE TUS ASUNTOS ==="
+
+# CP-B3: pregunta por los recordatorios ("qué recordatorios tengo") → bloque de estado.
+# (La CREACIÓN de recordatorios es determinista — parse_reminder — y no pasa por aquí.)
+_REMINDERS_QUERY_RE = re.compile(r"\brecordatorios?\b", re.IGNORECASE)
+
+# CP-B3: cancelar por chat también es determinista ("cancela el recordatorio de la
+# tutela") — el modelo JAMÁS confirma una cancelación que no ocurrió (hallazgo M4).
+_REMINDER_CANCEL_RE = re.compile(
+    r"\b(cancela(?:me|r)?|elimina(?:r)?|borra(?:r)?|quita(?:r)?)\b.*\brecordatorios?\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_CANCEL_FRAGMENT_RE = re.compile(
+    r"\brecordatorios?\s+(?:de|del|de\s+la|para|sobre)\s+(.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+REMINDERS_BLOCK_HEADER = "=== TUS RECORDATORIOS PENDIENTES ==="
+
+# Respuestas deterministas del flujo de recordatorios (sin LLM: crear un recordatorio
+# cambia estado y no puede depender de la interpretación de un modelo).
+REMINDER_MISSING_DATE_REPLY = (
+    "Con gusto te lo recuerdo, pero necesito saber cuándo. Dime por ejemplo: "
+    "«mañana a las 9», «el viernes», «en 2 horas» o «el 15 de agosto»."
+)
+
+# "N días hábiles": Mia NO los calcula (festivos y calendario judicial cambian el
+# resultado) — se pide la fecha exacta (hallazgo M1, coherente con la regla dura).
+REMINDER_BUSINESS_DAYS_REPLY = (
+    "Los días hábiles dependen de los festivos y del calendario judicial, y ese "
+    "cálculo debe ser tuyo. Dime la fecha exacta (por ejemplo «el 15 de agosto») "
+    "y te lo recuerdo ese día."
+)
+
+# El despacho aún no tiene canal de avisos (Telegram, opt-in de CP-B2): el
+# recordatorio queda guardado y visible en Mia, pero nadie le va a "sonar" (M3).
+REMINDER_NO_CHANNEL_WARNING = (
+    "Ojo: todavía no tienes activado el canal de avisos por Telegram, así que no "
+    "podré escribirte cuando llegue la hora — el recordatorio quedará visible en tu "
+    "lista de recordatorios dentro de Mia. Activarlo toma 5 minutos: pídeme la guía "
+    "cuando quieras."
+)
+
+# REGLA DURA (plan CP-B3 · regla 5 del propietario): un recordatorio que menciona un
+# plazo o actuación procesal SIEMPRE se confirma con el abogado — Mia no calcula
+# términos legales; la fecha la puso él y debe verificarla contra la fuente oficial.
+REMINDER_PROCEDURAL_WARNING = (
+    "[VERIFICAR] Esto menciona un plazo o actuación procesal: la fecha me la diste tú "
+    "y debes confirmarla contra el expediente o la fuente oficial antes de actuar — "
+    "yo no calculo términos legales por mi cuenta."
+)
 
 # Historial: cuántos mensajes persistidos se cargan por turno. Una conversación de años
 # no puede cargarse entera (memoria + latencia + ventana); 200 mensajes ≈ semanas de uso
@@ -80,7 +133,13 @@ ASSISTANT_INSTRUCTIONS = (
     "usas para ayudar de verdad, no solo para responder. Regla inquebrantable: NUNCA "
     "des por definitivo un plazo procesal, un término judicial o una fecha límite legal "
     "— si mencionas uno, márcalo con [VERIFICAR] y dile al abogado que debe confirmarlo "
-    "él mismo contra la fuente oficial antes de actuar."
+    "él mismo contra la fuente oficial antes de actuar. Sobre los RECORDATORIOS: tú NO "
+    "puedes crearlos, cancelarlos ni moverlos — eso lo hace el sistema de Mia solo "
+    "cuando el abogado lo pide con frases directas como «recuérdame … mañana a las 9» "
+    "o «cancela el recordatorio de …», y el sistema siempre responde confirmándolo. "
+    "JAMÁS afirmes que un recordatorio quedó creado, cancelado o cambiado: si el "
+    "abogado te lo pide y no ves esa confirmación del sistema, dile la frase exacta "
+    "que debe escribir para lograrlo."
 )
 
 
@@ -271,6 +330,24 @@ class AssistantService:
                 (conversation_id, _HISTORY_MAX_MESSAGES),
             )).fetchall()
 
+        # CP-B3 · CREAR o CANCELAR un recordatorio es un flujo DETERMINISTA (sin LLM):
+        # cambia estado y no puede depender de que un modelo "entienda". Si el parser
+        # reconoce la intención, se ejecuta, se persiste el turno y se responde ya.
+        parsed = reminders_mod.parse_reminder(text)
+        if parsed is None:
+            # Turno de seguimiento (hallazgo B2): Mia acaba de preguntar "¿cuándo?"
+            # y el abogado responde solo con la fecha ("mañana a las 9") — se retoma
+            # el QUÉ del mensaje anterior; jamás se deja que el modelo "confirme".
+            parsed = self._reminder_followup(text, history_rows)
+        if parsed is not None:
+            reply = await self._handle_reminder_request(tenant_id, user_id, parsed)
+            await self._persist_turn(tenant_id, conversation_id, text, reply)
+            return conversation_id, reply
+        if _REMINDER_CANCEL_RE.search(text):
+            reply = await self._handle_reminder_cancel(tenant_id, text)
+            await self._persist_turn(tenant_id, conversation_id, text, reply)
+            return conversation_id, reply
+
         # El mensaje del turno actual va EN MEMORIA al final del historial (se persiste
         # en (f), junto con la respuesta).
         history = [{"role": r[0], "content": r[1]} for r in history_rows]
@@ -285,6 +362,16 @@ class AssistantService:
                 history[-1] = {
                     "role": "user",
                     "content": f"{history[-1]['content']}\n\n{matters_block}",
+                }
+
+        # CP-B3: pregunta por sus recordatorios → el modelo ve el estado real bajo RLS
+        # (mismo patrón que el bloque de asuntos: solo en el mensaje que viaja al modelo).
+        if _REMINDERS_QUERY_RE.search(text):
+            reminders_block = await self._reminders_block(tenant_id)
+            if reminders_block:
+                history[-1] = {
+                    "role": "user",
+                    "content": f"{history[-1]['content']}\n\n{reminders_block}",
                 }
 
         # (d) compresión ANTES de llamar: compresor NUEVO por turno (nunca compartido
@@ -319,15 +406,24 @@ class AssistantService:
         resp = await asyncio.to_thread(llm.call_llm, messages, task="main")
         reply = (resp.choices[0].message.content or "").strip()
 
-        # (f) persistir user + assistant JUNTOS y refrescar updated_at — una sola
-        # transacción tras el éxito del modelo. clock_timestamp() (no now()): dentro de
-        # una misma transacción now() es constante y el orden (created_at, id) con ids
-        # uuid aleatorios sería ambiguo; clock_timestamp() avanza entre inserts.
+        # (f) persistir user + assistant JUNTOS tras el éxito del modelo.
+        await self._persist_turn(tenant_id, conversation_id, text, reply)
+
+        # TODO(CP-C2): escritura fire-and-forget de lo aprendido a la wiki del despacho (WikiManager).
+        return conversation_id, reply
+
+    async def _persist_turn(
+        self, tenant_id: str, conversation_id: str, user_text: str, reply: str
+    ) -> None:
+        """Persiste user + assistant JUNTOS y refresca updated_at — una sola
+        transacción tras el éxito del turno. clock_timestamp() (no now()): dentro de
+        una misma transacción now() es constante y el orden (created_at, id) con ids
+        uuid aleatorios sería ambiguo; clock_timestamp() avanza entre inserts."""
         async with pool.tenant_connection(tenant_id) as conn:
             await conn.execute(
                 "INSERT INTO assistant_messages (tenant_id, conversation_id, role, content, created_at) "
                 "VALUES (%s::uuid, %s::uuid, 'user', %s, clock_timestamp())",
-                (tenant_id, conversation_id, text),
+                (tenant_id, conversation_id, user_text),
             )
             await conn.execute(
                 "INSERT INTO assistant_messages (tenant_id, conversation_id, role, content, created_at) "
@@ -339,8 +435,138 @@ class AssistantService:
                 (conversation_id,),
             )
 
-        # TODO(CP-C2): escritura fire-and-forget de lo aprendido a la wiki del despacho (WikiManager).
-        return conversation_id, reply
+    def _reminder_followup(
+        self, text: str, history_rows: list
+    ) -> reminders_mod.ParsedReminder | None:
+        """Retoma el recordatorio cuando el abogado responde SOLO la fecha (B2).
+
+        Aplica únicamente si el último mensaje de la conversación fue la pregunta
+        determinista de Mia ("¿cuándo?" / "días hábiles") y el texto actual trae
+        una fecha reconocible; el QUÉ sale del mensaje anterior del abogado."""
+        if len(history_rows) < 2:
+            return None
+        last_role, last_content = history_rows[-1][0], history_rows[-1][1]
+        prev_role, prev_content = history_rows[-2][0], history_rows[-2][1]
+        if last_role != "assistant" or last_content not in (
+            REMINDER_MISSING_DATE_REPLY, REMINDER_BUSINESS_DAYS_REPLY
+        ) or prev_role != "user":
+            return None
+        due = reminders_mod.parse_when(text)
+        if due is None:
+            return None
+        prev_parsed = reminders_mod.parse_reminder(prev_content)
+        subject = prev_parsed.subject if prev_parsed else _sanitize_title(prev_content)
+        procedural = (prev_parsed.is_procedural if prev_parsed else
+                      reminders_mod.is_procedural_text(prev_content))
+        return reminders_mod.ParsedReminder(
+            subject, due, procedural or reminders_mod.is_procedural_text(text)
+        )
+
+    async def _owns_notify_channel(self, tenant_id: str) -> bool:
+        """True si ESTE despacho recibirá los avisos: Telegram configurado y el
+        usuario del puente (MIA_BRIDGE_EMAIL) pertenece al tenant — se verifica bajo
+        RLS: si el correo es de otro despacho, aquí no existe (hallazgo M3)."""
+        from ..channels import notify
+
+        bridge_email = (os.getenv("MIA_BRIDGE_EMAIL") or "").strip()
+        if not bridge_email or not notify.telegram_configured():
+            return False
+        try:
+            async with pool.tenant_connection(tenant_id) as conn:
+                row = await (await conn.execute(
+                    "SELECT 1 FROM users WHERE lower(email) = lower(%s) LIMIT 1",
+                    (bridge_email,),
+                )).fetchone()
+            return row is not None
+        except Exception:  # noqa: BLE001 — ante la duda, avisar que no hay canal
+            logger.exception("no se pudo verificar el canal de avisos (tenant=%s)", tenant_id)
+            return False
+
+    async def _handle_reminder_request(
+        self, tenant_id: str, user_id: str | None, parsed: reminders_mod.ParsedReminder
+    ) -> str:
+        """Crea el recordatorio (o pide la fecha) y arma la confirmación determinista.
+
+        REGLA DURA: si menciona un plazo/actuación procesal, la confirmación lleva
+        [VERIFICAR] — la fecha la puso el abogado y la confirma él (Mia nunca
+        calcula términos legales; "días hábiles" no se calculan, se pide la fecha)."""
+        if parsed.due_at is None:
+            return (REMINDER_BUSINESS_DAYS_REPLY if parsed.business_days
+                    else REMINDER_MISSING_DATE_REPLY)
+        await reminders_mod.ReminderService().create(
+            tenant_id, user_id, parsed.subject, parsed.due_at, parsed.is_procedural
+        )
+        reply = (
+            f"Listo. Te lo recordaré el {reminders_mod.format_due(parsed.due_at)}: "
+            f"«{parsed.subject}»."
+        )
+        if parsed.is_procedural:
+            reply += f"\n\n{REMINDER_PROCEDURAL_WARNING}"
+        if not await self._owns_notify_channel(tenant_id):
+            # Promesa honesta (M3): sin canal de avisos, el recordatorio no "suena".
+            reply += f"\n\n{REMINDER_NO_CHANNEL_WARNING}"
+        return reply
+
+    async def _handle_reminder_cancel(self, tenant_id: str, text: str) -> str:
+        """Cancela por chat, de forma determinista (M4): por fragmento («cancela el
+        recordatorio de la tutela»), o directo si solo hay uno; si es ambiguo, lista
+        los pendientes y pide precisión — nunca adivina ni deja confirmar al modelo."""
+        service = reminders_mod.ReminderService()
+        try:
+            pending = await service.list_pending(tenant_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("asistente: no se pudieron leer los recordatorios (cancel)")
+            return "No pude consultar tus recordatorios en este momento. Intenta de nuevo."
+        if not pending:
+            return "No tienes recordatorios pendientes, así que no hay nada que cancelar."
+
+        frag_m = _CANCEL_FRAGMENT_RE.search(text)
+        fragment = (frag_m.group(1).strip(" ,.;:¿?¡!«»\"'") if frag_m else "")
+        matches = [r for r in pending if fragment and fragment.lower() in r["text"].lower()]
+        target = None
+        if len(matches) == 1:
+            target = matches[0]
+        elif not fragment and len(pending) == 1:
+            target = pending[0]
+        if target is not None:
+            cancelled = await service.cancel(tenant_id, target["id"])
+            if cancelled:
+                return f"Listo, cancelé el recordatorio: «{target['text']}»."
+            return "Ese recordatorio ya no estaba pendiente."
+        lines = [
+            "Tengo estos recordatorios pendientes y no estoy segura de cuál cancelar:"
+        ]
+        lines += [
+            f"- «{r['text']}» (para el "
+            f"{reminders_mod.format_due(datetime.fromisoformat(r['due_at']))})"
+            for r in pending
+        ]
+        lines.append("Dime, por ejemplo: «cancela el recordatorio de "
+                     f"{pending[0]['text'][:40]}».")
+        return "\n".join(lines)
+
+    async def _reminders_block(self, tenant_id: str) -> str:
+        """Bloque factual con los recordatorios pendientes del despacho (bajo RLS)."""
+        try:
+            pending = await reminders_mod.ReminderService().list_pending(tenant_id)
+        except Exception:  # noqa: BLE001 — la herramienta v1 no debe tumbar el turno
+            logger.exception("asistente: no se pudieron leer los recordatorios")
+            return ""
+        if not pending:
+            return (f"{REMINDERS_BLOCK_HEADER}\n(No hay recordatorios pendientes.)\n"
+                    "=== FIN DE LOS RECORDATORIOS ===")
+        lines = [REMINDERS_BLOCK_HEADER]
+        for r in pending:
+            due = reminders_mod.format_due(datetime.fromisoformat(r["due_at"]))
+            marca = " · [VERIFICAR] plazo procesal (la fecha la confirma el abogado)" \
+                if r["is_procedural"] else ""
+            lines.append(f"- {_sanitize_title(r['text'])} · para el {due}{marca}")
+        lines.append("=== FIN DE LOS RECORDATORIOS ===")
+        lines.append(
+            "(Bloque generado por el sistema con los recordatorios reales del despacho; "
+            "úsalo para responder con hechos, no lo inventes ni lo contradigas.)"
+        )
+        return "\n".join(lines)
 
     async def _matters_block(self, tenant_id: str) -> str:
         """Bloque factual con el estado de los asuntos del despacho (bajo RLS)."""

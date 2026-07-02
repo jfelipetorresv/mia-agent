@@ -12,11 +12,13 @@ por email contra `users` bajo RLS. §G: errores sin jerga técnica.
 from __future__ import annotations
 
 import logging
+import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...assistant.core import AssistantService, ConversationNotFound
+from ...assistant.reminders import ReminderService
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 logger = logging.getLogger("mia.api.assistant")
@@ -84,3 +86,43 @@ async def assistant_messages(conversation_id: str, request: Request):
         return await _service.list_messages(tid, conversation_id)
     except ConversationNotFound:
         raise HTTPException(status_code=404, detail="No encontré esa conversación.")
+
+
+# ── CP-B3 · recordatorios (la creación es por chat, en lenguaje natural) ─────
+_reminders = ReminderService()
+
+
+@router.get("/reminders")
+async def assistant_reminders(request: Request):
+    """Recordatorios pendientes del despacho, el más próximo primero."""
+    tid = _tenant(request)
+    try:
+        return await _reminders.list_pending(tid)
+    except Exception:  # noqa: BLE001 — §G: nunca exponer el error técnico al abogado
+        logger.exception("listar recordatorios falló (tenant=%s)", tid)
+        raise HTTPException(
+            status_code=502,
+            detail="No pude consultar tus recordatorios en este momento. Intenta de nuevo.",
+        )
+
+
+@router.post("/reminders/{reminder_id}/cancel")
+async def assistant_reminder_cancel(reminder_id: str, request: Request):
+    """Cancela un recordatorio pendiente. Ajeno o inexistente → 404 (RLS incluido)."""
+    tid = _tenant(request)
+    try:
+        uuid.UUID(reminder_id)
+    except (ValueError, AttributeError, TypeError):
+        # Id mal formado = "no existe" (404), nunca un error técnico (500).
+        raise HTTPException(status_code=404, detail="No encontré ese recordatorio.")
+    try:
+        cancelled = await _reminders.cancel(tid, reminder_id)
+    except Exception:  # noqa: BLE001 — DB caída NO es "no existe": §G, error amable
+        logger.exception("cancelar recordatorio falló (tenant=%s)", tid)
+        raise HTTPException(
+            status_code=502,
+            detail="No pude cancelar el recordatorio en este momento. Intenta de nuevo.",
+        )
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="No encontré ese recordatorio.")
+    return {"status": "cancelled"}

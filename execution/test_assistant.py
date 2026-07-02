@@ -145,13 +145,15 @@ def run_checks(client, fake: FakeCompletions, tenants: list[str]) -> None:
     set_policy_nube(tenant_b)
 
     # ── (a) primer turno: crea conversación y persiste user+assistant ──
-    fake.script["claude-sonnet"] = ["Claro, te lo recuerdo mañana a primera hora."]
-    msg1 = "Hola Mia, recuérdame llamar al cliente de la aseguradora mañana temprano"
+    # OJO (CP-B3): "recuérdame..." ya NO pasa por el LLM (flujo determinista de
+    # recordatorios, gate test_reminders.py) — este turno usa un mensaje sin esa intención.
+    fake.script["claude-sonnet"] = ["Claro, organicemos juntos la agenda del despacho."]
+    msg1 = "Hola Mia, ayúdame a organizar la agenda del despacho esta semana"
     r = client.post("/api/assistant/chat", headers=auth_a, json={"message": msg1})
     data = r.json()
     check("a1 · POST /assistant/chat → 200 con conversation_id y reply",
           r.status_code == 200 and data.get("conversation_id")
-          and data.get("reply") == "Claro, te lo recuerdo mañana a primera hora.")
+          and data.get("reply") == "Claro, organicemos juntos la agenda del despacho.")
     conv_a = data["conversation_id"]
 
     with sb() as c:
@@ -193,7 +195,7 @@ def run_checks(client, fake: FakeCompletions, tenants: list[str]) -> None:
     check("b2 · los messages enviados incluyen los turnos previos (user1, assistant1, user2)",
           len(hist) == 3 and hist[0]["content"] == msg1
           and hist[1]["role"] == "assistant"
-          and hist[1]["content"] == "Claro, te lo recuerdo mañana a primera hora."
+          and hist[1]["content"] == "Claro, organicemos juntos la agenda del despacho."
           and hist[2]["content"] == msg2)
     check("b3 · persistidos 4 mensajes tras dos vueltas", _count_msgs(conv_a) == 4)
 

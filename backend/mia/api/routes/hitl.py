@@ -51,10 +51,12 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
                     if "finalize" in chunk:
                         final_draft = (chunk["finalize"] or {}).get("draft")
                 # Riesgo #25: la decisión quedó tomada (approve/reject/edit) —
-                # el asunto ya no tiene borrador esperando revisión.
+                # el asunto ya no tiene borrador esperando revisión. Se resetea también
+                # el debounce del aviso (CP-B3): un borrador NUEVO avisa de inmediato.
                 async with pool.tenant_connection(tenant_id) as conn:
                     await conn.execute(
-                        "UPDATE matters SET pending_review = false "
+                        "UPDATE matters SET pending_review = false, "
+                        "pending_review_notified_at = NULL "
                         "WHERE id = %s::uuid", (matter_id,))
                 if command.get("decision") == "approved":
                     try:

@@ -609,3 +609,21 @@ condicionan comportamiento visible al cliente y deben resolverse antes de endure
    ejecuta winget en el HOST — correcto en Modo B (laptop de un despacho), pero en despliegue
    compartido (Modo A) DEBE DESHABILITARSE (documentado en su docstring; Riesgos #10/#15 de
    sandbox). Requiere gate de despliegue antes del primer cliente Modo A.
+
+## 🟡 Riesgo #35 — Notificaciones proactivas: canal ÚNICO de Telegram y residuales de CP-B3  [registrado 2026-07-01, revisión CP-B3]
+CP-B3 quedó verde (gate 64/64, 2 bloqueantes y 5 mayores del revisor corregidos), pero deja
+residuales ACEPTADOS y documentados, a resolver antes del multi-tenant real:
+1. **Canal único**: hay UN bot y UN chat (el de `MIA_BRIDGE_EMAIL`). Los demás despachos pueden
+   crear recordatorios y Mia les avisa honestamente que no les sonará (quedan visibles en su
+   lista); el multi-tenant real necesita canal por despacho (token/chat en `tenant_settings`).
+   El aislamiento está garantizado: los jobs solo despachan al tenant dueño del canal.
+2. **Reintento sin tope**: un mensaje que Telegram rechace PERMANENTEMENTE (p. ej. 400) se
+   reintenta cada 5 min sin contador ni cuarentena. A escala de un despacho es inocuo.
+3. **Varios workers = avisos duplicados**: el scheduler vive en el lifespan de FastAPI (patrón
+   preexistente); con >1 worker de uvicorn habría N schedulers. Modo B usa 1 worker.
+4. **Horas ambiguas**: "a la 1" = 01:00 (la confirmación muestra la hora exacta, es detectable).
+   "avísame mañana qué opinas" crea un recordatorio en vez de conversar (disparador débil CON
+   fecha se intercepta; sin fecha ya no — hallazgo M5 corregido a medias por diseño).
+5. **Canal atado a `users.email`**: si el usuario del puente se elimina y otro despacho registra
+   ese mismo correo, las notificaciones cambiarían de tenant en silencio. Supuesto operativo:
+   el correo del puente no se recicla entre despachos.

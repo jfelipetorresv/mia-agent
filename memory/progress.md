@@ -1298,3 +1298,49 @@ Gate `test_retrieval_knowledge` **35/35**. **APROBADO por Pipe con comparación 
 (análisis con y sin el método del despacho). **Riesgo #16 CERRADO.**
 
 **Regresión final de la sesión: 40/40 suites verdes** (`test_rls` 12/12 HALT intacto).
+
+---
+
+## 2026-07-01 — Sesión 22 · CP-B3: proactividad (recordatorios + avisos por Telegram)
+
+**CP-B3 — Mia te avisa y recuerda (rama `feat/cp-b3-proactividad`)**
+Mia deja de ser solo reactiva. Tres piezas nuevas:
+- **Recordatorios en lenguaje natural** (`assistant/reminders.py` + migración `017_reminders.sql`):
+  "recuérdame radicar la tutela mañana a las 9" crea un recordatorio SIN pasar por el LLM
+  (parser determinista en español: mañana / el viernes / en 2 horas / el 15 de agosto / horas
+  am-pm; crear algo que sonará después no puede depender de que un modelo "entienda"). Sin
+  fecha reconocible → Mia PREGUNTA. Cancelación por chat también determinista. RLS fail-closed.
+- **notify.py (canal de salida común)**: POST directo a la Bot API de Telegram (mismo bot de
+  CP-B2), opt-in y fail-soft (sin token → no-op), sin loguear jamás token ni contenido.
+- **Jobs del scheduler**: `reminders_due` (5 min; marca 'sent' SOLO si Telegram aceptó, si no
+  reintenta), `pending_review_notify` (1h; aviso agregado de borradores esperando revisión con
+  debounce de 24h por asunto, reseteado al decidir en hitl.py) y envío del reporte semanal de
+  Dreams. Todos notifican SOLO al tenant dueño del canal (`MIA_BRIDGE_EMAIL`) — el contenido
+  de otro despacho JAMÁS sale por el chat de Telegram de Pipe.
+
+**REGLA DURA implementada**: recordatorios con vocabulario procesal (radicar, audiencia,
+emplazamiento, sentencia, término, expediente, "días hábiles"…) SIEMPRE llevan [VERIFICAR] —
+la fecha la pone el abogado y la confirma él; Mia no calcula términos legales, y "N días
+hábiles" ni siquiera se agenda: se pide la fecha exacta.
+
+**Gate `test_reminders.py` 64/64** · regresión completa **41/41 suites** (`test_rls` 12/12 HALT).
+`test_assistant` actualizado (su primer turno usaba "recuérdame…", que ahora es determinista).
+
+**Revisor independiente (capa 2)**: APROBADO CON CORRECCIONES — 2 bloqueantes y 5 mayores,
+TODOS corregidos antes del commit y convertidos en checks del gate:
+- B1 vocabulario procesal incompleto (emplazamiento/sentencia/diligencia/fiscalía → ampliado).
+- B2 confirmaciones falsas: "¿cuándo?" → "mañana a las 9" ahora crea el recordatorio de verdad
+  (turno de seguimiento determinista) y el modelo tiene PROHIBIDO confirmar acciones de
+  recordatorios que el sistema no confirmó.
+- M1 "días hábiles" no se calculan · M2 año explícito respetado ("el 15 de agosto de 2027") ·
+  M3 promesa honesta: sin canal de avisos la confirmación lo dice · M4 cancelación por chat
+  determinista · M5 "avísame" sin fecha ya no secuestra frases conversacionales.
+- Menores: 29-feb sin crash, mark_sent no pisa cancelaciones, chequeo barato antes de conexión
+  admin cada 5 min, endpoints con errores amables (§G), log de notify sin superficie de token.
+
+**Residuales documentados (bugs-and-risks.md)**: canal único de Telegram (multi-tenant real
+necesitará canal por despacho), reintento sin tope si Telegram rechaza permanente, duplicación
+de avisos si algún día corren varios workers, "a la 1" = 01:00 (la confirmación muestra la hora).
+
+**Bloqueantes:** ninguno. La prueba viva con el celular de Pipe queda pendiente de que él cree
+su bot (guía `docs/telegram-setup.md`) — el sistema completo es opt-in hasta entonces.
