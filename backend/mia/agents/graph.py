@@ -23,7 +23,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
@@ -37,10 +37,11 @@ from ..gateway import hub_config
 from ..gateway.agent_hub import AgentHub
 from ..db import pool as db_pool
 from ..memory.playbook_manager import Playbook, PlaybookManager
+from ..memory.tokens import estimate_tokens
 from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
-from . import retrieval
+from . import context_recovery, retrieval
 from .state import MatterState
 
 logger = logging.getLogger("mia.agents.graph")
@@ -216,13 +217,21 @@ class MatterGraphBuilder:
         return await asyncio.to_thread(self.hub.invoke, agent_key, prompt, state["tenant_id"])
 
     async def _llm(self, messages: list[dict], *, task: str = "main",
-                   state: Optional[MatterState] = None, md: Optional[dict] = None) -> tuple[str, Any]:
+                   state: Optional[MatterState] = None, md: Optional[dict] = None,
+                   shrink: Optional[Callable[[], list[dict]]] = None) -> tuple[str, Any]:
         """Llama al LLM por el gateway (cadena de fallback H.5) sin bloquear el event loop.
 
         Ya NO se fija `model`: call_llm recorre la cadena del task (claude-sonnet→mia-local para
         'main'). Si el prompt excede la ventana (CONTEXT_TOO_LONG) y aún no se comprimió en este
-        turno (TurnLLMState en md['llm_turn']), comprime UNA vez y reintenta desde el primer
-        proveedor de la cadena. El resto de errores se propaga tal cual (LLMError con su kind)."""
+        turno (TurnLLMState en md['llm_turn']), reduce UNA vez y reintenta desde el primer
+        proveedor de la cadena. El resto de errores se propaga tal cual (LLMError con su kind).
+
+        CP1 (Riesgo #33): `shrink` es un callable SIN args que devuelve los messages REDUCIDOS.
+        Los nodos con prompt monolítico de 2 mensajes (analysis/draft) lo pasan para recortar su
+        MATERIAL (documentos/diagnóstico/playbooks) — ContextCompressor no puede reducir 2
+        mensajes (protege first=5/last=30). Sin `shrink`, se conserva el camino del compresor
+        (nodos con historial, p. ej. finalize/EDIT). Ambos caminos consumen el mismo cupo
+        una-sola-compresión-por-turno (turn.mark_compressed())."""
         try:
             resp = await asyncio.to_thread(llm.call_llm, messages, task=task)
         except Exception as exc:  # noqa: BLE001 — solo rescatamos CONTEXT_TOO_LONG; el resto re-lanza
@@ -233,16 +242,31 @@ class MatterGraphBuilder:
                 md["llm_turn"] = turn.to_dict()
             if md is None or not turn.should_compress(kind):
                 raise  # no es contexto, ya se comprimió, o no hay md donde coordinar → propaga
-            compressed = await asyncio.to_thread(
-                self._compressor.compress, messages, config.MIA_CONTEXT_WINDOW,
-                tenant_id=(state or {}).get("tenant_id"),
-                matter_id=(state or {}).get("matter_id"),
-            )
+            if shrink is not None:
+                # CP1 (Riesgo #33): el nodo reconstruye su prompt con el material recortado.
+                reduced = shrink()
+                # Guard (revisión CP1-H1): si el recorte no redujo nada (p. ej. sin
+                # documentos que recortar), el reintento fallaría idéntico — propagar
+                # sin quemar el cupo de compresión ni una llamada LLM extra.
+                before = sum(estimate_tokens(m.get("content", "")) for m in messages)
+                after = sum(estimate_tokens(m.get("content", "")) for m in reduced)
+                if after >= before:
+                    logger.warning("call_llm context_too_long (task=%s): el shrink del nodo "
+                                   "no redujo el prompt (%d→%d tok est.) — se propaga sin reintento",
+                                   task, before, after)
+                    raise
+            else:
+                reduced = await asyncio.to_thread(
+                    self._compressor.compress, messages, config.MIA_CONTEXT_WINDOW,
+                    tenant_id=(state or {}).get("tenant_id"),
+                    matter_id=(state or {}).get("matter_id"),
+                )
             turn.mark_compressed()
             md["llm_turn"] = turn.to_dict()
-            logger.warning("call_llm context_too_long (task=%s) → contexto comprimido, reintento "
-                           "desde el 1er proveedor de la cadena", task)
-            resp = await asyncio.to_thread(llm.call_llm, compressed, task=task)
+            logger.warning("call_llm context_too_long (task=%s) → contexto %s, reintento "
+                           "desde el 1er proveedor de la cadena", task,
+                           "recortado por el nodo" if shrink is not None else "comprimido")
+            resp = await asyncio.to_thread(llm.call_llm, reduced, task=task)
         content = resp.choices[0].message.content or ""
         return content, getattr(resp, "usage", None)
 
@@ -273,13 +297,25 @@ class MatterGraphBuilder:
     async def analysis_node(self, state: MatterState) -> dict:
         msg = _last_user_message(state)
         docs = state.get("documents") or []
-        ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(docs)) or \
-            "(sin documentos recuperados del expediente)"
         md = dict(state.get("metadata") or {})
-        diagnosis, usage = await self._llm([
-            {"role": "system", "content": _system_with_soul(state, ANALYSIS_SYSTEM)},
-            {"role": "user", "content": f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"},
-        ], task="main", state=state, md=md)
+
+        def _messages(doc_list: list) -> list[dict]:
+            ctx = "\n\n".join(f"[doc {i + 1}] {d['content']}" for i, d in enumerate(doc_list)) or \
+                "(sin documentos recuperados del expediente)"
+            return [
+                {"role": "system", "content": _system_with_soul(state, ANALYSIS_SYSTEM)},
+                {"role": "user", "content": f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"},
+            ]
+
+        def _shrink() -> list[dict]:
+            # CP1 (Riesgo #33): ante CONTEXT_TOO_LONG se reconstruye el prompt con los
+            # documentos recortados (menos docs + contenido truncado al presupuesto).
+            # (futuro) si el estado trae `knowledge`, recortarlo AQUÍ antes que documents.
+            budget = context_recovery.budget_for("analysis", config.MIA_CONTEXT_WINDOW)
+            return _messages(context_recovery.shrink_documents(docs, budget))
+
+        diagnosis, usage = await self._llm(
+            _messages(docs), task="main", state=state, md=md, shrink=_shrink)
         md.update(stage="analysis", diagnosis=diagnosis)
         _accum_usage(md, usage)
         return {"metadata": md}
@@ -297,10 +333,29 @@ class MatterGraphBuilder:
             user_parts.append(playbook_txt)
         user_parts.append("Redacta el borrador del escrito.")
         md = dict(md_in)
-        draft, usage = await self._llm([
-            {"role": "system", "content": _system_with_soul(state, DRAFT_SYSTEM)},
-            {"role": "user", "content": "\n\n".join(user_parts)},
-        ], task="main", state=state, md=md)
+
+        def _messages(parts: list[str]) -> list[dict]:
+            return [
+                {"role": "system", "content": _system_with_soul(state, DRAFT_SYSTEM)},
+                {"role": "user", "content": "\n\n".join(parts)},
+            ]
+
+        def _shrink() -> list[dict]:
+            # CP1 (Riesgo #33): PRIMERO se descartan los playbooks activos (queda solo el
+            # índice con marcador) y LUEGO se recorta el diagnóstico preservando su FINAL
+            # (la conclusión/recomendación del análisis va al final).
+            budget = context_recovery.budget_for("draft", config.MIA_CONTEXT_WINDOW)
+            pb_small = (pb_index + "\n" + context_recovery.PLAYBOOKS_TRIMMED_MARKER) \
+                if pb_index else ""
+            diag_small = context_recovery.shrink_text(diagnosis, budget, protect_tail=True)
+            parts = [f"Diagnóstico:\n{diag_small}", profile_txt]
+            if pb_small:
+                parts.append(pb_small)
+            parts.append("Redacta el borrador del escrito.")
+            return _messages(parts)
+
+        draft, usage = await self._llm(
+            _messages(user_parts), task="main", state=state, md=md, shrink=_shrink)
         md["stage"] = "draft"
         md["activated_playbooks"] = activated
         _accum_usage(md, usage)
