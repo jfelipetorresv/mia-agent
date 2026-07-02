@@ -40,16 +40,20 @@ const ESTADO_CITA: Record<string, { label: string; className: string }> = {
 function VerificationReport({ v }: { v: Verification }) {
   const [open, setOpen] = useState(false);
   const citas = v.citas ?? 0;
-  const marcadas = v.marcadas ?? 0;
+  // El abogado debe verificar TODA cita con la marca [VERIFICAR] en el borrador
+  // final: las que el redactor ya marcó (marcadas) MÁS las que el verificador
+  // añadió por no tener respaldo (anotadas). Contar solo `marcadas` subreporta el
+  // riesgo que este informe existe para evitar (CP9).
+  const porVerificar = (v.marcadas ?? 0) + (v.anotadas ?? 0);
   const detalle = v.detalle || [];
 
   const resumen =
     citas === 0
       ? "Mia no encontró citas de normas o sentencias en este borrador."
-      : marcadas === 0
+      : porVerificar === 0
         ? `Mia revisó ${citas === 1 ? "1 cita" : `${citas} citas`}; todas quedaron con respaldo.`
         : `Mia revisó ${citas === 1 ? "1 cita" : `${citas} citas`}; ${
-            marcadas === 1 ? "1 quedó marcada" : `${marcadas} quedaron marcadas`
+            porVerificar === 1 ? "1 quedó marcada" : `${porVerificar} quedaron marcadas`
           } para tu verificación.`;
 
   return (

@@ -452,3 +452,17 @@ navegador para errores de Aprobar/Rechazar (patrón pre-existente); el resto de
 la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
 
 **Verificación:** `npm run build` verde (11/11 páginas, sin errores de tipos).
+
+### Corrección post-Cursor (Claude Code · verificación de la entrega integrada)
+
+- **Exactitud del resumen del verificador (corregido):** la línea sobria contaba
+  solo `marcadas` para decir cuántas citas verificar, pero el abogado debe
+  verificar TODA cita con la marca [VERIFICAR] en el texto final = `marcadas`
+  (las que ya venían marcadas del redactor) **+ `anotadas`** (las que el
+  verificador añadió por no tener respaldo). Con el conteo anterior, un caso real
+  (5 citas: 3 marcadas + 2 anotadas + 0 respaldadas) mostraba "3 quedaron
+  marcadas" cuando en el borrador hay 5 con marca; y peor, un caso de 0 marcadas
+  + 2 anotadas decía "todas quedaron con respaldo" (falso — 2 sin respaldo). Eso
+  subrepresentaba justo el riesgo que CP9 existe para evitar. Corregido en
+  `revisar/page.tsx` (`porVerificar = marcadas + anotadas`). Build verde,
+  regresión 43/43 tras el cambio.
