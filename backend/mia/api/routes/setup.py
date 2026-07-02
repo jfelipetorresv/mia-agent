@@ -39,6 +39,138 @@ logger = logging.getLogger("mia.api.setup")
 # Los pasos del recorrido, en orden. El id es estable (lo usa la UI y el skip).
 STEP_IDS = ("perfil", "motor", "obsidian", "carpetas", "guias", "telegram")
 
+# ── CP-C4b · La guía explicativa de cada paso (encargo de Pipe 2026-07-02) ────
+# El recorrido no solo DETECTA: EXPLICA como un onboarding — qué es cada
+# herramienta, para qué le sirve al despacho y cómo se implementa paso a paso,
+# en lenguaje de negocio (§G). FUENTE ÚNICA: la consume la página /configurar y
+# también el asistente por chat (assistant/core._setup_block).
+STEP_GUIDES: dict[str, dict] = {
+    "perfil": {
+        "que_es": (
+            "Una entrevista corta donde Mia aprende quién eres: tu despacho, tu "
+            "jurisdicción, tus áreas de práctica, tu forma de escribir y las "
+            "reglas de la casa."),
+        "para_que": (
+            "Todo lo que Mia analice y redacte saldrá con la voz de TU despacho, "
+            "no con una voz genérica. Es la diferencia entre un asistente "
+            "cualquiera y uno que trabaja como los tuyos."),
+        "como": [
+            "Pulsa «Ir al paso» (si es tu primera vez, Mia te lleva sola al entrar).",
+            "Responde las preguntas de corrido; cada una trae un ejemplo. Ten a mano los datos: si cierras la pestaña antes de terminar, se empiezan de nuevo.",
+            "Al final Mia te muestra lo que entendió de tu despacho para que lo revises y edites antes de guardarlo.",
+            "Después puedes volver a ajustar tu perfil en la pantalla Conocimiento, pestaña «Mi despacho».",
+        ],
+    },
+    "motor": {
+        "que_es": (
+            "El «cerebro» con el que Mia razona. Hay tres opciones: usar tu "
+            "suscripción existente (recomendado), un servicio en la nube que se "
+            "paga por uso, o un motor que corre completo en tu equipo."),
+        "para_que": (
+            "Define calidad, costo y privacidad para tu despacho: con tu "
+            "suscripción aprovechas lo que ya pagas; con «todo en mi equipo» "
+            "ningún dato del despacho sale de tu computador (a cambio es más "
+            "lento y menos preciso)."),
+        "como": [
+            "Abre el Panel de control con «Ir al paso».",
+            "Busca la sección «Motor de IA» y elige la opción que prefieras.",
+            "Con solo elegirla queda aplicada al instante; puedes cambiarla cuando quieras.",
+            "Si no detecto ningún motor en tu equipo, la opción de nube funciona sin instalar nada.",
+        ],
+    },
+    "obsidian": {
+        "que_es": (
+            "Obsidian es una aplicación gratuita de notas. Mia la usa como su "
+            "«cuaderno visible»: lo que aprende de tu despacho queda escrito ahí "
+            "como notas normales que puedes abrir, leer y editar."),
+        "para_que": (
+            "Transparencia total: ves lo que Mia sabe y aprende (conceptos, "
+            "reportes semanales) como si fueran notas tuyas. Mia escribe SOLO en "
+            "su propia carpeta y jamás toca tus notas."),
+        "como": [
+            "Si aún no tienes Obsidian, su instalación es gratuita desde el sitio obsidian.md (o pídeme que lo instale por ti por Telegram, con tu confirmación).",
+            "Abre el Panel de control con «Ir al paso» y ubica la tarjeta «Obsidian».",
+            "Escribe ahí la ruta de tu espacio de notas de Obsidian y pulsa «Sincronizar».",
+            "Desde ese momento, las notas de Mia aparecerán bajo la carpeta «Mia/» dentro de tu espacio.",
+        ],
+    },
+    "carpetas": {
+        "que_es": (
+            "El permiso explícito que le das a Mia para leer las carpetas donde "
+            "guardas tu trabajo — en el disco, OneDrive o Google Drive."),
+        "para_que": (
+            "Mia conoce los modelos, plantillas y documentos de referencia del "
+            "despacho para trabajar con TU material. Solo lee lo que autorices; "
+            "nunca entra a carpetas del sistema ni a nada fuera de tu lista."),
+        "como": [
+            "Ten a la mano la ruta de la carpeta donde guardas tu trabajo (por ejemplo, tu carpeta de OneDrive o de Google Drive en el equipo).",
+            "Registra la carpeta desde el Panel de control (la administración de carpetas se está incorporando a esa pantalla).",
+            "Mia lee y organiza su contenido para tenerlo presente al trabajar, solo de las carpetas que autorices.",
+            "Puedes quitar una carpeta cuando quieras y Mia deja de verla al instante.",
+        ],
+    },
+    "guias": {
+        "que_es": (
+            "Tus manuales, instructivos y formatos de trabajo: cómo contesta "
+            "demandas tu despacho, qué revisa antes de radicar, qué cláusulas usa."),
+        "para_que": (
+            "Mia sigue TU método, no uno inventado: al redactar aplica los "
+            "procedimientos del despacho y te dice cuáles usó. Además aprende de "
+            "tus correcciones y te propone mejoras que tú apruebas o rechazas."),
+        "como": [
+            "Abre la pantalla Conocimiento con «Ir al paso».",
+            "Usa «Importar guías» y sube tus documentos (.md, .txt o Word).",
+            "Mia los divide en procedimientos y te muestra el detalle de lo que importó y lo que omitió.",
+            "Revisa la lista de procedimientos: cada uno queda disponible para que Mia lo use al redactar.",
+        ],
+    },
+    "telegram": {
+        "que_es": (
+            "Un canal privado para hablar con Mia desde el celular, con un bot "
+            "que es TUYO — nadie más puede escribirle ni leerlo."),
+        "para_que": (
+            "Recordatorios a la hora pactada, aviso cuando un borrador queda "
+            "esperando tu revisión y el reporte semanal del despacho — sin abrir "
+            "el computador."),
+        "como": [
+            "En Telegram, busca @BotFather y envíale /newbot.",
+            "Ponle nombre a tu bot y copia la clave que te entrega.",
+            "Entrégale esa clave a tu administrador: con la guía de instalación la deja lista en un minuto.",
+            "Abre Telegram en tu celular y escríbele a tu bot: quedará enlazado solo contigo.",
+        ],
+    },
+}
+
+# CP-C4b · Qué hace cada sección de Mia — el mapa de la casa, en lenguaje llano.
+MIA_SECTIONS: list[dict] = [
+    {"titulo": "Asuntos",
+     "que_es": "La pantalla principal: un espacio de trabajo por cada caso.",
+     "para_que": ("Aquí subes el expediente, le preguntas a Mia y recibes el "
+                  "diagnóstico y el borrador para tu aprobación.")},
+    {"titulo": "Revisión de borradores",
+     "que_es": "Donde apruebas, corriges o rechazas lo que Mia redacta.",
+     "para_que": ("Nada sale del despacho sin tu visto bueno: revisas el borrador "
+                  "y las citas que Mia marcó para verificar antes de aprobarlo.")},
+    {"titulo": "Conocimiento",
+     "que_es": ("La memoria del despacho: tu perfil, tus guías de trabajo y lo "
+                "que Mia va aprendiendo."),
+     "para_que": ("Aquí importas guías, apruebas las sugerencias de mejora de Mia "
+                  "y ves qué tan bien le va con cada procedimiento.")},
+    {"titulo": "Panel de control",
+     "que_es": ("El tablero general: motor de IA, conexiones (Obsidian, carpetas, "
+                "Telegram), recordatorios, actividad y costo del mes."),
+     "para_que": "Es donde se hacen casi todos los pasos de esta configuración."},
+    {"titulo": "Configura a Mia",
+     "que_es": "Este recorrido.",
+     "para_que": ("Detecta qué está listo y qué falta, te explica cada pieza y te "
+                  "lleva al lugar exacto donde se hace. Todo es opcional y "
+                  "retomable.")},
+    {"titulo": "Mia en tu celular (Telegram)",
+     "que_es": "Ayuda en lenguaje normal desde el celular, una vez lo actives.",
+     "para_que": ("Ejemplos: «recuérdame radicar mañana a las 9» o «¿cómo va mi "
+                  "configuración?» — Mia responde por Telegram.")},
+]
+
 # Caché de detecciones que tocan disco/subprocesos (revisor CP-C4, M2/M3):
 # `winget list` puede tardar hasta 60s cuando Obsidian NO está instalado —
 # exactamente el escenario del wizard — y sondear unidades de red caídas
@@ -156,7 +288,11 @@ async def collect_setup_status(tid: str) -> dict:
              enlace: str | None = None) -> dict:
         estado = "listo" if listo else ("omitido" if sid in skipped else "pendiente")
         return {"id": sid, "titulo": titulo, "estado": estado, "detalle": detalle,
-                "accion": accion, "enlace": enlace}
+                "accion": accion, "enlace": enlace,
+                # CP-C4b: la guía explicativa viaja con el paso (qué es, para qué
+                # sirve al despacho y cómo se implementa) — la pinta la página y
+                # la usa el asistente por chat.
+                "guia": STEP_GUIDES.get(sid)}
 
     steps = [
         step("perfil", "Tu perfil y la voz del despacho",
@@ -207,6 +343,7 @@ async def collect_setup_status(tid: str) -> dict:
     siguiente = next((s for s in steps if s["estado"] == "pendiente"), None)
     return {
         "pasos": steps,
+        "secciones": MIA_SECTIONS,  # CP-C4b: el mapa de las secciones de Mia
         "completados": hechos,
         "total": len(steps),
         "siguiente": siguiente["id"] if siguiente else None,

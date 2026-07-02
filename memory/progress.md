@@ -1459,3 +1459,32 @@ post-merge verdes (rls 12/12, prompt_builder 46/46, e2e 31/31, retrieval 35/35, 
 CP-C4b (wizard explicativo, encargo previo), frontend de CP9 (botÃ³n Word + informe de
 verificaciÃ³n, ya en HANDOFF.md para Cursor), y el push de main.
 
+
+---
+
+## 2026-07-02 â€” SesiÃ³n 24 (cont.) Â· CP9 mergeado + CP-C4b wizard explicativo
+
+**CP9:** Pipe aprobÃ³ â†’ merge a `main` (424a666), gates post-merge verdes, `git push origin main`
+autorizado y ejecutado. Frontend de CP9 (botÃ³n Word + informe de verificaciÃ³n) queda como trabajo
+de Cursor en HANDOFF.md.
+
+**CP-C4b (encargo de Pipe):** el wizard "Configura a Mia" ahora EXPLICA como onboarding.
+Rama `feat/cp-c4b-wizard-onboarding`.
+- `api/routes/setup.py`: `STEP_GUIDES` (quÃ© es / para quÃ© sirve al despacho / cÃ³mo paso a paso, por
+  paso) + `MIA_SECTIONS` (mapa de secciones de Mia). El status ahora incluye `pasos[].guia` y
+  `secciones` (aditivo, no rompe consumidores).
+- `assistant/core.py`: `_setup_block` inyecta la guÃ­a completa del siguiente paso pendiente (el
+  asistente acompaÃ±a, no solo enumera). `_sanitize_title` acepta `max_chars`.
+- `frontend/app/configurar/page.tsx`: botÃ³n "Â¿QuÃ© es esto?" por paso, mapa de secciones, a11y
+  (role=progressbar + aria, aria-expanded, estado sr-only).
+- Capa 2: APROBADO CON CORRECCIONES â€” CORREGIDAS: L1 (guÃ­a cortada a 150 chars en el chat â†’ check
+  a4); U1/U2/U4/U5/U8 (las guÃ­as describÃ­an pantallas/chat web inexistentes â†’ reescritas a la
+  realidad de HOY, sin referencias circulares); U3 (promesa de Word/verificaciÃ³n suavizada). La UI
+  faltante (secciÃ³n Carpetas, botÃ³n Instalar Obsidian, botones de CP9) quedÃ³ DOCUMENTADA en
+  HANDOFF.md para Cursor en vez de fingir que existe.
+- Gates: `test_setup_wizard` 30/30 Â· regresiÃ³n 43/43 (test_rls HALT verde) Â· `npm run build` verde.
+
+**PENDIENTE de Pipe:** decidir merge de CP-C4b; construir con Cursor la UI faltante (carpetas,
+instalar Obsidian, Word + verificaciÃ³n de CP9); crear su bot de Telegram; subir sus primeras guÃ­as;
+recorrido vivo cronometrado de "Configura a Mia".
+

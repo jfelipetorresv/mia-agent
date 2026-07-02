@@ -159,4 +159,4 @@ Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor indep
 ## Encargo directo de Pipe (2026-07-02, próxima sesión — PRIORIDAD)
 | Tarea | Estado | Qué pidió |
 |----|--------|--------|
-| CP-C4b | ⬜ | El wizard "Configura a Mia" debe EXPLICAR TODO como un onboarding: para cada paso, qué es esa herramienta/sección, para qué le sirve al despacho, cómo se instala/implementa paso a paso (no solo detectar y enlazar). Hoy el checklist da una línea por paso; Pipe quiere acompañamiento completo estilo entrevista de onboarding. Incluir: qué hace cada sección de Mia, cómo instalar cada cosa, con lenguaje de negocio. |
+| CP-C4b | 🟡 | Wizard "Configura a Mia" explicativo estilo onboarding: cada paso trae `guia` (qué es / para qué al despacho / cómo paso a paso) + mapa `secciones` de Mia; el asistente acompaña por chat. Rama `feat/cp-c4b-wizard-onboarding`. Capa 2 APROBADO CON CORRECCIONES (L1 guía truncada; U1/U2/U4 guías describían UI inexistente → reescritas a la realidad de hoy; UI faltante documentada para Cursor). Gate `test_setup_wizard` 30/30 · regresión 43/43. **PENDIENTE merge de Pipe** |
