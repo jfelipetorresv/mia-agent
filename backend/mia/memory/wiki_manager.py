@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 from datetime import date, datetime, timedelta, timezone
@@ -12,6 +13,8 @@ from typing import Any
 from .. import config
 from ..agent import llm
 from .trace_capture import TraceCapture
+
+logger = logging.getLogger("mia.memory.wiki_manager")
 
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -169,7 +172,32 @@ class WikiManager:
             f"{body.strip()}\n"
         )
         path.write_text(content, encoding="utf-8")
+        # CP-C2 (decisión #32): espejo en el vault de Obsidian del despacho, si lo tiene.
+        await self._mirror_concept_to_vault(tenant_id, concept_name, content)
         return content
+
+    async def _mirror_concept_to_vault(self, tenant_id: str, concept_name: str, content: str) -> None:
+        """Copia el concepto al vault de Obsidian del despacho, bajo Mia/conceptos/
+        (CP-C2 · decisión #32). La wiki interna es la fuente de verdad: si el vault no
+        está configurado o falla, aquí solo queda registro en el log y NADA se pierde."""
+        try:
+            from ..connectors import vault_writer as vw
+
+            writer = await vw.tenant_vault_writer(tenant_id)
+            if writer is None:
+                return
+            meta, body = _parse_frontmatter(content)
+            # Revisión CP-C2: la escritura al vault es E/S síncrona de disco (y puede
+            # ser LENTA con vaults en OneDrive) → a un hilo, sin congelar el event loop.
+            await asyncio.to_thread(
+                writer.export_concept, tenant_id, concept_name, body, metadata=meta)
+        except Exception:  # noqa: BLE001 — el espejo nunca tumba la wiki interna
+            logger.warning(
+                "No se pudo copiar el concepto '%s' al vault de Obsidian; "
+                "la wiki interna sí quedó guardada.",
+                concept_name,
+                exc_info=True,
+            )
 
     async def extract_concepts(self, tenant_id: str, matter_text: str) -> list[str]:
         await self.init_wiki(tenant_id)

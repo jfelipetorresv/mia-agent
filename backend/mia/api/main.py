@@ -75,6 +75,8 @@ app.include_router(traces.router)
 app.include_router(assistant.router, prefix="/api")
 # CARPETAS DE TRABAJO (CP-C1, Pilar C): allowlist de carpetas locales/nubes → /api/folders/*.
 app.include_router(folders.router, prefix="/api")
+# OBSIDIAN (CP-C2, Pilar C · decisión #32): estado/instalación/bootstrap → /api/obsidian/*.
+app.include_router(folders.obsidian_router, prefix="/api")
 
 
 @app.get("/health")

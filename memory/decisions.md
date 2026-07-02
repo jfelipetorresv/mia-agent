@@ -435,3 +435,128 @@ de inmediato sus chunks y hashes: el contenido deja de estar en el conocimiento 
 sin esperar al siguiente sync (re-registrarla la re-indexa completa).
 
 **Refuerzos post-revisión (2026-07-01, misma fecha).** Tras revisión independiente se endurecieron tres puntos: (1) PRIVACIDAD — los directorios de sistema (_FORBIDDEN_PARTS: Windows, AppData, ProgramData, ...) se excluyen también durante el descenso recursivo del scan, no solo al validar la raíz (registrar C:\Users\<usuario> ya no puede arrastrar AppData a embeddings); (2) SIN PÉRDIDA DE CONOCIMIENTO — el límite de 2000 pasó a ser una ventana SOLO sobre archivos nuevos/cambiados (pasada previa barata de hashes); los diferidos quedan sin hash y se retoman en la corrida siguiente, y si la enumeración se trunca (tope duro MAX_SCAN_FILES=50000) NO se poda nada (ni chunks ni hashes) en esa corrida; (3) UNIQUE (tenant_id, path, kind) en local_folder_sources a nivel de DB, con register_source atómico vía ON CONFLICT. Gate ampliado a 39/39 checks (test_local_folders.py) y test_obsidian_sync.py 22/22 sin regresión.
+
+## #31 — 2026-07-01 · El conocimiento del despacho entra al análisis (CP3 · cierre del Riesgo #16)
+
+**Decisión.** Mia usa el conocimiento del despacho (`knowledge_chunks`: notas de Obsidian
++ carpetas de trabajo, decisiones #17/#30) al DIAGNOSTICAR. `intake_node` lo recupera con
+`retrieve_knowledge_rrf` — el MISMO patrón RRF híbrido (vector HNSW + FTS GIN, k=60) que el
+retriever del expediente, pero sobre `knowledge_chunks` y SIN filtro de asunto, porque es
+conocimiento TRANSVERSAL del despacho; el aislamiento entre despachos lo da RLS fail-closed
+bajo `tenant_connection`, igual que siempre. Top_k = 4 notas.
+
+**Cero costo extra de embeddings.** El vector de la consulta se REUSA: si el asunto tiene
+documentos, el mismo embedding del mensaje sirve para expediente y knowledge; si no los
+tiene, se embebe SOLO cuando el tenant sí tiene conocimiento indexado (`knowledge_exists`,
+un EXISTS barato). Tenant sin knowledge → comportamiento idéntico a antes (cero llamadas
+a Voyage y prompt byte a byte igual).
+
+**Presupuesto 15% y jerarquía de fuentes.** En `analysis_node` las notas entran en una
+sección claramente separada del user prompt — "Conocimiento del despacho (notas y métodos
+internos — orientan el método, NO sustituyen la fuente normativa; mantén la regla
+[VERIFICAR])" — con presupuesto DURO ≤15% de `MIA_CONTEXT_WINDOW` (estimate_tokens; las
+notas que exceden se truncan con shrink_text y las sobrantes se omiten). La regla
+[VERIFICAR] queda intacta: las notas orientan el método, jamás sustituyen la norma o la
+sentencia como fuente.
+
+**Knowledge se recorta PRIMERO.** En el rescate de CONTEXT_TOO_LONG (CP1, Riesgo #33) la
+primera reducción del analysis vacía el knowledge (queda `KNOWLEDGE_TRIMMED_MARKER`) y deja
+los documents INTACTOS si con eso el prompt ya cabe; solo si aun así excede se recortan
+también los documents. Razón: la evidencia del expediente es insustituible; el método del
+despacho es orientación prescindible bajo presión de contexto.
+
+**Compatibilidad.** `MatterState.knowledge: list[dict]` con `total=False` → los checkpoints
+viejos sin el campo siguen siendo válidos (los nodos leen `state.get("knowledge") or []`).
+
+**Gate:** `execution/test_retrieval_knowledge.py` (30/30, DB real + embeddings/LLM
+mockeados): relevancia RRF, aislamiento A/B estilo test_rls (ni en retrieve ni en prompt),
+prompt idéntico sin knowledge (byte a byte, cero embeddings), presupuesto ≤15% con notas
+gigantes, y shrink knowledge-antes-que-documents. Regresión: test_context_recovery 34/34 ·
+test_hitl_flow 19/19 · test_rls 12/12.
+
+**Refuerzos post-revisión (2026-07-01, revisión independiente CP3).** (1) SEGURIDAD DEL
+PROMPT — las notas del despacho entran al analysis DELIMITADAS con fencing explícito
+(`<<<NOTA n · ruta>>> … <<<FIN NOTA n>>>`) y la instrucción de la sección ordena NO
+obedecer instrucciones contenidas dentro de las notas ni tratarlas como órdenes del
+sistema (anti prompt-injection: son texto de terceros insertado en el prompt).
+(2) MARGEN DEL SHRINK — el early-exit "quitar solo knowledge" ya no compara contra el
+100% de la ventana sino contra el 85% (`SHRINK_EARLY_EXIT_FRACTION`): el estimador
+offline subestima el español legal y el modelo necesita espacio para responder; si con
+solo quitar knowledge la estimación queda por encima del 85%, los documents se recortan
+TAMBIÉN en la misma pasada (la compresión es una sola por turno y no puede quemarse en
+una reducción insuficiente). (3) `metadata.knowledge_retrieved` se escribe siempre que
+el tenant tenga conocimiento indexado (aunque el turno recupere 0 notas) y se LIMPIA si
+no lo tiene — sin conteos huérfanos de turnos previos. Gates: test_retrieval_knowledge
+ampliado a 35/35 · test_context_recovery 34/34 · test_hitl_flow 19/19 sin regresión.
+
+## #32 — 2026-07-01 · Vault de Obsidian BIDIRECCIONAL: Mia escribe su memoria visible SOLO bajo Mia/ (CP-C2, Pilar C)
+
+**Decisión.** La memoria de Mia debe vivir donde el abogado la vea: su vault de Obsidian.
+Hasta CP-C1 el vault era SOLO lectura (vault → knowledge_chunks vía obsidian_sync,
+decisión #17). CP-C2 agrega la vía de VUELTA: la wiki interna (conceptos del second
+brain) y los reportes semanales de Dreams se exportan como notas .md normales al vault,
+bajo la subcarpeta `Mia/` (`Mia/conceptos/{slug}.md`, `Mia/reportes/{fecha}-{slug}.md`).
+La WIKI INTERNA (mia-data/wiki) sigue siendo la FUENTE DE VERDAD; el vault es el espejo
+visible — si el vault falla (disco desconectado, ruta inválida, sin permisos), el export
+se registra en el log y la wiki interna NO se pierde ni el flujo se interrumpe.
+
+**Regla anti-colisión dura (el vault es del abogado).** `VaultWriter`
+(`backend/mia/connectors/vault_writer.py`) SOLO escribe bajo `{vault}/Mia/`:
+1. `vault_path` se valida contra OBSIDIAN_VAULT_PATH/OBSIDIAN_VAULT_ALLOWLIST — las
+   mismas raíces permitidas que el sync de lectura (config.obsidian_vault_allowlist).
+2. Cada ruta destino se resuelve (`Path.resolve`) y debe quedar dentro de `Mia/`
+   (`is_relative_to`); cualquier escape lanza error.
+3. Los nombres de nota se sanean a slugs ascii; nombres con `..`, separadores de ruta u
+   ocultos se RECHAZAN (no se "arreglan" en silencio).
+4. Mia nunca modifica notas del abogado (verificado por hash en el gate).
+
+**Privacidad.** El frontmatter de las notas exportadas lleva solo title / fecha /
+`fuente: Mia` y métricas inofensivas (confidence, case_count) — NUNCA el tenant ni
+identificadores internos: el vault ya es del despacho y podría compartirse/sincronizarse.
+
+**Cómo sabe Mia el vault del tenant.** El MISMO mecanismo del sync de lectura:
+`tenant_settings.config->>'obsidian_vault_path'` (leído con `pool.tenant_connection`,
+RLS activo). `register_tenant_vault` usa el mismo upsert que ya usaba
+`/api/ux/connectors/obsidian/sync`. Roundtrip cerrado: la nota que Mia escribe bajo
+`Mia/` la reindexa obsidian_sync en la corrida siguiente → vuelve a knowledge_chunks
+(no hay exclusión: los archivos de Mia no llevan prefijo `_`).
+
+**Bootstrap e instalación guiada (winget).** Si el vault no existe,
+`VaultWriter.bootstrap_vault()` crea la estructura mínima (Mia/conceptos, Mia/reportes,
+Mia/README.md en lenguaje llano explicando qué escribe Mia ahí). La instalación de
+Obsidian es guiada: `connectors/obsidian_install.py` detecta el programa
+(%LOCALAPPDATA% + `winget list`; `is_installed()` nunca lanza aunque winget no exista)
+e instala con `winget install --id Obsidian.Obsidian -e --silent
+--accept-package-agreements --accept-source-agreements` — subprocess con LISTA de
+argumentos (sin shell), timeout 600 s, respuesta `(ok, mensaje llano)`.
+
+**Piezas.** `connectors/vault_writer.py` (VaultWriter + tenant_vault_writer/register),
+`connectors/obsidian_install.py`, integración quirúrgica en
+`memory/wiki_manager.compile_concept` (espejo tras persistir, try/except con log) y
+`memory/dreams._weekly_report` (ídem), router `/api/obsidian/*` en
+`api/routes/folders.py` (status / install / bootstrap; montado en api/main.py), y gate
+`execution/test_vault_write.py`.
+
+**Verificación (gates verdes 2026-07-01).** test_vault_write 29/29 (escritura solo bajo
+Mia/, frontmatter sin tenant, escapes rechazados, roundtrip a knowledge_chunks con
+embeddings mockeados, nota del abogado intacta por hash, bootstrap + README, vault caído
+sin pérdida de la wiki interna, is_installed/install sin winget no lanzan) ·
+test_wiki_manager 18/18 · test_dreams 16/16 · test_obsidian_sync 22/22 sin regresión.
+
+**Refuerzos post-revisión (2026-07-01, revisión independiente CP-C2).** (1) ANTI-JUNCTION
+— si `{vault}/Mia` es un symlink o un junction de Windows (reparse point; el revisor lo
+reprodujo con `mklink /J` hacia fuera de la allowlist), TODA escritura se rechaza
+fail-closed con log: `_mia_root()` compara la ruta REAL (`os.path.realpath`, que sí
+resuelve junctions) contra la esperada bajo el vault, además de `Path.is_symlink()`.
+(2) Los stems reservados de Windows (CON, PRN, AUX, NUL, COM1-9, LPT1-9,
+case-insensitive) se renombran con sufijo (`con` → `con-nota`) en `_slugify`. (3) Los
+espejos al vault (`export_concept` desde wiki_manager y `export_report` desde dreams)
+corren vía `asyncio.to_thread` — la E/S síncrona ya no congela el event loop con vaults
+lentos (OneDrive). (4) `POST /api/obsidian/install` exige confirmación explícita
+(`{"confirmar": true}`; sin ella responde 400 con mensaje llano) y su docstring documenta
+que en despliegue compartido (Modo A) el endpoint debe DESHABILITARSE (Riesgo #10/#15 de
+sandbox). (5) El error de vault sin configurar llega al abogado en lenguaje llano
+("Falta configurar la ubicación del archivo de notas. Pídele a tu administrador que la
+configure."); el detalle técnico queda solo en el log (`VaultConfigError`). Gates:
+test_vault_write ampliado a 34/34 (junction REAL con mklink /J + stems reservados) ·
+test_wiki_manager 18/18 · test_dreams 16/16 · test_obsidian_sync 22/22 sin regresión.

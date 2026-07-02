@@ -4,9 +4,12 @@
 conocimiento del despacho que NO es un expediente (≠ documents/chunks, que son por-asunto).
 `LocalFolderSync` indexa las carpetas de trabajo registradas (allowlist) del abogado —
 disco local, OneDrive y Google Drive espejo — a la misma tabla (CP-C1, decisión #30).
+`VaultWriter` es la vía de VUELTA (CP-C2, decisión #32): escribe la memoria de Mia
+(conceptos y reportes) como notas .md en el vault, SOLO bajo `{vault}/Mia/`.
 """
 from .local_folders import LocalFolderSync, detect_cloud_folders
 from .obsidian_sync import ObsidianSync
+from .vault_writer import VaultWriter
 from .pinecone_connector import (
     NoopPineconeConnector,
     PineconeConnector,
@@ -18,6 +21,7 @@ __all__ = [
     "LocalFolderSync",
     "detect_cloud_folders",
     "ObsidianSync",
+    "VaultWriter",
     "PineconeConnectorBase",
     "PineconeConnector",
     "NoopPineconeConnector",

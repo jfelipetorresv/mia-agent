@@ -1,6 +1,8 @@
 """Dreams: consolidación semanal profunda del second brain por tenant."""
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -15,6 +17,8 @@ from ..onboarding.soul_interview import soul_path
 from .gepa import GEPALoop
 from .trace_capture import TraceCapture
 from .wiki_manager import WikiManager
+
+logger = logging.getLogger("mia.memory.dreams")
 
 
 def _parse_ts(value: str | None) -> datetime:
@@ -189,7 +193,30 @@ class Dreams:
                 "VALUES (%s::uuid, 'weekly_report', %s, %s, %s)",
                 (tenant_id, report, "Resumen semanal generado por Dreams.", max(1, metrics["matters_worked"])),
             )
+        # CP-C2 (decisión #32): espejo del reporte en el vault de Obsidian del despacho.
+        await self._mirror_report_to_vault(tenant_id, report)
         return report
+
+    async def _mirror_report_to_vault(self, tenant_id: str, report: str) -> None:
+        """Copia el reporte semanal al vault de Obsidian del despacho (Mia/reportes/,
+        CP-C2 · decisión #32). El reporte interno ya quedó guardado: si el vault falla,
+        solo se registra en el log y el flujo continúa."""
+        try:
+            from ..connectors import vault_writer as vw
+
+            writer = await vw.tenant_vault_writer(tenant_id)
+            if writer is None:
+                return
+            # Revisión CP-C2: la escritura al vault es E/S síncrona de disco (y puede
+            # ser LENTA con vaults en OneDrive) → a un hilo, sin congelar el event loop.
+            await asyncio.to_thread(
+                writer.export_report, tenant_id, "Resumen semanal de Mia", report)
+        except Exception:  # noqa: BLE001 — el espejo nunca tumba el reporte interno
+            logger.warning(
+                "No se pudo copiar el reporte semanal al vault de Obsidian; "
+                "el reporte interno sí quedó guardado.",
+                exc_info=True,
+            )
 
     async def run(self, tenant_id: str) -> dict:
         traces = self._week_traces(tenant_id)
