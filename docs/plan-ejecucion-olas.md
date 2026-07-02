@@ -141,7 +141,12 @@ Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref
 > `onnxruntime-directml` para GPU Windows). El código Rust de Lexter es la REFERENCIA de qué modelos,
 > sample rate y preproceso usar (los que ya funcionan), no código a copiar literal. El post-proceso
 > "clean_dictation" con Ollama local de Lexter encaja con el gateway de Mia (que ya habla Ollama).
-> Análisis detallado del repo → `docs/analisis-lexter.md` (pendiente en este cierre).
+> **DISEÑO TÉCNICO COMPLETO en `docs/analisis-lexter.md`** (arquitectura, modelo exacto, parámetros
+> 16kHz/umbral 0.3/tramas 30ms, prompts de limpieza, portabilidad a Python, 5 pasos). **Decisión de
+> alto impacto al llegar a CP-Z1:** qué modelo fijar — Whisper large-v3 (mejor control de español
+> jurídico: forzar `es` + glosario del despacho + no-traducir) vs. Parakeet v3 (el default de Lexter,
+> más rápido en CPU pero sin forzar idioma/vocabulario). Confirmar con Pipe con qué modelo probó
+> ("va bien") antes de fijarlo.
 
 ### CP-Z1 · Voz-a-texto local (base: Lexter/Handy)
 - **Qué:** dictado local para el abogado. Dos caminos según respuesta de Pipe:
