@@ -278,6 +278,111 @@ async def create_playbook(request: Request, body: PlaybookBody):
     return {"id": str(pid), "title": body.title}
 
 
+# ── Pantalla 4 · import de guías de trabajo (Riesgo #20: seeding de playbooks) ──
+_PLAYBOOK_IMPORT_EXTS = (".md", ".txt", ".docx")
+# Tope de guías por archivo importado (revisión CP4): protege costo de embeddings,
+# número de inserts y el tamaño del índice que viaja al prompt.
+MAX_IMPORT_SECTIONS = 100
+# Marcadores de la línea "cuándo aplica" al inicio del cuerpo de una sección.
+_APPLIES_PREFIXES = ("cuándo:", "cuando:", "aplica:")
+
+
+def _split_level1_sections(text: str) -> list[tuple[str, list[str]]]:
+    """Divide el texto por encabezados de nivel 1 ('# Título'). Devuelve
+    [(título, líneas_del_cuerpo)]. Sin encabezados de nivel 1 → lista vacía
+    (el llamador aplica el fallback de archivo-sin-encabezados)."""
+    sections: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        if line.startswith("# ") and line[2:].strip():
+            # títulos al límite de la columna (varchar 200) para no romper el batch
+            sections.append((line[2:].strip()[:200], []))
+        elif sections:
+            sections[-1][1].append(line)
+    return sections
+
+
+def _section_to_playbook(title: str, body_lines: list[str]) -> Playbook:
+    """Convierte una sección (título + cuerpo) en un Playbook. Si la primera línea
+    del cuerpo empieza con 'Cuándo:'/'Cuando:'/'Aplica:', esa línea es applies_when
+    y el resto es content; si no, applies_when se deriva del título y todo es content."""
+    body = "\n".join(body_lines).strip()
+    first, _, rest = body.partition("\n")
+    if first.strip().lower().startswith(_APPLIES_PREFIXES):
+        # cap a 200 (revisión CP4): applies_when entra al índice que va SIEMPRE al prompt
+        applies_when = first.split(":", 1)[1].strip()[:200]
+        content = rest.strip()
+    else:
+        applies_when = f"asuntos relacionados con: {title}"
+        content = body
+    summary = (content.splitlines() or [title])[0].strip()[:200] or title
+    return Playbook(id="", title=title, summary=summary,
+                    applies_when=applies_when, content=content)
+
+
+@router.post("/playbooks/import")
+async def import_playbooks(request: Request,
+                           files: list[UploadFile] = File(...),
+                           protected: bool = Query(False)):
+    """Importa las guías de trabajo del despacho desde archivos .md, .txt o Word .docx
+    (varios a la vez). Cada encabezado de nivel 1 ('# Título') es una guía; un archivo
+    sin encabezados se importa como UNA guía con el nombre del archivo como título.
+    Títulos repetidos se omiten (no pisan lo ya guardado). `protected=true` marca las
+    guías como protegidas frente al mantenimiento automático (H.6). Cierra la brecha
+    de seeding del Riesgo #20."""
+    tid = _tenant(request)
+    mgr = PlaybookManager(pool=pool, tenant_id=tid)
+    importados: list[str] = []
+    omitidos: list[str] = []
+    errores: list[str] = []
+    seen: set[str] = set()
+    for f in files:
+        fname = f.filename or "archivo"
+        if not fname.lower().endswith(_PLAYBOOK_IMPORT_EXTS):
+            errores.append(f"{fname}: tipo de archivo no soportado. Usa .md, .txt o Word .docx.")
+            continue
+        data = await f.read()
+        if len(data) > MAX_UPLOAD_BYTES:
+            errores.append(f"{fname}: el archivo supera el límite de 50 MB.")
+            continue
+        try:
+            text = extract_text(fname, data)
+        except ValueError as e:
+            errores.append(f"{fname}: {e}")
+            continue
+        except Exception:
+            errores.append(f"{fname}: no se pudo leer el archivo. Verifica que no esté dañado.")
+            continue
+        if not text.strip():
+            errores.append(f"{fname}: el archivo está vacío o no tiene texto.")
+            continue
+        sections = _split_level1_sections(text)
+        if not sections:
+            # Sin encabezados '#' (p. ej. un Word plano o un .txt): todo el archivo es UNA guía.
+            sections = [(Path(fname).stem[:200], text.splitlines())]
+        if len(sections) > MAX_IMPORT_SECTIONS:
+            # tope (revisión CP4): cada guía cuesta un insert + una llamada de embeddings,
+            # y el índice de guías viaja al prompt en cada consulta del despacho.
+            errores.append(f"{fname}: tiene {len(sections)} guías; el máximo por archivo es "
+                           f"{MAX_IMPORT_SECTIONS}. Divide el archivo e importa por partes.")
+            continue
+        for title, body_lines in sections:
+            if title in seen or await mgr.get_playbook(title) is not None:
+                omitidos.append(title)
+                continue
+            try:
+                await mgr.register_playbook(_section_to_playbook(title, body_lines),
+                                            protected=protected)
+            except Exception:
+                # (revisión CP4) un fallo puntual (p. ej. embeddings caído) no aborta el
+                # batch ni deja la respuesta inconsistente: las demás guías siguen.
+                logger.exception("import de playbook falló (tenant=%s, título=%s)", tid, title)
+                errores.append(f"{title}: no se pudo guardar esta guía. Intenta de nuevo más tarde.")
+                continue
+            seen.add(title)
+            importados.append(title)
+    return {"importados": importados, "omitidos": omitidos, "errores": errores}
+
+
 # ── Pantalla 4 · sugerencias de Mia (feedback_proposals) ─────────────────────
 @router.get("/proposals")
 async def list_proposals(request: Request):
@@ -512,13 +617,17 @@ async def onboarding_complete(request: Request, body: OnboardingComplete):
         content = await asyncio.wait_for(
             interview.run_interview(tid, body.responses), timeout=_SOUL_TIMEOUT_S
         )
-        return {"soul_content": content, "path": f"soul_{tid}.md", "generated_by": "llm"}
+        # puede_importar_guias: el frontend puede ofrecer el paso opcional de importar
+        # las guías de trabajo del despacho (POST /api/playbooks/import — Riesgo #20).
+        return {"soul_content": content, "path": f"soul_{tid}.md", "generated_by": "llm",
+                "puede_importar_guias": True}
     except asyncio.TimeoutError:
         logger.warning("SOUL: timeout (%ss) tenant=%s — fallback sin LLM", _SOUL_TIMEOUT_S, tid)
     except Exception as exc:  # noqa: BLE001 — cualquier fallo del gateway cae al fallback
         logger.warning("SOUL: fallo del LLM tenant=%s (%s) — fallback sin LLM", tid, exc)
     content = interview.save_fallback(tid, body.responses)
-    return {"soul_content": content, "path": f"soul_{tid}.md", "generated_by": "fallback"}
+    return {"soul_content": content, "path": f"soul_{tid}.md", "generated_by": "fallback",
+            "puede_importar_guias": True}
 
 
 @router.get("/onboarding/status")

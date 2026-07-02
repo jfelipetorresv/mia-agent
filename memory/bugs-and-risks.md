@@ -352,6 +352,8 @@ activarlo; registrar la consolidación para auditoría (ya queda el linaje en `m
 Considerar un umbral más alto y/o tope de consolidaciones por corrida.
 
 ## 🟡 Riesgo #20 — La tabla `playbooks` no tiene seeding/onboarding  [detectado 2026-06-14, Sesión 12]
+**Actualización 2026-07-01 (CP4):** mecanismo de import listo (POST /playbooks/import + gate); falta solo que el despacho cargue sus guías reales — el cierre definitivo llega con la primera traza viva con activated_playbooks no vacío.
+
 Se creó la tabla `playbooks` y el PlaybookManager DB-backed (decisión #18), pero NINGÚN flujo la
 llena todavía: el manager in-memory (`pool=None`) sigue siendo el default y no hay onboarding que
 registre los playbooks de un despacho en DB. El Curator corre sobre una tabla que, en producción,
@@ -542,7 +544,15 @@ pins intactos. Tras separarlos, re-pinear FastAPI/uvicorn/sse-starlette/starlett
 en `backend/pyproject.toml` a las versiones probadas y verificar el arranque de uvicorn + un turno
 SSE completo. Mientras compartan venv, NO reinstalar `litellm[proxy]` con la API productiva viva.
 
-## 🔴 Riesgo #33 — CONTEXT_TOO_LONG en el grafo: la recuperación por compresión es un no-op  [detectado 2026-06-30, H.5] ⚖️
+## 🟢 Riesgo #33 — CONTEXT_TOO_LONG en el grafo: la recuperación por compresión es un no-op  [detectado 2026-06-30, H.5] [CERRADO 2026-07-01, CP1] ⚖️
+**Resolución (2026-07-01, checkpoint CP1):** nuevo `backend/mia/agents/context_recovery.py` con
+helpers puros (`shrink_documents` / `shrink_text` / `budget_for`) que recortan el MATERIAL del
+prompt por nodo; `graph.py::_llm` acepta un `shrink` opcional que ante CONTEXT_TOO_LONG rearma el
+prompt reducido (analysis: menos documentos + contenido truncado; draft: playbooks → solo índice y
+diagnóstico recortado preservando la conclusión), manteniendo el contrato una-sola-compresión-por-
+turno (TurnLLMState). Los nodos sin `shrink` (finalize/EDIT) conservan el camino del
+ContextCompressor. Gate nuevo `execution/test_context_recovery.py` (offline) + regresión
+`test_llm_fallback.py` y `test_hitl_flow.py` verdes. Detalle original ↓
 El rescate de contexto que añadió H.5 en `agents/graph.py::_llm` NO funciona para los prompts que
 realmente pueden desbordarse. Cuando una llamada falla con `CONTEXT_TOO_LONG`, `_llm` invoca
 `ContextCompressor.compress(messages, …)` y reintenta; pero los nodos `analysis_node` y `draft_node`

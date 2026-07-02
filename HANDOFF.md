@@ -11,66 +11,65 @@ quede trazabilidad de ambas revisiones.
 
 ---
 
-## Checkpoint actual: CP2 — Motor de modelos por suscripción (2026-07-01)
+## Checkpoint actual: CP1 + CP4 — Expedientes grandes e importación de guías (2026-07-01)
 
 ### Qué cambió (lenguaje simple)
 
-- Mia ahora puede pensar usando la suscripción de Claude del abogado,
-  sin costo por consumo: cada respuesta se carga a la suscripción que
-  el despacho ya paga, no a una cuenta de API por token.
-- Cada despacho elige su modo de trabajo entre tres opciones:
-  "Mi suscripción" (recomendado), "Nube" o "Todo en mi equipo".
-- El respaldo local quedó restaurado con un modelo pequeño: si la
-  suscripción y la nube fallan, Mia sigue respondiendo desde el propio
-  equipo del abogado.
-- Tras la revisión independiente se blindó la conexión con la
-  suscripción: Mia ya no comparte sus claves ni secretos con el
-  programa externo, y solo ejecuta el programa auténtico (nunca un
-  sustituto que pudiera manipularse).
+- CP1: un expediente muy grande ya no le devuelve un error al abogado —
+  Mia recorta con criterio el material menos esencial (documentos
+  extensos, guías) conservando siempre la conclusión del diagnóstico, y
+  reintenta sola. Si el recorte no ayudaría, no desperdicia el intento.
+- CP4: nuevo mecanismo para importar las guías de trabajo del despacho
+  (archivos Word, texto o Markdown, varios a la vez): cada título de
+  nivel 1 se vuelve una guía que Mia activará al redactar. Las guías
+  pueden marcarse como protegidas para que el mantenimiento automático
+  nunca las modifique.
 
 ### Frontend a revisar
 
-- Ninguno aún — el selector visual del modo de modelo llega en CP7.
+- Ninguno aún — el botón "Importar guías" llega en CP7. El endpoint ya
+  está listo: POST /api/playbooks/import (multipart, .md/.txt/.docx).
 
 ### Comportamiento esperado
 
-- Con "Mi suscripción" activo, Mia responde igual que siempre pero el
-  consumo va contra la suscripción de Claude del abogado. Si la
-  suscripción no está disponible, Mia pasa sola a la nube y luego al
-  respaldo local, sin que el abogado note el cambio ni pierda el turno.
+- Con documentos enormes en un asunto, la consulta tarda lo mismo o un
+  poco más, pero SIEMPRE llega a un diagnóstico y borrador (nunca un
+  error de "contexto demasiado largo").
+- Al importar un archivo de guías, la respuesta lista qué se importó,
+  qué se omitió por repetido y qué falló — en lenguaje claro.
 
 ### Bugs conocidos / fuera de alcance
 
-- El alias "haiku" (modelo pequeño para tareas auxiliares) puede ser
-  atendido por otro modelo pequeño de la suscripción — el proveedor
-  decide cuál responde; no afecta el resultado visible.
-- Riesgo #34 anotado: con varios procesos del servidor, un cambio de
-  modo puede tardar hasta ~60 segundos en aplicar en todos (hoy, con un
-  solo proceso, aplica de inmediato); y si el programa de la
-  suscripción se cuelga, un turno puede quedar retenido unos minutos
-  antes de saltar al siguiente proveedor.
+- El recorte de emergencia se usa UNA vez por consulta (si el análisis
+  la consumió, la redacción del mismo turno ya no la tiene) — decisión
+  consciente, anotada por el revisor.
+- Endurecimiento diferido a CP8 (anotado por el revisor de CP4, son
+  patrones heredados del endpoint de documentos preexistente): archivos
+  comprimidos maliciosos (.docx bomba) y lectura del archivo completo
+  en memoria antes de validar tamaño.
 
 ### Resultado de verificación (3 capas)
 
-- Capa 1 (automatizada): VERDE — regresión completa 33/33 suites PASS
-  (incluye test_rls 12/12 HALT PASS, el gate nuevo test_model_policy.py
-  40/40, test_llm_fallback 25/25 y test_curator 24/24; las 4 suites que
-  esperaban el contrato viejo de modelos fueron actualizadas al nuevo).
-  Gate en vivo del turno completo por suscripción: 176 segundos de
-  pregunta a borrador, borrador de 19.098 caracteres con citas correctas
-  (fuero de maternidad, art. 239 CST) y 47 marcadores [VERIFICAR]; el
-  proxy no registró ninguna llamada por API — todo fue por suscripción.
-  Se corrigieron en vivo dos problemas de calidad: la personalidad
-  concisa del programa de la suscripción producía borradores diminutos
-  (148 caracteres) y su modelo por defecto tardaba más de 5 minutos —
-  ahora Mia le impone su propia personalidad jurídica y usa el modelo
-  rápido de alta calidad (configurable).
-- Capa 2 (subagente revisor independiente): revisor independiente
-  ejecutado: 2 mayores corregidos (aislamiento de credenciales del
-  subproceso, blindaje de ejecutable), 5 menores corregidos/anotados;
-  revisión por lectura de patrones, no auditoría con herramientas.
-- Capa 3 (revisión visual de Cursor): no aplica — CP2 no tocó frontend;
-  Cursor confirma en la sección siguiente.
+- Capa 1 (automatizada): VERDE — regresión completa 35/35 suites PASS
+  (test_rls 12/12 HALT PASS; gates nuevos: test_context_recovery 34/34
+  y test_playbook_import 21/21).
+- Capa 2 (subagente revisor independiente): dos revisores con contexto
+  fresco, ambos veredicto "apto/aprobado". Hallazgos mayores corregidos
+  antes del commit: guard de reducción estricta (CP1-H1), fallo puntual
+  de guardado no aborta el batch, tope de 100 guías por archivo y cap
+  de longitud del campo que viaja al prompt (CP4). Revisión por lectura
+  de patrones, no auditoría con herramientas.
+- Capa 3 (revisión visual de Cursor): no aplica — sin cambios de
+  frontend; Cursor confirma en la sección siguiente.
+
+### Checkpoint anterior: CP2 — Motor por suscripción (2026-07-01)
+
+Mia piensa con la suscripción de Claude del abogado (sin costo por
+consumo); tres modos por despacho ("Mi suscripción" / "Nube" / "Todo en
+mi equipo"); respaldo local restaurado. Verificado: 33/33 suites + turno
+vivo de 176s con borrador de 19.098 caracteres y citas correctas, cero
+facturación por API. Revisor independiente: 2 mayores corregidos
+(aislamiento de credenciales, blindaje de ejecutable).
 
 ---
 
