@@ -1,0 +1,334 @@
+"""
+Mia · test_setup_wizard.py — gate de CP-C4 (asistente de configuración guiado, Pilar C).
+
+Verifica con DB REAL y detectores SIMULADOS (sin red, sin winget, sin instalar nada):
+
+  (s) GET /api/setup/status — estructura completa (6 pasos con id/titulo/estado/
+      detalle/accion), detección simulada de cada componente (Obsidian, vault,
+      carpetas, guías, motor, Telegram) cambia el estado, textos sin jerga (§G),
+      y es SOLO LECTURA: consultar el estado no escribe nada en la DB.
+  (k) skip/unskip — cada paso es opcional y RETOMABLE; el estado persiste en
+      tenant_settings.config['setup'] y sobrevive entre consultas; paso
+      inexistente → 404; RLS: lo omitido por un despacho no afecta a otro.
+  (a) El asistente (CP-B1) guía por chat: "ayúdame a conectar mi Google Drive"
+      → el modelo ve el bloque de estado real; el mensaje persistido va limpio.
+  (f) Frontend: página /configurar consume /api/setup/status con skip/retomar
+      y guía de Telegram; el Sidebar tiene el enlace.
+
+Limpia sus datos al final. HALT si falla (CLAUDE.md §G). Exit 0 = PASS · 1 = FAIL.
+    .venv\\Scripts\\python.exe execution\\test_setup_wizard.py
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import shutil as _shutil_std
+import sys
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import psycopg
+from dotenv import load_dotenv
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
+sys.path.insert(0, str(ROOT / "backend"))
+sys.path.insert(0, str(ROOT / "execution"))
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+import init_assistant  # noqa: E402
+import init_local_folders  # noqa: E402
+import init_playbooks  # noqa: E402
+import init_profiles  # noqa: E402
+import init_users  # noqa: E402
+from mia import config  # noqa: E402
+from mia.agent import llm  # noqa: E402
+from mia.api.routes import setup as setup_mod  # noqa: E402
+from mia.assistant.core import SETUP_BLOCK_HEADER  # noqa: E402
+from mia.channels import notify  # noqa: E402
+from mia.connectors import obsidian_install  # noqa: E402
+
+PG = dict(
+    host=os.getenv("PG_HOST", "127.0.0.1"),
+    port=os.getenv("PG_PORT", "5432"),
+    dbname=os.getenv("PG_DB", "mia"),
+    user="postgres",
+    password=os.getenv("PG_PASSWORD", ""),
+)
+
+_results: list[tuple[str, bool]] = []
+
+# La UI jamás muestra jerga (§G) — ninguna de estas PALABRAS puede aparecer en los
+# textos (por palabra completa: "cli" no debe marcar "cliente" — revisor CP-C4).
+import re as _re  # noqa: E402
+
+_FORBIDDEN_RE = _re.compile(
+    r"\b(tenant|cli|api|endpoint|backend|jsonb|winget|rls)\b", _re.IGNORECASE)
+
+
+def check(name: str, ok: bool) -> None:
+    _results.append((name, bool(ok)))
+    print(("  [OK]   " if ok else "  [FAIL] ") + name)
+
+
+def sb() -> psycopg.Connection:
+    return psycopg.connect(autocommit=True, **PG)
+
+
+def cleanup(tenant_ids: list[str]) -> None:
+    if not tenant_ids:
+        return
+    with sb() as c:
+        c.execute("DELETE FROM tenants WHERE id = ANY(%s::uuid[])", (tenant_ids,))
+
+
+def ok_response(text: str):
+    msg = SimpleNamespace(content=text)
+    return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=None)
+
+
+class FakeCompletions:
+    def __init__(self) -> None:
+        self.script: dict[str, list[str]] = {}
+        self.calls: list[dict] = []
+        self._lock = threading.Lock()
+
+    def create(self, **kwargs):
+        model = kwargs["model"]
+        with self._lock:
+            self.calls.append({"model": model, "messages": kwargs["messages"]})
+            outcomes = self.script.get(model)
+            if not outcomes:
+                raise AssertionError(f"llamada no guionada al alias {model}")
+            text = outcomes.pop(0) if len(outcomes) > 1 else outcomes[0]
+        return ok_response(text)
+
+    def last_for(self, model: str) -> dict | None:
+        for call in reversed(self.calls):
+            if call["model"] == model:
+                return call
+        return None
+
+
+class Detectors:
+    """Simula cada componente del equipo (el gate NO toca winget ni el disco)."""
+
+    def __init__(self) -> None:
+        self.obsidian = False
+        self.vault: str | None = None
+        self.which: dict[str, str | None] = {"claude": None, "ollama": None}
+        self.telegram = False
+        self.detected_clouds: list[dict] = []
+        self._saved: list = []
+
+    def install(self) -> None:
+        self._saved = [
+            obsidian_install.is_installed,
+            setup_mod.vault_writer_mod.get_tenant_vault_path,
+            setup_mod.shutil.which,
+            notify.telegram_configured,
+            setup_mod.detect_cloud_folders,
+            setup_mod._DETECT_TTL_SECONDS,
+        ]
+        obsidian_install.is_installed = lambda: self.obsidian
+        setup_mod.vault_writer_mod.get_tenant_vault_path = self._vault
+        setup_mod.shutil.which = lambda name: self.which.get(name)
+        notify.telegram_configured = lambda env=None: self.telegram
+        setup_mod.detect_cloud_folders = lambda *a, **k: list(self.detected_clouds)
+        # El caché de detecciones (60s) se desactiva: el gate CAMBIA los detectores
+        # entre consultas y debe ver el efecto de inmediato.
+        setup_mod._DETECT_TTL_SECONDS = 0.0
+        setup_mod._detect_cache.clear()
+
+    async def _vault(self, tenant_id: str):
+        return self.vault
+
+    def restore(self) -> None:
+        (obsidian_install.is_installed,
+         setup_mod.vault_writer_mod.get_tenant_vault_path,
+         setup_mod.shutil.which,
+         notify.telegram_configured,
+         setup_mod.detect_cloud_folders,
+         setup_mod._DETECT_TTL_SECONDS) = self._saved
+        setup_mod._detect_cache.clear()
+
+
+def table_counts(tenant: str) -> dict:
+    with sb() as c:
+        pb = c.execute("SELECT count(*) FROM playbooks WHERE tenant_id=%s::uuid", (tenant,)).fetchone()[0]
+        ts = c.execute("SELECT count(*) FROM tenant_settings WHERE tenant_id=%s::uuid", (tenant,)).fetchone()[0]
+    return {"playbooks": pb, "settings": ts}
+
+
+def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[str]) -> None:
+    stamp = int(time.time() * 1000)
+    ra = client.post("/api/auth/register", json={
+        "email": f"setup-{stamp}-a@example.com", "password": "Password-12345",
+        "firm_name": "Setup Test A"})
+    rb = client.post("/api/auth/register", json={
+        "email": f"setup-{stamp}-b@example.com", "password": "Password-12345",
+        "firm_name": "Setup Test B"})
+    assert ra.status_code == 201 and rb.status_code == 201, "registro falló"
+    tenant_a, tenant_b = ra.json()["tenant_id"], rb.json()["tenant_id"]
+    tenants.extend([tenant_a, tenant_b])
+    auth_a = {"Authorization": f"Bearer {ra.json()['token']}"}
+    auth_b = {"Authorization": f"Bearer {rb.json()['token']}"}
+    with sb() as c:  # política nube para el turno de chat (LLM falso)
+        for t in (tenant_a, tenant_b):
+            c.execute("UPDATE tenant_settings SET config = jsonb_set(config, '{model_policy}', '\"nube\"') "
+                      "WHERE tenant_id = %s::uuid", (t,))
+
+    # ── (s) estado inicial: todo pendiente, estructura completa, solo lectura ──
+    before = table_counts(tenant_a)
+    r = client.get("/api/setup/status", headers=auth_a)
+    body = r.json()
+    check("s1 · GET /setup/status → 200 con 6 pasos y campos completos",
+          r.status_code == 200 and len(body["pasos"]) == 6
+          and all({"id", "titulo", "estado", "detalle", "accion"} <= set(p) for p in body["pasos"]))
+    ids = [p["id"] for p in body["pasos"]]
+    check("s2 · los pasos son los del recorrido (perfil→motor→obsidian→carpetas→guías→telegram)",
+          ids == ["perfil", "motor", "obsidian", "carpetas", "guias", "telegram"])
+    check("s3 · sin nada configurado: 0 listos y el siguiente es el perfil",
+          body["completados"] == 0 and body["siguiente"] == "perfil")
+    todo_texto = " ".join(
+        f"{p['titulo']} {p['detalle']}" for p in body["pasos"]) + " " + body["mensaje"]
+    check("s4 · §G: los textos no traen jerga técnica",
+          not _FORBIDDEN_RE.search(todo_texto))
+    check("s5 · consultar el estado NO escribe nada (solo lectura)",
+          table_counts(tenant_a) == before)
+
+    # ── (s) detección simulada: cada componente cambia su paso ──
+    det.obsidian = True
+    r2 = client.get("/api/setup/status", headers=auth_a).json()
+    obsidian = next(p for p in r2["pasos"] if p["id"] == "obsidian")
+    check("s6 · Obsidian instalado (sin vault) → sigue pendiente pero el texto lo dice",
+          obsidian["estado"] == "pendiente" and "instalado" in obsidian["detalle"])
+    det.vault = "D:\\vault-de-prueba"
+    det.which["claude"] = "C:\\bin\\claude.exe"
+    det.telegram = True
+    r3 = client.get("/api/setup/status", headers=auth_a).json()
+    estados = {p["id"]: p["estado"] for p in r3["pasos"]}
+    check("s7 · detecciones simuladas → obsidian/motor/telegram quedan LISTOS",
+          estados["obsidian"] == "listo" and estados["motor"] == "listo"
+          and estados["telegram"] == "listo")
+    check("s8 · guías y carpetas siguen pendientes (aún no hay datos)",
+          estados["guias"] == "pendiente" and estados["carpetas"] == "pendiente")
+    with sb() as c:
+        c.execute("INSERT INTO playbooks (tenant_id, title, summary, applies_when, content) "
+                  "VALUES (%s::uuid, 'Guía setup', 's', 'w', 'c')", (tenant_a,))
+        c.execute("INSERT INTO local_folder_sources (tenant_id, path, label) "
+                  "VALUES (%s::uuid, 'D:\\\\trabajo', 'Trabajo')", (tenant_a,))
+    r4 = client.get("/api/setup/status", headers=auth_a).json()
+    estados4 = {p["id"]: p["estado"] for p in r4["pasos"]}
+    check("s9 · con guía y carpeta registradas → esos pasos quedan LISTOS",
+          estados4["guias"] == "listo" and estados4["carpetas"] == "listo")
+    check("s10 · el progreso cuenta bien (5 de 6; falta solo el perfil)",
+          r4["completados"] == 5 and r4["siguiente"] == "perfil")
+
+    # ── (k) skip/unskip retomable + RLS ──
+    rs = client.post("/api/setup/steps/perfil/skip", headers=auth_a)
+    r5 = client.get("/api/setup/status", headers=auth_a).json()
+    perfil5 = next(p for p in r5["pasos"] if p["id"] == "perfil")
+    check("k1 · 'dejar para después' → el paso queda omitido y persiste",
+          rs.status_code == 200 and perfil5["estado"] == "omitido"
+          and r5["siguiente"] is None)
+    with sb() as c:
+        row = c.execute("SELECT config->'setup'->'skipped' FROM tenant_settings "
+                        "WHERE tenant_id=%s::uuid", (tenant_a,)).fetchone()
+    check("k2 · lo omitido vive en tenant_settings.config['setup']",
+          row and row[0] == ["perfil"])
+    ru = client.post("/api/setup/steps/perfil/unskip", headers=auth_a)
+    r6 = client.get("/api/setup/status", headers=auth_a).json()
+    check("k3 · 'retomar' → vuelve a pendiente (recorrido retomable)",
+          ru.status_code == 200
+          and next(p for p in r6["pasos"] if p["id"] == "perfil")["estado"] == "pendiente")
+    check("k4 · paso inexistente → 404 (allowlist de pasos)",
+          client.post("/api/setup/steps/hackear/skip", headers=auth_a).status_code == 404)
+    rb_status = client.get("/api/setup/status", headers=auth_b).json()
+    check("k5 · RLS: el despacho B tiene SU propio recorrido (nada de A se filtra)",
+          rb_status["completados"] < r4["completados"]
+          and all(p["estado"] != "omitido" for p in rb_status["pasos"]))
+    check("k6 · sin sesión → 401", client.get("/api/setup/status").status_code == 401)
+
+    # ── (a) el asistente guía por chat con el estado real ──
+    fake_llm.script["claude-sonnet"] = ["Claro, conectemos tu Google Drive paso a paso."]
+    rc = client.post("/api/assistant/chat", headers=auth_a,
+                     json={"message": "Ayúdame a conectar mi Google Drive con Mia"})
+    sent = fake_llm.last_for("claude-sonnet")
+    last_user = sent["messages"][-1]["content"] if sent else ""
+    check("a1 · el modelo ve el bloque con el estado real de configuración",
+          rc.status_code == 200 and SETUP_BLOCK_HEADER in last_user
+          and "carpetas" in last_user.lower())
+    with sb() as c:
+        persisted = c.execute(
+            "SELECT content FROM assistant_messages WHERE conversation_id=%s::uuid "
+            "AND role='user' ORDER BY created_at DESC LIMIT 1",
+            (rc.json()["conversation_id"],),
+        ).fetchone()[0]
+    check("a2 · el mensaje PERSISTIDO va limpio (el bloque no se guarda)",
+          SETUP_BLOCK_HEADER not in persisted)
+
+
+def run_frontend_checks() -> None:
+    page = (ROOT / "frontend" / "app" / "configurar" / "page.tsx").read_text(encoding="utf-8")
+    sidebar = (ROOT / "frontend" / "app" / "_components" / "Sidebar.tsx").read_text(encoding="utf-8")
+    check("f1 · página /configurar consume /api/setup/status con skip y retomar",
+          "/api/setup/status" in page and "Dejar para después" in page and "Retomar" in page)
+    check("f2 · la guía de Telegram está en la página y remite al chat (sin rutas técnicas, §G)",
+          "@BotFather" in page and "telegram-setup.md" not in page
+          and "por el chat" in page)
+    check("f3 · el Sidebar enlaza 'Configura a Mia'",
+          "/configurar" in sidebar and "Configura a Mia" in sidebar)
+
+
+def main() -> int:
+    print("== CP-C4 · asistente de configuración guiado (setup wizard) ==")
+    if not os.getenv("PG_PASSWORD") or not config.JWT_SECRET:
+        print("  [FAIL] PG_PASSWORD o JWT_SECRET vacío en .env")
+        return 1
+    init_profiles.apply()
+    init_users.apply()
+    init_assistant.apply()
+    init_playbooks.apply()
+    init_local_folders.apply()
+
+    fake_llm = FakeCompletions()
+    llm._client = SimpleNamespace(chat=SimpleNamespace(completions=fake_llm))
+    llm.time.sleep = lambda *_a, **_k: None
+
+    det = Detectors()
+    det.install()
+    from fastapi.testclient import TestClient
+    from mia.api.main import app
+
+    tenants: list[str] = []
+    try:
+        with TestClient(app) as client:
+            run_checks(client, fake_llm, det, tenants)
+        run_frontend_checks()
+    finally:
+        det.restore()
+        llm._client = None
+        cleanup(tenants)
+
+    passed = sum(1 for _, ok in _results if ok)
+    total = len(_results)
+    print(f"\nRESULT: {passed}/{total} checks PASS")
+    if passed == total:
+        print("Setup guiado OK — CP-C4 verificado (detección simulada + retomable + chat + UI).")
+        return 0
+    print("Setup guiado FAIL — HALT: no avanzar (CLAUDE.md §G).")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

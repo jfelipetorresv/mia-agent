@@ -16,7 +16,7 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from .middleware import TenantContextMiddleware
-from .routes import assistant, auth, curator, folders, hitl, settings, stream, traces, ux
+from .routes import assistant, auth, curator, folders, hitl, settings, setup, stream, traces, ux
 
 
 @asynccontextmanager
@@ -77,6 +77,8 @@ app.include_router(assistant.router, prefix="/api")
 app.include_router(folders.router, prefix="/api")
 # OBSIDIAN (CP-C2, Pilar C · decisión #32): estado/instalación/bootstrap → /api/obsidian/*.
 app.include_router(folders.obsidian_router, prefix="/api")
+# CP-C4 · asistente de configuración guiado (estado del recorrido "Configura a Mia")
+app.include_router(setup.router, prefix="/api")
 
 
 @app.get("/health")

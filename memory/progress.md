@@ -1407,3 +1407,20 @@ regresión **41/41**. Revisor capa 2: APROBADO CON CORRECCIONES — 1 mayor (fal
 cancelar recordatorios) + 1 mayor preexistente (API key de Pinecone visible → type=password)
 + 5 menores: TODOS corregidos pre-commit. Capa 3 (Cursor) PENDIENTE vía HANDOFF.md (4 archivos).
 Deuda §G anotada: textos "second brain"/"vault"/"Pinecone" del dashboard viejo.
+
+
+**CP-C4 — Asistente de configuración guiado (rama `feat/cp-c4-setup-guiado`, 2026-07-02)**
+Cierre del Pilar C: cualquier abogado deja a Mia conectada sin saber nada técnico.
+`GET /api/setup/status` detecta 6 pasos (perfil/SOUL, motor vía claude/ollama en el equipo,
+Obsidian+vault, carpetas+nubes espejo, guías, Telegram) con textos §G y detectores fail-soft
+en threads con caché de 60s (winget puede tardar hasta 60s — hallazgo del revisor); es SOLO
+LECTURA (las acciones viven en sus endpoints con sus confirmaciones). Skip/unskip retomable
+persistido en `tenant_settings.config['setup']` (merge jsonb anidado que preserva claves).
+Página nueva `/configurar` (checklist + progreso + guía de Telegram inline sin rutas técnicas)
++ enlace en Sidebar. El asistente guía por chat: bloque de estado real inyectado cuando el
+mensaje menciona el dominio (obsidian/telegram/drive/carpetas/"configura a Mia") — el
+disparador NO reacciona a verbos jurídicos ("se configura la causal", hallazgo M1 corregido).
+Gate `test_setup_wizard` **21/21** · `npm run build` ✓ · regresión **42/42**. Revisor capa 2:
+APROBADO CON CORRECCIONES (3 mayores + 3 menores corregidos; residual aceptado: carrera menor
+en skip con doble clic). Capa 3 (Cursor) pendiente. **Recorrido vivo cronometrado con Pipe:
+pendiente de él** (gate del plan).
