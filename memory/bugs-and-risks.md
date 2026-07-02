@@ -696,3 +696,24 @@ evitada con inspect.signature). Residuales:
    fallo de DB simultáneos; lo mejor alcanzable sin un reaper de fondo). (b) La detección de `env`
    del runner (inspect.signature) no cubre runners con `**kwargs` — ninguno existe hoy; si se
    introduce, detectar también VAR_KEYWORD.
+
+## 🟢 Riesgo #39 — Motor de vigilancia (CP-P1): residuales menores  [registrado 2026-07-02, revisión CP-P1]
+CP-P1 quedó verde (gate 24/24; capa 2 APROBADO CON CORRECCIONES — el código cumple la regla dura
+y el at-most-once por inspección; se CORRIGIÓ H1: el gate doblaba el SQL de la regla dura y el CAS,
+ahora se ejercitan contra Postgres REAL (checks p1-db1..7: solo procesales en ventana salen, no
+procesales excluidos, debounce real, RLS, CAS concurrente y protección de release ajeno); H4:
+run_watch ahora captura la excepción del check y degrada sin apoyarse en el loop del scheduler).
+Residuales menores:
+1. **H2 · re-aviso sin tope si mark_heads_up falla tras envío exitoso**: mismo trade-off consciente
+   que reminders_due (nunca perder un aviso a costa de posible duplicado). La ventana es estrecha
+   (la DB acaba de leer bien). Aceptable.
+2. **H3 · edición de fecha del recordatorio**: hoy no existe editar due_at (solo create/cancel). Si
+   se agrega, resetear heads_up_sent_at = NULL o el nuevo plazo no recibiría aviso anticipado.
+3. **Alcance de CP-P1**: se entregó el MOTOR (Watch/run_watch: claim at-most-once + wake-gate +
+   no_agent/agent) y UNA vigilancia concreta (plazos procesales próximos, no_agent). "Correo urgente
+   de autoridad" NO se construyó (no hay conector de email en Mia — sería build nuevo, futura ola).
+   La "revisión semanal de expediente" (vigilancia tipo 'agent' con wake-gate) queda como próxima
+   pieza fácil sobre el motor ya existente.
+4. **At-most-once solo en las vigilancias nuevas**: los jobs viejos (obsidian, curator, dreams,
+   feedback, reminders_due) siguen SIN claim (Modo B single-worker). Migrarlos a run_watch/claim
+   cuando haya multi-worker cierra del todo el Riesgo #22.

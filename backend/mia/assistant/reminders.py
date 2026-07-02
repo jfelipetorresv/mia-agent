@@ -367,3 +367,36 @@ class ReminderService:
                 "WHERE id = %s::uuid AND status = 'pending'",
                 (reminder_id,),
             )
+
+    # ── CP-P1 · aviso ANTICIPADO de plazos procesales próximos (motor de vigilancia) ──
+    async def upcoming_procedural(self, tenant_id: str, within_hours: int) -> list[dict]:
+        """Recordatorios PROCESALES pendientes que vencen dentro de `within_hours` (aún
+        NO vencidos) y a los que no se les ha dado el aviso anticipado (heads_up_sent_at
+        IS NULL). Es el insumo del wake-gate de la vigilancia de plazos: lista vacía →
+        no hay nada próximo → silencio. NO calcula fechas: solo lee las que el abogado
+        fijó (is_procedural)."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            rows = await (await conn.execute(
+                "SELECT id, text, due_at, is_procedural FROM reminders "
+                "WHERE status = 'pending' AND is_procedural "
+                "AND heads_up_sent_at IS NULL "
+                "AND due_at > now() AND due_at <= now() + (%s || ' hours')::interval "
+                "ORDER BY due_at",
+                (within_hours,),
+            )).fetchall()
+        return [
+            {"id": str(r[0]), "text": r[1], "due_at": r[2], "is_procedural": r[3]}
+            for r in rows
+        ]
+
+    async def mark_heads_up(self, tenant_id: str, reminder_ids: list[str]) -> None:
+        """Marca el aviso anticipado como enviado (a lo sumo uno por recordatorio).
+        Solo sobre los que siguen 'pending' (si el abogado canceló, no se toca)."""
+        if not reminder_ids:
+            return
+        async with pool.tenant_connection(tenant_id) as conn:
+            await conn.execute(
+                "UPDATE reminders SET heads_up_sent_at = now() "
+                "WHERE id = ANY(%s::uuid[]) AND status = 'pending'",
+                (reminder_ids,),
+            )
