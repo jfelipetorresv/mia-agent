@@ -1,6 +1,6 @@
 # Mia — progress.md
 # DIARIO DE OBRA · qué se construyó · errores · tests · resultados
-# Última actualización: 2026-06-14
+# Última actualización: 2026-07-01
 
 ---
 
@@ -1229,3 +1229,72 @@ Cierra el riesgo "PENDIENTE — Módulos sin registrar en progress.md" de `bugs-
 **Límites de esta entrada:** es reconstrucción por lectura de código; si la sesión 20 tomó
 decisiones que NO son visibles en el código (alternativas descartadas, razones de negocio), no
 están aquí ni en `decisions.md`.
+
+---
+
+## 2026-07-01 — Sesión 21 · Plan maestro: 10 checkpoints (CP0-CP5, CP-B1/B2, CP-C1/C2, CP3)
+
+Plan completo en `C:\Users\jfeli\.claude\plans\quiero-que-elabores-un-streamed-wand.md`.
+Commits del día (en orden): CP0 `f6bd780` · CP2 `3ca6438` · CP1 `71c2df7` · CP4 `adde9d9` ·
+CP5 `4cab69d` · CP-B1 `5426a0a` · CP-B2 `bd53711` · CP-C1 `1f9e7f2` · CP-C2 `2c05bde` ·
+CP3 `5c54903`. **Todos** los checkpoints pasaron por revisor independiente (capa 2) con
+hallazgos corregidos ANTES de cada commit.
+
+**CP0 — Estabilidad de plataforma (`f6bd780`)**
+LiteLLM proxy separado en su propio venv `.venv-litellm/` (`litellm[proxy]==1.74.8`) + runtime
+del API re-pineado exacto en `backend/pyproject.toml`. Gate nuevo `execution/check_env_pins.py`
+cableado al arranque (`start_api.ps1`) y a la regresión (`run_tests.ps1`): si el venv fue
+alterado, aborta. **Riesgo #32 CERRADO.**
+
+**CP2 — Motor por suscripción + política por tenant (`3ca6438`, decisión #27)**
+Mia piensa con la suscripción de Claude Code del abogado (`claude -p` headless, sin billing por
+API); 3 políticas por tenant: "Mi suscripción" (default) / "Nube" / "Todo en mi equipo".
+Gate `test_model_policy` **40/40**. Verificado EN VIVO: turno completo de 176s con borrador de
+19.098 chars y citas correctas, cero facturación por API.
+
+**CP1 — Recuperación real ante CONTEXT_TOO_LONG (`71c2df7`)**
+Shrink POR NODO (`agents/context_recovery.py`): analysis recorta documentos, draft recorta
+playbooks/diagnóstico preservando siempre la conclusión; una sola compresión por turno.
+Gate `test_context_recovery` **34/34**. **Riesgo #33 CERRADO.**
+
+**CP4 — Importación de guías del despacho (`adde9d9`)**
+`POST /api/playbooks/import` (multipart, .md/.txt/.docx, varios a la vez): cada título H1 se
+vuelve una guía; soporta guías protegidas inmunes al mantenimiento. Gate `test_playbook_import`
+**21/21**. Cierre parcial del Riesgo #20 (falta solo que el despacho cargue sus guías reales).
+
+**CP5 — Diagnóstico visible + pending_review (`4cab69d`)**
+El diagnóstico jurídico por fin se VE: panel "Diagnóstico" en la pantalla del asunto + punto
+naranja en la lista cuando hay borrador esperando revisión. Gate `test_ux` **29/29** (incluye
+`npm run build`). Frontend pendiente de capa 3 de Cursor (2 archivos).
+
+**CP-B1 — Modo asistente (`5426a0a`, decisión #28)**
+Conversación libre fuera del expediente (una sola Mia): historial persistente por tenant+usuario
+(migración `015_assistant.sql`), ContextCompressor cableado a su propósito original. Gate
+`test_assistant` **32/32**. El revisor encontró 1 BLOQUEANTE (compresor compartido entre
+despachos mezclaba contexto) — CORREGIDO antes del commit (compresor nuevo por turno).
+
+**CP-B2 — Puente Telegram (`bd53711`, decisión #29)**
+Bot privado single-chat → POST a `/api/assistant/chat` con JWT (RLS y política de modelo
+idénticos al frontend). Opt-in: apagado hasta que Pipe cree el bot (guía sin jerga:
+`docs/telegram-setup.md`). Gate `test_telegram_bridge` **22/22**.
+
+**CP-C1 — Conector de carpetas del abogado (`1f9e7f2`, decisión #30)**
+Disco local + OneDrive + Google Drive (carpetas espejo, sin OAuth) → `knowledge_chunks`;
+migración `016_local_folders.sql`; allowlist fail-closed de 2 capas. Gate `test_local_folders`
+**39/39**. Revisor: 2 mayores de PRIVACIDAD corregidos (subcarpetas de sistema excluidas también
+en el descenso recursivo; carpetas >2000 archivos ya no pierden conocimiento).
+
+**CP-C2 — Vault de Obsidian bidireccional + instalación guiada (`2c05bde`, decisión #32)**
+Mia escribe su memoria (conceptos de la wiki + reportes semanales) como notas .md en el vault
+del abogado, SOLO bajo `Mia/`; wiki interna sigue siendo fuente de verdad; instalación guiada
+de Obsidian vía winget con confirmación explícita. Gate `test_vault_write` **34/34**. Revisor:
+escape por junction/symlink de Windows BLOQUEADO fail-closed (reproducido con `mklink /J`).
+
+**CP3 — El conocimiento del despacho entra al análisis (`5c54903`, decisión #31)**
+`retrieve_knowledge_rrf` sobre `knowledge_chunks` (mismo RRF híbrido, sin filtro de asunto,
+RLS fail-closed); sección "Conocimiento del despacho" en el prompt con presupuesto ≤15% y
+fencing anti prompt-injection; knowledge se recorta ANTES que los documents en el shrink.
+Gate `test_retrieval_knowledge` **35/35**. **APROBADO por Pipe con comparación A/B en vivo**
+(análisis con y sin el método del despacho). **Riesgo #16 CERRADO.**
+
+**Regresión final de la sesión: 40/40 suites verdes** (`test_rls` 12/12 HALT intacto).

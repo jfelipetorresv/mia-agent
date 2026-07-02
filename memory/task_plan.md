@@ -1,6 +1,6 @@
 # Mia — task_plan.md
 # Fases del proyecto · objetivos por módulo · checklists
-# Última actualización: 2026-06-20
+# Última actualización: 2026-07-01
 
 Leyenda: [x] completado · [ ] pendiente · [~] en progreso
 
@@ -127,3 +127,29 @@ cliente (riesgos abiertos) + smoke test vivo en navegador (`architecture/e2e_run
 - ⬜ Corregir ruta del proyecto en `CLAUDE.md` (`D:\Inteligencia Artificial\…` → `D:\Codex\…`).
 - ⬜ Investigar y documentar trabajo no registrado (`gepa.py`, `dreams.py`, `second_brain_ui`) + auth real (#23).
 - ⬜ Separar LiteLLM en su propio venv antes de reiniciar la API en producción (Riesgo #32).
+
+---
+
+## Plan maestro 2026-07-01 (sesión 21)
+Plan completo: `C:\Users\jfeli\.claude\plans\quiero-que-elabores-un-streamed-wand.md`
+Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor independiente) en los 10 checkpoints.
+
+| CP | Estado | Qué es | Gate |
+|----|--------|--------|------|
+| CP0 | ✅ | LiteLLM en `.venv-litellm` propio + pins exactos + gate `check_env_pins` en arranque y regresión (cierra Riesgo #32) | pins 9/9 |
+| CP2 | ✅ | Motor por suscripción (`claude -p`) + 3 políticas por tenant (decisión #27); turno vivo 176s/19k chars sin billing API | `test_model_policy` 40/40 |
+| CP1 | ✅ | Shrink por nodo ante CONTEXT_TOO_LONG (cierra Riesgo #33) | `test_context_recovery` 34/34 |
+| CP4 | ✅ | Import de guías del despacho (`POST /playbooks/import`, .md/.txt/.docx) | `test_playbook_import` 21/21 |
+| CP5 | ✅ | Diagnóstico visible + punto naranja `pending_review` (cierra el grueso del Riesgo #25) | `test_ux` 29/29 |
+| CP-B1 | ✅ | Modo asistente — conversación libre con memoria (migración 015; decisión #28) | `test_assistant` 32/32 |
+| CP-B2 | ✅ | Puente Telegram opt-in single-chat (decisión #29; guía `docs/telegram-setup.md`) | `test_telegram_bridge` 22/22 |
+| CP-C1 | ✅ | Conector carpetas disco/OneDrive/Google Drive (migración 016; decisión #30) | `test_local_folders` 39/39 |
+| CP-C2 | ✅ | Vault Obsidian bidireccional (Mia escribe bajo `Mia/`) + instalación guiada (decisión #32) | `test_vault_write` 34/34 |
+| CP3 | ✅ | Conocimiento del despacho al análisis (cierra Riesgo #16; decisión #31) — APROBADO por Pipe con A/B en vivo | `test_retrieval_knowledge` 35/35 |
+| CP6 | ⬜ | `prompt_builder` (10 capas) cableado al grafo — ALTO IMPACTO, requiere diff a Pipe antes de ejecutar | — |
+| CP7 | ⬜ | Sincronización frontend: selector de motor + UI de conectores/curator/skills/import de guías | — |
+| CP-B3 | ⬜ | Proactividad: recordatorios y avisos por Telegram | — |
+| CP-B4 | ⬜ | Herramientas reales del asistente (agenda, acciones) | — |
+| CP-C3 | ⬜ | Cierre del circuito GEPA (aprendizaje procedural end-to-end) | — |
+| CP-C4 | ⬜ | Asistente de configuración guiado (onboarding técnico sin jerga) | — |
+| CP8 | ⬜ | Endurecimiento pre-cliente — EN PAUSA por decisión de prioridad (uso diario Lexia primero) | — |

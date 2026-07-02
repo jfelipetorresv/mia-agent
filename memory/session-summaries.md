@@ -635,3 +635,28 @@ Qué decidimos:
 - `*.egg-info/` va a `.gitignore` (artefacto de `pip install -e`).
 Qué sigue: Riesgo #33 (recuperación por nodo ante contexto largo en `graph.py`); sembrar playbooks
   reales (cierra #20/#31); separar LiteLLM en su venv (Riesgo #32); cablear `prompt_builder` al grafo.
+
+## 2026-07-01 — Sesión 21
+TL;DR: plan maestro de 3 pilares ejecutado — 10 checkpoints, 40/40 suites, todo en GitHub.
+Qué construimos:
+- CP0: LiteLLM en venv propio + pins + gate check_env_pins (Riesgo #32 cerrado).
+- CP2: motor por suscripción (CLI claude) + 3 políticas por tenant; turno vivo 176s/19k chars sin billing API.
+- CP1: shrink por nodo ante CONTEXT_TOO_LONG (Riesgo #33 cerrado).
+- CP4: import de guías del despacho (POST /playbooks/import, .md/.txt/.docx).
+- CP5: diagnóstico visible en pantalla + punto naranja de borrador pendiente.
+- CP-B1: modo asistente — conversación libre con memoria (migración 015).
+- CP-B2: puente Telegram opt-in single-chat (guía docs/telegram-setup.md).
+- CP-C1: conector de carpetas disco/OneDrive/Google Drive (migración 016, allowlist 2 capas).
+- CP-C2: vault de Obsidian bidireccional (Mia escribe bajo Mia/) + instalación guiada.
+- CP3: el conocimiento del despacho entra al análisis (Riesgo #16 cerrado) — APROBADO por Pipe con A/B en vivo.
+Regresión final 40/40 suites; capa 2 (revisor independiente) en TODOS los checkpoints con hallazgos corregidos antes de cada commit.
+Qué decidimos:
+- Decisiones #27-#32 (motor por suscripción · modo asistente · Telegram · carpetas · knowledge al análisis · vault bidireccional).
+- "Una sola Mia": el asistente NO es un segundo agente — misma alma, memoria y política de modelo.
+- Telegram primero como canal móvil (antes que app/WhatsApp); prioridad = uso diario en Lexia.
+Qué sigue:
+- CP7: sincronización frontend — selector de motor + UI de conectores/curator/skills.
+- CP-B3: proactividad/recordatorios por Telegram. CP-C3: cierre del circuito GEPA. CP-C4: asistente de configuración guiado.
+- CP6: prompt_builder→grafo (ALTO IMPACTO — requiere diff a Pipe antes de ejecutar).
+- CP8: endurecimiento pre-cliente — EN PAUSA.
+- Pendientes de Pipe: crear su bot de Telegram con docs/telegram-setup.md; subir sus primeras guías con /playbooks/import; decidir privacidad de conversaciones del asistente (hoy: nivel despacho) y visibilidad del diagnóstico tras aprobar.

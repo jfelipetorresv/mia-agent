@@ -1,6 +1,6 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-06-30
+# Última actualización: 2026-07-01
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
 
@@ -596,3 +596,16 @@ alias antes de saltar de proveedor: en el peor caso un turno puede quedar reteni
 antes de caer a la nube/local. Mitigación parcial ya aplicada (timeout por task); si aparece en uso
 real, bajar reintentos para aliases `cli-*` (el CLI local rara vez se recupera reintentando) o
 timeout más agresivo con detección de "CLI muerto" (circuit breaker por proceso).
+
+## 🟡 Decisiones de producto PENDIENTES DE PIPE  [registrado 2026-07-01, sesión 21]
+Tres decisiones de negocio quedaron abiertas durante el plan maestro; no son bugs, pero
+condicionan comportamiento visible al cliente y deben resolverse antes de endurecer (CP8):
+1. **Privacidad intra-despacho de las conversaciones del asistente (CP-B1):** hoy las
+   conversaciones del modo asistente son visibles a NIVEL DE DESPACHO (cualquier abogado del
+   tenant puede verlas). ¿Deben ser privadas por usuario? Anotado por el revisor de CP-B1.
+2. **Diagnóstico visible tras aprobar (CP5):** el panel "Diagnóstico" puede seguir mostrando
+   el análisis del último turno ya decidido. ¿Se oculta/archiva tras aprobar o rechazar?
+3. **Endpoint de instalación de Obsidian en Modo A (CP-C2):** `POST /api/obsidian/install`
+   ejecuta winget en el HOST — correcto en Modo B (laptop de un despacho), pero en despliegue
+   compartido (Modo A) DEBE DESHABILITARSE (documentado en su docstring; Riesgos #10/#15 de
+   sandbox). Requiere gate de despliegue antes del primer cliente Modo A.
