@@ -9,6 +9,7 @@ from typing import Any
 from psycopg.types.json import Json
 
 from .. import config
+from ..agent import llm
 from ..db import pool
 from ..onboarding.soul_interview import soul_path
 from .gepa import GEPALoop
@@ -212,7 +213,8 @@ class Dreams:
         out: dict[str, Any] = {}
         for tenant_id in self._list_tenant_ids():
             try:
-                out[tenant_id] = await self.run(tenant_id)
+                async with llm.tenant_model_policy(tenant_id):  # CP2: política por tenant
+                    out[tenant_id] = await self.run(tenant_id)
             except Exception as e:
                 out[tenant_id] = {"error": str(e)}
         return out

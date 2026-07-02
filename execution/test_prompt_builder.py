@@ -4,9 +4,11 @@ Mia · test_prompt_builder.py — gate del Módulo 1b (10 capas + AuxiliaryClien
 Verifica OFFLINE (sin red ni proxy LiteLLM):
   1. Las 10 capas en el ORDEN correcto (índices 1..10, nombres y tiers).
   2. Las capas 1-6 marcadas como CACHED (prefijo estable, TTL 1h); 7-10 no.
-  3. compression forzado a mia-local (decisión #23) AUNQUE se pase otro `model` —
-     tanto en resolve_model como atravesando AuxiliaryClient.complete() de punta a
-     punta (con un cliente OpenAI falso, sin red).
+  3. compression forzado a mia-local bajo política 'soberano' (CP2, decisión #27)
+     AUNQUE se pase otro `model` — tanto en resolve_model como atravesando
+     AuxiliaryClient.complete() de punta a punta (con un cliente OpenAI falso, sin
+     red). El gate fija la política explícitamente; el bloqueo bajo las 3 políticas
+     lo cubre execution/test_model_policy.py.
   4. El mapa TASK_MODELS está completo (router + tareas auxiliares).
   5. El prompt ensamblado respeta el orden de las capas y las costuras vacías no
      aportan texto.
@@ -156,34 +158,43 @@ class _FakeClient:
 
 
 def test_compression_lock() -> None:
-    # Nivel resolve_model / model_for (sin red).
-    check("model_for(compression) -> mia-local", ac.AuxiliaryClient.model_for("compression") == "mia-local")
-    check("model_for(compression, model=sonnet) IGNORA el override",
-          ac.AuxiliaryClient.model_for("compression", "claude-sonnet") == "mia-local")
-    check("model_for(compression, model=opus) IGNORA el override",
-          ac.AuxiliaryClient.model_for("compression", "claude-opus") == "mia-local")
-
-    # Punta a punta a través de AuxiliaryClient.complete() con cliente falso.
-    fake = _FakeClient()
-    original = llm._client
-    llm._client = fake  # _get_client() devuelve este si no es None
+    # CP2: el ruteo depende de la política de modelo activa (decisión #27). Este gate
+    # fija 'soberano' explícitamente (patrón de test_model_policy.py): bajo esa política
+    # compression→mia-local, que es lo que el cliente falso de abajo espera; el bloqueo
+    # bajo 'suscripcion'/'nube' lo cubre test_model_policy.py.
+    tok = llm.set_model_policy("soberano")
     try:
-        out = ac.aux.complete("Comprime este expediente.", task="compression", model="claude-sonnet")
-        check("aux.complete devuelve texto", out == "[texto auxiliar]")
-        check("compression: el gateway recibe mia-local (no sonnet)",
-              fake.chat.completions.last_kwargs["model"] == "mia-local")
+        # Nivel resolve_model / model_for (sin red).
+        check("model_for(compression) -> mia-local (soberano)",
+              ac.AuxiliaryClient.model_for("compression") == "mia-local")
+        check("model_for(compression, model=sonnet) IGNORA el override",
+              ac.AuxiliaryClient.model_for("compression", "claude-sonnet") == "mia-local")
+        check("model_for(compression, model=opus) IGNORA el override",
+              ac.AuxiliaryClient.model_for("compression", "claude-opus") == "mia-local")
 
-        # Tarea NO bloqueada: el override de model SÍ pasa.
-        ac.aux.complete("Verifica esta cita.", task="verification", model="claude-haiku")
-        check("verification: el override de model SÍ pasa al gateway",
-              fake.chat.completions.last_kwargs["model"] == "claude-haiku")
+        # Punta a punta a través de AuxiliaryClient.complete() con cliente falso.
+        fake = _FakeClient()
+        original = llm._client
+        llm._client = fake  # _get_client() devuelve este si no es None
+        try:
+            out = ac.aux.complete("Comprime este expediente.", task="compression", model="claude-sonnet")
+            check("aux.complete devuelve texto", out == "[texto auxiliar]")
+            check("compression: el gateway recibe mia-local (no sonnet)",
+                  fake.chat.completions.last_kwargs["model"] == "mia-local")
 
-        # Sin model: la verification usa su default mia-local (decisión #23).
-        ac.aux.complete("Verifica esta otra.", task="verification")
-        check("verification sin override -> mia-local",
-              fake.chat.completions.last_kwargs["model"] == "mia-local")
+            # Tarea NO bloqueada: el override de model SÍ pasa.
+            ac.aux.complete("Verifica esta cita.", task="verification", model="claude-haiku")
+            check("verification: el override de model SÍ pasa al gateway",
+                  fake.chat.completions.last_kwargs["model"] == "claude-haiku")
+
+            # Sin model: la verification usa su default mia-local ('soberano').
+            ac.aux.complete("Verifica esta otra.", task="verification")
+            check("verification sin override -> mia-local (soberano)",
+                  fake.chat.completions.last_kwargs["model"] == "mia-local")
+        finally:
+            llm._client = original
     finally:
-        llm._client = original
+        llm.reset_model_policy(tok)
 
 
 def main() -> int:

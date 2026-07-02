@@ -187,7 +187,8 @@ class FeedbackProcessor:
         out: dict[str, dict] = {}
         for tenant_id in self._list_tenant_ids():
             try:
-                out[tenant_id] = await self.run(tenant_id)
+                async with llm.tenant_model_policy(tenant_id):  # CP2: política por tenant
+                    out[tenant_id] = await self.run(tenant_id)
             except Exception as e:
                 out[tenant_id] = {"error": str(e)}
                 logger.exception("feedback.run falló (tenant %s)", tenant_id)

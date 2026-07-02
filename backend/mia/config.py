@@ -32,6 +32,16 @@ MIA_MODEL = os.getenv("MIA_MODEL", "claude-sonnet")
 # Ventana de contexto del modelo principal (tokens). La usa el ContextCompressor
 # (2c) para el umbral del 55%. Default 200k (claude-sonnet); configurable por entorno.
 MIA_CONTEXT_WINDOW = int(os.getenv("MIA_CONTEXT_WINDOW", "200000"))
+# Política de modelo POR DEFECTO (CP2 · decisión #27). Valores: "suscripcion" (CLI de
+# Claude Code del abogado, sin billing por API) · "nube" (API Anthropic vía proxy) ·
+# "soberano" (todo local en Ollama). El default aplica cuando el tenant no configuró
+# `tenant_settings.config['model_policy']`; agent/llm.py la resuelve por request/job.
+MIA_MODEL_POLICY = os.getenv("MIA_MODEL_POLICY", "suscripcion").strip().lower()
+# Modelo que el CLI de la suscripción usa por defecto cuando la tarea no trae hint.
+# "sonnet": calidad alta y mucho más rápido escribiendo documentos extensos que el
+# modelo grande default del plan (medido 2026-07-01: el default excedió los 300s en un
+# borrador legal completo; sonnet lo produce en ~1-2 min). Aliases: sonnet/opus/haiku.
+MIA_CLI_MODEL = os.getenv("MIA_CLI_MODEL", "sonnet").strip().lower()
 
 # --- Memoria del agente en ejecución (Módulo 5) ---
 # $MIA_HOME: carpeta donde vive la identidad por despacho (SOUL.md por tenant) y otra

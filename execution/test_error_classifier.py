@@ -139,8 +139,13 @@ def run() -> None:
 
     # ===================== 6 · Cableado en call_llm ==============================
     # Sin delays reales (patch de time.sleep) para que el gate sea rápido.
+    # CP2: estos checks prueban reintentos/clasificación del CAMINO API (cliente del
+    # gateway mockeado), así que fijan política explícita (patrón test_model_policy.py):
+    # 'nube' → el primer proveedor es la API (el mock SÍ se invoca; bajo 'suscripcion'
+    # sería el CLI); 'soberano' → cadena de UN alias para el check de agotamiento.
     _orig_sleep = llm.time.sleep
     llm.time.sleep = lambda *_a, **_k: None
+    _tok_nube = llm.set_model_policy("nube")
     try:
         # 6a · transitorio: falla 2 veces (NETWORK) y luego responde → éxito, 3 llamadas.
         sentinel = object()
@@ -160,16 +165,20 @@ def run() -> None:
         check("call_llm AUTH falla rápido (1 llamada, sin reintentos)", fc.calls == 1)
         check("call_llm AUTH lanza LLMError(kind=AUTH)", auth_kind is LLMErrorKind.AUTH)
 
-        # 6c · transitorio persistente en un alias SIN fallback (task="verification", cadena de
-        # un solo proveedor tras H.5) → agota reintentos (MAX_RETRIES+1 llamadas) y lanza LLMError.
+        # 6c · transitorio persistente en un alias SIN fallback (política 'soberano':
+        # toda cadena es de UN proveedor) → agota reintentos (MAX_RETRIES+1 llamadas)
+        # y lanza LLMError.
         # (El agotamiento de una cadena MULTI-proveedor se cubre en test_llm_fallback.py · H.5.)
         fc = _FakeCreate(_exc("RateLimitError", "429", status_code=429), fail_n=99, sentinel=sentinel)
         _install_fake_client(fc)
         exhausted = None
+        _tok_sob = llm.set_model_policy("soberano")
         try:
             llm.call_llm([{"role": "user", "content": "x"}], task="verification")
         except LLMError as e:
             exhausted = e.kind
+        finally:
+            llm.reset_model_policy(_tok_sob)
         check("call_llm agota reintentos en alias sin fallback (MAX_RETRIES+1 llamadas)",
               fc.calls == llm.MAX_RETRIES + 1)
         check("call_llm tras agotar lanza LLMError(kind=RATE_LIMIT)", exhausted is LLMErrorKind.RATE_LIMIT)
@@ -188,6 +197,7 @@ def run() -> None:
         check("call_llm CONTEXT_TOO_LONG propaga original (no LLMError, 1 llamada)",
               propagated is original and not is_llmerror and fc.calls == 1)
     finally:
+        llm.reset_model_policy(_tok_nube)
         llm.time.sleep = _orig_sleep
         llm._client = None
 

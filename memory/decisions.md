@@ -308,3 +308,36 @@ de la **Fase 0.4** (`ContextVar` + `tenant_settings.config['model_policy']`): `n
 defecto; `soberano` = `mia-local`. El rojo de `test_curator` se cierra al implementar 0.4.
 **Implicación:** revierte el espíritu de la #23 (ya hay créditos) pero lo hace configurable, no
 hardcodeado. mia-local pasa de "parche por falta de créditos" a "tier soberano de producto".
+
+## 27 · 2026-07-01 — Motor por SUSCRIPCIÓN (CLI de Claude Code) + política de modelo por tenant [CP2]
+**Decisión:** Mia puede usar la SUSCRIPCIÓN de Claude Code del abogado (CLI `claude` en modo
+headless: `-p --output-format json --max-turns 1`, sin herramientas `--tools ""`, sin MCP
+`--strict-mcp-config`, sin settings del usuario `--setting-sources project`, cwd=$MIA_HOME) como
+cerebro principal — **sin billing por API**. Tres políticas por tenant en
+`tenant_settings.config['model_policy']`, resueltas por un `ContextVar` en `agent/llm.py`
+(implementa la Fase 0.4 anticipada en la decisión #26): **`suscripcion`** (default) →
+main/curator = `cli-claude`→`claude-sonnet`→`mia-local`, auxiliares y compression =
+`cli-claude-haiku`; **`nube`** → `claude-sonnet`→`mia-local`, compression = `claude-haiku`
+(restaura la decisión #7 — la clave de Anthropic volvió a funcionar, verificado 2026-07-01);
+**`soberano`** → todo `mia-local`. El middleware fija la política por request (caché TTL 60s);
+los crons por tenant (curator/feedback/gepa/dreams) la fijan con `llm.tenant_model_policy`.
+`compression` sigue en `_LOCKED_TASKS`: un `model` explícito no la cambia en ninguna política.
+El abogado la elige en `/settings/model-policy` con etiquetas sin jerga: "Mi suscripción
+(recomendado)" / "Nube" / "Todo en mi equipo".
+**Razón:** el tier suscripción elimina el costo por token del despacho fundador (ya paga la
+suscripción), mantiene calidad Claude para contenido jurídico citable (#26) y deja la nube y lo
+local como red de seguridad automática (cadena de fallback H.5, mismo error_classifier).
+**Nota de emergencia:** `mia-local` se remapeó a `ollama/qwen2.5:7b-instruct` porque
+qwen2.5:32b fue removido de la máquina — restaurar el 32b en litellm_config.yaml si se
+reinstala (el 7b es fallback de emergencia, menor disciplina de citas aún que el 32b).
+**Gate:** `execution/test_model_policy.py` (offline: subprocess/which mockeados).
+**Ajuste (revisión CP2, 2026-07-01):** en `suscripcion`, `compression` = `cli-claude-haiku`→`claude-haiku` (red de seguridad barata si el CLI falla; sigue bloqueada ante `model` explícito).
+**Ajuste de calidad (smoke vivo CP2, 2026-07-01):** dos correcciones medidas en vivo sobre el
+proveedor CLI: (1) Claude Code trae una persona de asistente de código que exige respuestas
+ultra-concisas — un borrador legal salía de 148-1.900 chars; `subscription_llm` ahora pasa un
+`--system-prompt` ESTÁTICO (persona de Mia, constante sin contenido del tenant — el system del
+tenant sigue por stdin, invariante BatBadBut intacto) que lo anula. (2) El modelo default del
+plan es grande y lento escribiendo documentos extensos (>300s → timeout); sin hint explícito el
+CLI usa ahora `MIA_CLI_MODEL` (default `sonnet`). Resultado medido: turno completo en 176s con
+borrador de 19.098 chars, citas correctas (fuero de maternidad, art. 239 CST) y 47 [VERIFICAR],
+todo por suscripción (el proxy no registró ninguna llamada de completions).

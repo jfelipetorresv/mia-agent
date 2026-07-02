@@ -2,9 +2,11 @@
 Mia · test_agent_core.py — verificación del Módulo 1a (MiaAgent + router call_llm).
 
 Verifica OFFLINE (sin red ni proxy LiteLLM):
-  1. La INVARIANTE crítica (decisión #7, override #23): task="compression" =>
-     mia-local SIEMPRE, incluso si se pasa otro `model` explícito (bloqueo).
-  2. El mapa task -> modelo (verification=mia-local, main/None=MIA_MODEL).
+  1. La INVARIANTE crítica (decisión #7/#27): task="compression" está BLOQUEADA
+     bajo LAS TRES políticas de modelo (CP2) — un `model` explícito se ignora y
+     resuelve al alias que la política determina.
+  2. El ruteo por cadena (H.5) bajo política explícita 'nube': main/None/desconocido
+     → claude-sonnet→mia-local; auxiliares → claude-haiku; override no bloqueado pasa.
   3. MiaAgent.run_turn: arma [system, user], usa task="main", guarda la
      respuesta y mantiene el historial entre turnos.
 
@@ -38,36 +40,54 @@ def check(name: str, ok: bool) -> None:
 
 
 # --- 1 + 2 · routing, cadena de fallback (H.5) y la invariante de compression --------
+# CP2: el ruteo depende de la POLÍTICA de modelo activa (decisión #27), así que cada
+# check fija la política explícitamente con set/reset (patrón de test_model_policy.py).
+def _with_policy(policy: str, fn) -> None:
+    tok = llm.set_model_policy(policy)
+    try:
+        fn()
+    finally:
+        llm.reset_model_policy(tok)
+
+
 def test_routing() -> None:
-    # H.5: task -> CADENA de fallback. resolve_model devuelve el primer eslabón (preferido).
-    # compression sigue BLOQUEADA en _LOCKED_TASKS (cadena de un alias, sin fallback).
-    check("compression -> mia-local", llm.resolve_model("compression") == "mia-local")
-    check(
-        "compression IGNORA model=claude-sonnet (bloqueo decision #7/#23)",
-        llm.resolve_model("compression", model="claude-sonnet") == "mia-local",
-    )
-    check(
-        "compression IGNORA model=claude-opus (bloqueo decision #7/#23)",
-        llm.resolve_model("compression", model="claude-opus") == "mia-local",
-    )
-    check("compression sin fallback (cadena de un alias)",
-          llm.resolve_fallback_chain("compression") == ["mia-local"])
-    check("verification -> mia-local", llm.resolve_model("verification") == "mia-local")
+    # INVARIANTE (decisión #7/#27): compression BLOQUEADA bajo LAS TRES políticas —
+    # el `model` explícito se ignora y resuelve al alias que la política determina.
+    locked_first = {"suscripcion": "cli-claude-haiku", "nube": "claude-haiku",
+                    "soberano": "mia-local"}
+    for pol, exp in locked_first.items():
+        def _locked(pol=pol, exp=exp):
+            check(f"[{pol}] compression -> {exp}", llm.resolve_model("compression") == exp)
+            check(f"[{pol}] compression IGNORA model=claude-sonnet (bloqueo #7/#27)",
+                  llm.resolve_model("compression", model="claude-sonnet") == exp)
+            check(f"[{pol}] compression IGNORA model=claude-opus (bloqueo #7/#27)",
+                  llm.resolve_model("compression", model="claude-opus") == exp)
+        _with_policy(pol, _locked)
 
-    # main/None/desconocido: cadena claude-sonnet → mia-local; resolve_model = primer eslabón.
-    check("main -> claude-sonnet (preferido)", llm.resolve_model("main") == "claude-sonnet")
-    check("main tiene fallback a mia-local",
-          llm.resolve_fallback_chain("main") == ["claude-sonnet", "mia-local"])
-    check("task=None -> cadena de main", llm.resolve_model(None) == "claude-sonnet")
-    check("task desconocido -> cadena de main", llm.resolve_model("xyz") == "claude-sonnet")
+    # Cadenas H.5 bajo política 'nube' (API Anthropic): main/None/desconocido → sonnet.
+    def _nube():
+        check("[nube] compression sin fallback (cadena de un alias)",
+              llm.resolve_fallback_chain("compression") == ["claude-haiku"])
+        check("[nube] verification -> claude-haiku (auxiliar barata)",
+              llm.resolve_model("verification") == "claude-haiku")
+        check("[nube] main -> claude-sonnet (preferido)", llm.resolve_model("main") == "claude-sonnet")
+        check("[nube] main tiene fallback a mia-local",
+              llm.resolve_fallback_chain("main") == ["claude-sonnet", "mia-local"])
+        check("[nube] task=None -> cadena de main", llm.resolve_model(None) == "claude-sonnet")
+        check("[nube] task desconocido -> cadena de main", llm.resolve_model("xyz") == "claude-sonnet")
 
-    # Override explícito (tarea no bloqueada): cadena de UN alias, sin fallback.
-    check(
-        "verification SI acepta override (no bloqueada)",
-        llm.resolve_model("verification", model="claude-haiku") == "claude-haiku",
-    )
-    check("override explícito → cadena de un alias (sin fallback)",
-          llm.resolve_fallback_chain("main", model="mia-local") == ["mia-local"])
+        # Override explícito (tarea no bloqueada): cadena de UN alias, sin fallback.
+        check("[nube] verification SI acepta override (no bloqueada)",
+              llm.resolve_model("verification", model="claude-haiku") == "claude-haiku")
+        check("[nube] override explícito → cadena de un alias (sin fallback)",
+              llm.resolve_fallback_chain("main", model="mia-local") == ["mia-local"])
+    _with_policy("nube", _nube)
+
+    # 'soberano': cero salida de datos — todo mia-local.
+    def _soberano():
+        check("[soberano] verification -> mia-local", llm.resolve_model("verification") == "mia-local")
+        check("[soberano] main -> mia-local", llm.resolve_model("main") == "mia-local")
+    _with_policy("soberano", _soberano)
 
 
 # --- 3 · MiaAgent.run_turn ------------------------------------------------------

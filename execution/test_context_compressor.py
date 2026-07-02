@@ -7,7 +7,10 @@ mia-local end-to-end (sin red). Verifica:
   1. No comprime bajo el threshold (55%).
   2. Comprime cuando lo supera.
   3. protect_first_n=5 y protect_last_n=30 intactos tras comprimir.
-  4. El modelo usado es SIEMPRE mia-local (bloqueo decisión #7, override #23).
+  4. El modelo usado es SIEMPRE mia-local bajo política 'soberano' (CP2, decisión #27):
+     este gate fija esa política explícitamente porque su gateway falso espera
+     model=mia-local; el bloqueo de compression bajo las 3 políticas lo cubre
+     execution/test_model_policy.py.
   5. Los mensajes con [VERIFICAR] no se comprimen (se preservan verbatim).
   6. El resumen está en español jurídico (+ prefijo [RESUMEN DE CONTEXTO ANTERIOR]).
   7. El evento context_compressed queda en la traza JSONL.
@@ -78,6 +81,9 @@ def main() -> int:
     fake = _FakeClient()
     original_client = llm._client
     llm._client = fake
+    # CP2: política 'soberano' explícita — compression→mia-local, que es lo que el
+    # gateway falso de este gate espera recibir (patrón de test_model_policy.py).
+    _tok = llm.set_model_policy("soberano")
     try:
         convo = make_convo(50)  # ~2600 tokens
 
@@ -99,9 +105,9 @@ def main() -> int:
               out[5]["role"] == "user" and out[5]["content"].startswith(SUMMARY_PREFIX))
         check("estructura: first5 + [resumen] + last30 (sin [VERIFICAR])", len(out) == 36)
 
-        # 4 · modelo SIEMPRE mia-local (decisión #23; bloqueo end-to-end + a nivel resolve_model)
+        # 4 · modelo mia-local bajo 'soberano' (CP2; bloqueo end-to-end + a nivel resolve_model)
         check("el gateway recibió model=mia-local", fake.chat.completions.last["model"] == "mia-local")
-        check("resolve_model(compression, sonnet) IGNORA override -> mia-local",
+        check("resolve_model(compression, sonnet) IGNORA override -> mia-local (soberano)",
               llm.resolve_model("compression", model="claude-sonnet") == "mia-local")
 
         # 5 · [VERIFICAR] no se comprime (se preserva verbatim)
@@ -150,6 +156,7 @@ def main() -> int:
         check("anti-thrashing: tras 2 compresiones inefectivas, no recomprime",
               out_at is convo and not cc_at.last_compressed)
     finally:
+        llm.reset_model_policy(_tok)
         llm._client = original_client
 
     passed = sum(1 for _, ok in _results if ok)

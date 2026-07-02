@@ -157,14 +157,22 @@ def run() -> None:
     check("6h · UNKNOWN → NO salta", should_fallback(LLMErrorKind.UNKNOWN) is False)
 
     # === 7 · resolve_fallback_chain — dedupe, locked, override ===
-    check("7a · main → cadena claude-sonnet→mia-local",
-          llm.resolve_fallback_chain("main") == ["claude-sonnet", "mia-local"])
-    check("7b · compression bloqueada (cadena de un alias, ignora model)",
-          llm.resolve_fallback_chain("compression", model="claude-opus") == ["mia-local"])
-    check("7c · override explícito → cadena de un alias",
-          llm.resolve_fallback_chain("main", model="mia-local") == ["mia-local"])
-    check("7d · task desconocido → cae a la cadena de main",
-          llm.resolve_fallback_chain("no-existe") == ["claude-sonnet", "mia-local"])
+    # CP2 (decisión #27): la cadena depende de la política de modelo. Se fija 'nube'
+    # explícitamente: es la política cuyo comportamiento verificaba H.5 (sonnet→local);
+    # compression restaurada a claude-haiku (decisión #7). test_model_policy.py cubre
+    # las otras políticas.
+    tok = llm.set_model_policy("nube")
+    try:
+        check("7a · [nube] main → cadena claude-sonnet→mia-local",
+              llm.resolve_fallback_chain("main") == ["claude-sonnet", "mia-local"])
+        check("7b · [nube] compression bloqueada a claude-haiku (ignora model, decisión #7)",
+              llm.resolve_fallback_chain("compression", model="claude-opus") == ["claude-haiku"])
+        check("7c · override explícito → cadena de un alias",
+              llm.resolve_fallback_chain("main", model="mia-local") == ["mia-local"])
+        check("7d · task desconocido → cae a la cadena de main",
+              llm.resolve_fallback_chain("no-existe") == ["claude-sonnet", "mia-local"])
+    finally:
+        llm.reset_model_policy(tok)
 
 
 def main() -> int:

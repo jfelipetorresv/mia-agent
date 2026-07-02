@@ -566,3 +566,17 @@ reintento parta de un `user` genuinamente más chico. Alternativa: que `_llm` (o
 `ContextCompressor`, que está pensado para historiales de conversación, no para prompts de 2 mensajes.
 Cubrir con un gate que fuerce `CONTEXT_TOO_LONG` en el 1er intento y verifique que el 2º manda un
 prompt más corto.
+
+## 🟡 Riesgo #34 — Política de modelo: caché por proceso y CLI colgado pueden retener el request  [detectado 2026-07-01, revisión CP2]
+Dos modos de degradación del motor por suscripción (decisión #27), aceptables hoy pero a vigilar:
+**(1) Caché de política por proceso.** El middleware cachea `model_policy` por tenant con TTL 60s
+**en memoria del proceso**. Con VARIOS workers de uvicorn (o API replicada, Modo A), un PUT a
+`/settings/model-policy` solo invalida el caché del worker que atendió el PUT: los demás pueden
+servir hasta ~60s con la política VIEJA. En Modo B (1 worker) no pasa. **Acción al pasar a Modo A:**
+invalidación compartida (Postgres LISTEN/NOTIFY o bajar el TTL) o aceptar los 60s documentándolo.
+**(2) CLI colgado = request retenido minutos.** Si el CLI `claude` no responde, cada intento espera
+el timeout completo (300s main/curator, 120s resto) y `call_llm` reintenta hasta 3 veces DENTRO del
+alias antes de saltar de proveedor: en el peor caso un turno puede quedar retenido varios minutos
+antes de caer a la nube/local. Mitigación parcial ya aplicada (timeout por task); si aparece en uso
+real, bajar reintentos para aliases `cli-*` (el CLI local rara vez se recupera reintentando) o
+timeout más agresivo con detección de "CLI muerto" (circuit breaker por proceso).

@@ -418,7 +418,10 @@ class Curator:
         out: dict[str, dict] = {}
         for tenant_id in self._list_tenant_ids():
             try:
-                p = await self.propose(tenant_id)
+                # CP2 (decisión #27): job de fondo sin request → fijar la política de
+                # modelo DEL TENANT antes de llamar al LLM; se restaura al salir.
+                async with llm.tenant_model_policy(tenant_id):
+                    p = await self.propose(tenant_id)
                 out[tenant_id] = {"proposal_id": p.id, "merges": len(p.proposed_merges),
                                   "deletions": len(p.proposed_deletions)}
             except Exception as e:
@@ -433,7 +436,8 @@ class Curator:
         out: dict[str, dict] = {}
         for tenant_id in self._list_tenant_ids():
             try:
-                out[tenant_id] = await self._run_legacy(tenant_id)
+                async with llm.tenant_model_policy(tenant_id):  # CP2: política por tenant
+                    out[tenant_id] = await self._run_legacy(tenant_id)
             except Exception as e:   # un tenant no debe tumbar a los demás
                 out[tenant_id] = {"error": str(e)}
                 logger.exception("curator._run_legacy falló (tenant %s)", tenant_id)

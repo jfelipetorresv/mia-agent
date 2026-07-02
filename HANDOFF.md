@@ -11,51 +11,65 @@ quede trazabilidad de ambas revisiones.
 
 ---
 
-## Checkpoint actual: CP0 — Estabilidad de plataforma (2026-07-01)
+## Checkpoint actual: CP2 — Motor de modelos por suscripción (2026-07-01)
 
 ### Qué cambió (lenguaje simple)
 
-- LiteLLM (la pieza que conecta a Mia con los modelos de IA) ahora corre
-  en su propio entorno separado, de modo que reinstalarlo o reiniciarlo
-  nunca vuelva a romper a Mia.
-- Se corrigió la documentación del proyecto: rutas viejas actualizadas a
-  la ubicación real ("D:\Codex\Mia-Super Agent") y se documentó la regla
-  del entorno separado de LiteLLM en las notas de arquitectura.
+- Mia ahora puede pensar usando la suscripción de Claude del abogado,
+  sin costo por consumo: cada respuesta se carga a la suscripción que
+  el despacho ya paga, no a una cuenta de API por token.
+- Cada despacho elige su modo de trabajo entre tres opciones:
+  "Mi suscripción" (recomendado), "Nube" o "Todo en mi equipo".
+- El respaldo local quedó restaurado con un modelo pequeño: si la
+  suscripción y la nube fallan, Mia sigue respondiendo desde el propio
+  equipo del abogado.
+- Tras la revisión independiente se blindó la conexión con la
+  suscripción: Mia ya no comparte sus claves ni secretos con el
+  programa externo, y solo ejecuta el programa auténtico (nunca un
+  sustituto que pudiera manipularse).
 
 ### Frontend a revisar
 
-- Ninguno en este checkpoint. No hubo cambios visibles en pantalla.
+- Ninguno aún — el selector visual del modo de modelo llega en CP7.
 
 ### Comportamiento esperado
 
-- Los 3 procesos (litellm / uvicorn / npm run dev) arrancan sin errores
-  y el chat responde igual que antes.
+- Con "Mi suscripción" activo, Mia responde igual que siempre pero el
+  consumo va contra la suscripción de Claude del abogado. Si la
+  suscripción no está disponible, Mia pasa sola a la nube y luego al
+  respaldo local, sin que el abogado note el cambio ni pierda el turno.
 
 ### Bugs conocidos / fuera de alcance
 
-- El frontend está 16 días rezagado respecto al backend — se sincroniza
-  en CP5/CP7. No es parte de este checkpoint.
+- El alias "haiku" (modelo pequeño para tareas auxiliares) puede ser
+  atendido por otro modelo pequeño de la suscripción — el proveedor
+  decide cuál responde; no afecta el resultado visible.
+- Riesgo #34 anotado: con varios procesos del servidor, un cambio de
+  modo puede tardar hasta ~60 segundos en aplicar en todos (hoy, con un
+  solo proceso, aplica de inmediato); y si el programa de la
+  suscripción se cuelga, un turno puede quedar retenido unos minutos
+  antes de saltar al siguiente proveedor.
 
 ### Resultado de verificación (3 capas)
 
-- Capa 1 (automatizada): VERDE — regresión completa 32/32 suites PASS
-  (test_rls 12/12 HALT PASS) + gate nuevo check_env_pins.py 9/9 PASS,
-  cableado a start_api.ps1 y run_tests.ps1. Prueba en vivo: LiteLLM
-  arrancó desde su entorno separado, el API arrancó con el gate de
-  versiones, y un turno jurídico completo funcionó de punta a punta
-  (pregunta → análisis → borrador con citas correctas → aprobación →
-  finalización). Nota: la prueba en vivo usó claude-sonnet temporalmente
-  (la clave de Anthropic volvió a funcionar); el modelo por defecto del
-  .env no se cambió — eso es CP2.
-- Capa 2 (subagente revisor independiente): ejecutada. 3 hallazgos
-  mayores, TODOS corregidos antes del commit: (1) start_all.ps1 fallaba
-  con rutas con espacios → comillas explícitas; (2) el gate de versiones
-  no estaba conectado a ningún flujo → ahora aborta arranque y regresión;
-  (3) websockets había quedado degradada (13.1) → restaurada a 15.0.1,
-  pineada y cubierta por el gate. Menores: Riesgo #32 cerrado en
-  bugs-and-risks.md. Esta revisión es por lectura de patrones conocidos,
-  no una auditoría con herramientas de escaneo.
-- Capa 3 (revisión visual de Cursor): no aplica — CP0 no tocó frontend;
+- Capa 1 (automatizada): VERDE — regresión completa 33/33 suites PASS
+  (incluye test_rls 12/12 HALT PASS, el gate nuevo test_model_policy.py
+  40/40, test_llm_fallback 25/25 y test_curator 24/24; las 4 suites que
+  esperaban el contrato viejo de modelos fueron actualizadas al nuevo).
+  Gate en vivo del turno completo por suscripción: 176 segundos de
+  pregunta a borrador, borrador de 19.098 caracteres con citas correctas
+  (fuero de maternidad, art. 239 CST) y 47 marcadores [VERIFICAR]; el
+  proxy no registró ninguna llamada por API — todo fue por suscripción.
+  Se corrigieron en vivo dos problemas de calidad: la personalidad
+  concisa del programa de la suscripción producía borradores diminutos
+  (148 caracteres) y su modelo por defecto tardaba más de 5 minutos —
+  ahora Mia le impone su propia personalidad jurídica y usa el modelo
+  rápido de alta calidad (configurable).
+- Capa 2 (subagente revisor independiente): revisor independiente
+  ejecutado: 2 mayores corregidos (aislamiento de credenciales del
+  subproceso, blindaje de ejecutable), 5 menores corregidos/anotados;
+  revisión por lectura de patrones, no auditoría con herramientas.
+- Capa 3 (revisión visual de Cursor): no aplica — CP2 no tocó frontend;
   Cursor confirma en la sección siguiente.
 
 ---

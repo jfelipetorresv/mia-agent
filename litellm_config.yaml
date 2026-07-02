@@ -13,11 +13,12 @@ model_list:
     litellm_params:
       model: anthropic/claude-sonnet-4-6
       api_key: os.environ/ANTHROPIC_API_KEY
-  # Modelo local para desarrollo (Ollama). Sin coste y sin Anthropic. Activar con
+  # Modelo local (Ollama). Sin coste y sin Anthropic. Activar con
   # MIA_MODEL=mia-local en .env + reiniciar uvicorn. ollama_chat/ usa /api/chat.
+  # fallback de emergencia; qwen2.5:32b fue removido — restaurar si se reinstala.
   - model_name: mia-local
     litellm_params:
-      model: ollama/qwen3.6
+      model: ollama/qwen2.5:7b-instruct
       api_base: http://127.0.0.1:11434
 
 litellm_settings:

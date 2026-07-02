@@ -18,11 +18,25 @@ H.5 (cadena de fallback de proveedor, 2026-06-30):
     (`error_classifier.should_fallback`), pasa al siguiente alias. `main`/`curator` intentan
     `claude-sonnet` y caen a `mia-local`. `compression` mantiene su cadena de un solo alias
     (sin fallback) y su bloqueo. Ver architecture/ y memory/decisions.md.
+
+CP2 (política de modelo por tenant, 2026-07-01 · decisión #27, anticipada en la #26):
+    Un ContextVar `_model_policy` (default: config.MIA_MODEL_POLICY) decide QUÉ cadena usa
+    cada task. Tres políticas:
+      · "suscripcion" → CLI de Claude Code del abogado (aliases "cli-claude" /
+        "cli-claude-haiku", despachados a agent/subscription_llm) con fallback a nube y local;
+      · "nube"        → API Anthropic vía proxy (restaura la decisión #7: compression=claude-haiku);
+      · "soberano"    → todo mia-local (Ollama).
+    El middleware fija la política por request (tenant_settings.config['model_policy']);
+    los flujos sin request (cron) usan `model_policy_for` / `tenant_model_policy`.
+    `_TASK_FALLBACK_CHAINS` se conserva como mapa BASE (compat con gates que lo leen);
+    `resolve_fallback_chain` lo superpone con la cadena de la política activa.
 """
 from __future__ import annotations
 
 import logging
 import time
+from contextlib import asynccontextmanager
+from contextvars import ContextVar, Token
 from typing import Any
 
 from .. import config
@@ -64,6 +78,122 @@ _LOCKED_TASKS = frozenset({"compression"})
 
 _DEFAULT_TASK = "main"
 
+# ── CP2 · política de modelo por tenant (decisión #27) ──────────────────────────
+VALID_POLICIES = ("suscripcion", "nube", "soberano")
+
+# Tareas auxiliares (baratas): comparten cadena dentro de cada política.
+_AUX_TASKS = ("verification", "title_generation", "session_search", "web_extract",
+              "vision", "soul")
+
+# Cadenas por política. Se SUPERPONEN a _TASK_FALLBACK_CHAINS (que queda como mapa base,
+# compat con tests que lo leen/mutan): un task inyectado ahí (no estándar) sigue resolviendo.
+# `compression` sigue en _LOCKED_TASKS en las 3 políticas (un model explícito no la cambia).
+_POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
+    # Suscripción de Claude Code del abogado (sin billing por API): CLI primero,
+    # nube y local como red de seguridad. Auxiliares → hint haiku por el CLI.
+    "suscripcion": {
+        "main": ["cli-claude", "claude-sonnet", "mia-local"],
+        "curator": ["cli-claude", "claude-sonnet", "mia-local"],
+        # Sigue BLOQUEADA (model explícito no la cambia), pero con red: si el CLI
+        # falla, cae a la API haiku barata (ajuste de la revisión CP2, decisión #27).
+        "compression": ["cli-claude-haiku", "claude-haiku"],
+        **{t: ["cli-claude-haiku", "mia-local"] for t in _AUX_TASKS},
+    },
+    # Nube (API Anthropic vía proxy). Restaura la decisión #7: compression=claude-haiku
+    # (la clave de Anthropic volvió a funcionar, verificado 2026-07-01).
+    "nube": {
+        "main": ["claude-sonnet", "mia-local"],
+        "curator": ["claude-sonnet", "mia-local"],
+        "compression": ["claude-haiku"],
+        **{t: ["claude-haiku", "mia-local"] for t in _AUX_TASKS},
+    },
+    # Soberano: TODO local (Ollama), para despachos que exigen cero salida de datos.
+    "soberano": {t: ["mia-local"] for t in ("main", "curator", "compression", *_AUX_TASKS)},
+}
+
+# Alias CLI → hint de modelo para subscription_llm ("cli-claude" usa el default de la
+# suscripción; "cli-claude-haiku" pide el modelo pequeño para tareas auxiliares baratas).
+_CLI_MODEL_HINTS: dict[str, str | None] = {"cli-claude": None, "cli-claude-haiku": "haiku"}
+
+# Timeout del CLI por task (revisión CP2): el razonamiento largo (main/curator) puede
+# tardar minutos; las tareas auxiliares/compresión no deben retener el request tanto.
+_CLI_TIMEOUT_LONG_TASKS = frozenset({"main", "curator"})
+_CLI_TIMEOUT_LONG = 300.0   # segundos — main / curator
+_CLI_TIMEOUT_SHORT = 120.0  # segundos — resto de tareas
+
+# Aviso ÚNICO por proceso cuando temperature/max_tokens se descartan en aliases cli-*
+# (el CLI headless no acepta esos parámetros); evitar spamear el log por llamada.
+_warned_cli_dropped_params = False
+
+
+def _cli_timeout(task: str | None) -> float:
+    return _CLI_TIMEOUT_LONG if task in _CLI_TIMEOUT_LONG_TASKS else _CLI_TIMEOUT_SHORT
+
+
+def _default_policy() -> str:
+    """Política por defecto desde config (env MIA_MODEL_POLICY); inválida → 'suscripcion'."""
+    p = (getattr(config, "MIA_MODEL_POLICY", "") or "").strip().lower()
+    return p if p in VALID_POLICIES else "suscripcion"
+
+
+_model_policy: ContextVar[str | None] = ContextVar("mia_model_policy", default=None)
+
+
+def set_model_policy(policy: str | None) -> Token:
+    """Fija la política en el contexto actual (middleware por request / cron por job).
+    Devuelve el token para `reset_model_policy`. Una política inválida cae al default."""
+    p = (policy or "").strip().lower()
+    if p not in VALID_POLICIES:
+        if p:
+            logger.warning("política de modelo inválida '%s'; se usa el default '%s'",
+                           policy, _default_policy())
+        p = _default_policy()
+    return _model_policy.set(p)
+
+
+def get_model_policy() -> str:
+    """Política efectiva del contexto actual (default de config si nadie la fijó)."""
+    p = _model_policy.get()
+    return p if p in VALID_POLICIES else _default_policy()
+
+
+def reset_model_policy(token: Token) -> None:
+    """Restaura la política previa (usar en finally, simétrico a set_model_policy)."""
+    _model_policy.reset(token)
+
+
+async def model_policy_for(tenant_id: str) -> str:
+    """Política del tenant leída de `tenant_settings.config['model_policy']` (RLS).
+
+    Para flujos SIN request (cron/background). Sin fila, valor inválido o error de DB →
+    default de config. NO toca el ContextVar: combinar con set/reset o `tenant_model_policy`."""
+    try:
+        from ..db import pool  # import diferido: no exigir DB para usar call_llm offline
+
+        async with pool.tenant_connection(tenant_id) as conn:
+            row = await (await conn.execute(
+                "SELECT config->>'model_policy' FROM tenant_settings WHERE tenant_id = %s::uuid",
+                (tenant_id,),
+            )).fetchone()
+        p = ((row[0] if row else None) or "").strip().lower()
+        if p in VALID_POLICIES:
+            return p
+    except Exception:  # noqa: BLE001 — un fallo de DB no debe tumbar el job; usa el default
+        logger.exception("model_policy_for: no se pudo leer la política del tenant %s", tenant_id)
+    return _default_policy()
+
+
+@asynccontextmanager
+async def tenant_model_policy(tenant_id: str):
+    """Context manager async: fija la política del tenant y la restaura al salir.
+    Para envolver jobs por-tenant de cron/background que llamen al LLM."""
+    token = set_model_policy(await model_policy_for(tenant_id))
+    try:
+        yield
+    finally:
+        reset_model_policy(token)
+
+
 _client: Any = None  # openai.OpenAI — import diferido (ver _get_client)
 
 
@@ -89,15 +219,26 @@ def _dedupe_chain(aliases: list[str]) -> list[str]:
     return out
 
 
+def _active_chains() -> dict[str, list[str]]:
+    """Mapa task→cadena efectivo: el base (_TASK_FALLBACK_CHAINS, compat/legacy) superpuesto
+    con las cadenas de la política activa (CP2). Los tasks estándar los decide la política;
+    un task extra inyectado en el mapa base (p. ej. por un gate) se conserva."""
+    merged = dict(_TASK_FALLBACK_CHAINS)
+    merged.update(_POLICY_CHAINS[get_model_policy()])
+    return merged
+
+
 def resolve_fallback_chain(task: str | None, model: str | None = None) -> list[str]:
-    """Cadena de aliases a intentar para un `task` (sin vacíos ni duplicados).
+    """Cadena de aliases a intentar para un `task` (sin vacíos ni duplicados), según la
+    política de modelo activa (CP2 · get_model_policy()).
 
     - `compression` está bloqueado (decisión #7): un `model` distinto se ignora con warning.
     - `model` explícito (tarea no bloqueada) gana como cadena de UN alias (override sin fallback).
-    - Sin `model`: la cadena del mapa; un task desconocido cae a la de 'main'.
+    - Sin `model`: la cadena de la política activa; un task desconocido cae a la de 'main'.
     """
+    chains = _active_chains()
     if task in _LOCKED_TASKS:
-        locked = _TASK_FALLBACK_CHAINS[task]
+        locked = chains[task]
         if model and model != locked[0]:
             logger.warning(
                 "task=%s está bloqueado a %s (decisión #7); se ignora model=%s",
@@ -106,7 +247,7 @@ def resolve_fallback_chain(task: str | None, model: str | None = None) -> list[s
         return _dedupe_chain(locked)
     if model:
         return [model]
-    chain = _TASK_FALLBACK_CHAINS.get(task or _DEFAULT_TASK, _TASK_FALLBACK_CHAINS[_DEFAULT_TASK])
+    chain = chains.get(task or _DEFAULT_TASK, chains[_DEFAULT_TASK])
     return _dedupe_chain(chain)
 
 
@@ -181,6 +322,33 @@ def call_llm(
     ) from (last.exc if last else None)
 
 
+def _invoke(client: Any, alias: str, kwargs: dict[str, Any], task: str | None = None) -> Any:
+    """Despacha UNA llamada según el alias: los "cli-*" van al CLI de la suscripción
+    (agent/subscription_llm); el resto, al proxy LiteLLM (cliente OpenAI). Los errores de
+    ambos caminos pasan por el MISMO error_classifier/should_fallback aguas arriba."""
+    if alias.startswith("cli-"):
+        from . import subscription_llm  # import diferido (mismo criterio que _get_client)
+
+        if kwargs.get("tools"):
+            # El CLI headless no soporta tool-calling OpenAI; se ignora con aviso.
+            logger.warning("alias %s no soporta 'tools'; se ignoran en esta llamada", alias)
+        dropped = [k for k in ("temperature", "max_tokens") if kwargs.get(k) is not None]
+        if dropped:
+            global _warned_cli_dropped_params
+            if not _warned_cli_dropped_params:
+                _warned_cli_dropped_params = True
+                logger.warning(
+                    "los aliases cli-* descartan %s (el CLI headless no los acepta); "
+                    "este aviso se emite una sola vez por proceso", dropped,
+                )
+        return subscription_llm.call_cli(
+            kwargs["messages"],
+            model_hint=_CLI_MODEL_HINTS.get(alias),
+            timeout=_cli_timeout(task),   # 300s main/curator · 120s resto (revisión CP2)
+        )
+    return client.chat.completions.create(**kwargs)
+
+
 def _call_with_retries(
     client: Any,
     kwargs: dict[str, Any],
@@ -199,7 +367,7 @@ def _call_with_retries(
     """
     for attempt in range(max_retries + 1):     # 1 intento inicial + hasta max_retries reintentos
         try:
-            return client.chat.completions.create(**kwargs)
+            return _invoke(client, alias, kwargs, task)
         except Exception as exc:               # noqa: BLE001 — se clasifica y re-lanza abajo
             kind = classify_llm_error(exc)
 
