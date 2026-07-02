@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -391,12 +392,18 @@ async def list_proposals(request: Request):
     tid = _tenant(request)
     async with pool.tenant_connection(tid) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            # CP-C3: se incluye el TÍTULO del playbook target — el abogado debe saber
+            # QUÉ procedimiento se modificará al aplicar (hallazgo mayor del revisor).
             await cur.execute(
-                "SELECT id, proposal_type, suggested_content, rationale, signal_count, created_at "
-                "FROM feedback_proposals WHERE status = 'pending' ORDER BY created_at DESC")
+                "SELECT fp.id, fp.proposal_type, fp.suggested_content, fp.rationale, "
+                "       fp.signal_count, fp.created_at, pb.title AS target_title "
+                "FROM feedback_proposals fp "
+                "LEFT JOIN playbooks pb ON pb.id = fp.target_playbook_id "
+                "WHERE fp.status = 'pending' ORDER BY fp.created_at DESC")
             rows = await cur.fetchall()
     return [{"id": str(r["id"]), "type": _PROPOSAL_LABEL.get(r["proposal_type"], r["proposal_type"]),
              "suggestion": r["suggested_content"], "reason": r["rationale"],
+             "target": r["target_title"],
              "times_seen": r["signal_count"], "created_at": r["created_at"]} for r in rows]
 
 
@@ -422,9 +429,18 @@ async def apply_proposal(proposal_id: str, request: Request):
                 raise HTTPException(
                     status_code=409,
                     detail="El playbook está protegido y no puede modificarse automáticamente.")
+            # CP-C3: trazabilidad de la mejora — el playbook registra QUÉ propuesta lo
+            # modificó, cuándo, y guarda el CONTENIDO ANTERIOR (metadata.last_improvement):
+            # aplicar una mejora deja de ser irreversible (hallazgo mayor del revisor).
+            applied_at = datetime.now(timezone.utc).isoformat()
             await conn.execute(
-                "UPDATE playbooks SET content = %s, updated_at = now() WHERE id = %s AND NOT protected",
-                (p["suggested_content"], p["target_playbook_id"]))
+                "UPDATE playbooks SET content = %s, updated_at = now(), "
+                "metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{last_improvement}', "
+                "  jsonb_build_object('proposal_id', %s::text, 'applied_at', %s::text, "
+                "                     'previous_content', playbooks.content), true) "
+                "WHERE id = %s AND NOT protected",
+                (p["suggested_content"], str(proposal_id), applied_at,
+                 p["target_playbook_id"]))
         elif p["proposal_type"] == "new_playbook":
             await conn.execute(
                 "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content) "

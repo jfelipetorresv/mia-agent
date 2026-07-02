@@ -107,6 +107,23 @@ def main() -> int:
               and sft["messages"][0]["content"] == trace.input
               and sft["messages"][1]["content"] == trace.output)
 
+        # 7 · CP-C3 (Riesgo #31): activated_playbooks viaja en la traza v2 y hace
+        # roundtrip por el JSONL — es la materia prima del circuito de aprendizaje.
+        v2 = tc.capture(tenant_id="t-3", matter_id="m-1", input="i", output="o",
+                        model="claude-sonnet", tokens=10, latency_ms=50.0,
+                        hitl_outcome="approved",
+                        activated_playbooks=["pb-tutela", "pb-caducidad"])
+        rec3 = tc.read("t-3")[0]
+        check("CP-C3: capture con activated_playbooks sube el schema a v2",
+              v2.schema == "mia.trace.v2" and rec3.get("schema") == "mia.trace.v2")
+        check("CP-C3: activated_playbooks hace roundtrip (lista de 2 ids intacta)",
+              rec3.get("activated_playbooks") == ["pb-tutela", "pb-caducidad"])
+        v2solo = tc.capture(tenant_id="t-3", matter_id="m-2", input="i", output="o",
+                            model="claude-sonnet", tokens=10, latency_ms=50.0,
+                            activated_playbooks=["pb-solo"])
+        check("CP-C3: activated_playbooks SOLO (sin otros campos HITL) también es v2",
+              v2solo.schema == "mia.trace.v2")
+
     # 6 · dir por defecto.
     default = _default_traces_dir()
     check("el dir por defecto termina en mia-data/traces",

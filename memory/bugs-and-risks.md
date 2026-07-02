@@ -34,14 +34,19 @@ El spec permitió "encriptado o como está"; se eligió "como está" para cerrar
 **Riesgo:** en producción, una lectura indebida de DB expondría la API key del tenant.
 **Acción:** cifrar secretos por tenant o moverlos a un vault/secret manager antes de producción.
 
-### 🟡 Riesgo #31 — GEPA depende de trazas con activación de playbook para medir skills
+### 🟢 Riesgo #31 — GEPA depende de trazas con activación de playbook para medir skills  [CERRADO 2026-07-01, CP-C3]
+**Resolución (CP-C3, sesión 22):** el cableado ya existía (graph.py registra
+`activated_playbooks` en la traza v2 desde el smoke de 2026-06-30); CP-C3 cerró la brecha
+LÓGICA restante — el FeedbackProcessor ahora vincula cada señal (rechazo/edición) con los
+playbooks activados en ESAS trazas y propone mejorar el correcto (no uno arbitrario); la
+propuesta se redacta sobre el contenido real del playbook; aplicarla guarda el contenido
+anterior en `metadata.last_improvement` (reversible) y el abogado ve qué procedimiento se
+modifica (`target` en GET /api/proposals). Gates: test_feedback_processor 26/26 ·
+test_gepa 18/18 · test_trace_capture 23/23. **Residual → Riesgo #20:** la vuelta EN VIVO
+del ciclo espera que Pipe suba sus guías (sin playbooks sembrados no hay activación que
+observar). Detalle original ↓
 GEPA soporta `playbook_id`, `playbook_ids`, `skill_id`, `skill_ids` o `activated_playbooks` en
-trazas JSONL. Las trazas actuales del grafo no siempre registran qué playbook se activó.
-
-**Riesgo:** `grade_all_skills` y `evolve_skill` pueden subestimar activaciones reales hasta que el
-grafo registre explícitamente los playbooks usados. **Mitigación:** `detect_new_skill` sí funciona
-con respuestas aprobadas sin skill asignado y GEPA nunca aplica cambios sin revisión. **Acción:**
-cablear activación de playbooks al grafo/TraceCapture cuando el retriever procedural entre al prompt.
+trazas JSONL. Las trazas del grafo no siempre registraban qué playbook se activó.
 
 ## [CERRADO] Riesgo #28 - Issue #1 cerrado: chat responde con mia-local  [CERRADO 2026-06-20]
 **Cierre:** smoke test vivo completado en el asunto "Nueva prueba". Se levanto PostgreSQL 16 portable

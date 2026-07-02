@@ -31,7 +31,10 @@ def _norm(text: str) -> str:
     return " ".join(words[:10])
 
 
-def _trace_playbook_ids(trace: dict) -> list[str]:
+def trace_playbook_ids(trace: dict) -> list[str]:
+    """Ids de playbooks referidos por una traza, en cualquiera de sus formatos
+    (playbook_id/skill_id singulares, listas, activated_playbooks v2, metadata
+    anidada). API PÚBLICA: también la usa el FeedbackProcessor (CP-C3)."""
     ids: list[str] = []
     for key in ("playbook_id", "skill_id"):
         if trace.get(key):
@@ -42,8 +45,12 @@ def _trace_playbook_ids(trace: dict) -> list[str]:
             ids.extend(str(v) for v in value)
     meta = trace.get("metadata")
     if isinstance(meta, dict):
-        ids.extend(_trace_playbook_ids(meta))
+        ids.extend(trace_playbook_ids(meta))
     return list(dict.fromkeys(ids))
+
+
+# Alias privado retrocompatible (los usos internos históricos usan el nombre con _).
+_trace_playbook_ids = trace_playbook_ids
 
 
 def _outcome(trace: dict) -> str | None:
