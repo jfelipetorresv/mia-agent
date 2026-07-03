@@ -1546,3 +1546,44 @@ respeta señal viva, diversidad, buckets puros de costo/retrabajo, RLS forzado e
 sin jurisdicciones hardcodeadas). **Regresión completa 50/50 suites × 3 corridas** (base, tras
 correcciones H1-H7, tras R1/R2). Migración 022 aplicada en la DB local (idempotente).
 Riesgo #44 registrado.
+
+## 2026-07-03 · Sesión 28 — CP-Z1: dictado local (abre la Ola 3, voz)
+
+**CP-Z1 (rama `feature/cp-z1-voz-local`)** — voz-a-texto 100% LOCAL: el audio del abogado nunca
+sale del servidor del despacho. Motor reusa lo que **Lexter** (dictado de escritorio de Pipe, fork
+de Handy MIT) ya validó en español jurídico (diseño en `docs/analisis-lexter.md`): Silero VAD +
+**Parakeet TDT 0.6B v3 int8** vía **sherpa-onnx** (decisión de modelo de Pipe). Piezas:
+- `backend/mia/speech/audio.py`: WAV del navegador → PCM float32 16 kHz mono (stdlib `wave`+numpy,
+  sin ffmpeg); mezcla estéreo, decodifica 8/16/24/32 bits, re-muestrea; rechazos en llano
+  (vacío/corrupto/>5 min/>32 MB) con la jerga técnica fuera del mensaje.
+- `backend/mia/speech/engine.py`: motor con carga perezosa (singleton), parámetros de Lexter
+  (umbral 0.3, margen 450 ms, trozos 60 s, clips <1 s → 1.25 s); VAD Silero para trocear audios
+  largos, cortes fijos si el VAD no está; provider CPU/DirectML configurable con degradación.
+- `backend/mia/speech/policy.py`: candado `allow_cloud_audio` por tenant, default False,
+  **fail-closed** (patrón model_policy_for_strict de CP-P4) — un motor de nube futuro exigiría
+  opt-in explícito; hoy el motor es local (`ENGINE_IS_LOCAL`), así que no bloquea a nadie.
+- `backend/mia/speech/cleanup.py`: pulido opcional del dictado con el modelo **LOCAL**
+  (`mia-local`, cadena de UN alias sin fallback a nube) + guardrail anti-traducción; fail-soft.
+- `backend/mia/api/routes/speech.py`: `POST /api/speech/transcribe` (multipart, autenticado);
+  rate-limit por abogado, semáforo global + timeout, decodificación y STT en `asyncio.to_thread`.
+- `scripts/download_speech_models.ps1`: baja los pesos (gitignored) — no se versionan.
+- `backend/pyproject.toml`: `sherpa-onnx~=1.13` (fuera de los pins críticos del Riesgo #32;
+  check_env_pins 9/9 intacto).
+
+**Capa 2 (revisor adversarial con contexto fresco): APROBAR CON CORRECCIONES.** Verificó por
+CÓDIGO que la regla no negociable se cumple (audio local, candado fail-closed real, sin fugas en
+logs, `/api/speech/transcribe` no es OPEN_PATH, `resolve_fallback_chain` con model explícito = 1
+alias). 2 MAYORES + 6 menores corregidos pre-commit (detalle en Riesgo #45):
+- MAYOR · decodificación del WAV corría en el event loop antes del semáforo (numpy sobre 32 MB) →
+  N clips congelaban los SSE de otros abogados. Movida a to_thread dentro del semáforo →
+  **verificado con probe: 3 clips de 24.7 MB simultáneos, gap del loop 46 ms (<150 ms objetivo)**.
+- MAYOR · rate-limit por despacho castigaba firmas multi-abogado → llave (tenant, email).
+- menores · guardrail burlable con "no" (palabra ES/EN) → exige ≥2 stopwords ES y veta EN;
+  60 s de silencio iban al STT → VAD vacío = 0 trozos; curl sin -f; jerga "tenant" en 401;
+  `_clip_hits` sin poda; + timeout de STT (503 si el motor se cuelga).
+
+**Gates:** `test_speech_stt.py` **41/41** (audio adversarial, guardrail, ruta con motor doble,
+candado fail-closed contra DB real, e integración REAL con los pesos: es.wav → español correcto,
+76 s → camino VAD, 70 s de silencio → 0 STT rápido; + a-04b 24 bits, c-07 contrato sin-nube en
+llm.py, c-08 OPEN_PATH, r-06b cupo por abogado). **Regresión completa 51/51 suites** (test_rls
+12/12 HALT) tras correcciones. Riesgo #45 registrado. Frontend (botón 🎤) → HANDOFF para Cursor.
