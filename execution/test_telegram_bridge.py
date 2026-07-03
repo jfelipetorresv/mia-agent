@@ -55,9 +55,11 @@ def check(name: str, ok: bool) -> None:
 
 # ── dobles de prueba: HTTP falso (MiaClient) y transporte falso (TelegramBridge) ──
 class FakeResponse:
-    def __init__(self, status_code: int, payload: dict | None = None) -> None:
+    def __init__(self, status_code: int, payload: dict | None = None,
+                 content: bytes | None = None) -> None:
         self.status_code = status_code
         self._payload = payload or {}
+        self.content = content or b""
 
     def json(self) -> dict:
         return self._payload
@@ -65,28 +67,44 @@ class FakeResponse:
 
 class FakeHTTP:
     """Simula el API de Mia: login siempre entrega un token nuevo (tok-1, tok-2...);
-    las respuestas de /api/assistant/chat salen de una cola guionada (o lanzan)."""
+    las respuestas de /api/assistant/chat, /api/speech/transcribe y
+    /api/speech/synthesize salen de colas guionadas (o lanzan)."""
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
         self.login_count = 0
         self.chat_queue: list = []
+        self.transcribe_queue: list = []
+        self.synth_queue: list = []
 
-    async def post(self, url: str, json: dict | None = None, headers: dict | None = None):
-        self.calls.append({"url": url, "json": json, "headers": headers or {}})
+    async def post(self, url: str, json: dict | None = None, headers: dict | None = None,
+                   files: dict | None = None, data: dict | None = None):
+        self.calls.append({"url": url, "json": json, "headers": headers or {},
+                           "files": files, "data": data})
         if url.endswith("/api/auth/login"):
             self.login_count += 1
             return FakeResponse(200, {"token": f"tok-{self.login_count}", "tenant_id": "t"})
         if url.endswith("/api/assistant/chat"):
-            assert self.chat_queue, "llamada a /assistant/chat no guionada"
-            item = self.chat_queue.pop(0)
-            if isinstance(item, Exception):
-                raise item
-            return item
+            return self._pop(self.chat_queue, "/assistant/chat")
+        if url.endswith("/api/speech/transcribe"):
+            return self._pop(self.transcribe_queue, "/speech/transcribe")
+        if url.endswith("/api/speech/synthesize"):
+            return self._pop(self.synth_queue, "/speech/synthesize")
         raise AssertionError(f"URL inesperada: {url}")
+
+    @staticmethod
+    def _pop(queue: list, name: str):
+        assert queue, f"llamada a {name} no guionada"
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
     def chat_calls(self) -> list[dict]:
         return [c for c in self.calls if c["url"].endswith("/api/assistant/chat")]
+
+    def calls_to(self, suffix: str) -> list[dict]:
+        return [c for c in self.calls if c["url"].endswith(suffix)]
 
 
 class Recorder:
@@ -95,6 +113,7 @@ class Recorder:
     def __init__(self) -> None:
         self.texts: list[tuple[int, str]] = []
         self.docs: list[tuple[int, str, bytes]] = []
+        self.voices: list[tuple[int, bytes]] = []
         self.stops = 0
 
     async def send_text(self, chat_id: int, text: str) -> None:
@@ -102,6 +121,9 @@ class Recorder:
 
     async def send_document(self, chat_id: int, filename: str, content: bytes) -> None:
         self.docs.append((chat_id, filename, content))
+
+    async def send_voice(self, chat_id: int, ogg: bytes) -> None:
+        self.voices.append((chat_id, ogg))
 
     async def on_stop(self) -> None:
         self.stops += 1
@@ -117,6 +139,7 @@ def make_bridge() -> tuple[tb.TelegramBridge, FakeHTTP, Recorder]:
         send_text=rec.send_text,
         send_document=rec.send_document,
         on_stop=rec.on_stop,
+        send_voice=rec.send_voice,
     )
     return bridge, fake, rec
 
@@ -251,6 +274,115 @@ async def run_async_checks() -> None:
     await bridge2.handle_message(ALLOWED, "hola")   # no debe lanzar
     check("g3 · falla API + falla Telegram al avisar → el handler NO lanza",
           True)
+
+    # ── (h) NOTA DE VOZ: voz entra → voz sale (CP-Z2) ──────────────────────────
+    # h1 · bucle completo: transcribe (local) → chat → synthesize (local) → nota de voz
+    bridge, fake, rec = make_bridge()
+    audio_in = b"OggS" + b"\x00" * 64                    # una "nota de voz" entrante
+    fake.transcribe_queue = [FakeResponse(200, {"text": "cómo va el caso Zurich"})]
+    fake.chat_queue = [FakeResponse(200, {"conversation_id": "cv-v1",
+                                          "reply": "Va bien, el borrador está listo."})]
+    fake.synth_queue = [FakeResponse(200, content=b"OggS-voz-de-mia")]
+    await bridge.handle_voice(ALLOWED, audio_in)
+    tcalls = fake.calls_to("/api/speech/transcribe")
+    scalls = fake.calls_to("/api/speech/synthesize")
+    check("h1a · nota de voz → UN POST a /speech/transcribe con el audio y el Bearer",
+          len(tcalls) == 1
+          and tcalls[0]["files"]["audio"][1] == audio_in
+          and tcalls[0]["headers"].get("Authorization") == "Bearer tok-1")
+    check("h1b · el texto entendido va al asistente (POST a /assistant/chat)",
+          fake.chat_calls() and fake.chat_calls()[0]["json"]["message"]
+          == "cómo va el caso Zurich")
+    check("h1c · la respuesta se sintetiza (POST a /speech/synthesize con el texto)",
+          len(scalls) == 1 and scalls[0]["json"] == {"text": "Va bien, el borrador está listo."})
+    check("h1d · Mia responde con NOTA DE VOZ (el audio del synth), no como texto",
+          rec.voices == [(ALLOWED, b"OggS-voz-de-mia")]
+          and (ALLOWED, "Va bien, el borrador está listo.") not in rec.texts)
+    check("h1e · transparencia: Mia devuelve lo que ENTENDIÓ para verificación",
+          any(cid == ALLOWED and tb.VOICE_HEARD_PREFIX in txt
+              and "cómo va el caso Zurich" in txt for cid, txt in rec.texts))
+    check("h1f · un solo login reutilizado para transcribe + chat + synthesize",
+          fake.login_count == 1)
+
+    # h2 · nota de voz de chat NO autorizado → ignorada por completo
+    bridge, fake, rec = make_bridge()
+    await bridge.handle_voice(INTRUDER, audio_in)
+    check("h2 · nota de voz de chat no autorizado → ningún POST y ninguna respuesta",
+          fake.calls == [] and rec.texts == [] and rec.voices == [])
+
+    # h3 · nota de voz vacía → aviso amable, sin llamar al API
+    bridge, fake, rec = make_bridge()
+    await bridge.handle_voice(ALLOWED, b"")
+    check("h3 · nota de voz vacía → aviso amable (no entendí), sin tocar el API",
+          fake.calls == [] and rec.texts == [(ALLOWED, tb.VOICE_NOT_UNDERSTOOD)])
+
+    # h4 · transcripción vacía (no se escuchó voz) → aviso, sin turno de chat
+    bridge, fake, rec = make_bridge()
+    fake.transcribe_queue = [FakeResponse(200, {"text": ""})]
+    await bridge.handle_voice(ALLOWED, audio_in)
+    check("h4 · no se escuchó voz → aviso amable y NO se llama al asistente",
+          fake.chat_calls() == [] and rec.voices == []
+          and (ALLOWED, tb.VOICE_NOT_UNDERSTOOD) in rec.texts)
+
+    # h5 · respuesta larga → va por escrito (no una nota de voz eterna)
+    bridge, fake, rec = make_bridge()
+    long_reply = "detalle jurídico " * 100              # > VOICE_REPLY_MAX_CHARS
+    fake.transcribe_queue = [FakeResponse(200, {"text": "resúmeme el expediente"})]
+    fake.chat_queue = [FakeResponse(200, {"conversation_id": "cv-v5", "reply": long_reply})]
+    await bridge.handle_voice(ALLOWED, audio_in)
+    check("h5 · respuesta larga → texto (o adjunto), NO nota de voz; sin synth",
+          rec.voices == [] and fake.calls_to("/api/speech/synthesize") == []
+          and (len(long_reply) <= tb.TELEGRAM_TEXT_LIMIT and rec.texts
+               or rec.docs))
+
+    # h6 · la síntesis falla → degrada a texto (nunca se cae ni se queda muda)
+    bridge, fake, rec = make_bridge()
+    fake.transcribe_queue = [FakeResponse(200, {"text": "hola Mia"})]
+    fake.chat_queue = [FakeResponse(200, {"conversation_id": "cv-v6", "reply": "Hola, Pipe."})]
+    fake.synth_queue = [ConnectionError("TTS caído (simulado)")]
+    await bridge.handle_voice(ALLOWED, audio_in)
+    check("h6 · si el TTS falla → la respuesta llega como TEXTO (degradación)",
+          rec.voices == [] and (ALLOWED, "Hola, Pipe.") in rec.texts)
+
+    # h7 · el envío de la nota de voz falla → también degrada a texto
+    bridge, fake, rec = make_bridge()
+    fake.transcribe_queue = [FakeResponse(200, {"text": "hola"})]
+    fake.chat_queue = [FakeResponse(200, {"conversation_id": "cv-v7", "reply": "Aquí estoy."})]
+    fake.synth_queue = [FakeResponse(200, content=b"OggS-audio")]
+
+    async def _boom_voice(_cid, _ogg):
+        raise RuntimeError("Telegram rechazó la nota de voz")
+
+    bridge._send_voice = _boom_voice  # noqa: SLF001 — peor escenario del envío
+    await bridge.handle_voice(ALLOWED, audio_in)
+    check("h7 · si enviar la nota de voz falla → la respuesta cae a TEXTO",
+          (ALLOWED, "Aquí estoy.") in rec.texts)
+
+    # h8 · modalidad: un mensaje de TEXTO NO dispara síntesis (voz solo si entra voz)
+    bridge, fake, rec = make_bridge()
+    fake.chat_queue = [FakeResponse(200, {"conversation_id": "cv-t", "reply": "Respuesta."})]
+    await bridge.handle_message(ALLOWED, "pregunta escrita")
+    check("h8 · texto entra → texto sale: NUNCA se llama a /speech/synthesize",
+          fake.calls_to("/api/speech/synthesize") == []
+          and rec.voices == [] and (ALLOWED, "Respuesta.") in rec.texts)
+
+    # h9 · error de red del STT → mensaje amable, loop sigue (sin chat ni voz)
+    bridge, fake, rec = make_bridge()
+    fake.transcribe_queue = [ConnectionError("STT/API caído")]
+    await bridge.handle_voice(ALLOWED, audio_in)
+    check("h9 · STT/API caído en la voz → mensaje amable, sin turno ni nota de voz",
+          rec.texts == [(ALLOWED, tb.FRIENDLY_ERROR)]
+          and fake.chat_calls() == [] and rec.voices == [])
+
+    # h10 · reply vacío del asistente → aviso honesto, NO un texto vacío ni synth
+    bridge, fake, rec = make_bridge()
+    fake.transcribe_queue = [FakeResponse(200, {"text": "hola"})]
+    fake.chat_queue = [FakeResponse(200, {"conversation_id": "cv-v10", "reply": "   "})]
+    await bridge.handle_voice(ALLOWED, audio_in)
+    check("h10 · reply vacío → aviso honesto (sin texto vacío ni intento de voz)",
+          (ALLOWED, tb.VOICE_EMPTY_REPLY) in rec.texts and rec.voices == []
+          and fake.calls_to("/api/speech/synthesize") == []
+          and not any(t == "" for _, t in rec.texts))
 
 
 def main() -> int:
