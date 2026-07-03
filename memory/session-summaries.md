@@ -733,3 +733,29 @@ QuÃ© sigue (TERMINAL NUEVA, contexto en 0):
 - Pendientes de Pipe sin cambio: bot de Telegram, subir guÃ­as reales, corpus jurÃ­dico real,
   privacidad de conversaciones del asistente, deuda Â§G del dashboard (Pinecone/second brain).
 
+
+## 2026-07-02 — Sesión 26
+TL;DR: auditoría de seguridad incorporada a main (c3bdcc2) y CP-V1 "valor entregado (ROI)"
+completo y mergeado (74cb2bb) — la Ola 4 quedó abierta con su primer checkpoint en verde.
+Qué construimos:
+- AUDITORÍA DE SEGURIDAD (pendiente de sesión 25): verificada en 3 capas (regresión 49/49 ×2,
+  build ×2, revisor adversarial con 4 hallazgos corregidos: tope por IP + bcrypt a threadpool,
+  poda de memoria del throttle, ApiError en frontend, docs exactos; prueba visual del freno
+  anti fuerza-bruta y del error de red en llano). Aprobada por Pipe, commit c3bdcc2 en main.
+- CP-V1 (Ola 4): tabla turn_usage (migración 021, RLS) con el uso REAL del LLM por llamada;
+  metrics/usage (scope ContextVar api/cron, buffer acotado, precios por alias, flusher en el
+  lifespan); hook en call_llm (cubre API, CLI de suscripción y local); metrics/value con la
+  fórmula de horas (eventos y rechazos excluidos; borrador = escrito ≥3000 chars); endpoints
+  /api/value/settings (tarifa por despacho, upsert JSONB); tarjeta "Valor entregado este mes"
+  en el panel con edición de tarifa. Gate test_value_delivered.py 27/27; regresión 50/50.
+- Capa 2 de CP-V1 RECHAZÓ la fórmula v1 (A1: sobre-reportaba — toda pregunta aprobada contaba
+  120 min) → corregida con summarize_traces + 5 hallazgos más cerrados → re-verificado APROBAR.
+  Límites declarados en Riesgo #43 (embeddings fuera del costo; heurística de borrador).
+Qué decidimos:
+- Defaults del ROI declarados y configurables: 100 USD/h · borrador 120 min · consulta 15 min.
+- Conectores de correo/calendario siguen APLAZADOS (instrucción de Pipe, sesión 25).
+Qué sigue (TERMINAL NUEVA):
+- CP-V2 (Ola 4): auto-diagnóstico prescriptivo (gravedad×impacto×certeza, IDs estables,
+  guardas anti-invención) — evoluciona Dreams. Detalle en docs/plan-ejecucion-olas.md.
+- Frontend pendiente con Cursor (HANDOFF): pantallas de CP-P2 (automatizaciones) y CP-P3.
+- Deuda menor detectada por revisor: página de memoria usa .includes("409") roto (preexistente).

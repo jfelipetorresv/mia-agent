@@ -1488,3 +1488,10 @@ Rama `feat/cp-c4b-wizard-onboarding`.
 instalar Obsidian, Word + verificaciÃ³n de CP9); crear su bot de Telegram; subir sus primeras guÃ­as;
 recorrido vivo cronometrado de "Configura a Mia".
 
+
+## 2026-07-02 · Sesión 26 — auditoría de seguridad + CP-V1 (ROI)
+- Auditoría 2026-07 commiteada a main (c3bdcc2) tras 3 capas + 4 correcciones del revisor.
+- CP-V1 completo (74cb2bb): turn_usage + metrics/usage + metrics/value + /api/value/settings +
+  tarjeta del panel. Gate 27/27; regresión 50/50; visual OK (tarjeta y tarifa 250 reflejada).
+- Migración 021 aplicada en la DB local (execution/init_turn_usage.py, idempotente).
+- Riesgo #43 registrado (límites del estimado de valor).
