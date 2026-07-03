@@ -802,3 +802,33 @@ tras corregir A1/M1/M2/B1/B2 — la primera versión de la fórmula sobre-report
 4. **openrouter-sonnet se precia como el modelo base** ($3/$15): el fee de OpenRouter no se modela.
 5. **Los eventos de compresión reales no traen `tokens`** (escriben tokens_antes/despues): el
    fallback legacy los cuenta 0 — coherente con el punto 1 (subreporta, no infla).
+
+## 🟢 Riesgo #44 — Auto-diagnóstico prescriptivo (CP-V2): límites declarados  [registrado 2026-07-02, revisión CP-V2]
+CP-V2 quedó verde (gate test_dreams.py 43/43; capa 2 APROBÓ tras re-verificar — los 4 mayores
+CORREGIDOS antes del commit: H1 carrera cron×decisión del abogado → el upsert JAMÁS resetea una
+fila decidida; solo el flag explícito de resurgimiento la reabre (cierra también el residual R1
+de transacciones solapadas, sin comparar relojes); H2 la poda reseteaba la edad de tarjetas
+vivas fuera del top → ahora se upserta toda señal viva y el panel filtra por `surfaced`; H3/H4 el
+bucket de costo v1 recomendaba un swap por tarea arquitectónicamente imposible → rediseñado a
+"gasto real pagado + selector Motor de IA del Panel de control", que existe y guarda; R2 el
+texto de costo quedó neutro para no recomendar el motor ya elegido cuando el gasto viene de un
+fallback del CLI a la API paga). El motor es DETERMINISTA (sin LLM): la anti-invención queda
+garantizada por construcción — toda evidencia sale de conteos de datos reales y con <5 eventos
+el bucket se salta. Límites conocidos:
+1. **Heurísticas de minutos declaradas**: REWORK_MINUTES/WASTE_MINUTES = 15 min por corrección
+   repetida / borrador rechazado. Son estimados de negocio (certeza 0.7/0.8 ya los descuenta en
+   el ranking), no medición.
+2. **H7 · ID de retrabajo frágil ante inputs variables**: el slug sale de los primeros 80
+   caracteres de la solicitud; si el abogado antepone número de expediente/fecha, el mismo patrón
+   se fragmenta en contextos distintos y puede no alcanzar el umbral de 3. Fail-safe (calla, no
+   inventa). Refinar con normalización (quitar dígitos/fechas) si en uso real se queda corto.
+3. **Las tarjetas reflejan la última consolidación semanal**: si una señal se resuelve a mitad de
+   semana, la tarjeta sigue visible hasta la próxima corrida de Dreams (diseño semanal aceptado).
+4. **bucket de costo solo dispara con motor 'nube' pagado por token**: con 'suscripción' o
+   'soberano' el costo marginal registrado es 0 y no hay hallazgo (coherente: no hay nada que
+   ahorrar). El texto condiciona la recomendación a que el despacho tenga la suscripción.
+5. **Resurgimiento a 30 días sin historial de decisiones**: al resurgir, la fila pasa a
+   'recurring' y pierde el registro de la decisión anterior (no hay tabla de historial). Aceptable
+   v1; si se quiere auditoría, agregar un ledger de decisiones.
+6. **Frontend pendiente (Cursor, HANDOFF)**: tarjetas de diagnóstico en el panel sobre
+   GET /api/dreams/prescriptions + botones aceptar/descartar (POST .../decision).

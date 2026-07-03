@@ -629,6 +629,64 @@ async def dreams_report(request: Request):
     return {"report": row[0], "created_at": row[1]} if row else {"report": None, "created_at": None}
 
 
+# ── CP-V2 · auto-diagnóstico prescriptivo ─────────────────────────────────────
+@router.get("/dreams/prescriptions")
+async def dreams_prescriptions(request: Request):
+    """Recomendaciones vigentes del diagnóstico (las que el abogado no ha decidido),
+    ordenadas por impacto. Cada una trae título, receta, evidencia real y puntaje;
+    lo aceptado/descartado no aparece (memoria de recomendaciones, CP-V2)."""
+    tid = _tenant(request)
+    # `surfaced=true` = las del top del diagnóstico. Las filas con señal viva que
+    # salieron del top por ranking/diversidad se conservan (edad real del problema)
+    # pero no se muestran (capa 2 de CP-V2, H2). Filas viejas sin la marca cuentan
+    # como surfaceadas (compat).
+    async with pool.tenant_connection(tid) as conn:
+        rows = await (await conn.execute(
+            "SELECT prescription_id, status, payload, first_seen_at, last_seen_at "
+            "FROM dream_prescriptions WHERE status IN ('new', 'recurring') "
+            "AND coalesce((payload->>'surfaced')::boolean, true) "
+            "ORDER BY coalesce((payload->>'score')::numeric, 0) DESC"
+        )).fetchall()
+    now = datetime.now(timezone.utc)
+    out = []
+    for pid, status, payload, first_seen, last_seen in rows:
+        item = dict(payload or {})
+        item["id"] = pid
+        item["status"] = status
+        item["age_days"] = max(0, (now - first_seen).days) if first_seen else 0
+        item["last_seen_at"] = last_seen
+        out.append(item)
+    return {"prescriptions": out}
+
+
+class PrescriptionDecision(BaseModel):
+    action: str  # 'accept' | 'dismiss'
+
+
+@router.post("/dreams/prescriptions/{prescription_id}/decision")
+async def decide_prescription(prescription_id: str, request: Request,
+                              body: PrescriptionDecision):
+    """El abogado acepta o descarta una recomendación. No se vuelve a mostrar
+    salvo que la señal reaparezca pasados 30 días."""
+    tid = _tenant(request)
+    action = body.action.strip().lower()
+    if action not in ("accept", "dismiss"):
+        raise HTTPException(status_code=422,
+                            detail="La decisión debe ser aceptar o descartar.")
+    status = "accepted" if action == "accept" else "dismissed"
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "UPDATE dream_prescriptions SET status = %s, decided_at = now() "
+            "WHERE prescription_id = %s AND status IN ('new', 'recurring') "
+            "RETURNING prescription_id",
+            (status, prescription_id),
+        )).fetchone()
+    if not row:
+        raise HTTPException(status_code=404,
+                            detail="Esa recomendación no existe o ya fue decidida.")
+    return {"id": prescription_id, "status": status}
+
+
 @router.get("/skills/ranked")
 async def skills_ranked(request: Request):
     tid = _tenant(request)

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import psycopg
 from dotenv import load_dotenv
+from psycopg.types.json import Json
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -28,13 +29,16 @@ try:
 except Exception:
     pass
 
+import init_dream_prescriptions  # noqa: E402
 import init_dreams  # noqa: E402
 import init_feedback  # noqa: E402
 import init_playbooks  # noqa: E402
+import init_turn_usage  # noqa: E402
 from mia import config  # noqa: E402
 from mia.agent import llm  # noqa: E402
 from mia.cron import build_scheduler  # noqa: E402
 from mia.db import pool  # noqa: E402
+from mia.memory import prescriptions as rx  # noqa: E402
 from mia.memory.dreams import Dreams  # noqa: E402
 from mia.memory.gepa import GEPALoop  # noqa: E402
 from mia.memory.trace_capture import TraceCapture  # noqa: E402
@@ -137,6 +141,58 @@ def playbook_status(playbook_id: str) -> str:
         return c.execute("SELECT status FROM playbooks WHERE id=%s::uuid", (playbook_id,)).fetchone()[0]
 
 
+# ── Helpers CP-V2 · auto-diagnóstico prescriptivo ────────────────────────────
+def set_value_rate(tenant_id: str, rate: float) -> None:
+    with psycopg.connect(autocommit=True, **PG) as c:
+        c.execute(
+            "INSERT INTO tenant_settings (tenant_id, config) "
+            "VALUES (%s::uuid, jsonb_build_object('value', %s::jsonb)) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET config = jsonb_set("
+            "coalesce(tenant_settings.config, '{}'::jsonb), '{value}', %s::jsonb, true)",
+            (tenant_id, Json({"hourly_rate_usd": rate}), Json({"hourly_rate_usd": rate})),
+        )
+
+
+def set_decision(tenant_id: str, prescription_id: str, status: str, days_ago: int) -> None:
+    with psycopg.connect(autocommit=True, **PG) as c:
+        c.execute(
+            "UPDATE dream_prescriptions SET status=%s, "
+            "decided_at = now() - (%s * interval '1 day') "
+            "WHERE tenant_id=%s::uuid AND prescription_id=%s",
+            (status, days_ago, tenant_id, prescription_id),
+        )
+
+
+def stored_prescription_ids(tenant_id: str, statuses: tuple[str, ...] = ("new", "recurring")) -> set[str]:
+    with psycopg.connect(autocommit=True, **PG) as c:
+        rows = c.execute(
+            "SELECT prescription_id FROM dream_prescriptions "
+            "WHERE tenant_id=%s::uuid AND status = ANY(%s)",
+            (tenant_id, list(statuses)),
+        ).fetchall()
+    return {r[0] for r in rows}
+
+
+def surfaced_ids(tenant_id: str) -> set[str]:
+    with psycopg.connect(autocommit=True, **PG) as c:
+        rows = c.execute(
+            "SELECT prescription_id FROM dream_prescriptions "
+            "WHERE tenant_id=%s::uuid AND status IN ('new', 'recurring') "
+            "AND coalesce((payload->>'surfaced')::boolean, true)",
+            (tenant_id,),
+        ).fetchall()
+    return {r[0] for r in rows}
+
+
+def rls_forced(table: str) -> bool:
+    with psycopg.connect(autocommit=True, **PG) as c:
+        row = c.execute(
+            "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname=%s",
+            (table,),
+        ).fetchone()
+    return bool(row and row[0] and row[1])
+
+
 async def run_checks() -> None:
     original_llm = llm.call_llm
     original_home = config.MIA_HOME
@@ -195,6 +251,152 @@ async def run_checks() -> None:
             src = (ROOT / "backend" / "mia" / "memory" / "dreams.py").read_text(encoding="utf-8")
             forbidden = ("Colombia", "España", "México", "Argentina", "Perú", "Chile", "Civil", "Penal")
             check("Dreams no hardcodea jurisdicciones ni áreas", not any(word in src for word in forbidden))
+
+            # ── CP-V2 · auto-diagnóstico prescriptivo ────────────────────────
+            print("\n== CP-V2 · diagnóstico prescriptivo ==")
+            engine = rx.PrescriptionEngine(trace_capture=tc)
+
+            # Dreams.run ya corrió con 6 turnos: todos los buckets de señal se
+            # saltan (<5 eventos cada uno) salvo el aviso de tarifa de fábrica.
+            diag0 = result.get("diagnostics") or {}
+            check("Dreams.run trae la sección diagnostics",
+                  isinstance(diag0.get("prescriptions"), list))
+            check("Con pocos datos solo aparece el aviso de tarifa",
+                  {p["id"] for p in diag0["prescriptions"]} == {"valor-sin-configurar"})
+            check("El reporte menciona las recomendaciones",
+                  "recomendaciones de mejora" in result["report"])
+
+            # Guarda anti-invención: un despacho sin actividad no recibe nada.
+            empty_tenant = make_tenant()
+            try:
+                empty = await rx.PrescriptionEngine(trace_capture=tc).run(empty_tenant)
+                check("Guarda anti-invención: sin datos no hay recomendaciones",
+                      empty["prescriptions"] == [] and empty["candidates_total"] == 0)
+            finally:
+                cleanup(empty_tenant)
+
+            # Señal real: retrabajo (6 ediciones del mismo contexto) +
+            # conocimiento (6 respuestas sin fuentes del despacho).
+            for i in range(3):
+                append_trace(tc, tenant, matter_id=f"edited-x{i}", hitl_outcome="edited",
+                             input="misma correccion de estilo",
+                             draft_original="texto original", draft_final="texto final")
+            for i in range(5):
+                append_trace(tc, tenant, matter_id=f"gap-{i}", hitl_outcome="approved",
+                             retrieved_doc_ids=[], output="respuesta sin fuentes")
+
+            diag1 = await engine.run(tenant)
+            ids1 = {p["id"] for p in diag1["prescriptions"]}
+            rework = next((p for p in diag1["prescriptions"] if p["category"] == "retrabajo"), None)
+            check("Retrabajo detectado con evidencia real (conteos)",
+                  rework is not None and any("6 respuestas corregidas" in e for e in rework["evidence"]))
+            check("Conocimiento sin fuentes detectado", "conocimiento-sin-fuentes" in ids1)
+            check("Ranking: gravedad × dólares × certeza ordena el panel",
+                  diag1["prescriptions"][0]["id"] == rework["id"])
+            check("El impacto usa la tarifa del despacho (fábrica: 100 USD/h)",
+                  abs((rework["dollar_impact"] or 0) - 150.0) < 0.01)
+
+            # IDs estables + memoria de recomendaciones.
+            diag2 = await engine.run(tenant)
+            ids2 = {p["id"] for p in diag2["prescriptions"]}
+            check("IDs estables entre corridas",
+                  rework["id"] in ids2 and "conocimiento-sin-fuentes" in ids2)
+            rework2 = next(p for p in diag2["prescriptions"] if p["id"] == rework["id"])
+            check("La segunda corrida marca el hallazgo como recurrente",
+                  rework2["status"] == "recurring" and rework2["age_days"] >= 0)
+
+            # La tarifa del despacho cambia el impacto y apaga el aviso de fábrica;
+            # la tarjeta huérfana se PODA de la tabla (el panel queda coherente).
+            set_value_rate(tenant, 200.0)
+            diag3 = await engine.run(tenant)
+            rework3 = next(p for p in diag3["prescriptions"] if p["id"] == rework["id"])
+            check("El impacto en dólares sigue la tarifa fijada (200 USD/h)",
+                  abs((rework3["dollar_impact"] or 0) - 300.0) < 0.01)
+            check("Con tarifa fijada desaparece el aviso de tarifa",
+                  "valor-sin-configurar" not in {p["id"] for p in diag3["prescriptions"]})
+            check("La señal resuelta se poda de la tabla",
+                  "valor-sin-configurar" not in stored_prescription_ids(tenant))
+
+            # Decisión del abogado: lo descartado no se repite…
+            set_decision(tenant, rework["id"], "dismissed", days_ago=1)
+            diag4 = await engine.run(tenant)
+            check("Lo descartado no se vuelve a mostrar",
+                  rework["id"] not in {p["id"] for p in diag4["prescriptions"]}
+                  and rework["id"] in diag4["suppressed"])
+            check("La decisión sobrevive a la poda",
+                  rework["id"] in stored_prescription_ids(tenant, ("dismissed",)))
+
+            # …salvo que la señal siga viva pasados 30 días.
+            set_decision(tenant, rework["id"], "dismissed", days_ago=31)
+            diag5 = await engine.run(tenant)
+            resurfaced = next((p for p in diag5["prescriptions"] if p["id"] == rework["id"]), None)
+            check("Resurge tras 30 días como recurrente",
+                  resurfaced is not None and resurfaced["status"] == "recurring")
+
+            # Funciones puras: diversidad del top y bucket de costo.
+            fake = [dict(id=f"a{i}", category="costo", headline="", prescription="",
+                         evidence=[], severity=10, certainty=1.0,
+                         dollar_impact=100.0 - i, time_impact_mins=None) for i in range(3)]
+            fake.append(dict(id="b", category="guias", headline="", prescription="",
+                             evidence=[], severity=1, certainty=0.5,
+                             dollar_impact=None, time_impact_mins=None))
+            top = rx.rank_and_diversify(fake)
+            check("Diversidad: máximo 2 por categoría en el top",
+                  sum(1 for p in top if p["category"] == "costo") == 2
+                  and any(p["id"] == "b" for p in top))
+
+            # Escenario REAL (capa 2, H3/H6): motor 'nube' pagado por token (task
+            # main en claude-sonnet) + tareas de apoyo en el económico/suscripción
+            # con costo 0 — como de verdad registra turn_usage.
+            rows_cost = [
+                {"task": "main", "model": "claude-sonnet", "prompt_tokens": 2_000_000,
+                 "completion_tokens": 200_000, "cost_usd": 9.0, "calls": 10},
+                {"task": "compression", "model": "cli-claude-haiku", "prompt_tokens": 500_000,
+                 "completion_tokens": 50_000, "cost_usd": 0.0, "calls": 20},
+            ]
+            cost_out = rx.bucket_cost(rows_cost)
+            check("Costo: reporta el gasto real pagado y apunta al Panel de control",
+                  len(cost_out) == 1 and abs((cost_out[0]["dollar_impact"] or 0) - 9.0) < 0.01
+                  and any("Panel de control" in e for e in cost_out[0]["evidence"]))
+            check("Costo: suscripción/local (costo 0) no genera hallazgo",
+                  rx.bucket_cost([rows_cost[1]]) == [])
+            check("Costo: con menos de 5 llamadas pagadas se salta",
+                  rx.bucket_cost([{**rows_cost[0], "calls": 3}]) == [])
+            check("Retrabajo: con menos de 5 ediciones se salta",
+                  rx.bucket_rework([{"hitl_outcome": "edited", "input": "x"}] * 4, 100.0) == [])
+
+            # H1/R1 (capa 2): una decisión del abogado tomada DURANTE la corrida
+            # del cron no se pisa — el upsert jamás resetea una fila decidida
+            # (sin comparar relojes); solo el resurgimiento explícito lo hace.
+            set_decision(tenant, "conocimiento-sin-fuentes", "dismissed", days_ago=0)
+            cand = next(p for p in diag5["prescriptions"] if p["id"] == "conocimiento-sin-fuentes")
+            await engine._persist(tenant, [dict(cand, surfaced=True)])
+            check("Carrera cron×decisión: la decisión del abogado sobrevive al upsert",
+                  "conocimiento-sin-fuentes" in stored_prescription_ids(tenant, ("dismissed",)))
+            await engine._persist(tenant, [dict(cand, surfaced=True, _resurface=True)])
+            check("El resurgimiento explícito sí reabre la tarjeta",
+                  "conocimiento-sin-fuentes" in stored_prescription_ids(tenant, ("recurring",)))
+
+            # H2 (capa 2): una tarjeta con señal viva que sale del top por
+            # diversidad NO se borra (conserva su edad); el panel solo muestra
+            # las surfaceadas.
+            fakes = [dict(id=f"costo-fake-{i}", category="costo", headline="h",
+                          prescription="p", evidence=["e"], severity=10, certainty=1.0,
+                          dollar_impact=1000.0 - i, time_impact_mins=None) for i in range(3)]
+            picked_ids = {p["id"] for p in rx.rank_and_diversify(fakes)}
+            for p in fakes:
+                p["surfaced"] = p["id"] in picked_ids
+            await engine._persist(tenant, fakes)
+            check("La poda respeta la señal viva fuera del top (edad conservada)",
+                  {"costo-fake-0", "costo-fake-1", "costo-fake-2"}
+                  <= stored_prescription_ids(tenant))
+            check("El panel solo muestra las tarjetas del top (surfaced)",
+                  surfaced_ids(tenant) == {"costo-fake-0", "costo-fake-1"})
+
+            check("dream_prescriptions tiene RLS forzado", rls_forced("dream_prescriptions"))
+            src_rx = (ROOT / "backend" / "mia" / "memory" / "prescriptions.py").read_text(encoding="utf-8")
+            check("Prescriptions no hardcodea jurisdicciones ni áreas",
+                  not any(word in src_rx for word in forbidden))
     finally:
         llm.call_llm = original_llm
         config.MIA_HOME = original_home
@@ -209,6 +411,8 @@ async def async_main() -> int:
     init_playbooks.apply()
     init_feedback.apply()
     init_dreams.apply()
+    init_turn_usage.apply()
+    init_dream_prescriptions.apply()
     await pool.open_pool()
     try:
         await run_checks()

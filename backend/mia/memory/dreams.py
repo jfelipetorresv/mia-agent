@@ -15,6 +15,7 @@ from ..agent import llm
 from ..db import pool
 from ..onboarding.soul_interview import soul_path
 from .gepa import GEPALoop
+from .prescriptions import PrescriptionEngine
 from .trace_capture import TraceCapture
 from .wiki_manager import WikiManager
 
@@ -55,10 +56,12 @@ class Dreams:
         trace_capture: TraceCapture | None = None,
         wiki_manager: WikiManager | None = None,
         gepa: GEPALoop | None = None,
+        prescriptions: PrescriptionEngine | None = None,
     ) -> None:
         self.trace_capture = trace_capture or TraceCapture()
         self.wiki_manager = wiki_manager or WikiManager(trace_capture=self.trace_capture)
         self.gepa = gepa or GEPALoop(trace_capture=self.trace_capture)
+        self.prescriptions = prescriptions or PrescriptionEngine(trace_capture=self.trace_capture)
 
     def _week_traces(self, tenant_id: str) -> list[dict]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=7)
@@ -177,7 +180,8 @@ class Dreams:
             rules.append(rule)
         return rules
 
-    async def _weekly_report(self, tenant_id: str, firm_name: str, metrics: dict, wiki: dict, gepa: dict) -> str:
+    async def _weekly_report(self, tenant_id: str, firm_name: str, metrics: dict, wiki: dict,
+                             gepa: dict, diagnostics: dict | None = None) -> str:
         concepts = len(wiki.get("concepts_updated") or [])
         report = (
             f"Esta semana {firm_name} trabajó {metrics['matters_worked']} asuntos.\n"
@@ -186,6 +190,14 @@ class Dreams:
             f"{gepa.get('skills_evolved', 0)} procedimientos quedaron con mejoras listas para revisión.\n"
             f"{gepa.get('new_skills_proposed', 0)} procedimientos nuevos quedaron sugeridos en el panel de conocimiento."
         )
+        # CP-V2: el diagnóstico prescriptivo entra al reporte solo si encontró algo
+        # (con pocos datos los buckets se saltan y no se inventa nada).
+        top = (diagnostics or {}).get("prescriptions") or []
+        if top:
+            report += (
+                f"\nMia dejó {len(top)} recomendaciones de mejora en el panel. "
+                f"La principal: {top[0]['headline']}."
+            )
         async with pool.tenant_connection(tenant_id) as conn:
             await conn.execute(
                 "INSERT INTO feedback_proposals "
@@ -226,13 +238,23 @@ class Dreams:
         gepa_result = await self.gepa.run_evolution_cycle(tenant_id)
         cleanup = await self._lint_and_archive(tenant_id)
         nudges = await self._nudges(tenant_id, traces)
-        report = await self._weekly_report(tenant_id, firm_name, metrics, wiki, gepa_result)
+        # CP-V2: auto-diagnóstico prescriptivo. Si falla, Dreams sigue — el
+        # diagnóstico es una mejora del reporte, no un requisito de la consolidación.
+        try:
+            diagnostics = await self.prescriptions.run(tenant_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("el diagnóstico prescriptivo falló; Dreams continúa sin él",
+                           exc_info=True)
+            diagnostics = {"prescriptions": [], "candidates_total": 0, "suppressed": []}
+        report = await self._weekly_report(tenant_id, firm_name, metrics, wiki, gepa_result,
+                                           diagnostics)
         return {
             "metrics": metrics,
             "wiki": wiki,
             "gepa": gepa_result,
             "cleanup": cleanup,
             "nudges": nudges,
+            "diagnostics": diagnostics,
             "report": report,
         }
 
