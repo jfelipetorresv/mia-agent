@@ -787,3 +787,18 @@ y la vigilancia solo lee fechas is_procedural con [VERIFICAR] (bp-db5 e2e). Nota
    de sugerencias sobre /api/automations/* (catálogo, crear, aceptar/descartar).
 4. **Solo 2 plantillas en el catálogo v1**: deadline_heads_up (procesal) y calendar_heads_up
    (no procesal). El marco soporta más; agregarlas es declarativo + cablear su consumidor.
+
+## 🟢 Riesgo #43 — Valor entregado / ROI (CP-V1): límites declarados del estimado  [registrado 2026-07-02, revisión CP-V1]
+CP-V1 abre la Ola 4 en verde (gate test_value_delivered.py 27/27; regresión 50/50; capa 2 APROBÓ
+tras corregir A1/M1/M2/B1/B2 — la primera versión de la fórmula sobre-reportaba horas). La tubería
+(tokens reales por llamada en turn_usage, RLS, tarifa por despacho) quedó sólida. Límites conocidos:
+1. **El costo de IA NO incluye embeddings** (voyage-law-2 no pasa por call_llm): el panel
+   SUBREPORTA el costo, nunca infla el valor. Ideal futuro: registrar embeddings también.
+2. **DRAFT_MIN_CHARS=3000 es heurística declarada**: un análisis muy extenso (≥3000 chars) sin ser
+   escrito cuenta 120 min — es la aproximación menos conservadora del conjunto. Refinar cuando el
+   grafo etiquete el TIPO de turno (borrador vs diagnóstico vs consulta) en la traza.
+3. **turn_usage sin autopoda**: crece ~1 fila por llamada LLM. Aceptable por años a escala actual;
+   GRANT DELETE ya está listo para la poda futura (>12 meses).
+4. **openrouter-sonnet se precia como el modelo base** ($3/$15): el fee de OpenRouter no se modela.
+5. **Los eventos de compresión reales no traen `tokens`** (escriben tokens_antes/despues): el
+   fallback legacy los cuenta 0 — coherente con el punto 1 (subreporta, no infla).

@@ -19,6 +19,7 @@ from starlette.responses import JSONResponse
 
 from .. import config
 from ..agent import llm
+from ..metrics import usage as usage_metrics
 
 # Rutas sin token. Las docs interactivas (/docs, /redoc, /openapi.json) solo quedan
 # abiertas en desarrollo: en producción exponen el mapa completo del API a cualquiera
@@ -92,12 +93,16 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         request.state.email = payload.get("email")
 
         # CP2: política de modelo + CP-S3: opt-in de OpenRouter del tenant, para TODO
-        # lo que corra en este request. Ambos se resetean en finally.
+        # lo que corra en este request. CP-V1: scope de registro de uso del LLM
+        # (tokens reales → turn_usage → "valor neto" del panel). Todo se resetea
+        # en finally.
         policy, allow_or = await _tenant_ctx(tenant_id)
         policy_token = llm.set_model_policy(policy)
         or_token = llm.set_openrouter_allowed(allow_or)
+        usage_token = usage_metrics.set_usage_scope(tenant_id, source="api")
         try:
             return await call_next(request)
         finally:
+            usage_metrics.reset_usage_scope(usage_token)
             llm.reset_openrouter_allowed(or_token)
             llm.reset_model_policy(policy_token)

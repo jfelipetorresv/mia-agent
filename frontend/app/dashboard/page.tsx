@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet, apiSend } from "@/lib/api";
+import { ApiError, apiGet, apiSend } from "@/lib/api";
 
 type Stats = {
   matters_active?: number;
@@ -9,6 +9,17 @@ type Stats = {
   knowledge_items?: number;
   proposals_pending?: number;
   cost_month_usd?: number;
+  // CP-V1 · valor entregado del mes (horas ahorradas × tarifa − costo de IA).
+  value?: {
+    hours_saved?: number;
+    hourly_rate_usd?: number;
+    gross_usd?: number;
+    cost_usd?: number;
+    net_usd?: number;
+    drafts_approved?: number;
+    consultations?: number;
+    is_default_config?: boolean;
+  };
   playbooks_active?: number;
   playbooks_archived?: number;
   scheduler_jobs?: { label: string; next_run?: string | null; last_run?: string | null }[];
@@ -83,6 +94,9 @@ export default function DashboardPage() {
   const [obsidian, setObsidian] = useState<ObsidianStatus | null>(null);
   const [installConfirm, setInstallConfirm] = useState(false);
   const [installBusy, setInstallBusy] = useState(false);
+  // CP-V1: tarifa horaria del despacho (editable desde la tarjeta de valor).
+  const [rateInput, setRateInput] = useState("");
+  const [rateMsg, setRateMsg] = useState("");
 
   async function loadFolders() {
     try {
@@ -115,6 +129,26 @@ export default function DashboardPage() {
       setPolicyMsg(`Listo: Mia trabajará con "${res.nombre}".`);
     } catch {
       setPolicyMsg("No se pudo cambiar el motor. Intenta de nuevo.");
+    }
+  }
+
+  // CP-V1: guarda la tarifa horaria del despacho y refresca la tarjeta de valor.
+  async function saveRate() {
+    setRateMsg("");
+    const rate = Number(rateInput.replace(",", "."));
+    if (!rateInput.trim() || !Number.isFinite(rate) || rate <= 0) {
+      setRateMsg("Escribe una tarifa válida en USD por hora.");
+      return;
+    }
+    try {
+      await apiSend("PUT", "/api/value/settings", { hourly_rate_usd: rate });
+      setRateInput("");
+      setRateMsg("Tarifa guardada.");
+      await load();
+    } catch (err: any) {
+      // Solo mensajes en llano del backend (ApiError); un error de red no se muestra crudo.
+      const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+      setRateMsg(msg || "No se pudo guardar la tarifa. Intenta de nuevo.");
     }
   }
 
@@ -476,8 +510,40 @@ export default function DashboardPage() {
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-400">Costo del mes</h2>
-        <p className="text-lg">USD {Number(s.cost_month_usd || 0).toFixed(2)} aproximado este mes</p>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Valor entregado este mes</h2>
+        <div className="rounded-lg border border-gray-100 p-5">
+          <div className="text-3xl font-semibold">
+            USD {Number(s.value?.net_usd ?? 0).toFixed(2)}
+            <span className="ml-2 text-sm font-normal text-gray-500">de valor neto estimado</span>
+          </div>
+          <p className="mt-2 text-sm text-gray-600">
+            {Number(s.value?.hours_saved ?? 0).toFixed(1)} horas ahorradas (estimado) ×
+            USD {Number(s.value?.hourly_rate_usd ?? 0).toFixed(0)}/hora =
+            USD {Number(s.value?.gross_usd ?? 0).toFixed(2)}, menos
+            USD {Number(s.value?.cost_usd ?? 0).toFixed(2)} de costo de la inteligencia artificial.
+          </p>
+          <p className="mt-1 text-sm text-gray-500">
+            Este mes: {s.value?.drafts_approved ?? 0} borradores aprobados y {s.value?.consultations ?? 0} consultas.
+            El cálculo usa estimados configurables{s.value?.is_default_config ? " (valores de fábrica)" : ""}.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <label className="text-sm text-gray-600">Tu tarifa horaria (USD):</label>
+            <input
+              value={rateInput}
+              onChange={(e) => setRateInput(e.target.value)}
+              placeholder={String(s.value?.hourly_rate_usd ?? 100)}
+              inputMode="decimal"
+              className="w-24 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-gray-400"
+            />
+            <button
+              onClick={saveRate}
+              className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
+            >
+              Guardar
+            </button>
+            {rateMsg ? <span className="text-sm text-gray-500">{rateMsg}</span> : null}
+          </div>
+        </div>
       </section>
     </div>
   );

@@ -19,7 +19,7 @@ from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
 from .routes import (assistant, auth, automations, curator, folders, hitl, mailbox,
-                     settings, setup, stream, traces, ux)
+                     settings, setup, stream, traces, ux, value)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -39,6 +39,20 @@ async def lifespan(app: FastAPI):
     scheduler = build_scheduler()
     app.state.scheduler = scheduler
     scheduler_task = asyncio.create_task(scheduler.start())
+
+    # CP-V1 (Ola 4): flusher periódico del uso real del LLM (metrics/usage bufferiza
+    # en memoria desde call_llm; aquí se persiste a turn_usage cada 15s y al apagar).
+    from ..metrics import usage as usage_metrics
+
+    async def _usage_flusher() -> None:
+        while True:
+            await asyncio.sleep(15)
+            try:
+                await usage_metrics.flush_pending()
+            except Exception:  # noqa: BLE001 — el flusher nunca muere por un fallo puntual
+                logging.getLogger("mia.metrics.usage").exception("flush periódico falló")
+
+    usage_task = asyncio.create_task(_usage_flusher())
     try:
         yield
     finally:
@@ -46,10 +60,17 @@ async def lifespan(app: FastAPI):
         scheduler_task.cancel()
         with suppress(asyncio.CancelledError):
             await scheduler_task
+        usage_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await usage_task
         # C.4: drenar las tareas fire-and-forget de skill_improver (H.4) en vuelo ANTES de cerrar
         # el pool, para no perder propuestas a medio escribir en el shutdown.
         from ..agents.graph import drain_bg_tasks
         await drain_bg_tasks()
+        # Último flush DESPUÉS del drenado (capa 2 CP-V1, B2): las tareas de fondo
+        # también registran uso; y ANTES de cerrar el pool, que lo necesita.
+        with suppress(Exception):
+            await usage_metrics.flush_pending()
         await pool.close_pool()
 
 
@@ -141,6 +162,8 @@ app.include_router(setup.router, prefix="/api")
 app.include_router(mailbox.router, prefix="/api")
 # CP-P2 (Ola 2) · plantillas de automatización + sugerencias consent-first.
 app.include_router(automations.router, prefix="/api")
+# CP-V1 (Ola 4) · configuración del "valor entregado" (tarifa y estimados por despacho).
+app.include_router(value.router, prefix="/api")
 
 
 @app.get("/health")
