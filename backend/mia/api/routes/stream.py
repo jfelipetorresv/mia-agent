@@ -20,6 +20,8 @@ from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
 from ...agents.state import initial_state
 from ...db import pool
+from ...observability import audit
+from ...policy import budget as policy_budget
 from ._common import assert_owns_matter, load_profile_snapshot, prepare_new_turn, sse
 
 router = APIRouter(tags=["matters"])
@@ -118,6 +120,22 @@ async def stream_matter(
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Sin contexto de tenant")
     await assert_owns_matter(tenant_id, matter_id)
+
+    # CP-E1: tope de gasto de IA del despacho (política activa). El turno es GET/SSE,
+    # así que el bloqueo debe ser HTTP ANTES de abrir el stream (como el 409 de ciclo
+    # de vida), no un evento. Fail-open: un fallo de lectura permite el turno.
+    try:
+        await policy_budget.enforce_budget(tenant_id)
+    except policy_budget.BudgetExceeded as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
+    # CP-E1: rastro de la acción (el turno del asunto es GET → no lo cubre el audit
+    # genérico del middleware, que solo audita métodos mutantes).
+    await audit.record(
+        "matter_turn", tenant_id=tenant_id,
+        user_email=getattr(request.state, "email", None),
+        entity_type="matter", entity_id=matter_id,
+    )
 
     profile_snapshot = await load_profile_snapshot(tenant_id)
 

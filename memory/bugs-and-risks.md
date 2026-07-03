@@ -906,3 +906,11 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
    4. **Estado de descarga en memoria (heredado de Riesgo #45.4/#46):** el TTS comparte el estado in-memory de install.py — en Modo A multi-worker el polling de progreso puede caer en un worker sin la descarga. Mitigación futura: estado en Postgres.
    5. **`on_voice` (glue de python-telegram-bot) no está cubierto por gates:** la guardia de file_size y la descarga viven en run_bot, que el bridge no ejercita en tests (se mockea sin PTB). Lógica trivial, verificada por inspección de capa 2.
    6. **Capa 3 pendiente:** dictar una nota de voz REAL (calidad de la transcripción de voz humana y naturalidad de la voz de salida) solo lo puede validar Pipe en vivo con el bot creado.
+
+## Riesgo #48 — CP-E1 (auditoría + tope de gasto): residuales aceptados (2026-07-03)
+   1. **Lag del tope por el buffer de metrics/usage:** el gasto se bufferiza y persiste en lotes (CP-V1), así que month_to_date_cost puede ir segundos/minutos atrasado → un turno puede colarse justo al cruzar el tope. Aceptable: es guardia blanda de costo, no facturación. Declarado en el docstring de budget.py.
+   2. **FAIL-OPEN del tope (por diseño):** si no se puede leer el tope o el gasto (DB caída), se PERMITE el turno. Frenar el trabajo legítimo de un abogado por un hipo de infraestructura es peor que un sobregasto marginal. Distinto de los candados de confidencialidad (fail-closed).
+   3. **Borde `||` con 'policy' escalar (no alcanzable):** si config['policy'] fuera un escalar/array en vez de objeto, el merge `||` concatenaría en array. budget.py es el ÚNICO escritor y siempre lo escribe como objeto → solo se dispararía con manipulación manual de la DB (fuera del modelo de amenaza). Blindaje opcional: CASE WHEN jsonb_typeof(...)='object'.
+   4. **Auditoría genérica solo de métodos mutantes:** los GET (incluidas descargas de borrador) no se auditan salvo el turno del asunto (explícito). Login/register no se auditan (pre-tenant). Ampliable si un cliente exige rastro de lecturas.
+   5. **Auditoría awaited en el middleware:** agrega una escritura a DB por request mutante (fail-open). Bajo carga alta se podría pasar a fire-and-forget; hoy el volumen de mutaciones es bajo.
+   6. **Capa 3 pendiente:** control del tope en el Panel (Cursor).

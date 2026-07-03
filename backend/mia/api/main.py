@@ -19,7 +19,7 @@ from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
 from .routes import (assistant, auth, automations, curator, folders, hitl, mailbox,
-                     settings, setup, speech, stream, traces, ux, value)
+                     policy, settings, setup, speech, stream, traces, ux, value)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -166,6 +166,7 @@ app.include_router(automations.router, prefix="/api")
 app.include_router(value.router, prefix="/api")
 # CP-Z1 (Ola 3) · dictado local (Silero VAD + Parakeet v3, 100% en el servidor del despacho).
 app.include_router(speech.router, prefix="/api")
+app.include_router(policy.router, prefix="/api")
 
 
 @app.get("/health")
