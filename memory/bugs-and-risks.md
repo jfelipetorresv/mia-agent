@@ -877,3 +877,24 @@ Límites conocidos que QUEDAN (aceptados v1):
    16 kHz → POST /api/speech/transcribe). MediaRecorder produce webm/opus que el backend NO acepta.
 7. **allow_cloud_audio sin UI**: el candado existe y es fail-closed, pero hoy el motor es local, así
    que no hay pantalla para encenderlo (no hace falta en v1; el frontend no debe ofrecerlo aún).
+
+## Riesgo #46 — CP-Z1b (instalación de voz en el producto): residuales aceptados (2026-07-03)
+
+Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
+1. **Causa equivocada en un mensaje de error rarísimo**: si al publicar el modelo el directorio
+   viejo está bloqueado por otro proceso (estado ya anómalo), os.replace falla y el estado dice
+   "revisa la conexión a internet" (la causa real es el disco/bloqueo). Honesto y reintentable,
+   solo impreciso.
+2. **Staging huérfano**: si el proceso muere a mitad de la extracción quedan ~650 MB en
+   `models/speech/*.staging` hasta el siguiente intento (se barre al reintentar). El estado
+   sigue honesto ("no instalado").
+3. **Disponibilidad del mic por-montaje**: el botón 🎤 consulta /api/speech/status al montar la
+   página; si el despacho instala la voz en otra pestaña, hay que recargar la página del asunto
+   (coherente con la caché de 60 s del wizard; el clic mientras tanto muestra el mensaje del
+   Panel en llano).
+4. **Modo A multi-worker**: el estado de la descarga vive en memoria del proceso (criterio de
+   _clip_hits/_detect_cache); con >1 worker el polling puede caer en un worker sin la descarga.
+   Mitigación futura: estado en Postgres (mismo apunte que Riesgo #45.4).
+5. **Mensaje "~700 MB" del alertdialog del dashboard es fijo** (el caso "solo falta el detector"
+   no es alcanzable desde el botón porque la tarjeta ya dice Instalado; por API el mensaje del
+   backend SÍ diferencia).

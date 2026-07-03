@@ -1587,3 +1587,67 @@ candado fail-closed contra DB real, e integración REAL con los pesos: es.wav �
 76 s → camino VAD, 70 s de silencio → 0 STT rápido; + a-04b 24 bits, c-07 contrato sin-nube en
 llm.py, c-08 OPEN_PATH, r-06b cupo por abogado). **Regresión completa 51/51 suites** (test_rls
 12/12 HALT) tras correcciones. Riesgo #45 registrado. Frontend (botón 🎤) → HANDOFF para Cursor.
+
+---
+
+## 2026-07-03 · Sesión 29 — CP-Z1b: la voz instalada en el producto (instalador + wizard + micrófono)
+
+Pipe pidió "incorporar en el producto la instalación de voz" y aprobó el alcance COMPLETO
+(AskUserQuestion): instalador desde la pantalla + paso del wizard + botón de micrófono usable.
+Antes de esto, activar el dictado exigía que un administrador corriera un script (.ps1) y el
+motor de CP-Z1 no tenía botón — inusable para el usuario objetivo.
+
+**Backend:**
+- `backend/mia/speech/install.py` NUEVO: instalador de los modelos desde el producto — Python
+  stdlib puro (urllib+tarfile+shutil → funciona en Modo A Docker/Linux, a diferencia del
+  instalador de Obsidian que es solo-host; NO deshabilitarlo en Modo A, está en el docstring).
+  Single-flight bajo lock angosto (el I/O de disco quedó FUERA del lock; el worker re-verifica
+  en disco qué falta al arrancar → un dato viejo = no-op), progreso consultable (bytes/fase),
+  publicación ATÓMICA vía `.staging` + os.replace (un corte a mitad de la extracción de 650 MB
+  jamás deja a get_status diciendo "instalado" — hallazgo MAYOR de capa 2, verificado con g-13),
+  `_present()` = archivo de 0 bytes cuenta como ausente, anti path-traversal que también rechaza
+  symlinks/hardlinks (`_validate_member`, g-08b), reintento limpio tras fallo, mensajes en llano
+  diferenciados (solo-VAD no anuncia 700 MB). Mismas URLs/carpeta que el ps1 (que se conserva).
+- `routes/speech.py`: `GET /api/speech/status` y `POST /api/speech/install` ({"confirmar": true}
+  o 400 — consent-first patrón Obsidian); ambos por asyncio.to_thread; no son OPEN_PATH (g-10).
+- `engine.py`: el 503 ya manda al "Panel de control → Instalar dictado por voz" (sin ps1).
+- `setup.py`: paso 7 "voz" del wizard (STEP_IDS al FINAL — capacidad opcional; STEP_GUIDES en
+  llano con privacidad EXACTA: "la transcripción ocurre completa ahí [servidor del despacho]";
+  detección vía _detected con caché 60 s → tras instalar puede tardar ≤60 s en verse listo).
+
+**Frontend (construido por Claude Code; Cursor hace capa 3 vía HANDOFF):**
+- `lib/wav.ts` (concatenar Float32 + resample OfflineAudioContext 16 kHz + WAV PCM16 RIFF, sin
+  librerías — MediaRecorder/webm NO sirve, el backend solo decodifica WAV PCM).
+- `lib/useDictation.ts`: hook de captura Web Audio (ScriptProcessorNode, decisión documentada);
+  permiso de mic solo al PRIMER clic; UN arranque a la vez (startingRef + streamRef + busyRef —
+  hallazgo MAYOR de capa 2: doble clic durante el diálogo de permiso dejaba un mic huérfano
+  capturando); aliveRef detiene los tracks si el componente se desmonta durante el permiso;
+  auto-stop a 300 s; try/finally alrededor del armado del AudioContext; 429 no se reintenta.
+- `_components/MicButton.tsx` (estados con TEXTO + aria-pressed) integrado en el chat del asunto
+  (asuntos/[id]; el texto dictado se AGREGA sin borrar lo escrito; avisos/errores en ámbar).
+  NO existe pantalla de asistente con input en la web — el componente queda reutilizable.
+- `dashboard/page.tsx`: tarjeta "Dictado por voz" (Conectores): estados, barra role=progressbar,
+  confirmación role=alertdialog, polling 2 s SOLO durante la descarga con guard de vuelo y
+  limpieza del mensaje al terminar. `lib/api.ts`: `apiUploadBlob` nuevo (apiUpload intacto).
+
+**Verificación (3 capas):**
+- Capa 1: `test_speech_stt.py` 41 → **60/60** (sección G del instalador: consent, single-flight
+  con descarga bloqueada, progreso, retry, tar con '..' y symlink rechazados, 0 bytes,
+  idempotencia parcial — todo con MIA_SPEECH_MODELS_DIR→tempdir y _download inyectada: los gates
+  JAMÁS bajan los pesos reales ni tocan los de esta máquina); `test_setup_wizard.py` **30/30**
+  (7 pasos, "6 de 7"); regresión **ALL PASS 51 suites** ×2 (test_rls HALT); npm run build ×3.
+  EN VIVO (preview browser + API real con modelos en tempdir): tarjeta en sus 3 estados,
+  confirmar/cancelar, instalación con descarga REAL de internet (detector de voz), tarjeta pasa
+  sola a "Instalado" por polling, paso 7 en /configurar con guía, botón 🎤 con aria correcta, y
+  POST multipart navegador→API con WAV generado en página (CORS multipart OK). Chrome MCP no
+  estaba conectado → se usó Claude Preview con launch.json en la carpeta padre (fuera del repo).
+- Capa 2 (revisor adversarial, contexto fresco): **APROBAR CON CORRECCIONES → re-verificado
+  APROBAR**. 2 MAYORES (extracción no atómica → estado "instalado" mentiroso irreparable,
+  demostrado empíricamente con archivos de 0 bytes; doble clic del mic durante el permiso →
+  captura huérfana) + 4 menores + 3 notas — TODOS corregidos antes del commit y re-dictaminados
+  CERRADOS por el mismo revisor (verificó os.replace de directorios en Windows empíricamente).
+- Capa 3 (Cursor): HANDOFF.md actualizado — revisión visual pendiente; lo ÚNICO no cubierto por
+  la verificación automatizada es dictar con micrófono REAL (pedido explícito en el HANDOFF).
+
+**Riesgo #46 registrado** (residuales de capa 2, todos fail-closed). Commit en rama
+`cp-z1b-instalacion-voz`; merge+push a main con aprobación de Pipe en el diálogo.

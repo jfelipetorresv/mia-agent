@@ -50,6 +50,21 @@ type FoldersData = { detected: DetectedCloud[]; sources: FolderSource[] };
 // Estado de Obsidian en este equipo (GET /api/obsidian/status).
 type ObsidianStatus = { installed: boolean; vault_configured: boolean; vault_path?: string | null; message: string };
 
+// CP-Z1b · estado del dictado por voz (GET /api/speech/status). Mientras
+// descarga, `progreso` trae el avance para la barra.
+type SpeechProgress = {
+  fase: string;
+  descargado_mb: number;
+  total_mb: number | null;
+  porcentaje: number | null;
+};
+type SpeechStatus = {
+  estado: "instalado" | "no_instalado" | "descargando" | "error";
+  listo: boolean;
+  mensaje: string;
+  progreso: SpeechProgress | null;
+};
+
 function fmt(s?: string | null): string {
   if (!s) return "—";
   try {
@@ -94,6 +109,11 @@ export default function DashboardPage() {
   const [obsidian, setObsidian] = useState<ObsidianStatus | null>(null);
   const [installConfirm, setInstallConfirm] = useState(false);
   const [installBusy, setInstallBusy] = useState(false);
+  // CP-Z1b: dictado por voz — estado, confirmación e instalación desde la tarjeta.
+  const [speech, setSpeech] = useState<SpeechStatus | null>(null);
+  const [speechConfirm, setSpeechConfirm] = useState(false);
+  const [speechBusy, setSpeechBusy] = useState(false);
+  const [speechMsg, setSpeechMsg] = useState("");
   // CP-V1: tarifa horaria del despacho (editable desde la tarjeta de valor).
   const [rateInput, setRateInput] = useState("");
   const [rateMsg, setRateMsg] = useState("");
@@ -115,11 +135,35 @@ export default function DashboardPage() {
     apiGet<Reminder[]>("/api/assistant/reminders").then(setReminders).catch(() => setReminders([]));
     loadFolders();
     apiGet<ObsidianStatus>("/api/obsidian/status").then(setObsidian).catch(() => setObsidian(null));
+    apiGet<SpeechStatus>("/api/speech/status").then(setSpeech).catch(() => setSpeech(null));
   }
 
   useEffect(() => {
     load().catch(() => {});
   }, []);
+
+  // CP-Z1b: mientras el componente de voz descarga, la tarjeta se refresca sola
+  // cada 2 s (SOLO durante la descarga; el intervalo se limpia al terminar).
+  useEffect(() => {
+    if (speech?.estado !== "descargando") return;
+    // Guard de vuelo: si una consulta tarda más de 2 s, no se apilan más.
+    let enVuelo = false;
+    const t = setInterval(() => {
+      if (enVuelo) return;
+      enVuelo = true;
+      apiGet<SpeechStatus>("/api/speech/status")
+        .then((st) => {
+          setSpeech(st);
+          // Al terminar, el "Empecé a descargar…" ya no aplica: lo dice la tarjeta.
+          if (st.estado !== "descargando") setSpeechMsg("");
+        })
+        .catch(() => {})
+        .finally(() => {
+          enVuelo = false;
+        });
+    }, 2000);
+    return () => clearInterval(t);
+  }, [speech?.estado]);
 
   async function changePolicy(id: string) {
     setPolicyMsg("");
@@ -195,6 +239,27 @@ export default function DashboardPage() {
     } finally {
       setInstallBusy(false);
       setInstallConfirm(false);
+    }
+  }
+
+  async function installSpeech() {
+    // Descargar ~700 MB exige confirmación explícita (el backend también la
+    // exige: body {"confirmar": true}); el clic accidental nunca descarga nada.
+    setSpeechBusy(true);
+    setSpeechMsg("");
+    try {
+      const res = await apiSend<{ status: string; message: string }>(
+        "POST", "/api/speech/install", { confirmar: true },
+      );
+      setSpeechMsg(res.message);
+      apiGet<SpeechStatus>("/api/speech/status").then(setSpeech).catch(() => {});
+    } catch (e) {
+      setSpeechMsg(e instanceof ApiError && !e.message.startsWith("Error ")
+        ? e.message
+        : "No se pudo iniciar la instalación del dictado. Intenta de nuevo.");
+    } finally {
+      setSpeechBusy(false);
+      setSpeechConfirm(false);
     }
   }
 
@@ -321,6 +386,78 @@ export default function DashboardPage() {
             ) : null}
             <label htmlFor="vault-path" className="mb-1 block text-sm text-gray-600">Ubicación de tu espacio de notas</label>
             <input id="vault-path" value={vaultPath} onChange={(e) => setVaultPath(e.target.value)} placeholder="Ej.: D:\Notas del despacho" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
+          </div>
+
+          <div className="rounded-lg border border-gray-100 p-4">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div>
+                <div className="font-medium">Dictado por voz</div>
+                <div className="text-sm text-gray-500">
+                  {speech?.listo
+                    ? "Instalado · dicta con el micrófono desde el chat de tus asuntos"
+                    : speech?.estado === "descargando"
+                      ? "Instalando…"
+                      : "Inactivo"}
+                </div>
+              </div>
+              {speech && !speech.listo && speech.estado !== "descargando" ? (
+                <button
+                  onClick={() => setSpeechConfirm(true)}
+                  disabled={speechBusy}
+                  className="shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Instalar dictado por voz
+                </button>
+              ) : null}
+            </div>
+            {speech ? <p className="mb-2 text-sm text-gray-500">{speech.mensaje}</p> : null}
+            {speech?.estado === "descargando" && speech.progreso ? (
+              <div className="mb-2">
+                <div
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={speech.progreso.porcentaje ?? undefined}
+                  aria-label="Avance de la descarga del dictado por voz"
+                  className="h-2 w-full overflow-hidden rounded-full bg-gray-100"
+                >
+                  <div
+                    className="h-full rounded-full bg-gray-900 transition-all"
+                    style={{ width: `${speech.progreso.porcentaje ?? 5}%` }}
+                  />
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {speech.progreso.total_mb
+                    ? `${speech.progreso.descargado_mb} de ${speech.progreso.total_mb} MB`
+                    : `${speech.progreso.descargado_mb} MB descargados`}
+                </p>
+              </div>
+            ) : null}
+            {speechConfirm ? (
+              <div role="alertdialog" aria-label="Confirmar instalación del dictado por voz" className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-sm text-amber-800">
+                  Esta acción descarga el componente de dictado por voz (~700 MB) en el servidor de Mia.
+                  Puede tardar varios minutos. Tu voz nunca saldrá del servidor del despacho. ¿Quieres continuar?
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={installSpeech}
+                    disabled={speechBusy}
+                    className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                  >
+                    {speechBusy ? "Iniciando…" : "Sí, instalar"}
+                  </button>
+                  <button
+                    onClick={() => setSpeechConfirm(false)}
+                    disabled={speechBusy}
+                    className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {speechMsg ? <p className="text-sm text-amber-700">{speechMsg}</p> : null}
           </div>
 
           <div className="rounded-lg border border-gray-100 p-4">

@@ -19,6 +19,11 @@ audio largo por el camino del VAD); si no están, esos checks se saltan con avis
      error de lectura → False (fail-closed).
   F. (si hay pesos) integración real: español correcto en es.wav; audio >60 s
      transcrito por el camino VAD/troceo.
+  G. install.py + rutas status/install (CP-Z1b): instalación desde el producto —
+     consent-first (400 sin confirmar), single-flight, progreso visible, retry
+     limpio tras fallo de red, anti path-traversal fail-closed, idempotencia.
+     Con MIA_SPEECH_MODELS_DIR → tempdir y _download reemplazada: JAMÁS se
+     descargan los pesos reales ni se tocan los ya instalados en esta máquina.
 
 Exit 0 = PASS · 1 = FAIL.     .venv\\Scripts\\python.exe execution\\test_speech_stt.py
 """
@@ -407,6 +412,271 @@ async def db_checks() -> None:
         await pool.close_pool()
 
 
+def _fake_tar(members: dict[str, bytes]) -> bytes:
+    """tar.bz2 pequeño en memoria — ejercita la extracción REAL sin bajar 650 MB."""
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:bz2") as tf:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def install_checks() -> None:
+    import tempfile
+    import threading
+    import urllib.error
+
+    from mia.speech import engine as se
+    from mia.speech import install as si
+
+    def _reset() -> None:
+        with si._state_lock:
+            si._thread = None
+            si._state.update(status="no_instalado", phase=None, bytes_done=0,
+                             bytes_total=None, error=None)
+
+    def _join(timeout=10.0) -> None:
+        t = si._thread
+        if t is not None:
+            t.join(timeout)
+
+    parakeet_members = {
+        f"{se._PARAKEET_DIR}/{n}": b"fake-model-bytes"
+        for n in ["encoder.int8.onnx", "decoder.int8.onnx",
+                  "joiner.int8.onnx", "tokens.txt"]
+    }
+    good_tar = _fake_tar(parakeet_members)
+    fake_vad = b"\x00" * (600 * 1024)  # ≥ 500 KB, pasa el umbral de sanidad
+
+    old_env = os.environ.get("MIA_SPEECH_MODELS_DIR")
+    real_download = si._download
+    tmp = tempfile.mkdtemp(prefix="mia-cpz1b-")
+    gate = threading.Event()  # libera la descarga bloqueada (también en finally)
+    try:
+        os.environ["MIA_SPEECH_MODELS_DIR"] = tmp
+        dest = Path(tmp)
+        _reset()
+
+        st = si.get_status()
+        jerga = ("onnx", "tar.bz2", "ps1", "script", "thread", "endpoint")
+        check("g-01 · sin modelos → no_instalado con mensaje en llano",
+              st["estado"] == "no_instalado" and st["listo"] is False
+              and st["progreso"] is None
+              and not any(j in st["mensaje"].lower() for j in jerga))
+
+        # g-03/g-04/g-05/g-06 · flujo completo con la descarga BLOQUEADA a mitad
+        def _blocked(url, path, on_progress):
+            if "silero" in url:
+                path.write_bytes(fake_vad)
+                return
+            on_progress(10 * 1024 * 1024, 460 * 1024 * 1024)
+            gate.wait(10)
+            path.write_bytes(good_tar)
+            on_progress(460 * 1024 * 1024, 460 * 1024 * 1024)
+
+        si._download = _blocked
+        r1 = si.start_install()
+        first_thread = si._thread
+        check("g-03a · con confirmación → arranca en background ('descargando')",
+              r1["status"] == "descargando" and first_thread is not None)
+
+        # el hilo reporta el primer avance enseguida, pero no es instantáneo
+        import time as _t
+        deadline = _t.time() + 5
+        st = si.get_status()
+        while (not (st.get("progreso") or {}).get("descargado_mb")
+               and _t.time() < deadline):
+            _t.sleep(0.05)
+            st = si.get_status()
+        prog = st.get("progreso") or {}
+        check("g-05 · progreso visible durante la descarga (MB y porcentaje coherentes)",
+              st["estado"] == "descargando" and prog.get("descargado_mb") == 10
+              and prog.get("total_mb") == 460 and prog.get("porcentaje") == 2
+              and "MB" in st["mensaje"])
+
+        r2 = si.start_install()
+        check("g-04 · single-flight: segundo clic → 'ya en curso', sin segundo hilo",
+              r2["status"] == "descargando" and "curso" in r2["message"]
+              and si._thread is first_thread)
+
+        gate.set()
+        _join()
+        st = si.get_status()
+        files_ok = all((dest / se._PARAKEET_DIR / n).is_file()
+                       for n in ["encoder.int8.onnx", "decoder.int8.onnx",
+                                 "joiner.int8.onnx", "tokens.txt"])
+        check("g-03 · al terminar: instalado con los 4 archivos (extracción real)",
+              st["estado"] == "instalado" and st["listo"] is True and files_ok
+              and (dest / "silero_vad.onnx").is_file())
+        check("g-06 · ni tarball ni .part quedan en disco tras el éxito",
+              not list(dest.glob("*.tar.bz2")) and not list(dest.glob("*.part")))
+
+        calls: list[str] = []
+
+        def _spy(url, path, on_progress):
+            calls.append(url)
+            raise AssertionError("no debería descargar nada")
+
+        si._download = _spy
+        r3 = si.start_install()
+        check("g-09 · reinvocar ya instalado → idempotente, sin re-descarga",
+              r3["status"] == "instalado" and calls == [])
+
+        # g-12 · Parakeet presente + VAD ausente → solo baja el detector de voz
+        (dest / "silero_vad.onnx").unlink()
+
+        def _vad_only(url, path, on_progress):
+            calls.append(url)
+            path.write_bytes(fake_vad)
+
+        si._download = _vad_only
+        r12 = si.start_install()
+        _join()
+        check("g-12 · falta solo el detector de voz → se baja solo eso (parcial)",
+              len(calls) == 1 and "silero" in calls[0]
+              and (dest / "silero_vad.onnx").is_file()
+              and si.get_status()["estado"] == "instalado")
+        check("g-12b · si solo falta el detector, el mensaje NO anuncia 700 MB",
+              "700" not in (r12.get("message") or ""))
+
+        # g-13 · archivos truncados (0 bytes) NO cuentan como instalado
+        # (hallazgo capa 2 #1: un corte a mitad de la instalación no puede
+        # dejar a get_status mintiendo "listo").
+        for n in ["encoder.int8.onnx", "decoder.int8.onnx"]:
+            (dest / se._PARAKEET_DIR / n).write_bytes(b"")
+        st13 = si.get_status()
+        check("g-13 · archivos de 0 bytes → el estado NO dice instalado",
+              st13["estado"] != "instalado" and st13["listo"] is False)
+
+        # g-08b · el validador manual del tar también rechaza symlinks/hardlinks
+        # (hallazgo capa 2 #3 — la rama sin filter= debe dar las mismas garantías).
+        import tarfile as _tf
+        link = _tf.TarInfo("sub")
+        link.type = _tf.SYMTYPE
+        link.linkname = "../../fuera"
+        ok_reg = _tf.TarInfo("normal.txt")
+        ok_reg.type = _tf.REGTYPE
+        rejected = False
+        try:
+            si._validate_member(link)
+        except RuntimeError:
+            rejected = True
+        accepted = True
+        try:
+            si._validate_member(ok_reg)
+        except RuntimeError:
+            accepted = False
+        check("g-08b · symlink dentro del tar → rechazado; archivo normal → pasa",
+              rejected and accepted)
+
+        # g-07 · fallo de red → error en llano, parciales fuera, retry limpio
+        import shutil as _sh
+        _sh.rmtree(dest / se._PARAKEET_DIR)
+        (dest / "silero_vad.onnx").unlink()
+        _reset()
+
+        def _fail(url, path, on_progress):
+            path.write_bytes(b"a medias")
+            raise urllib.error.URLError("sin red")
+
+        si._download = _fail
+        si.start_install()
+        _join()
+        st = si.get_status()
+        check("g-07a · sin red → estado error con mensaje en llano y sin parciales",
+              st["estado"] == "error" and "internet" in st["mensaje"]
+              and not any(j in st["mensaje"].lower() for j in jerga)
+              and not list(dest.glob("*.part")) and not list(dest.glob("*.tar.bz2")))
+
+        def _good(url, path, on_progress):
+            path.write_bytes(fake_vad if "silero" in url else good_tar)
+
+        si._download = _good
+        si.start_install()
+        _join()
+        check("g-07b · reintento tras el fallo → instala limpio",
+              si.get_status()["estado"] == "instalado")
+
+        # g-08 · tar malicioso (../evil.txt) → rechazado fail-closed
+        _sh.rmtree(dest / se._PARAKEET_DIR)
+        _reset()
+        evil_tar = _fake_tar({"../evil.txt": b"pwned"})
+
+        def _evil(url, path, on_progress):
+            if "silero" in url:
+                path.write_bytes(fake_vad)
+                return
+            path.write_bytes(evil_tar)
+
+        si._download = _evil
+        si.start_install()
+        _join()
+        check("g-08 · entrada con '..' en el archivo → extracción rechazada, "
+              "nada escrito fuera de la carpeta",
+              si.get_status()["estado"] == "error"
+              and not (dest.parent / "evil.txt").is_file()
+              and not (dest / "evil.txt").is_file())
+
+        # g-11 · el 503 del motor ya manda al Panel, no a un script
+        eng = se.SpeechEngine()
+        ok, reason = eng.available()
+        check("g-11 · sin pesos, available() apunta al Panel de control (sin 'ps1')",
+              ok is False and "Panel de control" in reason
+              and "ps1" not in reason and "script" not in reason.lower())
+    finally:
+        # ORDEN (hallazgo capa 2 #8): primero esperar cualquier worker vivo y
+        # SOLO después restaurar _download — si se restaurara antes, un worker
+        # rezagado haría la descarga REAL.
+        gate.set()
+        _join()
+        si._download = real_download
+        _reset()
+        if old_env is None:
+            os.environ.pop("MIA_SPEECH_MODELS_DIR", None)
+        else:
+            os.environ["MIA_SPEECH_MODELS_DIR"] = old_env
+        import shutil as _sh
+        _sh.rmtree(tmp, ignore_errors=True)
+
+
+async def install_route_checks() -> None:
+    from fastapi import HTTPException
+    from mia.api.middleware import OPEN_PATHS
+    from mia.api.routes import speech as route
+    from mia.speech import install as si
+
+    check("g-10 · status e install exigen autenticación (no son OPEN_PATH)",
+          "/api/speech/status" not in OPEN_PATHS
+          and "/api/speech/install" not in OPEN_PATHS)
+
+    try:
+        await route.speech_install_models(
+            request=_req(), body=route.SpeechInstallBody())
+        check("g-02 · instalar SIN confirmación → 400 consent-first", False)
+    except HTTPException as e:
+        check("g-02 · instalar SIN confirmación → 400 consent-first",
+              e.status_code == 400 and "confirmación" in e.detail
+              and si._thread is None)
+
+    real_start = si.start_install
+    try:
+        si.start_install = lambda: {"status": "descargando", "message": "ok"}
+        r = await route.speech_install_models(
+            request=_req(), body=route.SpeechInstallBody(confirmar=True))
+        check("g-02b · con confirmación → la instalación arranca",
+              r.get("status") == "descargando")
+    finally:
+        si.start_install = real_start
+
+    st = await route.speech_status(request=_req())
+    check("g-02c · la ruta de estado responde con estado/listo/mensaje",
+          isinstance(st, dict) and {"estado", "listo", "mensaje"} <= set(st))
+
+
 def integration_checks() -> None:
     from mia.speech import engine as se
     from mia.speech.audio import decode_wav_to_pcm16k
@@ -447,6 +717,8 @@ def main() -> int:
     cleanup_checks()
     asyncio.run(route_checks())
     asyncio.run(db_checks())
+    install_checks()
+    asyncio.run(install_route_checks())
     integration_checks()
 
     passed = sum(1 for _, ok in _results if ok)
