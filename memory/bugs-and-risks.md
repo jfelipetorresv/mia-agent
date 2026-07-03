@@ -898,3 +898,11 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
 5. **Mensaje "~700 MB" del alertdialog del dashboard es fijo** (el caso "solo falta el detector"
    no es alcanzable desde el botón porque la tarjeta ya dice Instalado; por API el mensaje del
    backend SÍ diferencia).
+
+## Riesgo #47 — CP-Z2 (voz de salida + notas de voz de Telegram): residuales aceptados (2026-07-03)
+   1. **Voz por defecto es_MX-ald sin confirmación final de Pipe:** el checkpoint fija es_MX-ald-medium como voz por defecto (latinoamericana). Se le enviaron 3 muestras (es_MX + 2 castellanas) para que elija por el oído; cambiar la voz = cambiar 5 constantes en speech/tts.py + el nombre del modelo en install.py/ps1. Alto impacto (contenido que oye el cliente) → la elección de Pipe manda antes del merge.
+   2. **Latencia de TTS en CPU sin GPU:** VITS es rápido en CPU pero una respuesta larga cerca de VOICE_REPLY_MAX_CHARS (1000 chars) puede tardar segundos; el semáforo serializa voz (1 op a la vez por proceso). Mitigación: DirectML (MIA_SPEECH_PROVIDER) o subir MIA_SPEECH_CONCURRENCY con costo de CPU.
+   3. **Empate de timeouts al límite (cerrado, anotado):** acquire 45s + op 240s = 285s < 300s HTTP del puente. Margen 15s. Si se sube MIA_SPEECH_TIMEOUT hay que revisar MIA_SPEECH_ACQUIRE_TIMEOUT y HTTP_TIMEOUT_SECONDS del puente.
+   4. **Estado de descarga en memoria (heredado de Riesgo #45.4/#46):** el TTS comparte el estado in-memory de install.py — en Modo A multi-worker el polling de progreso puede caer en un worker sin la descarga. Mitigación futura: estado en Postgres.
+   5. **`on_voice` (glue de python-telegram-bot) no está cubierto por gates:** la guardia de file_size y la descarga viven en run_bot, que el bridge no ejercita en tests (se mockea sin PTB). Lógica trivial, verificada por inspección de capa 2.
+   6. **Capa 3 pendiente:** dictar una nota de voz REAL (calidad de la transcripción de voz humana y naturalidad de la voz de salida) solo lo puede validar Pipe en vivo con el bot creado.

@@ -28,6 +28,26 @@ class AudioInvalido(ValueError):
     """Audio que no se puede procesar. `str(e)` es apto para mostrarse al abogado."""
 
 
+def decode_audio_to_pcm16k(data: bytes) -> np.ndarray:
+    """Decodifica el audio a float32 mono 16 kHz sea WAV o nota de voz OGG/Opus.
+
+    El botón de micrófono de la web envía WAV PCM; Telegram envía notas de voz en
+    OGG/Opus. Se detecta por los primeros bytes de la cabecera y se delega al
+    decodificador que corresponde (WAV = stdlib `wave`; Opus = speech/opus.py, que
+    usa PyAV). Un formato desconocido se intenta como WAV y, si no, se rechaza en
+    llano — así el STT sirve a ambas superficies transparentemente (CP-Z2)."""
+    if not data:
+        raise AudioInvalido("La grabación llegó vacía. Intenta grabar de nuevo.")
+    head = data[:4]
+    if head == b"OggS":
+        from . import opus  # import perezoso: opus.py depende de este módulo
+        return opus.decode_ogg_opus_to_pcm16k(data)
+    if head == b"RIFF":
+        return decode_wav_to_pcm16k(data)
+    # Desconocido: algunos clientes omiten detalles de cabecera → intenta WAV.
+    return decode_wav_to_pcm16k(data)
+
+
 def decode_wav_to_pcm16k(data: bytes) -> np.ndarray:
     """Decodifica un WAV PCM a float32 mono 16 kHz. Lanza AudioInvalido en llano."""
     if not data:

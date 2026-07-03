@@ -35,6 +35,7 @@ import urllib.request
 from pathlib import Path
 
 from .engine import _PARAKEET_DIR, _VAD_FILE, models_dir
+from .tts import _TTS_DIR, _TTS_FILES
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,13 @@ PARAKEET_TARBALL = _PARAKEET_DIR + ".tar.bz2"
 _TARBALL_LOCAL = "parakeet-v3-int8.tar.bz2"  # mismo nombre local que el ps1
 _STAGING_DIR = _PARAKEET_DIR + ".staging"    # extracción atómica (capa 2 #1)
 _PARAKEET_FILES = ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"]
+
+# Voz de salida (CP-Z2): los modelos TTS viven en OTRO release (tag tts-models).
+# Misma mecánica de descarga atómica que Parakeet; el modelo lo fija tts.py.
+TTS_RELEASE_BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+TTS_TARBALL = _TTS_DIR + ".tar.bz2"
+_TTS_TARBALL_LOCAL = "tts-voz-es.tar.bz2"
+_TTS_STAGING_DIR = _TTS_DIR + ".staging"
 _VAD_MIN_BYTES = 500 * 1024        # mismo umbral de sanidad que el ps1
 _CHUNK = 1024 * 1024               # lectura por MiB
 _HTTP_TIMEOUT = 60                 # por operación de socket, no por descarga total
@@ -84,12 +92,15 @@ def _present(path: Path) -> bool:
         return False
 
 
-def missing_components() -> tuple[list[str], bool]:
-    """(archivos Parakeet faltantes, ¿falta el detector de voz?). Mira el disco."""
+def missing_components() -> tuple[list[str], bool, list[str]]:
+    """(archivos Parakeet faltantes, ¿falta el detector de voz?, archivos TTS
+    faltantes). Mira el disco. El dictado (STT) y la voz (TTS) se instalan juntos."""
     pdir = models_dir() / _PARAKEET_DIR
     missing = [f for f in _PARAKEET_FILES if not _present(pdir / f)]
     vad_missing = not _present(models_dir() / _VAD_FILE)
-    return missing, vad_missing
+    tdir = models_dir() / _TTS_DIR
+    tts_missing = [f for f in _TTS_FILES if not _present(tdir / f)]
+    return missing, vad_missing, tts_missing
 
 
 def _downloading() -> bool:
@@ -126,8 +137,8 @@ def get_status() -> dict:
                 "porcentaje": pct,
             },
         }
-    missing, _vad_missing = missing_components()
-    if not missing:
+    missing, _vad_missing, tts_missing = missing_components()
+    if not missing and not tts_missing:
         return {"estado": "instalado", "listo": True, "mensaje": _MSG_INSTALADO,
                 "progreso": None}
     if status["status"] == "error" and status["error"]:
@@ -146,8 +157,8 @@ def start_install() -> dict:
     # capa 2 #5): el polling de get_status no debe esperar detrás de un disco
     # lento. El worker re-verifica qué falta al arrancar, así que un dato viejo
     # aquí solo produce un no-op, nunca una doble descarga.
-    missing, vad_missing = missing_components()
-    if not missing and not vad_missing:
+    missing, vad_missing, tts_missing = missing_components()
+    if not missing and not vad_missing and not tts_missing:
         return {"status": "instalado", "message": _MSG_INSTALADO}
     dest = models_dir()
     try:
@@ -173,11 +184,11 @@ def start_install() -> dict:
             name="mia-speech-install", daemon=True,
         )
         _thread.start()
-    if missing:
-        mensaje = ("Empecé a descargar el componente de voz (~700 MB). "
+    if missing or tts_missing:
+        mensaje = ("Empecé a descargar el componente de voz (~750 MB). "
                    "Puedes seguir el avance aquí mismo.")
     else:
-        # Solo falta el detector de voz (~2 MB): no anunciar 700 MB (exactitud).
+        # Solo falta el detector de voz (~2 MB): no anunciar 750 MB (exactitud).
         mensaje = "Empecé a descargar el detector de voz (es pequeño, tarda poco)."
     return {"status": "descargando", "message": mensaje}
 
@@ -185,7 +196,8 @@ def start_install() -> dict:
 def _cleanup_partials(dest: Path) -> None:
     """Borra restos de intentos anteriores para que el reintento arranque limpio."""
     for leftover in [dest / _TARBALL_LOCAL, dest / (_TARBALL_LOCAL + ".part"),
-                     dest / (_VAD_FILE + ".part")]:
+                     dest / (_VAD_FILE + ".part"),
+                     dest / _TTS_TARBALL_LOCAL, dest / (_TTS_TARBALL_LOCAL + ".part")]:
         try:
             leftover.unlink(missing_ok=True)
         except OSError:
@@ -193,6 +205,7 @@ def _cleanup_partials(dest: Path) -> None:
     # La extracción ocurre en un área de trabajo aparte (publicación atómica,
     # hallazgo capa 2 #1): si un intento anterior murió a medias, fuera con ella.
     shutil.rmtree(dest / _STAGING_DIR, ignore_errors=True)
+    shutil.rmtree(dest / _TTS_STAGING_DIR, ignore_errors=True)
 
 
 def _download(url: str, dest: Path, on_progress) -> None:
@@ -250,37 +263,57 @@ def _safe_extract(tarball: Path, dest: Path) -> None:
             tf.extractall(dest)
 
 
+def _download_extract_publish(
+    dest: Path, url: str, local_tarball: str, staging_name: str,
+    final_dir: str, files: list[str], progress,
+) -> None:
+    """Descarga un tar.bz2 y publica su carpeta de forma ATÓMICA: baja a `.part`,
+    extrae en un área de trabajo aparte, verifica ahí los archivos y solo entonces
+    renombra a su lugar — si el proceso muere a mitad, el estado sigue siendo
+    honesto y el reintento arranca limpio (hallazgo capa 2 #1). Reusado por el
+    modelo de dictado (Parakeet) y el de voz (TTS)."""
+    tarball = dest / local_tarball
+    part = dest / (local_tarball + ".part")
+    staging = dest / staging_name
+    _set_phase("descarga")
+    _download(url, part, progress)
+    os.replace(part, tarball)
+    _set_phase("extraccion")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    _safe_extract(tarball, staging)
+    tarball.unlink(missing_ok=True)
+    extracted = staging / final_dir
+    broken = [f for f in files if not _present(extracted / f)]
+    if broken:
+        raise RuntimeError(f"la descarga llegó incompleta: faltan {broken}")
+    # Publicación atómica: el directorio final aparece completo o no aparece.
+    shutil.rmtree(dest / final_dir, ignore_errors=True)
+    os.replace(extracted, dest / final_dir)
+    shutil.rmtree(staging, ignore_errors=True)
+
+
 def _install_worker(dest: Path) -> None:
     """Corre COMPLETO en un thread — jamás en el event loop del API.
 
     Re-verifica en disco QUÉ falta (no confía en lo que vio start_install) y
-    publica el modelo de forma ATÓMICA: extrae en un área de trabajo aparte,
-    verifica ahí los 4 archivos y solo entonces lo renombra a su lugar — si el
-    proceso muere a mitad, el estado sigue siendo honesto ("no instalado") y el
-    reintento arranca limpio (hallazgo capa 2 #1)."""
+    publica cada modelo de forma ATÓMICA (ver _download_extract_publish). El
+    dictado (Parakeet) y la voz (TTS) se instalan juntos; el detector de voz
+    (VAD) es fail-soft."""
     global _thread
-    tarball = dest / _TARBALL_LOCAL
-    part = dest / (_TARBALL_LOCAL + ".part")
-    staging = dest / _STAGING_DIR
     try:
         _cleanup_partials(dest)
-        need_parakeet, need_vad = missing_components()
+        need_parakeet, need_vad, need_tts = missing_components()
         if need_parakeet:
-            _set_phase("descarga")
-            _download(f"{RELEASE_BASE}/{PARAKEET_TARBALL}", part, _set_progress)
-            os.replace(part, tarball)
-            _set_phase("extraccion")
-            staging.mkdir(parents=True, exist_ok=True)
-            _safe_extract(tarball, staging)
-            tarball.unlink(missing_ok=True)
-            extracted = staging / _PARAKEET_DIR
-            broken = [f for f in _PARAKEET_FILES if not _present(extracted / f)]
-            if broken:
-                raise RuntimeError(f"la descarga llegó incompleta: faltan {broken}")
-            # Publicación atómica: el directorio final aparece completo o no aparece.
-            shutil.rmtree(dest / _PARAKEET_DIR, ignore_errors=True)
-            os.replace(extracted, dest / _PARAKEET_DIR)
-            shutil.rmtree(staging, ignore_errors=True)
+            _download_extract_publish(
+                dest, f"{RELEASE_BASE}/{PARAKEET_TARBALL}", _TARBALL_LOCAL,
+                _STAGING_DIR, _PARAKEET_DIR, _PARAKEET_FILES, _set_progress,
+            )
+        if need_tts:
+            _download_extract_publish(
+                dest, f"{TTS_RELEASE_BASE}/{TTS_TARBALL}", _TTS_TARBALL_LOCAL,
+                _TTS_STAGING_DIR, _TTS_DIR, _TTS_FILES, _set_progress,
+            )
         if need_vad:
             # Fail-soft: sin el detector de voz el motor degrada a cortes fijos
             # de 60 s (engine.py) — no es motivo para declarar error la instalación.
@@ -298,9 +331,11 @@ def _install_worker(dest: Path) -> None:
                 logger.exception("speech.install: no se pudo bajar el detector de "
                                  "voz (opcional); el dictado funciona sin él")
         _set_phase("verificacion")
-        missing, _ = missing_components()
-        if missing:
-            raise RuntimeError(f"faltan archivos tras la instalación: {missing}")
+        missing, _, tts_missing = missing_components()
+        if missing or tts_missing:
+            raise RuntimeError(
+                f"faltan archivos tras la instalación: {missing + tts_missing}"
+            )
         with _state_lock:
             _state.update(status="instalado", phase=None, error=None)
         logger.info("speech.install: componente de voz instalado en %s", dest)

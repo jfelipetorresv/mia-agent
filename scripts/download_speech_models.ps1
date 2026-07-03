@@ -1,11 +1,14 @@
-# Mia - descarga de los modelos de dictado local (CP-Z1, Ola 3)
+# Mia - descarga de los modelos de voz local (CP-Z1 dictado + CP-Z2 voz de Mia)
 #
 # Baja a mia-data/models/speech/ (gitignored) los pesos que el motor de voz
-# necesita — los MISMOS que Lexter valido en espanol juridico:
+# necesita:
 #   - Parakeet TDT 0.6B v3 int8 (STT, ~650 MB extraido)  [NVIDIA CC-BY-4.0]
 #   - silero_vad.onnx (detector de voz)                    [MIT]
+#   - vits-piper-es_MX-ald-medium (TTS, voz de Mia, ~67 MB) [Piper/espeak-ng]
 # Los pesos NO se versionan en git (tamano + licencias propias): este script
 # corre UNA vez por instalacion. Idempotente: si ya estan, no re-descarga.
+# Nota: el usuario final instala todo esto con el boton del Panel de control
+# (speech/install.py); este script es la via de administrador.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $dest = Join-Path $root 'mia-data\models\speech'
@@ -13,6 +16,7 @@ New-Item -ItemType Directory -Force $dest | Out-Null
 
 $parakeetDir = Join-Path $dest 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8'
 $release = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models'
+$ttsRelease = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models'
 
 # -f: un 404/500 debe FALLAR, no escribir la pagina de error al archivo destino
 # (hallazgo del revisor de capa 2). Limite conocido: no hay checksum de integridad.
@@ -43,4 +47,18 @@ if (-not (Test-Path $vad)) {
     Write-Host "Silero VAD ya estaba descargado." -ForegroundColor Green
 }
 
-Write-Host "`nModelos de dictado listos. Reinicia el API para activar el microfono." -ForegroundColor Green
+$ttsDir = Join-Path $dest 'vits-piper-es_MX-ald-medium'
+if (-not (Test-Path (Join-Path $ttsDir 'es_MX-ald-medium.onnx'))) {
+    Write-Host "Descargando la voz de Mia (VITS es_MX, ~67 MB)..." -ForegroundColor Cyan
+    $ttsTarball = Join-Path $dest 'tts-voz-es.tar.bz2'
+    curl.exe -fSL -o $ttsTarball "$ttsRelease/vits-piper-es_MX-ald-medium.tar.bz2"
+    if ($LASTEXITCODE -ne 0) { throw "Fallo la descarga de la voz de Mia." }
+    tar -xjf $ttsTarball -C $dest
+    if ($LASTEXITCODE -ne 0) { throw "Fallo la extraccion de la voz de Mia." }
+    Remove-Item $ttsTarball
+    Write-Host "Voz de Mia lista en $ttsDir" -ForegroundColor Green
+} else {
+    Write-Host "La voz de Mia ya estaba descargada." -ForegroundColor Green
+}
+
+Write-Host "`nModelos de voz listos. Reinicia el API para activar el microfono y la voz de Mia." -ForegroundColor Green

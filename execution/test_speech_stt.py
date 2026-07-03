@@ -451,6 +451,10 @@ def install_checks() -> None:
     }
     good_tar = _fake_tar(parakeet_members)
     fake_vad = b"\x00" * (600 * 1024)  # ≥ 500 KB, pasa el umbral de sanidad
+    # CP-Z2: la instalación ahora también baja el modelo de VOZ (TTS). El tar
+    # falso trae sus archivos para no descargar el modelo real (~67 MB).
+    tts_members = {f"{si._TTS_DIR}/{n}": b"fake-voice-bytes" for n in si._TTS_FILES}
+    good_tts_tar = _fake_tar(tts_members)
 
     old_env = os.environ.get("MIA_SPEECH_MODELS_DIR")
     real_download = si._download
@@ -472,6 +476,9 @@ def install_checks() -> None:
         def _blocked(url, path, on_progress):
             if "silero" in url:
                 path.write_bytes(fake_vad)
+                return
+            if "tts-models" in url:
+                path.write_bytes(good_tts_tar)
                 return
             on_progress(10 * 1024 * 1024, 460 * 1024 * 1024)
             gate.wait(10)
@@ -509,9 +516,10 @@ def install_checks() -> None:
         files_ok = all((dest / se._PARAKEET_DIR / n).is_file()
                        for n in ["encoder.int8.onnx", "decoder.int8.onnx",
                                  "joiner.int8.onnx", "tokens.txt"])
-        check("g-03 · al terminar: instalado con los 4 archivos (extracción real)",
+        tts_ok = all((dest / si._TTS_DIR / n).is_file() for n in si._TTS_FILES)
+        check("g-03 · al terminar: instalado con dictado (4) + voz (TTS) + VAD",
               st["estado"] == "instalado" and st["listo"] is True and files_ok
-              and (dest / "silero_vad.onnx").is_file())
+              and tts_ok and (dest / "silero_vad.onnx").is_file())
         check("g-06 · ni tarball ni .part quedan en disco tras el éxito",
               not list(dest.glob("*.tar.bz2")) and not list(dest.glob("*.part")))
 

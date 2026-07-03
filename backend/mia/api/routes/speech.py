@@ -23,15 +23,18 @@ import asyncio
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from ...speech import audio as speech_audio
 from ...speech import cleanup as speech_cleanup
 from ...speech import engine as speech_engine
 from ...speech import install as speech_install
+from ...speech import opus as speech_opus
 from ...speech import policy as speech_policy
+from ...speech import tts as speech_tts
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +49,38 @@ _RATE_MAX_CLIPS = 20
 _RATE_WINDOW_SECONDS = 5 * 60
 _clip_hits: dict[tuple[str, str], list[float]] = {}
 
-# El STT satura CPU: un semáforo global serializa las transcripciones del proceso.
+# El STT/TTS satura CPU: un semáforo global serializa las operaciones de voz del
+# proceso (una nota de voz de Telegram encadena transcribe + synthesize sobre él).
 _stt_semaphore = asyncio.Semaphore(max(1, int(os.getenv("MIA_SPEECH_CONCURRENCY", "1"))))
-# Tope de espera por transcripción: si el motor se cuelga (modelo corrupto, bug
-# de runtime), el request responde 503 en vez de dejar el dictado muerto para
-# siempre. El thread colgado queda zombi con el lock del motor — límite declarado.
+# Tope de espera por transcripción/síntesis: si el motor se cuelga (modelo
+# corrupto, bug de runtime), el request responde 503 en vez de dejar la voz
+# muerta para siempre. El thread colgado queda zombi con el lock — límite declarado.
 _STT_TIMEOUT_SECONDS = max(60, int(os.getenv("MIA_SPEECH_TIMEOUT", "240")))
+# Tope de espera para ADQUIRIR el semáforo (no solo para la operación): bajo
+# contención (p. ej. dictado por web + nota de voz de Telegram simultáneos) un
+# turno no debe quedarse colgado hasta el timeout HTTP del puente (~5 min) y
+# degradar en silencio — responde un 503 explícito y honesto (hallazgo capa 2).
+# 45s deja margen bajo el timeout HTTP del puente (300s): 45 + _STT_TIMEOUT (240)
+# = 285 < 300, sin el empate al límite que señaló la re-verificación de capa 2.
+_ACQUIRE_TIMEOUT_SECONDS = max(10, int(os.getenv("MIA_SPEECH_ACQUIRE_TIMEOUT", "45")))
+
+
+@asynccontextmanager
+async def _speech_slot():
+    """Adquiere el semáforo de voz con tope de espera. Si el componente está
+    ocupado más de _ACQUIRE_TIMEOUT_SECONDS, 503 en llano en vez de colgar."""
+    try:
+        await asyncio.wait_for(_stt_semaphore.acquire(), timeout=_ACQUIRE_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="El componente de voz está ocupado en este momento. "
+                   "Intenta de nuevo en unos segundos.",
+        )
+    try:
+        yield
+    finally:
+        _stt_semaphore.release()
 
 
 class SpeechInstallBody(BaseModel):
@@ -59,6 +88,12 @@ class SpeechInstallBody(BaseModel):
     se descarga nada. El default False hace que un POST vacío sea un rechazo."""
 
     confirmar: bool = False
+
+
+class SynthesizeBody(BaseModel):
+    """Texto a convertir en voz. La respuesta es audio OGG/Opus (nota de voz)."""
+
+    text: str = ""
 
 
 def _tenant(request: Request) -> str:
@@ -125,9 +160,9 @@ async def transcribe(
     # el modelo) → van a un thread y DENTRO del semáforo, para que N clips
     # simultáneos jamás congelen el event loop del API (hallazgo capa 2: antes la
     # decodificación corría en el loop y frenaba los SSE de otros abogados).
-    async with _stt_semaphore:
+    async with _speech_slot():
         try:
-            samples = await asyncio.to_thread(speech_audio.decode_wav_to_pcm16k, data)
+            samples = await asyncio.to_thread(speech_audio.decode_audio_to_pcm16k, data)
         except speech_audio.AudioInvalido as e:
             raise HTTPException(status_code=400, detail=str(e))
         try:
@@ -163,6 +198,82 @@ async def transcribe(
         "duration_seconds": result.get("duration_seconds", 0.0),
         "message": None if text else "No se escuchó voz en la grabación.",
     }
+
+
+@router.post("/speech/synthesize")
+async def synthesize(request: Request, body: SynthesizeBody):
+    """Texto → nota de voz OGG/Opus, 100% local (CP-Z2). La usa el puente de
+    Telegram para que Mia responda hablando. Mismas salvaguardas que transcribe:
+    auth, rate-limit por abogado, candado de privacidad y semáforo de CPU."""
+    tenant_id = _tenant(request)
+    _check_rate(tenant_id, getattr(request.state, "email", "") or "")
+
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="No hay texto para convertir en voz.")
+    if len(text) > speech_tts.MAX_TTS_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail="El texto es demasiado largo para una nota de voz.",
+        )
+
+    eng = speech_tts.get_tts_engine()
+    ok, reason = eng.available()
+    if not ok:
+        raise HTTPException(status_code=503, detail=reason)
+
+    # Candado de privacidad (Ola 3): un motor de voz que NO sea local exigiría el
+    # opt-in explícito del despacho. El TTS v1 es local → hoy no bloquea, pero la
+    # exigencia es estructural (idéntico a transcribe).
+    if not speech_tts.TTS_IS_LOCAL:
+        if not await speech_policy.allow_cloud_audio(tenant_id):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Este despacho no autorizó procesar la voz fuera del servidor. "
+                    "La voz en la nube está apagada."
+                ),
+            )
+
+    # Síntesis + codificación: ambos trabajo de CPU → thread DENTRO del semáforo
+    # (compartido con el STT: una operación de voz a la vez por proceso).
+    async with _speech_slot():
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(eng.synthesize, text),
+                timeout=_STT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error("speech.tts: síntesis excedió %ss (tenant=%s)",
+                         _STT_TIMEOUT_SECONDS, tenant_id)
+            raise HTTPException(
+                status_code=503,
+                detail="La voz está tardando demasiado. Intenta con un texto más corto.",
+            )
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception:
+            logger.exception("speech.tts: fallo sintetizando (tenant=%s)", tenant_id)
+            raise HTTPException(
+                status_code=500,
+                detail="No se pudo generar la voz. Vuelve a intentarlo.",
+            )
+
+        samples = result.get("samples")
+        sample_rate = int(result.get("sample_rate", 0))
+        if samples is None or getattr(samples, "size", 0) == 0 or sample_rate <= 0:
+            raise HTTPException(
+                status_code=500,
+                detail="No se pudo generar la voz. Vuelve a intentarlo.",
+            )
+        try:
+            ogg = await asyncio.to_thread(
+                speech_opus.encode_pcm_to_ogg_opus, samples, sample_rate
+            )
+        except speech_audio.AudioInvalido as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return Response(content=ogg, media_type="audio/ogg")
 
 
 @router.get("/speech/status")

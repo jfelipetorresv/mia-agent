@@ -57,6 +57,21 @@ SHUTDOWN_REPLY = "Listo, apago el puente de Telegram. Para reactivarlo, ejecuta 
 NEW_CONVERSATION_REPLY = "Listo, empezamos una conversación nueva. Cuéntame."
 ATTACHMENT_FILENAME = "respuesta-de-mia.md"
 
+# CP-Z2: si el abogado manda una NOTA DE VOZ, Mia responde HABLANDO (voz entra →
+# voz sale). Respuestas más largas que esto se dejan por escrito (una nota de voz
+# de varios minutos leyendo un borrador es mala experiencia).
+VOICE_REPLY_MAX_CHARS = 1000
+VOICE_NOT_UNDERSTOOD = "No entendí bien la nota de voz. ¿Puedes repetirla, por favor?"
+# Al recibir voz, Mia devuelve primero lo que ENTENDIÓ, para que el abogado
+# verifique la transcripción (la voz-a-texto puede errar — criterio [VERIFICAR]).
+VOICE_HEARD_PREFIX = "Entendí: "
+VOICE_TOO_LONG_NOTE = "La respuesta es larga, te la dejo por escrito:"
+VOICE_EMPTY_REPLY = "No obtuve una respuesta esta vez. Intenta de nuevo."
+# Techo de tamaño de una nota de voz entrante antes de siquiera descargarla
+# (defensa en profundidad; la Bot API ya limita descargas de bots y el backend
+# rechaza > 32 MB al decodificar).
+MAX_VOICE_BYTES = 20 * 1024 * 1024
+
 # Backoff del polling ante caídas de red (segundos): 5 → 10 → 20 → ... → tope 300.
 _BACKOFF_INITIAL = 5.0
 _BACKOFF_MAX = 300.0
@@ -183,6 +198,54 @@ class MiaClient:
         data = resp.json()
         return data["conversation_id"], data["reply"]
 
+    async def _post_transcribe(self, audio: bytes):
+        return await self._http.post(
+            f"{self.api_url}/api/speech/transcribe",
+            files={"audio": ("nota-de-voz.ogg", audio, "audio/ogg")},
+            data={"pulir": "false"},
+            headers={"Authorization": f"Bearer {self._token}"},
+        )
+
+    async def transcribe(self, audio: bytes) -> str:
+        """Nota de voz (OGG/Opus) → texto, vía POST /api/speech/transcribe.
+
+        El STT corre 100% local en el servidor de Mia; el audio nunca sale de ahí.
+        Renueva el JWT y reintenta UNA vez ante 401. Devuelve texto (posiblemente
+        vacío si no se escuchó voz — el llamador lo maneja)."""
+        if not self._token:
+            await self.login()
+        resp = await self._post_transcribe(audio)
+        if resp.status_code == 401:
+            self._token = None
+            await self.login()
+            resp = await self._post_transcribe(audio)
+        if resp.status_code != 200:
+            raise MiaApiError(f"transcribe → status {resp.status_code}")
+        return (resp.json().get("text") or "").strip()
+
+    async def _post_synthesize(self, text: str):
+        return await self._http.post(
+            f"{self.api_url}/api/speech/synthesize",
+            json={"text": text},
+            headers={"Authorization": f"Bearer {self._token}"},
+        )
+
+    async def synthesize(self, text: str) -> bytes:
+        """Texto → nota de voz OGG/Opus, vía POST /api/speech/synthesize.
+
+        La síntesis es 100% local. Renueva el JWT y reintenta UNA vez ante 401.
+        Devuelve los bytes del audio (OGG/Opus)."""
+        if not self._token:
+            await self.login()
+        resp = await self._post_synthesize(text)
+        if resp.status_code == 401:
+            self._token = None
+            await self.login()
+            resp = await self._post_synthesize(text)
+        if resp.status_code != 200:
+            raise MiaApiError(f"synthesize → status {resp.status_code}")
+        return resp.content
+
     async def aclose(self) -> None:
         close = getattr(self._http, "aclose", None)
         if close:
@@ -203,12 +266,14 @@ class TelegramBridge:
         send_text: Callable[[int, str], Awaitable[None]],
         send_document: Callable[[int, str, bytes], Awaitable[None]],
         on_stop: Callable[[], Awaitable[None]],
+        send_voice: Callable[[int, bytes], Awaitable[None]] | None = None,
     ) -> None:
         self.allowed_chat_id = allowed_chat_id
         self.client = client
         self._send_text = send_text
         self._send_document = send_document
         self._on_stop = on_stop
+        self._send_voice = send_voice
         self.stopped = False
         # conversation_id por chat, en memoria (un solo chat autorizado; /nueva resetea).
         self.conversations: dict[int, str] = {}
@@ -265,6 +330,87 @@ class TelegramBridge:
         else:
             await self._send_text(chat_id, reply)
 
+    async def handle_voice(self, chat_id: int, audio: bytes) -> None:
+        """Procesa una NOTA DE VOZ entrante. NUNCA lanza: un turno fallido no tumba
+        el loop (mismo contrato que handle_message)."""
+        try:
+            await self._handle_voice(chat_id, audio)
+        except Exception:  # noqa: BLE001 — resiliencia: el loop sigue pase lo que pase
+            logger.exception("Nota de voz de Telegram falló (chat_id=%s)", chat_id)
+            await self._safe_send_text(chat_id, FRIENDLY_ERROR)
+
+    async def _handle_voice(self, chat_id: int, audio: bytes) -> None:
+        # SEGURIDAD: idéntico a _handle — cualquier otro chat se ignora POR COMPLETO
+        # (el runner ya no debería ni descargar el audio de un chat ajeno).
+        if chat_id != self.allowed_chat_id:
+            logger.warning("Nota de voz IGNORADA de chat no autorizado (chat_id=%s)", chat_id)
+            return
+        if self.stopped:
+            return
+        if not audio:
+            await self._safe_send_text(chat_id, VOICE_NOT_UNDERSTOOD)
+            return
+
+        # 1) Voz → texto (STT local en el servidor de Mia; el audio no sale de ahí).
+        logger.info("Nota de voz entrante (chat_id=%s, %d bytes)", chat_id, len(audio))
+        try:
+            heard = await self.client.transcribe(audio)
+        except Exception:  # noqa: BLE001 — API/STT caído: mensaje amable, loop sigue
+            logger.exception("No se pudo transcribir la nota de voz (chat_id=%s)", chat_id)
+            await self._safe_send_text(chat_id, FRIENDLY_ERROR)
+            return
+        if not heard:
+            await self._safe_send_text(chat_id, VOICE_NOT_UNDERSTOOD)
+            return
+
+        # Transparencia: devolver lo que Mia entendió para que el abogado verifique.
+        await self._safe_send_text(chat_id, f"{VOICE_HEARD_PREFIX}“{heard}”")
+
+        # 2) Turno normal del asistente con ese texto.
+        try:
+            conversation_id, reply = await self.client.chat(
+                heard, self.conversations.get(chat_id)
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("El API de Mia no respondió a la voz (chat_id=%s)", chat_id)
+            await self._safe_send_text(chat_id, FRIENDLY_ERROR)
+            return
+        self.conversations[chat_id] = conversation_id
+
+        # 3) Voz entra → voz sale: si la respuesta es corta, Mia contesta hablando.
+        await self._deliver_voice_reply(chat_id, reply)
+
+    async def _deliver_voice_reply(self, chat_id: int, reply: str) -> None:
+        """Respuesta hablada a una nota de voz. Corta → nota de voz sintetizada;
+        larga o si la síntesis falla → texto/adjunto (degrada, nunca se cae)."""
+        reply = reply or ""
+        if not reply.strip():
+            # Reply vacío del asistente: un texto vacío lo rechaza Telegram (400) y
+            # el abogado vería "problema técnico" — mejor un aviso honesto (capa 2).
+            await self._safe_send_text(chat_id, VOICE_EMPTY_REPLY)
+            return
+        can_voice = self._send_voice is not None and len(reply) <= VOICE_REPLY_MAX_CHARS
+        if not can_voice:
+            if reply and len(reply) > VOICE_REPLY_MAX_CHARS:
+                await self._safe_send_text(chat_id, VOICE_TOO_LONG_NOTE)
+            await self._deliver_reply(chat_id, reply)
+            return
+        try:
+            ogg = await self.client.synthesize(reply)
+        except Exception:  # noqa: BLE001 — TTS/API falló: degrada a texto
+            logger.exception("No se pudo sintetizar la voz (chat_id=%s); va texto", chat_id)
+            await self._deliver_reply(chat_id, reply)
+            return
+        if not ogg:
+            await self._deliver_reply(chat_id, reply)
+            return
+        try:
+            await self._send_voice(chat_id, ogg)
+            logger.info("Respuesta de voz enviada (chat_id=%s, %d bytes)", chat_id, len(ogg))
+        except Exception:  # noqa: BLE001 — envío de la nota falló: cae a texto
+            logger.exception("No se pudo enviar la nota de voz (chat_id=%s); va texto", chat_id)
+            await self._deliver_reply(chat_id, reply)
+
     async def _safe_send_text(self, chat_id: int, text: str) -> None:
         try:
             await self._send_text(chat_id, text)
@@ -291,6 +437,11 @@ def run_bot(settings: BridgeSettings) -> int:
             chat_id=chat_id, document=io.BytesIO(content), filename=filename
         )
 
+    async def send_voice(chat_id: int, ogg: bytes) -> None:
+        buf = io.BytesIO(ogg)
+        buf.name = "mia.ogg"
+        await application.bot.send_voice(chat_id=chat_id, voice=buf)
+
     async def on_stop() -> None:
         application.stop_running()
 
@@ -300,6 +451,7 @@ def run_bot(settings: BridgeSettings) -> int:
         send_text=send_text,
         send_document=send_document,
         on_stop=on_stop,
+        send_voice=send_voice,
     )
 
     async def on_message(update: Update, _context) -> None:
@@ -309,7 +461,35 @@ def run_bot(settings: BridgeSettings) -> int:
             return
         await bridge.handle_message(chat.id, message.text)
 
+    async def on_voice(update: Update, _context) -> None:
+        message = update.effective_message
+        chat = update.effective_chat
+        if message is None or chat is None or message.voice is None:
+            return
+        # SEGURIDAD: no descargar audio de un chat no autorizado (defensa antes de
+        # tocar la red; el bridge lo re-verifica igual).
+        if chat.id != settings.allowed_chat_id:
+            logger.warning("Nota de voz IGNORADA de chat no autorizado (chat_id=%s)", chat.id)
+            return
+        # Defensa en profundidad: rechazar una nota enorme ANTES de bajarla a RAM
+        # (hallazgo capa 2). El backend igual acota al decodificar.
+        size = getattr(message.voice, "file_size", None)
+        if size and size > MAX_VOICE_BYTES:
+            await bridge._safe_send_text(
+                chat.id, "Esa nota de voz es muy larga. Envíala en fragmentos más cortos."
+            )
+            return
+        try:
+            tg_file = await message.voice.get_file()
+            audio = bytes(await tg_file.download_as_bytearray())
+        except Exception:  # noqa: BLE001 — fallo al bajar el audio: mensaje amable
+            logger.exception("No se pudo descargar la nota de voz (chat_id=%s)", chat.id)
+            await bridge._safe_send_text(chat.id, FRIENDLY_ERROR)
+            return
+        await bridge.handle_voice(chat.id, audio)
+
     application.add_handler(MessageHandler(filters.TEXT, on_message))
+    application.add_handler(MessageHandler(filters.VOICE, on_voice))
 
     # Reconexión con backoff: PTB ya reintenta dentro del polling; este loop cubre
     # además caídas del arranque (p. ej. sin internet al iniciar). /apagar sale limpio.
