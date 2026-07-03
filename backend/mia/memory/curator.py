@@ -24,6 +24,7 @@ from psycopg.types.json import Json
 from .. import embeddings
 from ..agent import llm
 from ..db import pool
+from ..observability import audit
 
 logger = logging.getLogger("mia.curator")
 
@@ -406,11 +407,12 @@ class Curator:
     @staticmethod
     async def _audit(conn, tenant_id: str, action: str, entity_id: str,
                      payload: dict, user_email: str | None) -> None:
-        """Registro append-only en audit_logs (migración 011)."""
-        await conn.execute(
-            "INSERT INTO audit_logs (tenant_id, user_email, action, entity_type, entity_id, payload) "
-            "VALUES (%s::uuid, %s, %s, 'curator_proposal', %s, %s)",
-            (tenant_id, user_email, action, entity_id, Json(payload)))
+        """Registro append-only en audit_logs (migración 011), DENTRO de la
+        transacción del curador (atómico con la acción). Usa el sink compartido de
+        CP-E1 (observability.audit)."""
+        await audit.record_on_conn(
+            conn, action, tenant_id=tenant_id, user_email=user_email,
+            entity_type="curator_proposal", entity_id=entity_id, payload=payload)
 
     async def propose_all_tenants(self) -> dict:
         """Como `run_all_tenants` pero SOLO propone (dry-run + persistencia). Lo usa el cron

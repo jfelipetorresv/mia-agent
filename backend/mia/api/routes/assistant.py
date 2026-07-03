@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from ...assistant.core import AssistantService, ConversationNotFound
 from ...assistant.reminders import ReminderService
+from ...policy import budget as policy_budget
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 logger = logging.getLogger("mia.api.assistant")
@@ -52,6 +53,11 @@ class ChatBody(BaseModel):
 async def assistant_chat(body: ChatBody, request: Request):
     """Un turno de conversación libre con Mia. Devuelve {conversation_id, reply}."""
     tid = _tenant(request)
+    # CP-E1: tope de gasto de IA del despacho (política activa) antes del turno.
+    try:
+        await policy_budget.enforce_budget(tid)
+    except policy_budget.BudgetExceeded as e:
+        raise HTTPException(status_code=402, detail=str(e))
     uid = await _user_id(request, tid)
     try:
         conversation_id, reply = await _service.chat(

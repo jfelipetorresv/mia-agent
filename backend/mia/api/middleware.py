@@ -20,6 +20,13 @@ from starlette.responses import JSONResponse
 from .. import config
 from ..agent import llm
 from ..metrics import usage as usage_metrics
+from ..observability import audit
+
+# CP-E1: se audita CADA acción mutante (POST/PUT/PATCH/DELETE) autenticada. Los GET
+# (lecturas/polling) no son "acciones" y no ensucian el rastro. Se excluye el
+# dictado/voz (alta frecuencia, latencia sensible, sin valor de cumplimiento).
+_AUDITED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_AUDIT_SKIP_PREFIXES = ("/api/speech/",)
 
 # Rutas sin token. Las docs interactivas (/docs, /redoc, /openapi.json) solo quedan
 # abiertas en desarrollo: en producción exponen el mapa completo del API a cualquiera
@@ -101,8 +108,28 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         or_token = llm.set_openrouter_allowed(allow_or)
         usage_token = usage_metrics.set_usage_scope(tenant_id, source="api")
         try:
-            return await call_next(request)
+            response = await call_next(request)
+            await self._maybe_audit(request, response, tenant_id)
+            return response
         finally:
             usage_metrics.reset_usage_scope(usage_token)
             llm.reset_openrouter_allowed(or_token)
             llm.reset_model_policy(policy_token)
+
+    @staticmethod
+    async def _maybe_audit(request: Request, response, tenant_id: str) -> None:
+        """CP-E1: deja rastro de cada acción mutante en audit_logs (read-only,
+        fail-open — audit.record nunca lanza)."""
+        if request.method not in _AUDITED_METHODS:
+            return
+        path = request.url.path
+        if any(path.startswith(p) for p in _AUDIT_SKIP_PREFIXES):
+            return
+        await audit.record(
+            "api_call",
+            tenant_id=tenant_id,
+            user_email=getattr(request.state, "email", None),
+            entity_type=request.method,
+            entity_id=path,
+            payload={"status": getattr(response, "status_code", None)},
+        )
