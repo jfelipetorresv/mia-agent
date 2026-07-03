@@ -759,3 +759,25 @@ Qué sigue (TERMINAL NUEVA):
   guardas anti-invención) — evoluciona Dreams. Detalle en docs/plan-ejecucion-olas.md.
 - Frontend pendiente con Cursor (HANDOFF): pantallas de CP-P2 (automatizaciones) y CP-P3.
 - Deuda menor detectada por revisor: página de memoria usa .includes("409") roto (preexistente).
+
+## 2026-07-02 — Sesión 27
+TL;DR: CP-V2 (auto-diagnóstico prescriptivo) completo, mergeado y pusheado — la Ola 4 quedó CERRADA.
+Qué construimos:
+- Motor determinista de recomendaciones (memory/prescriptions.py): 6 buckets con guarda
+  anti-invención (<5 eventos = silencio), score gravedad×dólares×certeza, top 4 con diversidad,
+  IDs estables, memoria de decisiones (tabla dream_prescriptions, migración 022, RLS FORCE).
+- Integración a Dreams (sección diagnostics fail-soft + línea en el reporte semanal) y
+  endpoints del panel: listar recomendaciones vigentes + decidir (aceptar/descartar).
+- Capa 2 APROBÓ tras re-verificar: H1+R1 (el upsert jamás pisa una decisión del abogado),
+  H2 (la poda conserva la edad de señales vivas), H3/H4 (bucket de costo rediseñado a gasto
+  real + Motor de IA del Panel), H5-H7+R2. Gate test_dreams 43/43; regresión 50/50 ×3.
+Qué decidimos:
+- Pipe aprobó merge+push (383197b en origin/main).
+- VOZ (CP-Z1): Pipe confirmó que validó Lexter con el modelo POR DEFECTO → Parakeet v3 fijado
+  para v1; Whisper queda como opción futura.
+- Regla de sesión: al ~65% del contexto, preparar traspaso a terminal nueva.
+Qué sigue (TERMINAL NUEVA, contexto en 0):
+- OLA 3 · CP-Z1: dictado local nativo (micrófono web → FastAPI → backend/mia/speech/ con
+  Silero VAD + Parakeet v3 vía onnxruntime-directml, parámetros de Lexter). Leer
+  docs/analisis-lexter.md y docs/plan-ejecucion-olas.md antes de tocar código.
+- Frontend pendiente con Cursor (HANDOFF): tarjetas de diagnóstico CP-V2 + pantallas CP-P2/P3.
