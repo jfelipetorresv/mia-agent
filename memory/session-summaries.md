@@ -781,3 +781,22 @@ Qué sigue (TERMINAL NUEVA, contexto en 0):
   Silero VAD + Parakeet v3 vía onnxruntime-directml, parámetros de Lexter). Leer
   docs/analisis-lexter.md y docs/plan-ejecucion-olas.md antes de tocar código.
 - Frontend pendiente con Cursor (HANDOFF): tarjetas de diagnóstico CP-V2 + pantallas CP-P2/P3.
+
+## 2026-07-02 — Sesión 28
+TL;DR: TRASPASO-MODELO.md creado y verificado — cualquier modelo (Opus u otro) puede continuar
+el proyecto con la misma visión, ruta y estándar de calidad; pedido explícito de Pipe.
+Qué construimos:
+- mia/TRASPASO-MODELO.md: orden de lectura al retomar, visión no negociable, protocolo de
+  calidad por checkpoint (3 capas, test_rls HALT, A/B de alto impacto descrito completo sin
+  depender del script efímero ab_run.py), cómo trabajar con Pipe, ruta por delante y trampas
+  del entorno. CLAUDE.md y la memoria persistente apuntan a él.
+- Consistencia de la decisión de voz: Parakeet v3 (resuelta en sesión 27) propagada a
+  docs/analisis-lexter.md y docs/plan-ejecucion-olas.md (decían "confirmar con Pipe").
+- Verificación: regresión completa en main ALL PASS 50/50 (una corrida previa falló por
+  artefacto de DOS terminales concurrentes sobre el repo — advertencia añadida al traspaso);
+  capa 2 (revisor adversarial simulando "Opus en terminal nueva"): SUFICIENTE CON
+  CORRECCIONES — 3 mayores + 4 menores, TODOS corregidos antes del commit.
+Qué decidimos:
+- Pipe aprobó commit+merge+push de CP-V2 en este diálogo (la sesión 27 lo ejecutó en paralelo).
+Qué sigue (TERMINAL NUEVA, contexto en 0):
+- OLA 3 · CP-Z1 (dictado local con Parakeet v3). Leer TRASPASO-MODELO.md al arrancar.

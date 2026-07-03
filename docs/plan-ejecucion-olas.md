@@ -142,11 +142,11 @@ Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref
 > sample rate y preproceso usar (los que ya funcionan), no código a copiar literal. El post-proceso
 > "clean_dictation" con Ollama local de Lexter encaja con el gateway de Mia (que ya habla Ollama).
 > **DISEÑO TÉCNICO COMPLETO en `docs/analisis-lexter.md`** (arquitectura, modelo exacto, parámetros
-> 16kHz/umbral 0.3/tramas 30ms, prompts de limpieza, portabilidad a Python, 5 pasos). **Decisión de
-> alto impacto al llegar a CP-Z1:** qué modelo fijar — Whisper large-v3 (mejor control de español
-> jurídico: forzar `es` + glosario del despacho + no-traducir) vs. Parakeet v3 (el default de Lexter,
-> más rápido en CPU pero sin forzar idioma/vocabulario). Confirmar con Pipe con qué modelo probó
-> ("va bien") antes de fijarlo.
+> 16kHz/umbral 0.3/tramas 30ms, prompts de limpieza, portabilidad a Python, 5 pasos). **Decisión del
+> modelo STT RESUELTA por Pipe (2026-07-02, sesión 27): Parakeet v3** — confirmó que validó Lexter
+> con el modelo por defecto (Parakeet v3) y su español jurídico va bien en uso real. CP-Z1 se
+> construye con Parakeet v3 (sherpa-onnx + DirectML); Whisper large-v3 queda como opción
+> configurable futura, no v1. No re-preguntar.
 
 ### CP-Z1 · Voz-a-texto local (base: Lexter/Handy)
 - **Qué:** dictado local para el abogado. Dos caminos según respuesta de Pipe:

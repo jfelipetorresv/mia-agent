@@ -95,6 +95,12 @@ Dos memorias separadas:
   decidimos · sigue)
 - bugs-and-risks.md  → riesgos abiertos y watch-outs no resueltos
 
+## Continuidad entre sesiones y modelos (raíz del repo)
+- HANDOFF.md          → traspaso a Cursor (frontend, capa 3)
+- TRASPASO-MODELO.md  → traspaso a cualquier modelo de IA que
+  continúe el proyecto — LEER al iniciar sesión en terminal nueva
+  (visión, estándar de calidad, ruta y trampas del entorno)
+
 ## Mapa de arquitectura (/architecture/)
 - rls_isolation.md       → cómo funciona el aislamiento entre tenants
 - prompt_builder.md      → las 10 capas del sistema de prompts

@@ -36,13 +36,11 @@ traducir ES→EN, contexto entre trozos) vive en `transcription.rs::build_whispe
 y aplica al **camino Whisper**. Aceleración Windows = **DirectML** (`Cargo.toml` feature
 `ort-directml`). El VAD Silero (`silero_vad_v4.onnx`) es común a todos.
 
-> **DECISIÓN de alto impacto para CP-Z1 (confirmar con Pipe):** ¿qué modelo fijar en Mia?
-> - **Whisper large-v3** (vía `faster-whisper`): mejor calidad y control jurídico (glosario del
->   despacho, no-traducir), pero más pesado y lento en CPU (conviene GPU).
-> - **Parakeet v3** (vía `sherpa-onnx` + DirectML): el default de Lexter, mucho más rápido en CPU
->   pero sin forzar idioma ni vocabulario.
-> Pipe dijo que probó Lexter en español y "va bien" — conviene confirmar CON QUÉ modelo probó
-> (si fue el default, era Parakeet). Afecta la calidad de transcripción que ve el abogado.
+> **DECISIÓN RESUELTA por Pipe (2026-07-02, sesión 27): Parakeet v3.** Pipe confirmó que
+> validó Lexter con el modelo POR DEFECTO — es decir, Parakeet v3 — y su español jurídico
+> "va bien" en uso real. **CP-Z1 se construye con Parakeet v3** (vía `sherpa-onnx` +
+> DirectML). **Whisper large-v3** (vía `faster-whisper`, con glosario del despacho y
+> no-traducir) queda como opción configurable FUTURA, no v1. No re-preguntar.
 
 ## Parámetros que ya funcionan (reusar tal cual)
 - STT: **16 000 Hz, mono, f32**. Trama VAD **30 ms / 480 muestras**.
