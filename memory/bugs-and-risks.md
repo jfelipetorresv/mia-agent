@@ -832,3 +832,48 @@ el bucket se salta. Límites conocidos:
    v1; si se quiere auditoría, agregar un ledger de decisiones.
 6. **Frontend pendiente (Cursor, HANDOFF)**: tarjetas de diagnóstico en el panel sobre
    GET /api/dreams/prescriptions + botones aceptar/descartar (POST .../decision).
+
+## 🟢 Riesgo #45 — Dictado local (CP-Z1, Ola 3): límites declarados  [registrado 2026-07-03, revisión CP-Z1]
+CP-Z1 quedó verde (gate test_speech_stt.py 41/41 con integración real: español correcto en es.wav,
+audio de 76 s por el camino VAD, 70 s de silencio → 0 STT; regresión completa; probe de
+concurrencia: 3 clips de 24.7 MB simultáneos con el loop latiendo <150 ms). Motor 100% LOCAL
+(Silero VAD + Parakeet TDT v3 int8 vía sherpa-onnx), parámetros heredados de Lexter. Capa 2
+(revisor adversarial) APROBÓ CON CORRECCIONES — verificó por código que la regla no negociable se
+cumple (audio nunca sale del servidor, candado allow_cloud_audio fail-closed real, sin fugas en
+logs). Los 2 MAYORES + 6 menores CORREGIDOS antes del commit:
+- **[MAYOR, corregido] decodificación del WAV en el event loop**: numpy sobre hasta 32 MB corría
+  en el loop ANTES del semáforo → N clips concurrentes congelaban los SSE de otros abogados.
+  Movida a asyncio.to_thread DENTRO del semáforo; verificado con probe (gap del loop 46 ms).
+- **[MAYOR, corregido] rate-limit por despacho castigaba firmas multi-abogado**: ahora la llave es
+  (tenant, email) → cada abogado tiene su cupo (20 clips/5 min); gate r-06b lo cubre.
+- **[menor, corregido] guardrail anti-traducción burlable con "no"** (palabra compartida ES/EN):
+  ahora exige ≥2 stopwords españolas distintas Y rechaza si gana stopwords inglesas; gate c-02b.
+- **[menor, corregido] >60 s de silencio se transcribía igual** (VAD lista vacía → 60 s al STT):
+  lista vacía ahora devuelve 0 trozos; gate i-03.
+- **[menor, corregido] curl sin -f** en el script de descarga (404 escribía HTML al .onnx): -fSL +
+  verificación de tamaño mínimo del VAD.
+- **[menor, corregido] jerga "tenant" en el 401** → "Tu sesión no es válida. Vuelve a iniciar sesión."
+- **[menor, corregido] _clip_hits sin poda** → poda de claves con ventana vencida (patrón auth.py).
+- **[menores de gate, corregidos] añadidos**: c-07 (resolve_fallback_chain('speech_cleanup',
+  'mia-local')==['mia-local'] — delata un refactor futuro que rompa el "sin nube"), c-08
+  (/api/speech/transcribe no es OPEN_PATH), a-04b (PCM 24 bits).
+- **[robustez extra]** timeout de 240 s en la transcripción → 503 en llano si el motor se cuelga
+  (evita que un clip zombi mate todo el dictado del proceso).
+Límites conocidos que QUEDAN (aceptados v1):
+1. **Clips <~0.7 s de voz cortada a media palabra pueden alucinar** (observación #11 del revisor:
+   los primeros 0.5 s de un habla real → "Yeah, perhaps."). Parakeet v3 es multilingüe y no se le
+   fija idioma. Silencio/ruido puros SÍ devuelven vacío (verificado). Bajo impacto: el abogado
+   revisa el texto antes de usarlo. Mitigación futura: filtrar clips con <~0.7 s de voz por VAD.
+2. **Sin GPU la latencia sube** en audios largos (Parakeet int8 es rápido en CPU; ~3 s por 5 s de
+   audio en la laptop de prueba). Provider DirectML configurable (MIA_SPEECH_PROVIDER) para GPU
+   Windows; degrada a CPU con aviso si el build de sherpa-onnx no lo trae.
+3. **Sin checksum de integridad de los pesos**: el script verifica tamaño mínimo del VAD y que el
+   tarball extraiga, pero no hay SHA256. Aceptable (fuente oficial de k2-fsa por HTTPS).
+4. **Rate-limit y semáforo en memoria (Modo B, 1 worker)**: en Modo A multi-worker migrar a
+   contador compartido (mismo apunte que auth.py).
+5. **Timeout de STT deja el thread zombi**: el servicio responde 503 pero el thread colgado
+   retiene el lock del motor hasta reiniciar el API (límite de asyncio.to_thread; declarado).
+6. **Frontend pendiente (Cursor, HANDOFF)**: botón de micrófono (captura Web Audio → WAV PCM16
+   16 kHz → POST /api/speech/transcribe). MediaRecorder produce webm/opus que el backend NO acepta.
+7. **allow_cloud_audio sin UI**: el candado existe y es fail-closed, pero hoy el motor es local, así
+   que no hay pantalla para encenderlo (no hace falta en v1; el frontend no debe ofrecerlo aún).

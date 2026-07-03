@@ -1,0 +1,156 @@
+"""Mia · api.routes.speech — dictado local (CP-Z1, Ola 3).
+
+POST /api/speech/transcribe — el botón de micrófono de la web envía un clip WAV
+(16 kHz mono; el backend tolera y re-muestrea si no) y recibe el texto dictado.
+Todo el procesamiento es LOCAL (Silero VAD + Parakeet v3 vía sherpa-onnx): el
+audio nunca sale del servidor del despacho.
+
+Salvaguardas:
+  - Autenticación: el middleware exige Bearer en /api/* (no es OPEN_PATH).
+  - Candado de privacidad (policy.py): motor de nube requeriría opt-in explícito
+    del despacho (allow_cloud_audio, default False fail-closed). El motor v1 es
+    local → hoy el candado no bloquea a nadie, pero la exigencia es estructural.
+  - Topes: 32 MB / 5 min por clip (audio.py) + rate-limit por despacho
+    (20 clips / 5 min, en memoria — Modo B 1 worker, mismo criterio que auth.py).
+  - Concurrencia: el STT es trabajo de CPU → corre en un thread y un semáforo
+    global lo serializa (los clips en cola esperan, no tumban el event loop).
+  - Pulido opcional (`pulir=true`): SOLO con el modelo local (cleanup.py);
+    fail-soft — sin Ollama corriendo, el texto sale crudo.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import time
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+
+from ...speech import audio as speech_audio
+from ...speech import cleanup as speech_cleanup
+from ...speech import engine as speech_engine
+from ...speech import policy as speech_policy
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["speech"])
+
+# Rate-limit por ABOGADO (tenant + email del JWT, hallazgo capa 2): dictar 20
+# clips en 5 minutos es uso humano intenso para UNA persona; por despacho
+# castigaría a las firmas con varios abogados dictando a la vez. En memoria
+# (Modo B, 1 worker); en Modo A multi-worker migrar a contador compartido
+# (mismo apunte que auth.py).
+_RATE_MAX_CLIPS = 20
+_RATE_WINDOW_SECONDS = 5 * 60
+_clip_hits: dict[tuple[str, str], list[float]] = {}
+
+# El STT satura CPU: un semáforo global serializa las transcripciones del proceso.
+_stt_semaphore = asyncio.Semaphore(max(1, int(os.getenv("MIA_SPEECH_CONCURRENCY", "1"))))
+# Tope de espera por transcripción: si el motor se cuelga (modelo corrupto, bug
+# de runtime), el request responde 503 en vez de dejar el dictado muerto para
+# siempre. El thread colgado queda zombi con el lock del motor — límite declarado.
+_STT_TIMEOUT_SECONDS = max(60, int(os.getenv("MIA_SPEECH_TIMEOUT", "240")))
+
+
+def _tenant(request: Request) -> str:
+    t = getattr(request.state, "tenant_id", None)
+    if not t:
+        raise HTTPException(
+            status_code=401, detail="Tu sesión no es válida. Vuelve a iniciar sesión."
+        )
+    return t
+
+
+def _check_rate(tenant_id: str, email: str) -> None:
+    now = time.monotonic()
+    key = (tenant_id, email or "")
+    hits = [t for t in _clip_hits.get(key, []) if now - t < _RATE_WINDOW_SECONDS]
+    if len(hits) >= _RATE_MAX_CLIPS:
+        _clip_hits[key] = hits
+        raise HTTPException(
+            status_code=429,
+            detail="Se dictaron muchos clips seguidos. Espera un momento e intenta de nuevo.",
+        )
+    hits.append(now)
+    _clip_hits[key] = hits
+    # Poda: claves cuya ventana quedó vacía no deben vivir para siempre (auth.py).
+    for k in [k for k, v in _clip_hits.items()
+              if k != key and (not v or now - v[-1] >= _RATE_WINDOW_SECONDS)]:
+        del _clip_hits[k]
+
+
+@router.post("/speech/transcribe")
+async def transcribe(
+    request: Request,
+    audio: UploadFile = File(...),
+    pulir: bool = Form(False),
+):
+    tenant_id = _tenant(request)
+    _check_rate(tenant_id, getattr(request.state, "email", "") or "")
+
+    eng = speech_engine.get_engine()
+    ok, reason = eng.available()
+    if not ok:
+        raise HTTPException(status_code=503, detail=reason)
+
+    # Candado de privacidad (Ola 3): un motor que NO sea local exige el opt-in
+    # explícito del despacho. Se verifica en CADA dictado, no al configurar.
+    if not speech_engine.ENGINE_IS_LOCAL:
+        if not await speech_policy.allow_cloud_audio(tenant_id):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Este despacho no autorizó enviar audio fuera del servidor. "
+                    "El dictado en la nube está apagado."
+                ),
+            )
+
+    # Lectura ACOTADA (mismo criterio que la subida de documentos, auditoría 2026-07).
+    data = await audio.read(speech_audio.MAX_UPLOAD_BYTES + 1)
+    if len(data) > speech_audio.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="La grabación es demasiado grande. Dicta en clips más cortos.",
+        )
+    # Decodificación y STT: AMBOS son trabajo de CPU (numpy sobre hasta 32 MB +
+    # el modelo) → van a un thread y DENTRO del semáforo, para que N clips
+    # simultáneos jamás congelen el event loop del API (hallazgo capa 2: antes la
+    # decodificación corría en el loop y frenaba los SSE de otros abogados).
+    async with _stt_semaphore:
+        try:
+            samples = await asyncio.to_thread(speech_audio.decode_wav_to_pcm16k, data)
+        except speech_audio.AudioInvalido as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(eng.transcribe, samples),
+                timeout=_STT_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.error("speech: transcripción excedió %ss (tenant=%s) — posible "
+                         "motor colgado", _STT_TIMEOUT_SECONDS, tenant_id)
+            raise HTTPException(
+                status_code=503,
+                detail="El dictado está tardando demasiado. Intenta con un clip más corto.",
+            )
+        except RuntimeError as e:
+            # El motor explicó en llano por qué no pudo (modelo ausente/corrupto).
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception:
+            logger.exception("speech: fallo transcribiendo un clip (tenant=%s)", tenant_id)
+            raise HTTPException(
+                status_code=500,
+                detail="No se pudo transcribir el dictado. Vuelve a intentarlo.",
+            )
+
+    text = result.get("text", "")
+    cleaned = None
+    if pulir and text:
+        cleaned = await asyncio.to_thread(speech_cleanup.polish_transcript, text)
+
+    return {
+        "text": text,
+        "cleaned_text": cleaned,
+        "duration_seconds": result.get("duration_seconds", 0.0),
+        "message": None if text else "No se escuchó voz en la grabación.",
+    }
