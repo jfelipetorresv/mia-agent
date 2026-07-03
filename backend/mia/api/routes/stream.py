@@ -17,8 +17,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from ...agents.checkpointer import open_checkpointer
+from ...agents.context_references import expand_context_references
 from ...agents.graph import build_matter_graph
 from ...agents.state import initial_state
+from ...config import MIA_CONTEXT_WINDOW
 from ...db import pool
 from ...observability import audit
 from ...policy import budget as policy_budget
@@ -144,8 +146,25 @@ async def stream_matter(
         graph = build_matter_graph(cp)
         cfg = await prepare_new_turn(cp, graph, tenant_id, matter_id)
 
+    # CP-E2: expandir referencias @expediente/@carpeta a evidencia sellada (RLS,
+    # confinado a las filas del despacho). Después del 409 de ciclo de vida para no
+    # gastar lecturas si el turno se rechaza. Fail-open: si la expansión falla, el turno
+    # sigue con el mensaje tal cual (adjuntar pruebas es una ayuda, no un candado).
+    expanded_message = message
+    retrieval_query: str | None = None
+    try:
+        ref_result = await expand_context_references(
+            tenant_id, message, matter_id=matter_id, context_length=MIA_CONTEXT_WINDOW)
+        if ref_result.expanded:
+            expanded_message = ref_result.message
+            retrieval_query = ref_result.retrieval_query
+    except Exception:  # noqa: BLE001 — §G: adjuntar por referencia nunca tumba el turno
+        logger.exception("stream: la expansión de referencias falló (tenant=%s matter=%s)",
+                         tenant_id, matter_id)
+
     turn_input = initial_state(
-        tenant_id, matter_id, message, profile_snapshot=profile_snapshot
+        tenant_id, matter_id, expanded_message, profile_snapshot=profile_snapshot,
+        retrieval_query=retrieval_query,
     )
 
     async def gen():

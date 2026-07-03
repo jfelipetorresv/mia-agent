@@ -914,3 +914,29 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
    4. **Auditoría genérica solo de métodos mutantes:** los GET (incluidas descargas de borrador) no se auditan salvo el turno del asunto (explícito). Login/register no se auditan (pre-tenant). Ampliable si un cliente exige rastro de lecturas.
    5. **Auditoría awaited en el middleware:** agrega una escritura a DB por request mutante (fail-open). Bajo carga alta se podría pasar a fire-and-forget; hoy el volumen de mutaciones es bajo.
    6. **Capa 3 pendiente:** control del tope en el Panel (Cursor).
+
+## Riesgo #49 — CP-E2 (adjuntar pruebas por referencia @expediente/@carpeta): residuales aceptados (2026-07-03)
+   1. **Tope de fetch = recursos, no completitud:** `MAX_FETCH_ROWS=2000` acota la memoria del
+      fetch por referencia. Con chunks de tamaño normal cubre de sobra el techo de tokens; con
+      chunks patológicamente diminutos podría adjuntarse de MENOS (fail-safe: jamás de más). Si
+      algún día importa la completitud sobre expedientes enormes, subir el tope o paginar.
+   2. **Valor multi-palabra sin comillas se corta:** `@carpeta:Pruebas Zurich` toma solo
+      "Pruebas"; "Zurich" queda suelto en el mensaje/query. Es UX (el abogado debe entrecomillar
+      valores con espacios). Sin implicación de seguridad. Documentado; un autocompletado futuro
+      lo evitaría.
+   3. **Referencias solo del turno actual (asistente):** el mensaje PERSISTIDO es el original con
+      el `@` literal; los adjuntos NO se re-inyectan en turnos siguientes (como un resultado de
+      herramienta, son por-turno). Si el abogado quiere la evidencia otra vez, re-referencia.
+      Decisión de producto v1.
+   4. **`@carpeta` = carpetas de trabajo (`local_folder_sources`), no Obsidian:** el vault de
+      Obsidian (`source='obsidian'`) no es alcanzable por `@carpeta` hoy. Ampliable si se pide.
+   5. **Título/etiqueta de matter que contenga literalmente `@carpeta:`** (auto-infligido, mismo
+      tenant): al expandir sobre history[-1] aumentado en el asistente, un título así podría
+      dispararse como referencia. Es intra-tenant (adjunta datos del PROPIO despacho) → sin fuga;
+      solo un adjunto extra inesperado. Aceptado; sin impacto de seguridad.
+   6. **A/B en vivo NO ejecutada:** CP-E2 es plomería de entrada (adjunta evidencia que el abogado
+      pide explícitamente, sellada, opt-in por referencia); no cambia prompts ni la lógica de
+      argumentos legales. Se juzgó que no exige la comparación A/B de alto impacto. Si Pipe quiere
+      confirmarlo con un caso real antes de usarlo en producción, es trivial montarlo.
+   7. **Capa 3:** NO APLICA (sin frontend); autocompletado de `@` en el chat es trabajo futuro
+      opcional documentado en HANDOFF.

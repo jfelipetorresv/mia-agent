@@ -338,7 +338,11 @@ class MatterGraphBuilder:
 
     # ── 1 · intake ──────────────────────────────────────────────────────────
     async def intake_node(self, state: MatterState) -> dict:
-        msg = _last_user_message(state)
+        # CP-E2: si el turno trae referencias @expediente/@carpeta expandidas, la
+        # recuperación (embedding + RRF) usa la consulta LIMPIA (mensaje sin las
+        # referencias ni los adjuntos sellados) para no ensuciar la búsqueda; los
+        # especialistas sí ven el mensaje completo con la evidencia adjunta.
+        msg = state.get("retrieval_query") or _last_user_message(state)
         # Sin documentos indexados no hay nada que recuperar: evitamos la llamada
         # a embeddings (Voyage) por completo. Si los hay, embebemos y hacemos RRF.
         qvec: Optional[list[float]] = None

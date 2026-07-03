@@ -31,6 +31,12 @@ class MatterState(TypedDict, total=False):
 
     messages: Annotated[list, operator.add]   # mensajes del turno (reducer: append)
 
+    # CP-E2: consulta de recuperación LIMPIA (mensaje del abogado SIN las referencias
+    # @expediente/@carpeta ni los adjuntos sellados). intake_node la usa para el embedding
+    # y el RRF; así adjuntar un expediente entero no ensucia la búsqueda del turno.
+    # total=False → checkpoints viejos sin el campo siguen válidos (se cae a _last_user_message).
+    retrieval_query: Optional[str]
+
     soul_snapshot: Optional[dict]     # copia frozen del SOUL.md al inicio (Módulo 5; hoy None)
     profile_snapshot: Optional[dict]  # copia frozen del perfil al inicio del asunto (2a)
 
@@ -61,12 +67,16 @@ def initial_state(
     *,
     profile_snapshot: Optional[dict] = None,
     soul_snapshot: Optional[dict] = None,
+    retrieval_query: Optional[str] = None,
 ) -> MatterState:
     """Estado inicial de un turno a partir del mensaje del abogado.
 
     Si el caller no pasa `soul_snapshot`, se carga el SOUL.md del despacho desde
     $MIA_HOME (Módulo 5): así la identidad del agente entra al turno real del grafo.
     Sin onboarding (archivo ausente) queda None → el grafo no antepone identidad.
+
+    `retrieval_query` (CP-E2): consulta de recuperación limpia cuando el mensaje trae
+    referencias @expediente/@carpeta expandidas; si es None, intake usa el mensaje.
     """
     if soul_snapshot is None:
         from ..onboarding.soul_interview import load_soul_snapshot  # diferido (sin ciclo)
@@ -76,6 +86,7 @@ def initial_state(
         matter_id=matter_id,
         thread_id=thread_id_for(tenant_id, matter_id),
         messages=[{"role": "user", "content": user_message}],
+        retrieval_query=retrieval_query,
         soul_snapshot=soul_snapshot,
         profile_snapshot=profile_snapshot,
         documents=[],
