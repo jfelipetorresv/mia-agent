@@ -735,16 +735,48 @@ async def dashboard_stats(request: Request):
             "SELECT created_at FROM feedback_proposals WHERE proposal_type='weekly_report' "
             "ORDER BY created_at DESC LIMIT 1")).fetchone())
         config_json = settings[0] if settings else {}
+        # CP-V1: costo REAL del mes desde turn_usage (tokens reales × precio por
+        # modelo, capturados en cada llamada al LLM por metrics/usage). Frontera de
+        # mes en UTC (misma que el filtro de trazas). Si la migración 021 no está
+        # aplicada, DEGRADA al estimado legacy en vez de tumbar el panel entero.
+        real_cost_usd = 0.0
+        usage_calls_month = 0
+        try:
+            usage_row = await (await conn.execute(
+                "SELECT coalesce(sum(cost_usd), 0), count(*) FROM turn_usage "
+                "WHERE created_at >= "
+                "(date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc')"
+            )).fetchone()
+            real_cost_usd = float(usage_row[0])
+            usage_calls_month = int(usage_row[1])
+        except Exception:  # noqa: BLE001 — sin turn_usage el panel sigue funcionando
+            logger.warning("turn_usage no disponible (¿falta init_turn_usage?); "
+                           "el costo cae al estimado legacy", exc_info=True)
+        # OJO: si esta consulta falla, la TRANSACCIÓN queda abortada — no agregar
+        # más consultas después de este punto dentro del mismo `with` (fallarían
+        # con InFailedSqlTransaction). Debe seguir siendo la última del bloque.
 
-    # Costo aproximado del periodo a partir de las trazas del despacho.
-    total_tokens = 0
-    for t in TraceCapture().read(tid):
-        tok = t.get("tokens")
-        if isinstance(tok, dict):
-            total_tokens += int(tok.get("total") or 0)
-        elif isinstance(tok, int):
-            total_tokens += tok
-    cost_month_usd = round(total_tokens * _USD_PER_TOKEN, 2)
+    # CP-V1 · valor entregado del MES: horas ahorradas (estimado configurable por
+    # despacho) × tarifa − costo real de IA. La clasificación de trazas (borrador
+    # sustancial vs consulta; eventos técnicos y rechazos excluidos; solo el mes)
+    # vive en metrics/value.summarize_traces — función pura cubierta por el gate.
+    # LIMITACIÓN DECLARADA: el costo no incluye embeddings (voyage no pasa por
+    # call_llm) — subreporta el costo, nunca infla el valor.
+    month_prefix = datetime.now(timezone.utc).strftime("%Y-%m")
+    from ...metrics.value import summarize_traces
+    tsum = summarize_traces(TraceCapture().read(tid), month_prefix)
+    drafts_month, turns_month = tsum["drafts"], tsum["turns"]
+    # Fallback legacy: si turn_usage aún no registró nada (instalación recién
+    # migrada), se estima con tarifa fija SOLO sobre los tokens de ESTE mes.
+    cost_month_usd = round(real_cost_usd, 2) if usage_calls_month else round(
+        tsum["legacy_tokens_month"] * _USD_PER_TOKEN, 2)
+
+    from .value import value_settings_for  # import local: evita ciclos entre routers
+    vcfg = await value_settings_for(tid)
+    hours_saved = round(
+        (drafts_month * vcfg["draft_minutes"] + turns_month * vcfg["turn_minutes"]) / 60.0, 1)
+    gross_usd = round(hours_saved * vcfg["hourly_rate_usd"], 2)
+    net_usd = round(gross_usd - cost_month_usd, 2)
 
     jobs = [{"label": _JOB_LABEL.get(j["name"], j["name"]),
              "next_run": j["next_run"], "last_run": j["last_run"]}
@@ -764,6 +796,19 @@ async def dashboard_stats(request: Request):
         "knowledge_items": knowledge_items,
         "scheduler_jobs": jobs,
         "cost_month_usd": cost_month_usd,
+        # CP-V1 · tarjeta "Valor entregado este mes" (todo en llano, §G).
+        "value": {
+            "hours_saved": hours_saved,
+            "hourly_rate_usd": vcfg["hourly_rate_usd"],
+            "gross_usd": gross_usd,
+            "cost_usd": cost_month_usd,
+            "net_usd": net_usd,
+            "drafts_approved": drafts_month,
+            "consultations": turns_month,
+            "draft_minutes": vcfg["draft_minutes"],
+            "turn_minutes": vcfg["turn_minutes"],
+            "is_default_config": vcfg["is_default"],
+        },
         "connectors": {
             "knowledge_base": {"active": last_sync is not None, "last_sync": last_sync, "chunks": knowledge_items},
             # CP-S2: el estado sale SOLO de la configuración del tenant (RLS) —

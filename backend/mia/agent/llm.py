@@ -267,12 +267,18 @@ async def model_policy_for_strict(tenant_id: str) -> str:
 @asynccontextmanager
 async def tenant_model_policy(tenant_id: str):
     """Context manager async: fija la política del tenant y la restaura al salir.
-    Para envolver jobs por-tenant de cron/background que llamen al LLM."""
+    Para envolver jobs por-tenant de cron/background que llamen al LLM.
+    CP-V1: también fija el scope de registro de uso (source='cron') para que el
+    gasto de los jobs de fondo cuente en el "valor neto" del panel."""
+    from ..metrics import usage as usage_metrics  # import diferido (sin ciclos)
+
     token = set_model_policy(await model_policy_for(tenant_id))
     or_token = set_openrouter_allowed(await openrouter_allowed_for(tenant_id))
+    usage_token = usage_metrics.set_usage_scope(tenant_id, source="cron")
     try:
         yield
     finally:
+        usage_metrics.reset_usage_scope(usage_token)
         reset_openrouter_allowed(or_token)
         reset_model_policy(token)
 
@@ -397,10 +403,12 @@ def call_llm(
     for i, alias in enumerate(chain):
         next_alias = chain[i + 1] if i + 1 < len(chain) else None
         try:
-            return _call_with_retries(
+            resp = _call_with_retries(
                 client, {**base_kwargs, "model": alias}, MAX_RETRIES,
                 task=task, alias=alias, next_alias=next_alias,
             )
+            _record_usage(alias, task, resp)   # CP-V1: tokens reales → turn_usage
+            return resp
         except _FallbackNeeded as fn:
             last = fn                          # sigue con el próximo alias de la cadena
             continue
@@ -412,6 +420,20 @@ def call_llm(
     raise LLMError(
         kind, f"ALL_PROVIDERS_EXHAUSTED: la cadena {chain} falló ({kind.value})."
     ) from (last.exc if last else None)
+
+
+def _record_usage(alias: str, task: str | None, resp: Any) -> None:
+    """CP-V1 (Ola 4): registra el uso real de la llamada (tokens→costo) en el buffer
+    de metrics/usage. Cubre las 3 políticas: la API/OpenRouter traen `resp.usage`
+    OpenAI-compatible y el CLI de la suscripción también lo construye
+    (subscription_llm). Sin scope fijado (gates offline) es un no-op. JAMÁS rompe
+    el turno: cualquier fallo se loguea y se sigue."""
+    try:
+        from ..metrics import usage as usage_metrics  # import diferido (sin ciclos)
+
+        usage_metrics.record(alias, task, getattr(resp, "usage", None))
+    except Exception:  # noqa: BLE001 — una métrica nunca tumba una respuesta buena
+        logger.exception("no se pudo registrar el uso (alias=%s task=%s)", alias, task)
 
 
 def _invoke(client: Any, alias: str, kwargs: dict[str, Any], task: str | None = None) -> Any:
