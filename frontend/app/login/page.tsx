@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { apiSend, setToken } from "@/lib/api";
+import { ApiError, apiSend, setToken } from "@/lib/api";
 
 type AuthResponse = { token: string; tenant_id: string };
 
@@ -25,8 +25,12 @@ export default function LoginPage() {
       });
       setToken(res.token);
       router.replace("/");
-    } catch {
-      setError("Email o contraseña incorrectos.");
+    } catch (err: any) {
+      // Solo se muestran mensajes que VIENEN del backend (ApiError, en llano);
+      // un error de red del navegador ("Failed to fetch") jamás llega a pantalla.
+      const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+      const generic = !msg || msg === "Credenciales invalidas" || msg === "Sesión expirada";
+      setError(generic ? "Email o contraseña incorrectos." : msg);
     } finally {
       setLoading(false);
     }

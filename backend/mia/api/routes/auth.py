@@ -1,6 +1,7 @@
 """Rutas de autenticacion real multi-tenant."""
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -9,11 +10,111 @@ import jwt
 from fastapi import APIRouter, HTTPException, Request
 from psycopg import errors
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from ... import config
 from ...db import pool
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# ── Freno anti fuerza-bruta (auditoría 2026-07) ────────────────────────────────
+# Sin esto, /login acepta intentos ilimitados: un atacante puede probar millones de
+# contraseñas contra un email conocido. Ventana deslizante EN MEMORIA por proceso
+# (suficiente para Modo B, 1 worker; en Modo A multi-worker migrar a un contador
+# compartido, p. ej. en Postgres o Redis — anotado en la auditoría).
+_LOGIN_MAX_FAILURES = 5          # fallos permitidos por (ip, email) …
+_LOGIN_WINDOW_SECONDS = 15 * 60  # … dentro de esta ventana → 429
+_LOGIN_IP_MAX_FAILURES = 30      # tope agregado: fallos por ip (cualquier email)
+_REGISTER_MAX = 10               # registros por ip …
+_REGISTER_WINDOW_SECONDS = 3600  # … por hora → 429
+_login_failures: dict[tuple[str, str], list[float]] = {}
+_login_ip_failures: dict[str, list[float]] = {}
+_register_hits: dict[str, list[float]] = {}
+
+# Hash de sacrificio: cuando el email NO existe se verifica bcrypt igual, para que
+# el tiempo de respuesta no delate qué correos tienen cuenta (timing attack).
+_DUMMY_HASH = bcrypt.hashpw(b"mia-timing-equalizer", bcrypt.gensalt(rounds=12))
+
+
+def _client_ip(request: Request) -> str:
+    # En Modo A detrás de un reverse proxy esto es la IP del proxy, no la del
+    # cliente: habría que leer X-Forwarded-For DESDE UN PROXY CONFIABLE antes de
+    # confiar en ella (anotado en la auditoría como límite conocido).
+    return request.client.host if request.client else "unknown"
+
+
+def _prune(store: dict, key, window: float) -> int:
+    """Poda el bucket y ELIMINA la clave si quedó vacío — sin esto, cada email/IP
+    sondeado dejaría una entrada viva para siempre (fuga de memoria)."""
+    bucket = store.get(key)
+    if bucket is None:
+        return 0
+    now = time.monotonic()
+    bucket[:] = [t for t in bucket if now - t < window]
+    if not bucket:
+        store.pop(key, None)
+        return 0
+    return len(bucket)
+
+
+_sweep_countdown = 256
+
+
+def _maybe_sweep() -> None:
+    """Barrido oportunista cada ~256 registros: poda claves vencidas que nunca
+    vuelven a consultarse (un atacante con emails aleatorios no toca dos veces
+    la misma clave, así que el prune por-clave no basta para acotar memoria)."""
+    global _sweep_countdown
+    _sweep_countdown -= 1
+    if _sweep_countdown > 0:
+        return
+    _sweep_countdown = 256
+    for store, window in (
+        (_login_failures, _LOGIN_WINDOW_SECONDS),
+        (_login_ip_failures, _LOGIN_WINDOW_SECONDS),
+        (_register_hits, _REGISTER_WINDOW_SECONDS),
+    ):
+        for key in list(store):
+            _prune(store, key, window)
+
+
+def _check_login_throttle(ip: str, email: str) -> None:
+    # Tope agregado por IP primero: frena el barrido de emails aleatorios que el
+    # límite por (ip, email) no ve, y acota cuánto bcrypt puede provocar una IP.
+    if _prune(_login_ip_failures, ip, _LOGIN_WINDOW_SECONDS) >= _LOGIN_IP_MAX_FAILURES:
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos desde esta conexión. Espera unos minutos e intenta de nuevo.",
+        )
+    if _prune(_login_failures, (ip, email), _LOGIN_WINDOW_SECONDS) >= _LOGIN_MAX_FAILURES:
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos fallidos. Espera unos minutos e intenta de nuevo.",
+        )
+
+
+def _record_login_failure(ip: str, email: str) -> None:
+    # El registro ocurre DESPUÉS del await de DB/bcrypt: una ráfaga concurrente
+    # puede colar unos intentos extra antes del primer registro. Límite aceptado
+    # (queda acotado por la ventana; anotado en la auditoría).
+    now = time.monotonic()
+    _login_failures.setdefault((ip, email), []).append(now)
+    _login_ip_failures.setdefault(ip, []).append(now)
+    _maybe_sweep()
+
+
+def _clear_login_failures(ip: str, email: str) -> None:
+    _login_failures.pop((ip, email), None)
+
+
+def _check_register_throttle(ip: str) -> None:
+    if _prune(_register_hits, ip, _REGISTER_WINDOW_SECONDS) >= _REGISTER_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail="Se crearon demasiadas cuentas desde esta conexión. Intenta más tarde.",
+        )
+    _register_hits.setdefault(ip, []).append(time.monotonic())
+    _maybe_sweep()
 
 
 class RegisterBody(BaseModel):
@@ -46,7 +147,7 @@ def _verify_password(password: str, password_hash: str) -> bool:
 
 
 def create_token(tenant_id: str, email: str) -> str:
-    exp = datetime.now(timezone.utc) + timedelta(days=7)
+    exp = datetime.now(timezone.utc) + timedelta(days=config.JWT_TTL_DAYS)
     return jwt.encode(
         {"tenant_id": tenant_id, "email": email, "exp": exp},
         config.JWT_SECRET,
@@ -55,11 +156,13 @@ def create_token(tenant_id: str, email: str) -> str:
 
 
 @router.post("/register", status_code=201)
-async def register(body: RegisterBody):
+async def register(body: RegisterBody, request: Request):
+    _check_register_throttle(_client_ip(request))
     email = _normalize_email(body.email)
     tenant_id = str(uuid4())
     firm_name = body.firm_name.strip()
-    password_hash = _hash_password(body.password)
+    # bcrypt a threadpool: ver nota en login.
+    password_hash = await run_in_threadpool(_hash_password, body.password)
 
     try:
         async with pool.tenant_connection(tenant_id) as conn:
@@ -88,15 +191,28 @@ async def register(body: RegisterBody):
 
 
 @router.post("/login")
-async def login(body: LoginBody):
+async def login(body: LoginBody, request: Request):
     email = _normalize_email(body.email)
+    ip = _client_ip(request)
+    _check_login_throttle(ip, email)
     async with pool.get_pool().connection() as conn:
         row = await (await conn.execute(
             "SELECT tenant_id, email, password_hash FROM auth_user_by_email(%s)",
             (email,),
         )).fetchone()
-    if not row or not _verify_password(body.password, row[2]):
+    # bcrypt (~250 ms con cost 12) va a threadpool: síncrono dentro del handler
+    # bloquearía el event loop entero (SSE y todas las peticiones del API).
+    if row:
+        valid = await run_in_threadpool(_verify_password, body.password, row[2])
+    else:
+        # Email inexistente: se verifica bcrypt contra un hash de sacrificio para
+        # que la respuesta tarde lo mismo que con un email real (anti-enumeración).
+        await run_in_threadpool(bcrypt.checkpw, body.password.encode("utf-8"), _DUMMY_HASH)
+        valid = False
+    if not valid:
+        _record_login_failure(ip, email)
         raise HTTPException(status_code=401, detail="Credenciales invalidas")
+    _clear_login_failures(ip, email)
     tenant_id = str(row[0])
     saved_email = str(row[1])
     return {"token": create_token(tenant_id, saved_email), "tenant_id": tenant_id}

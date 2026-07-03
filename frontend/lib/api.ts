@@ -4,6 +4,18 @@
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Error que VIENE del backend (con `detail` en lenguaje llano, §G). Distinguirlo
+// de los errores de red del navegador ("Failed to fetch") permite a las pantallas
+// mostrar el mensaje del backend sin arriesgarse a mostrar jerga técnica.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem("mia_token");
@@ -32,7 +44,7 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 async function checkResponse(res: Response): Promise<void> {
   if (res.status === 401) {
     handleUnauthorized();
-    throw new Error("Sesión expirada");
+    throw new ApiError("Sesión expirada", 401);
   }
   if (!res.ok) {
     // El backend redacta `detail` en lenguaje llano para el abogado (§G):
@@ -44,7 +56,7 @@ async function checkResponse(res: Response): Promise<void> {
     } catch {
       /* respuesta sin cuerpo JSON */
     }
-    throw new Error(detail || `Error ${res.status}`);
+    throw new ApiError(detail || `Error ${res.status}`, res.status);
   }
 }
 

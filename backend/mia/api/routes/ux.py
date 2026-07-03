@@ -148,7 +148,9 @@ async def list_documents(matter_id: str, request: Request):
 async def upload_document(matter_id: str, request: Request, file: UploadFile = File(...)):
     tid = _tenant(request)
     await assert_owns_matter(tid, matter_id)
-    data = await file.read()
+    # Lectura ACOTADA (auditoría 2026-07): leer solo hasta el límite + 1 byte evita
+    # cargar en RAM un archivo arbitrariamente grande antes de poder rechazarlo.
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="El archivo supera el límite de 50 MB.")
     try:
@@ -389,7 +391,8 @@ async def import_playbooks(request: Request,
         if not fname.lower().endswith(_PLAYBOOK_IMPORT_EXTS):
             errores.append(f"{fname}: tipo de archivo no soportado. Usa .md, .txt o Word .docx.")
             continue
-        data = await f.read()
+        # Lectura acotada (auditoría 2026-07): mismo criterio que upload_document.
+        data = await f.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
             errores.append(f"{fname}: el archivo supera el límite de 50 MB.")
             continue

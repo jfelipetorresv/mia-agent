@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { apiSend, setToken } from "@/lib/api";
+import { ApiError, apiSend, setToken } from "@/lib/api";
 
 type AuthResponse = { token: string; tenant_id: string };
 
@@ -28,7 +28,10 @@ export default function RegisterPage() {
       setToken(res.token);
       router.replace("/onboarding");
     } catch (err: any) {
-      setError(err?.message === "Error 409" ? "Ese email ya está registrado." : "No se pudo crear la cuenta.");
+      // Solo mensajes del backend (ApiError, en llano — p. ej. "Email ya registrado"
+      // o el freno anti fuerza-bruta); un error de red jamás se muestra en crudo.
+      const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+      setError(msg || "No se pudo crear la cuenta.");
     } finally {
       setLoading(false);
     }

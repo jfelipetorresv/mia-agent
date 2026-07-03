@@ -130,11 +130,14 @@ _PRIVATE_KEY_RE = re.compile(
     re.DOTALL,
 )
 
-# 9 · Parámetros sensibles en query strings de URLs.
+# 9 · Parámetros sensibles en query strings de URLs. "message" no es una credencial
+# pero SÍ es confidencial: el SSE del turno viaja como GET /stream?message=<consulta
+# jurídica del abogado> y los access logs de uvicorn registran la URL completa
+# (auditoría 2026-07 — secreto profesional, no solo secretos técnicos).
 _SENSITIVE_QUERY_PARAMS = (
     "access_token", "refresh_token", "id_token", "token", "api_key", "apikey",
     "client_secret", "password", "auth", "jwt", "session", "secret", "key",
-    "code", "signature",
+    "code", "signature", "message",
 )
 _URL_QUERY_RE = re.compile(
     r"([?&](?:{names})=)([^&\s\"']{{2,}})".format(names="|".join(_SENSITIVE_QUERY_PARAMS)),
