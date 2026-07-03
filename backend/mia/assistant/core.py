@@ -40,6 +40,10 @@ from .. import config
 from ..agent import llm, prompt_builder
 from ..agent.context_compressor import ContextCompressor
 from ..agents import untrusted
+from ..agents.context_references import (
+    expand_context_references,
+    parse_context_references,
+)
 from ..db import pool
 from ..onboarding.soul_interview import load_soul_text
 from . import reminders as reminders_mod
@@ -404,6 +408,26 @@ class AssistantService:
                     "role": "user",
                     "content": f"{history[-1]['content']}\n\n{setup_block}",
                 }
+
+        # CP-E2: adjuntar pruebas por referencia (@expediente:"..."/@carpeta:"..."). En el
+        # asistente NO hay recuperación automática, así que la referencia es la única forma
+        # de traer evidencia del despacho a la conversación libre. El asistente no tiene
+        # asunto en curso → @expediente suelto pide un nombre (matter_id=None). El adjunto va
+        # SELLADO (CP-S1) y SOLO en el mensaje que viaja al modelo, nunca en el persistido.
+        # Fail-open: si la expansión falla, el turno sigue con el mensaje tal cual.
+        # Se expande sobre el contenido ACTUAL de history[-1] (que ya puede traer el
+        # bloque de asuntos/recordatorios/configuración) para no pisar esa augmentación:
+        # las referencias viven en la parte del abogado; el adjunto se anexa al final.
+        if parse_context_references(text):
+            try:
+                ref_result = await expand_context_references(
+                    tenant_id, history[-1]["content"], matter_id=None,
+                    context_length=config.MIA_CONTEXT_WINDOW)
+                if ref_result.expanded:
+                    history[-1] = {"role": "user", "content": ref_result.message}
+            except Exception:  # noqa: BLE001 — adjuntar por referencia nunca tumba el turno
+                logger.warning("asistente: la expansión de referencias falló conv=%s",
+                               conversation_id, exc_info=True)
 
         # (d) compresión ANTES de llamar: compresor NUEVO por turno (nunca compartido
         # entre requests/tenants — ver docstring de la clase). Decide con su umbral
