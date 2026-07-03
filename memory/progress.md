@@ -1495,3 +1495,54 @@ recorrido vivo cronometrado de "Configura a Mia".
   tarjeta del panel. Gate 27/27; regresión 50/50; visual OK (tarjeta y tarifa 250 reflejada).
 - Migración 021 aplicada en la DB local (execution/init_turn_usage.py, idempotente).
 - Riesgo #43 registrado (límites del estimado de valor).
+
+## 2026-07-02 · Sesión 27 — CP-V2: auto-diagnóstico prescriptivo (cierra la Ola 4)
+
+**CP-V2 (rama `feature/cp-v2-diagnostico`)** — evoluciona el Dreams semanal a un motor de
+recomendaciones puntuadas por **gravedad × impacto económico × certeza** (patrón ClaudeOS
+skills/dream, adaptado a lo jurídico). Piezas:
+- `backend/mia/memory/prescriptions.py`: motor **DETERMINISTA (sin LLM)** — la anti-invención
+  queda garantizada por construcción: toda evidencia sale de CONTEOS de datos reales (trazas de
+  turnos 30 días, turn_usage de CP-V1, guías vía GEPA, config de valor) y con <5 eventos el
+  bucket SE SALTA. 6 buckets: retrabajo (correcciones repetidas del mismo contexto), rechazos
+  (tasa ≥25%), conocimiento (respuestas sin fuentes del despacho), costo (gasto real pagado →
+  selector "Motor de IA" del Panel), guías (uso alto + aprobación <60%), valor (tarifa de
+  fábrica). IDs ESTABLES (slug determinista) + top 4 con diversidad (máx. 2 por categoría).
+- Migración `022_dream_prescriptions.sql` (+ `init_dream_prescriptions.py`): memoria de
+  recomendaciones por tenant (RLS ENABLE+FORCE): lo aceptado/descartado NO se repite salvo señal
+  viva pasados 30 días (vuelve como 'recurring' con edad rastreada).
+- `dreams.py`: sección `diagnostics` en run() (fail-soft: si el diagnóstico falla, Dreams sigue)
+  + línea en el reporte semanal con la recomendación principal.
+- Endpoints `GET /api/dreams/prescriptions` (tarjetas vigentes por score, solo surfaced) y
+  `POST /api/dreams/prescriptions/{id}/decision` (accept/dismiss). Frontend → HANDOFF (Cursor).
+
+**Capa 2 (revisor adversarial): APROBAR CON CORRECCIONES — los 4 MAYORES corregidos pre-commit:**
+- H1 · carrera cron×decisión: el upsert de _persist podía PISAR una decisión del abogado tomada
+  durante la corrida (status='recurring', decided_at=NULL) → ahora _load_states captura el reloj
+  de la DB al inicio y el ON CONFLICT preserva status/decided_at si decided_at >= run_started.
+- H2 · la poda borraba tarjetas VIVAS que solo salieron del top por ranking/diversidad (reset de
+  first_seen → edad falseada) → ahora se upserta TODA señal viva con `surfaced` true/false en el
+  payload; el GET filtra surfaced; la poda solo toca señales desaparecidas.
+- H3/H4 · el bucket de costo v1 era CÓDIGO MUERTO (recomendaba mover tareas de apoyo al modelo
+  económico — pero ya corren ahí en toda política, decisión #7) y prescribía una acción en una
+  pantalla sin ese control → REDISEÑADO: dispara solo con gasto real pagado (motor 'nube',
+  ≥5 llamadas, ≥1 USD) y apunta al selector "Motor de IA" del Panel de control (verificado:
+  dashboard/page.tsx consume GET/PUT /settings/model-policy — el grep del revisor falló por el
+  prefijo). dollar_impact = gasto real del período.
+- H5 (texto de valor prometía editar minutos que la tarjeta no expone → solo tarifa), H6 (el
+  gate probaba el costo con un input arquitectónicamente imposible → escenario real), H7
+  (fragilidad del ID de retrabajo ante inputs variables → limitación declarada, Riesgo #44).
+
+**Re-verificación de capa 2: APROBAR** (los 7 cerrados) con 2 residuales menores, TAMBIÉN
+cerrados en la misma sesión: R1 (ventana de carrera por transacciones solapadas — el timestamp
+de inicio de transacción podía ser anterior a run_started) → el upsert ya NO compara relojes:
+jamás resetea una fila con decisión; solo el flag explícito `_resurface` de run() la reabre.
+R2 (el texto de costo recomendaba "Mi suscripción" incluso si esa ya era la política y el gasto
+venía de un fallback del CLI a la API paga) → texto neutro que además alerta el fallback.
+
+**Gates:** `test_dreams.py` 16 → **43/43** (guarda anti-invención con tenant vacío, IDs estables,
+decisión no se repite / resurge a 31 días, carrera cron×decisión + resurgimiento explícito, poda
+respeta señal viva, diversidad, buckets puros de costo/retrabajo, RLS forzado en la tabla nueva,
+sin jurisdicciones hardcodeadas). **Regresión completa 50/50 suites × 3 corridas** (base, tras
+correcciones H1-H7, tras R1/R2). Migración 022 aplicada en la DB local (idempotente).
+Riesgo #44 registrado.
