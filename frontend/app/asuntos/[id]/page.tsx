@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
+import { useDictation } from "@/lib/useDictation";
+import MicButton from "../../_components/MicButton";
 
 type Doc = { id: string; name: string; type?: string; created_at?: string };
 type Msg = { role: "user" | "mia"; text: string };
@@ -37,6 +39,16 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  // CP-Z1b: dictado por voz — el texto transcrito se agrega al campo sin borrar
+  // lo ya escrito; los avisos ("no se escuchó voz") van en ámbar bajo el input.
+  const [dictationNotice, setDictationNotice] = useState("");
+  const dictation = useDictation(
+    (text) => {
+      setDictationNotice("");
+      setInput((prev) => (prev.trim() ? prev.trimEnd() + " " + text : text));
+    },
+    (notice) => setDictationNotice(notice),
+  );
 
   async function loadDocs() {
     try {
@@ -275,6 +287,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
               placeholder="Escribe tu consulta..."
               className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-2 text-sm outline-none focus:border-gray-400"
             />
+            <MicButton state={dictation.state} onToggle={dictation.toggle} />
             <button
               onClick={send}
               disabled={streaming}
@@ -283,6 +296,11 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
               Enviar
             </button>
           </div>
+          {dictation.error ? (
+            <p className="mt-2 text-xs text-amber-700">{dictation.error}</p>
+          ) : dictationNotice ? (
+            <p className="mt-2 text-xs text-amber-700">{dictationNotice}</p>
+          ) : null}
         </div>
       </div>
 

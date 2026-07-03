@@ -25,10 +25,12 @@ import os
 import time
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel
 
 from ...speech import audio as speech_audio
 from ...speech import cleanup as speech_cleanup
 from ...speech import engine as speech_engine
+from ...speech import install as speech_install
 from ...speech import policy as speech_policy
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,13 @@ _stt_semaphore = asyncio.Semaphore(max(1, int(os.getenv("MIA_SPEECH_CONCURRENCY"
 # de runtime), el request responde 503 en vez de dejar el dictado muerto para
 # siempre. El thread colgado queda zombi con el lock del motor — límite declarado.
 _STT_TIMEOUT_SECONDS = max(60, int(os.getenv("MIA_SPEECH_TIMEOUT", "240")))
+
+
+class SpeechInstallBody(BaseModel):
+    """Consent-first (patrón Instalar Obsidian): sin confirmación explícita no
+    se descarga nada. El default False hace que un POST vacío sea un rechazo."""
+
+    confirmar: bool = False
 
 
 def _tenant(request: Request) -> str:
@@ -154,3 +163,29 @@ async def transcribe(
         "duration_seconds": result.get("duration_seconds", 0.0),
         "message": None if text else "No se escuchó voz en la grabación.",
     }
+
+
+@router.get("/speech/status")
+async def speech_status(request: Request):
+    """Estado del dictado para la tarjeta del Panel y el botón de micrófono:
+    instalado / no instalado / descargando (con progreso) / error, en llano."""
+    _tenant(request)
+    # get_status toca disco (stat de ≤6 archivos) → thread, patrón _detected.
+    return await asyncio.to_thread(speech_install.get_status)
+
+
+@router.post("/speech/install")
+async def speech_install_models(request: Request, body: SpeechInstallBody):
+    """Descarga los modelos de dictado EN el servidor (background, single-flight).
+    Solo escribe en el data-dir de Mia — no instala software en el host."""
+    _tenant(request)
+    if not body.confirmar:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Para continuar necesito tu confirmación: esta acción descarga "
+                "el componente de dictado por voz (~700 MB) en el servidor. "
+                "Vuelve a intentarlo confirmando la descarga."
+            ),
+        )
+    return await asyncio.to_thread(speech_install.start_install)

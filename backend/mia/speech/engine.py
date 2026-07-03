@@ -7,8 +7,10 @@ trozos de máximo 60 s, clips <1 s acolchados a 1.25 s. STT: Parakeet TDT 0.6B v
 int8 (decisión de Pipe 2026-07-02) vía sherpa-onnx (OfflineRecognizer nemo_transducer).
 
 TODO es local y opcional: sin `sherpa-onnx` instalado o sin los pesos en disco
-(scripts/download_speech_models.ps1), `available()` explica qué falta en llano y
-el endpoint responde 503 — ningún otro módulo de Mia depende de esto.
+(se instalan desde el Panel de control — speech/install.py — o con
+scripts/download_speech_models.ps1 como vía de administrador), `available()`
+explica qué falta en llano y el endpoint responde 503 — ningún otro módulo de
+Mia depende de esto.
 
 El motor es un singleton de carga perezosa (el modelo pesa ~460 MB en disco;
 se carga UNA vez al primer dictado). `transcribe()` es síncrono y con lock — la
@@ -82,7 +84,8 @@ class SpeechEngine:
         if not all((pdir / f).is_file() for f in needed):
             return False, (
                 "El modelo de dictado no está descargado en este servidor. "
-                "Pide a tu administrador ejecutar scripts/download_speech_models.ps1."
+                "Instálalo desde el Panel de control con el botón "
+                "«Instalar dictado por voz»."
             )
         if self._load_error:
             return False, self._load_error

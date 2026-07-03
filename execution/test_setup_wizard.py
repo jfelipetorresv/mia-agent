@@ -127,6 +127,7 @@ class Detectors:
         self.vault: str | None = None
         self.which: dict[str, str | None] = {"claude": None, "ollama": None}
         self.telegram = False
+        self.voz = False  # CP-Z1b: el gate NO depende de los pesos de la máquina
         self.detected_clouds: list[dict] = []
         self._saved: list = []
 
@@ -137,6 +138,7 @@ class Detectors:
             setup_mod.shutil.which,
             notify.telegram_configured,
             setup_mod.detect_cloud_folders,
+            setup_mod.speech_engine.get_engine,
             setup_mod._DETECT_TTL_SECONDS,
         ]
         obsidian_install.is_installed = lambda: self.obsidian
@@ -144,6 +146,8 @@ class Detectors:
         setup_mod.shutil.which = lambda name: self.which.get(name)
         notify.telegram_configured = lambda env=None: self.telegram
         setup_mod.detect_cloud_folders = lambda *a, **k: list(self.detected_clouds)
+        setup_mod.speech_engine.get_engine = lambda: SimpleNamespace(
+            available=lambda: (self.voz, "" if self.voz else "no instalado"))
         # El caché de detecciones (60s) se desactiva: el gate CAMBIA los detectores
         # entre consultas y debe ver el efecto de inmediato.
         setup_mod._DETECT_TTL_SECONDS = 0.0
@@ -158,6 +162,7 @@ class Detectors:
          setup_mod.shutil.which,
          notify.telegram_configured,
          setup_mod.detect_cloud_folders,
+         setup_mod.speech_engine.get_engine,
          setup_mod._DETECT_TTL_SECONDS) = self._saved
         setup_mod._detect_cache.clear()
 
@@ -191,12 +196,12 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     before = table_counts(tenant_a)
     r = client.get("/api/setup/status", headers=auth_a)
     body = r.json()
-    check("s1 · GET /setup/status → 200 con 6 pasos y campos completos",
-          r.status_code == 200 and len(body["pasos"]) == 6
+    check("s1 · GET /setup/status → 200 con 7 pasos y campos completos",
+          r.status_code == 200 and len(body["pasos"]) == 7
           and all({"id", "titulo", "estado", "detalle", "accion"} <= set(p) for p in body["pasos"]))
     ids = [p["id"] for p in body["pasos"]]
-    check("s2 · los pasos son los del recorrido (perfil→motor→obsidian→carpetas→guías→telegram)",
-          ids == ["perfil", "motor", "obsidian", "carpetas", "guias", "telegram"])
+    check("s2 · los pasos son los del recorrido (perfil→motor→obsidian→carpetas→guías→telegram→voz)",
+          ids == ["perfil", "motor", "obsidian", "carpetas", "guias", "telegram", "voz"])
     check("s3 · sin nada configurado: 0 listos y el siguiente es el perfil",
           body["completados"] == 0 and body["siguiente"] == "perfil")
     todo_texto = " ".join(
@@ -241,11 +246,12 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     det.vault = "D:\\vault-de-prueba"
     det.which["claude"] = "C:\\bin\\claude.exe"
     det.telegram = True
+    det.voz = True
     r3 = client.get("/api/setup/status", headers=auth_a).json()
     estados = {p["id"]: p["estado"] for p in r3["pasos"]}
-    check("s7 · detecciones simuladas → obsidian/motor/telegram quedan LISTOS",
+    check("s7 · detecciones simuladas → obsidian/motor/telegram/voz quedan LISTOS",
           estados["obsidian"] == "listo" and estados["motor"] == "listo"
-          and estados["telegram"] == "listo")
+          and estados["telegram"] == "listo" and estados["voz"] == "listo")
     check("s8 · guías y carpetas siguen pendientes (aún no hay datos)",
           estados["guias"] == "pendiente" and estados["carpetas"] == "pendiente")
     with sb() as c:
@@ -257,8 +263,8 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     estados4 = {p["id"]: p["estado"] for p in r4["pasos"]}
     check("s9 · con guía y carpeta registradas → esos pasos quedan LISTOS",
           estados4["guias"] == "listo" and estados4["carpetas"] == "listo")
-    check("s10 · el progreso cuenta bien (5 de 6; falta solo el perfil)",
-          r4["completados"] == 5 and r4["siguiente"] == "perfil")
+    check("s10 · el progreso cuenta bien (6 de 7; falta solo el perfil)",
+          r4["completados"] == 6 and r4["siguiente"] == "perfil")
 
     # ── (k) skip/unskip retomable + RLS ──
     rs = client.post("/api/setup/steps/perfil/skip", headers=auth_a)

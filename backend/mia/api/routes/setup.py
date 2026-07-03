@@ -32,12 +32,15 @@ from ...connectors.local_folders import detect_cloud_folders, list_sources
 from ...connectors import vault_writer as vault_writer_mod
 from ...db import pool
 from ...onboarding.soul_interview import soul_status
+from ...speech import engine as speech_engine
 
 router = APIRouter(prefix="/setup", tags=["setup"])
 logger = logging.getLogger("mia.api.setup")
 
 # Los pasos del recorrido, en orden. El id es estable (lo usa la UI y el skip).
-STEP_IDS = ("perfil", "motor", "obsidian", "carpetas", "guias", "telegram")
+# "voz" va al final: es una capacidad opcional (CP-Z1b) — el "siguiente paso"
+# no debe anteponerla a carpetas o guías, que dan más valor al arrancar.
+STEP_IDS = ("perfil", "motor", "obsidian", "carpetas", "guias", "telegram", "voz")
 
 # ── CP-C4b · La guía explicativa de cada paso (encargo de Pipe 2026-07-02) ────
 # El recorrido no solo DETECTA: EXPLICA como un onboarding — qué es cada
@@ -137,6 +140,21 @@ STEP_GUIDES: dict[str, dict] = {
             "Ponle nombre a tu bot y copia la clave que te entrega.",
             "Entrégale esa clave a tu administrador: con la guía de instalación la deja lista en un minuto.",
             "Abre Telegram en tu celular y escríbele a tu bot: quedará enlazado solo contigo.",
+        ],
+    },
+    "voz": {
+        "que_es": (
+            "Un botón de micrófono junto al chat de tus asuntos: dictas con tu "
+            "voz y Mia escribe el texto por ti."),
+        "para_que": (
+            "Dictar es más rápido que teclear, y tu voz NUNCA sale del servidor "
+            "del despacho: la transcripción ocurre completa ahí, sin enviar el "
+            "audio a ningún servicio externo."),
+        "como": [
+            "Abre el Panel de control con «Ir al paso» y ubica la tarjeta «Dictado por voz».",
+            "Pulsa «Instalar dictado por voz» y confirma: la descarga (~700 MB) tarda unos minutos y puedes seguir el avance ahí mismo.",
+            "Cuando termine, verás el botón de micrófono junto al campo de texto de tus asuntos.",
+            "Toca el micrófono, dicta, y vuelve a tocarlo para que Mia escriba lo que dijiste.",
         ],
     },
 }
@@ -283,6 +301,13 @@ async def collect_setup_status(tid: str) -> dict:
     claude_ok = bool(await _detected("which:claude", lambda: shutil.which("claude")))
     ollama_ok = bool(await _detected("which:ollama", lambda: shutil.which("ollama")))
     telegram_ok = notify.telegram_configured()
+    try:
+        # available() toca disco (stat de los pesos) → thread + caché 60 s. Tras
+        # instalar desde el Panel, este paso puede tardar ≤60 s en verse "listo".
+        voz_ok = bool(await _detected(
+            "speech", lambda: speech_engine.get_engine().available()[0]))
+    except Exception:  # noqa: BLE001
+        voz_ok = False
 
     def step(sid: str, titulo: str, listo: bool, detalle: str, accion: str,
              enlace: str | None = None) -> dict:
@@ -337,6 +362,12 @@ async def collect_setup_status(tid: str) -> dict:
               if telegram_ok else
               "Crea tu bot privado (5 minutos, te doy la guía) para hablar con Mia desde el celular."),
              "guiada", None),
+        step("voz", "Dictado por voz",
+             voz_ok,
+             ("El dictado por voz está instalado: busca el micrófono junto al chat de tus asuntos."
+              if voz_ok else
+              "Instala el dictado por voz desde el Panel de control para dictar en vez de teclear."),
+             "automatica", "/dashboard"),
     ]
 
     hechos = sum(1 for s in steps if s["estado"] == "listo")

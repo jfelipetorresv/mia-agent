@@ -85,6 +85,24 @@ export async function apiUpload<T = unknown>(path: string, file: File): Promise<
   return res.json();
 }
 
+// CP-Z1b: subida de un Blob con nombre de campo propio y campos extra — el
+// dictado envía `audio` (WAV generado en el navegador) + `pulir`, y apiUpload
+// tiene el campo "file" fijo (lo usan documentos y guías; no se toca su firma).
+export async function apiUploadBlob<T = unknown>(
+  path: string,
+  field: string,
+  blob: Blob,
+  filename: string,
+  extra: Record<string, string> = {},
+): Promise<T> {
+  const fd = new FormData();
+  fd.append(field, blob, filename);
+  for (const [k, v] of Object.entries(extra)) fd.append(k, v);
+  const res = await fetch(`${API}${path}`, { method: "POST", headers: authHeaders(), body: fd });
+  await checkResponse(res);
+  return res.json();
+}
+
 // CP7: subida de VARIOS archivos en una sola petición (campo "files" repetido),
 // para importar las guías de trabajo del despacho (POST /api/playbooks/import).
 export async function apiUploadMany<T = unknown>(path: string, files: File[]): Promise<T> {
