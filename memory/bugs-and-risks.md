@@ -940,3 +940,32 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
       confirmarlo con un caso real antes de usarlo en producción, es trivial montarlo.
    7. **Capa 3:** NO APLICA (sin frontend); autocompletado de `@` en el chat es trabajo futuro
       opcional documentado en HANDOFF.
+
+
+## Riesgo #50 — CP-E3 (personas jurídicas editables): residuales aceptados (2026-07-03)
+   1. **Candado de motor por CONSTRUCCIÓN, no por posición:** una persona solo puede fijar
+      `LOCAL_ALIAS` (motor local) o no fijar nada (`estandar`). `resolve_persona_alias('local')`
+      devuelve `LOCAL_ALIAS` directamente (no `chain[-1]`), así que un reordenamiento futuro de
+      `_POLICY_CHAINS` no puede filtrar a la nube. ÚNICO punto a mantener: si el despliegue
+      renombra el alias del motor local, actualizar la constante `LOCAL_ALIAS` en personas.py
+      (el peor caso de un desajuste es un turno que falla CERRADO por falta del modelo, jamás una
+      fuga a la nube).
+   2. **`role_prompt` NO va fenceado/sellado:** la voz de la persona se inyecta cruda (autoridad
+      de estilo, como el SOUL.md del despacho), a diferencia de documentos/notas (contenido de
+      terceros, sí sellados con CP-S1). El modelo de amenaza es "el admin del despacho contra sí
+      mismo" (config autorizada). Mitigación en profundidad: L2/L3 (método/citación) preceden a la
+      voz en el prompt y el guardrail de la voz reitera [VERIFICAR]. Aceptado como decisión.
+   3. **Overhead por turno:** `resolve_for_turn` (asistente y asunto) hace 1-2 lecturas RLS por
+      turno aun cuando el despacho no use personas (tras la 1ª siembra, es un SELECT del flag + un
+      SELECT de las habilitadas). Es indexado y barato; si algún día pesa, cachear por proceso con
+      invalidación por escritura.
+   4. **Invocación solo por frase (v1):** no hay selector de persona en la UI ni autocompletado;
+      el abogado nombra la persona en su mensaje (`explicit_id` existe en el servicio para cuando
+      Cursor construya la pantalla). El grafo NO persiste una persona "por defecto del asunto":
+      cada turno se resuelve de nuevo desde el mensaje. Decisión de producto v1.
+   5. **A/B en vivo NO ejecutada:** sin invocación, CP-E3 es byte-idéntico (probado por gate y
+      capa 2); la voz solo aplica cuando el abogado nombra la persona. No hay regresión de la
+      calidad legal existente. Se ofreció a Pipe un A/B persona-on/off si quiere evaluar la calidad
+      de las voces canónicas antes de confiar en ellas en producción.
+   6. **Capa 3 PENDIENTE:** Cursor construye la pantalla de gestión de personas (endpoints
+      `/api/personas` GET/POST/PUT/DELETE listos, ver HANDOFF).

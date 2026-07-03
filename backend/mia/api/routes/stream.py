@@ -19,6 +19,7 @@ from sse_starlette.sse import EventSourceResponse
 from ...agents.checkpointer import open_checkpointer
 from ...agents.context_references import expand_context_references
 from ...agents.graph import build_matter_graph
+from ...agents.personas import persona_service
 from ...agents.state import initial_state
 from ...config import MIA_CONTEXT_WINDOW
 from ...db import pool
@@ -162,9 +163,23 @@ async def stream_matter(
         logger.exception("stream: la expansión de referencias falló (tenant=%s matter=%s)",
                          tenant_id, matter_id)
 
+    # CP-E3: persona jurídica invocada por el abogado en su mensaje (por frase). Se detecta
+    # sobre el mensaje ORIGINAL (las frases de invocación están en las palabras del abogado,
+    # no en la evidencia adjunta por CP-E2). El alias de motor se resuelve BAJO la política
+    # activa del despacho (ContextVar del request) → nunca escala a la nube. Fail-open: si la
+    # resolución falla, el turno sigue sin persona (idéntico a hoy).
+    persona_state: dict | None = None
+    try:
+        persona = await persona_service.resolve_for_turn(tenant_id, message)
+        if persona is not None:
+            persona_state = persona.turn_context()
+    except Exception:  # noqa: BLE001 — §G: aplicar una persona jamás tumba el turno
+        logger.exception("stream: no se pudo resolver la persona (tenant=%s matter=%s)",
+                         tenant_id, matter_id)
+
     turn_input = initial_state(
         tenant_id, matter_id, expanded_message, profile_snapshot=profile_snapshot,
-        retrieval_query=retrieval_query,
+        retrieval_query=retrieval_query, persona=persona_state,
     )
 
     async def gen():

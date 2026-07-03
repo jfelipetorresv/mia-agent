@@ -44,6 +44,12 @@ from ..agents.context_references import (
     expand_context_references,
     parse_context_references,
 )
+from ..agents.personas import (
+    Persona,
+    persona_service,
+    render_persona_voice,
+    resolve_persona_alias,
+)
 from ..db import pool
 from ..onboarding.soul_interview import load_soul_text
 from . import reminders as reminders_mod
@@ -216,18 +222,26 @@ def _require_uuid(conversation_id: str) -> str:
         raise ConversationNotFound(conversation_id)
 
 
-def build_assistant_system(tenant_id: str) -> str:
+def build_assistant_system(tenant_id: str, persona: Persona | None = None) -> str:
     """System del modo asistente: capas del prompt_builder que aplican SIN matter.
 
     Reutiliza L1 (identidad/SOUL del tenant, vía _identity_layer sobre un estado
     duck-typed) y L5 (comunicación sin jerga, USER_COMMS) y les suma la instrucción
     propia del asistente. Sin SOUL.md (onboarding incompleto) la identidad va vacía
     y el asistente funciona igual (no bloquea).
+
+    CP-E3 (personas): si el abogado invocó una persona, su voz se AÑADE (no reemplaza:
+    la identidad del despacho persiste) entre las reglas duras y la instrucción del
+    asistente. Se incluye L3 (citación) para que la regla dura anti-invención ([VERIFICAR])
+    PRECEDA a la voz de la persona: una persona jamás la relaja (hallazgo capa 2 · el rol
+    colorea el tono, no la verificación). Sin persona, la voz va vacía.
     """
     state = SimpleNamespace(identity=load_soul_text(tenant_id) or "")
     parts = [
         prompt_builder._identity_layer(state),      # L1 · identidad / SOUL del tenant
+        prompt_builder._citation_layer(state),      # L3 · citación / [VERIFICAR] (regla dura)
         prompt_builder._user_comms_layer(state),    # L5 · comunicación sin jerga (§G)
+        render_persona_voice(persona) if persona else "",   # CP-E3 · voz de la persona
         ASSISTANT_INSTRUCTIONS,                     # instrucción propia del modo asistente
     ]
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
@@ -455,10 +469,28 @@ class AssistantService:
             )
             history = _truncate_history(history)
 
+        # CP-E3: persona jurídica invocada por frase en el mensaje del abogado. Se detecta
+        # sobre el mensaje ORIGINAL (`text`), no sobre la versión aumentada con bloques de
+        # estado/adjuntos. El alias de motor se acota BAJO la política activa del despacho
+        # (ContextVar del middleware) → nunca escala a la nube. FAIL-OPEN (simétrico a
+        # stream.py): si algo falla resolviendo o acotando la persona, el turno sigue SIN
+        # persona (system y motor idénticos a hoy) — aplicar una persona nunca tumba el turno.
+        persona = None
+        persona_alias = None
+        try:
+            persona = await persona_service.resolve_for_turn(tenant_id, text)
+            persona_alias = resolve_persona_alias(persona.model_tier) if persona else None
+        except Exception:  # noqa: BLE001 — §G: aplicar una persona jamás tumba el turno
+            logger.warning("chat: no se pudo aplicar la persona (conv=%s)", conversation_id,
+                           exc_info=True)
+            persona = None
+            persona_alias = None
+
         # (c) + (e) system (sin matter) + historial → task='main'. La política de modelo
         # del tenant ya está en el ContextVar (middleware CP2); to_thread la propaga.
-        messages = [{"role": "system", "content": build_assistant_system(tenant_id)}, *history]
-        resp = await asyncio.to_thread(llm.call_llm, messages, task="main")
+        messages = [{"role": "system", "content": build_assistant_system(tenant_id, persona)},
+                    *history]
+        resp = await asyncio.to_thread(llm.call_llm, messages, task="main", model=persona_alias)
         reply = (resp.choices[0].message.content or "").strip()
 
         # (f) persistir user + assistant JUNTOS tras el éxito del modelo.

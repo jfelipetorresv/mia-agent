@@ -49,6 +49,12 @@ class MatterState(TypedDict, total=False):
     trace_id: Optional[str]           # id de la traza JSONL activa (finalize_node)
     metadata: dict                    # datos adicionales (diagnóstico, decisión HITL, usage…)
 
+    # CP-E3: persona jurídica invocada en el turno (o None). Dict JSON-serializable
+    # (viaja en el checkpoint): {"name", "voice" (bloque pre-renderizado), "alias" (motor
+    # ya acotado por la política — None = sin override)}. total=False → checkpoints viejos
+    # sin el campo siguen válidos; los nodos leen state.get("persona") or {}.
+    persona: Optional[dict]
+
 
 def thread_id_for(tenant_id: str, matter_id: str) -> str:
     """Clave del checkpoint: `{tenant_id}:{matter_id}` (decisión #9).
@@ -68,6 +74,7 @@ def initial_state(
     profile_snapshot: Optional[dict] = None,
     soul_snapshot: Optional[dict] = None,
     retrieval_query: Optional[str] = None,
+    persona: Optional[dict] = None,
 ) -> MatterState:
     """Estado inicial de un turno a partir del mensaje del abogado.
 
@@ -77,6 +84,9 @@ def initial_state(
 
     `retrieval_query` (CP-E2): consulta de recuperación limpia cuando el mensaje trae
     referencias @expediente/@carpeta expandidas; si es None, intake usa el mensaje.
+
+    `persona` (CP-E3): persona jurídica invocada en el turno (dict turn_context) o None
+    (turno sin persona = comportamiento idéntico a hoy).
     """
     if soul_snapshot is None:
         from ..onboarding.soul_interview import load_soul_snapshot  # diferido (sin ciclo)
@@ -95,4 +105,5 @@ def initial_state(
         hitl_status="pending",
         trace_id=None,
         metadata={},
+        persona=persona,
     )

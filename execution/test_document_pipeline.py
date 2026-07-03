@@ -80,7 +80,8 @@ async def run_gate() -> None:
     # ── C · nodos con _llm doblado (sin LLM real) ────────────────────────────
     captured: dict = {}
 
-    async def fake_llm(messages, *, task="main", state=None, md=None, shrink=None, node=""):
+    async def fake_llm(messages, *, task="main", state=None, md=None, shrink=None, node="",
+                       model=None):  # CP-E3: _llm ahora acepta model= (persona)
         captured[task + ":" + (md or {}).get("stage", "?")] = messages
         captured["last"] = messages
         return "SALIDA-DOBLADA", None
