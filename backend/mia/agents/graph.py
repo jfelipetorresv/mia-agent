@@ -54,7 +54,8 @@ from ..memory.tokens import estimate_tokens
 from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
-from . import context_recovery, research, retrieval, untrusted, verification
+from ..policy import budget as policy_budget
+from . import context_recovery, delegation, research, retrieval, untrusted, verification
 from .state import MatterState
 
 logger = logging.getLogger("mia.agents.graph")
@@ -74,6 +75,15 @@ async def drain_bg_tasks() -> None:
 
 _WORD = re.compile(r"\w+", re.UNICODE)
 _MAX_ACTIVE_PLAYBOOKS = 3
+
+# CP-E5: la investigación se DELEGA en paralelo (un investigador por jurisdicción) SOLO
+# cuando el despacho tiene ≥ este número de jurisdicciones. Con una sola (el caso de un
+# despacho mono-jurisdicción) la investigación corre en un único paso, idéntica byte a byte
+# a antes de CP-E5: cero costo extra, cero cambio de comportamiento. El fan-out (verificación
+# por rama + síntesis) suma llamadas LLM, por eso se activa solo cuando aporta (cruce de
+# jurisdicciones). `_RESEARCH_MAX_CONCURRENT` acota cuántos investigadores corren a la vez.
+_RESEARCH_FANOUT_MIN_JURISDICTIONS = 2
+_RESEARCH_MAX_CONCURRENT = 4
 
 # ── Prompts de sistema (Civil Law · §G: sin jerga técnica hacia el usuario) ──
 # CP6 (Riesgo #26 · "una sola voz"): el system de cada nodo ya NO es un texto
@@ -435,14 +445,30 @@ class MatterGraphBuilder:
 
     # ── 3 · research (CP9 · especialista de INVESTIGACIÓN) ───────────────────
     async def research_node(self, state: MatterState) -> dict:
-        msg = _last_user_message(state)
+        """CP-E5: con ≥2 jurisdicciones DELEGA un investigador por jurisdicción en
+        paralelo (+ verificación de citas por rama + síntesis); con una sola corre en un
+        único paso, idéntico a antes de CP-E5. La decisión es transparente al abogado."""
         md = dict(state.get("metadata") or {})
+        jurisdictions = await research.resolve_jurisdictions_for(state["tenant_id"])
+        if len(jurisdictions) >= _RESEARCH_FANOUT_MIN_JURISDICTIONS:
+            return await self._research_swarm(state, md, jurisdictions)
+        return await self._research_single(state, md, jurisdictions)
+
+    def _research_query(self, state: MatterState, md: dict) -> tuple[str, str]:
+        """(mensaje del abogado, consulta FTS) del turno de investigación. La consulta
+        FTS = mensaje + arranque de los hechos (los hechos completos diluirían el ranking)."""
+        msg = _last_user_message(state)
         facts = str(md.get("facts") or "")
-        # Consulta FTS: el mensaje del abogado + el arranque de los hechos (websearch
-        # tolera texto libre; los hechos completos diluirían el ranking).
-        query = (msg + "\n" + facts[:300]).strip()
+        return msg, (msg + "\n" + facts[:300]).strip()
+
+    async def _research_single(
+        self, state: MatterState, md: dict, jurisdictions: list[str],
+    ) -> dict:
+        """Camino de UNA jurisdicción (comportamiento previo a CP-E5, byte a byte)."""
+        msg, query = self._research_query(state, md)
+        facts = str(md.get("facts") or "")
         sources_txt, sources, jurisdictions = await research.gather_sources(
-            state["tenant_id"], query)
+            state["tenant_id"], query, jurisdictions=jurisdictions)
 
         def _messages(facts_txt: str) -> list[dict]:
             parts = [f"Consulta del abogado:\n{msg}"]
@@ -472,6 +498,129 @@ class MatterGraphBuilder:
         md["research_jurisdictions"] = jurisdictions
         _accum_usage(md, usage)
         return {"metadata": md}
+
+    async def _research_swarm(
+        self, state: MatterState, md: dict, jurisdictions: list[str],
+    ) -> dict:
+        """CP-E5 · investigación DELEGADA en paralelo (patrón swarm de Hermes):
+        un investigador por jurisdicción → verificación determinista de citas por rama →
+        síntesis de las memorias verificadas en una sola. Fail-soft: si todos los
+        investigadores fallan, se cae al camino de una jurisdicción (nunca tumba el turno)."""
+        # Revisión capa 2 (m4): el swarm multiplica llamadas LLM. Si el despacho YA superó
+        # su tope de gasto del mes (CP-E1), NO se amplifica el costo — se degrada al camino
+        # simple (una sola llamada). Fail-open: un hipo leyendo el tope no frena el turno.
+        try:
+            if (await policy_budget.budget_status(state["tenant_id"])).get("over_budget"):
+                logger.info("research_swarm: despacho sobre el tope de gasto (tenant=%s); "
+                            "se usa el camino simple para no amplificar el costo",
+                            state.get("tenant_id"))
+                return await self._research_single(state, md, jurisdictions)
+        except Exception:  # noqa: BLE001 — fail-open: no bloquear por infraestructura
+            logger.debug("research_swarm: no se pudo leer el tope de gasto; se continúa",
+                         exc_info=True)
+
+        msg, query = self._research_query(state, md)
+        facts = str(md.get("facts") or "")
+        extra_patterns = await research.citation_patterns_for(state["tenant_id"])  # fail-soft
+
+        async def _worker(juris: str) -> dict:
+            # Cada worker: fuentes ACOTADAS a SU jurisdicción → mini-memoria (LLM) →
+            # verificación determinista de citas contra SUS propias fuentes.
+            sources_txt, sources, _ = await research.gather_sources(
+                state["tenant_id"], query, jurisdictions=[juris])
+
+            def _msgs(facts_txt: str) -> list[dict]:
+                parts = [f"Consulta del abogado:\n{msg}"]
+                if facts_txt:
+                    parts.append("Hechos establecidos por el especialista de hechos:\n"
+                                 + facts_txt)
+                parts.append(
+                    f"Trabajas SOLO la jurisdicción '{juris}': ceñí tu investigación a su "
+                    "ordenamiento; no mezcles normas de otras jurisdicciones.")
+                parts.append(sources_txt if sources_txt else research.NO_SOURCES_NOTE)
+                parts.append("Elabora la memoria de investigación de esta jurisdicción.")
+                return [
+                    {"role": "system", "content": prompt_builder.build_graph_system(
+                        state, "research", matter_context=_matter_context_for(state),
+                        persona_voice=_persona_voice(state))},
+                    {"role": "user", "content": "\n\n".join(parts)},
+                ]
+
+            def _shrink() -> list[dict]:
+                budget = context_recovery.budget_for("research", config.MIA_CONTEXT_WINDOW)
+                return _msgs(context_recovery.shrink_text(facts, budget, protect_tail=True))
+
+            # Revisión capa 2 (M1): los workers pasan SU PROPIO `shrink` (recorte determinista
+            # por nodo, funciones puras de context_recovery) — así `_llm` NUNCA cae al
+            # `self._compressor` compartido, que es stateful y tendría carrera entre workers
+            # paralelos. `md={}` aísla además el cupo de compresión ("llm_turn"). El uso
+            # (usage) se acumula DESPUÉS, en serie, sobre el md real.
+            memo, usage = await self._llm(
+                _msgs(facts), task="main", state=state, md={}, shrink=_shrink,
+                node="research", model=_persona_alias(state))
+            annotated, _ = await asyncio.to_thread(
+                verification.annotate_draft, memo, sources=sources,
+                extra_patterns=extra_patterns)
+            return {"jurisdiction": juris, "memo": annotated, "sources": sources,
+                    "usage": usage}
+
+        results = await delegation.run_parallel(
+            jurisdictions, _worker, max_concurrent=_RESEARCH_MAX_CONCURRENT)
+        good = [r.value for r in results if r.ok and isinstance(r.value, dict)]
+        # Acumular el uso de CADA worker en serie sobre el md real (sin carrera).
+        for r in good:
+            _accum_usage(md, r.get("usage"))
+        all_sources: list[dict] = [s for r in good for s in (r.get("sources") or [])]
+
+        if not good:
+            # Todos los investigadores fallaron → fail-soft: una sola pasada con el
+            # conjunto de jurisdicciones (deja que el camino simple registre lo que pueda).
+            logger.warning("research_swarm: todos los investigadores fallaron (tenant=%s); "
+                           "se cae al camino de una pasada", state.get("tenant_id"))
+            return await self._research_single(state, md, jurisdictions)
+
+        if len(good) == 1:
+            # Una sola rama sobrevivió: no hay nada que sintetizar (evita una llamada LLM
+            # de más). Se toma su memoria ya verificada tal cual.
+            memo = str(good[0].get("memo") or "")
+        else:
+            # SINTETIZADOR: consolida las memorias verificadas por jurisdicción en UNA.
+            memo, usage = await self._llm(
+                self._research_synth_messages(state, msg, good),
+                task="main", state=state, md=md, node="research_synth",
+                model=_persona_alias(state))
+            _accum_usage(md, usage)
+
+        md.update(stage="research", research=memo)
+        md["research_sources"] = all_sources
+        md["research_jurisdictions"] = jurisdictions
+        # Transparencia/trace: cuántos investigadores delegados aportaron y sobre qué
+        # jurisdicciones (lo consume la Pantalla 2/3 y la traza; nunca jerga al abogado).
+        md["research_delegation"] = {
+            "workers": len(good),
+            "jurisdictions": [r.get("jurisdiction") for r in good],
+        }
+        return {"metadata": md}
+
+    def _research_synth_messages(
+        self, state: MatterState, msg: str, branches: list[dict],
+    ) -> list[dict]:
+        """Prompt del sintetizador: consolida las memorias por jurisdicción (ya verificadas)
+        en una sola memoria de investigación. Las [VERIFICAR] de cada rama se conservan."""
+        parts = [f"Consulta del abogado:\n{msg}",
+                 "Se investigó en paralelo por jurisdicción. Consolida las siguientes "
+                 "memorias en UNA sola memoria de investigación, sin perder ninguna cita ni "
+                 "ninguna marca [VERIFICAR]; agrupa por jurisdicción cuando difieran y señala "
+                 "coincidencias y diferencias entre ellas. NO inventes normas nuevas:"]
+        for b in branches:
+            parts.append(f"### Jurisdicción '{b.get('jurisdiction')}'\n{b.get('memo') or ''}")
+        parts.append("Entrega la memoria de investigación consolidada.")
+        return [
+            {"role": "system", "content": prompt_builder.build_graph_system(
+                state, "research", matter_context=_matter_context_for(state),
+                persona_voice=_persona_voice(state))},
+            {"role": "user", "content": "\n\n".join(parts)},
+        ]
 
     # ── 4 · analysis (CP9 · especialista de CRUCE) ───────────────────────────
     async def analysis_node(self, state: MatterState) -> dict:

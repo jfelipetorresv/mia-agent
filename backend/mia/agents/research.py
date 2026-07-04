@@ -73,7 +73,31 @@ def _clip(text: Any, limit: int = MAX_SOURCE_CHARS) -> str:
     return s if len(s) <= limit else s[:limit].rstrip() + " […]"
 
 
-async def gather_sources(tenant_id: str, query: str) -> tuple[str, list[dict], list[str]]:
+async def resolve_jurisdictions_for(tenant_id: str) -> list[str]:
+    """Jurisdicciones del despacho (fail-soft). CP-E5: la usa el grafo para decidir si
+    la investigación se delega en paralelo (≥2 jurisdicciones) o corre en un solo paso.
+
+    Ante cualquier error devuelve ['generic'] (fail-closed: 'generic' no arroja corpus de
+    otros países) — nunca propaga; el turno del abogado no depende de esto.
+
+    Revisión capa 2 (m1): DEDUPLICA preservando el orden — una config sucia con una
+    jurisdicción repetida ('co','co','us') no debe lanzar dos investigadores idénticos ni
+    duplicar el bloque en el sintetizador (costo LLM desperdiciado).
+    """
+    try:
+        codes = await resolve_jurisdictions(tenant_id)
+    except Exception:  # noqa: BLE001 — fail-soft
+        logger.warning("resolve_jurisdictions falló (tenant=%s); se asume 'generic'",
+                       tenant_id, exc_info=True)
+        return ["generic"]
+    seen: set[str] = set()
+    deduped = [c for c in codes if not (c in seen or seen.add(c))]
+    return deduped or ["generic"]
+
+
+async def gather_sources(
+    tenant_id: str, query: str, *, jurisdictions: list[str] | None = None,
+) -> tuple[str, list[dict], list[str]]:
     """Recupera y renderiza las fuentes del corpus para la consulta del turno.
 
     Devuelve (seccion_para_el_prompt, fuentes_compactas, jurisdicciones).
@@ -82,16 +106,16 @@ async def gather_sources(tenant_id: str, query: str) -> tuple[str, list[dict], l
       el especialista de verificación (respaldo de citas) y la traza.
     - jurisdicciones: códigos usados en la búsqueda (transparencia/trace).
 
+    CP-E5: `jurisdictions` permite ACOTAR la búsqueda a un subconjunto (p. ej. UNA sola
+    jurisdicción cuando el grafo delega un investigador por jurisdicción). Si es None se
+    resuelven las del despacho como siempre (comportamiento idéntico a antes de CP-E5).
+
     FAIL-SOFT: cualquier error (DB caída, tabla ausente) devuelve ('' , [], [...]) y
     lo registra — la investigación sigue con el conocimiento del modelo + [VERIFICAR];
     nunca tumba el turno del abogado.
     """
-    try:
-        jurisdictions = await resolve_jurisdictions(tenant_id)
-    except Exception:  # noqa: BLE001 — fail-soft (ver docstring)
-        logger.warning("resolve_jurisdictions falló (tenant=%s); investigación sin corpus",
-                       tenant_id, exc_info=True)
-        return "", [], ["generic"]
+    if jurisdictions is None:
+        jurisdictions = await resolve_jurisdictions_for(tenant_id)
 
     try:
         sat = SATGraph()
