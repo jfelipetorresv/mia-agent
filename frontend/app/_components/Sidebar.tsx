@@ -8,6 +8,7 @@ const LINKS = [
   { href: "/", label: "Asuntos", match: (p: string) => p === "/" || p.startsWith("/asuntos") },
   { href: "/memoria", label: "Conocimiento", match: (p: string) => p.startsWith("/memoria") },
   { href: "/dashboard", label: "Panel de control", match: (p: string) => p.startsWith("/dashboard") },
+  { href: "/personas", label: "Personas jurídicas", match: (p: string) => p.startsWith("/personas") },
   { href: "/configurar", label: "Configura a Mia", match: (p: string) => p.startsWith("/configurar") },
 ];
 
