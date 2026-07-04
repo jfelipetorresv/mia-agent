@@ -115,7 +115,7 @@ Forma de `Mission`:
   en el swarm) + 2 MENORES (dedup de jurisdicciones; degradación por tope) **corregidos y
   re-verificados ANTES del commit**; 2 residuales aceptados (orden de hitos por desempate;
   `matter_id` expuesto a propósito). Ver `memory/progress.md` sesión 33.
-- Capa 3: **PENDIENTE de Cursor** — construir el tablero según esta sección.
+- Capa 3: **COMPLETADO** — ver "Hallazgos de Cursor (capa 3)" · 2026-07-04 (CP-E5, commit `f47f143`).
 
 ---
 
@@ -1037,6 +1037,19 @@ la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
 **Deuda §G sin tocar (pre-existente):** tarjeta "Pinecone" (vectores, Index) y sección "Salud del second brain" (Skills) siguen con jerga técnica — anotado en CP7.
 
 **Pendiente de Pipe (capa 3 en vivo, no automatizable aquí):** probar aceptar/descartar una recomendación real cuando el cron semanal haya generado tarjetas; invocar una persona editada en el chat de un asunto.
+
+### 2026-07-04 — CP-E5: tablero de misión por expediente (capa 3)
+
+**Qué se construyó** (commit `f47f143`, ya en `origin/main`):
+
+- **`frontend/app/_components/MissionBoard.tsx`** + pestaña **Plan** en `frontend/app/asuntos/[id]/page.tsx` (junto a Consulta).
+- CRUD completo vía `/api/missions/*`: crear misión con propuesta automática de hitos, editar título/objetivo, archivar/eliminar, re-proponer hitos (añadir o reemplazar).
+- Hitos: editar título, actor, estado, reordenar (↑↓), añadir manual, quitar. Barra de progreso "X de Y hitos" con `role="progressbar"`.
+- §G: `mia` → "Mia lo prepara"; `abogado` → "Lo haces tú"; estados → Pendiente / En curso / Hecho; `is_procedural` → aviso "Toca un plazo — confírmalo tú [VERIFICAR]". Sin campos de fecha.
+- Errores 422/502 del backend mostrados tal cual (`ApiError.detail`).
+- **`npm run build` verde** (12/12 páginas).
+
+**Pendiente de Pipe (capa 3 en vivo):** crear una misión real ("Preparar la contestación"), editar hitos propuestos y marcar avance en un asunto con documentos.
 
 ### Corrección post-Cursor (Claude Code · verificación de la entrega integrada)
 
