@@ -24,16 +24,6 @@ type Mission = {
   milestones: Milestone[];
 };
 
-function actorLabel(actor: string): string {
-  return actor === "mia" ? "Mia lo prepara" : "Lo haces tú";
-}
-
-function statusLabel(status: string): string {
-  if (status === "active") return "En curso";
-  if (status === "done") return "Hecho";
-  return "Pendiente";
-}
-
 function apiMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : fallback;
 }
