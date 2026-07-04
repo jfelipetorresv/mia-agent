@@ -19,7 +19,8 @@ from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
 from .routes import (assistant, auth, automations, curator, folders, hitl, mailbox,
-                     personas, policy, settings, setup, speech, stream, traces, ux, value)
+                     missions, personas, policy, settings, setup, speech, stream, traces,
+                     ux, value)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -168,6 +169,8 @@ app.include_router(value.router, prefix="/api")
 app.include_router(speech.router, prefix="/api")
 app.include_router(policy.router, prefix="/api")
 app.include_router(personas.router, prefix="/api")
+# CP-E5 (Ola 5) · tablero de misión por expediente (objetivo grande → hitos visibles).
+app.include_router(missions.router, prefix="/api")
 
 
 @app.get("/health")

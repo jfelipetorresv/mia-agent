@@ -112,7 +112,7 @@ async def run_gate() -> None:
     fake_sources = [{"tipo": "norma", "referencia": "Ley 640 de 2001",
                      "titulo": "Conciliación extrajudicial"}]
 
-    async def fake_gather(tenant_id, query):
+    async def fake_gather(tenant_id, query, *, jurisdictions=None):
         captured["gather_query"] = query
         return ("<<<FUENTE 1 · Ley 640 de 2001>>>\nConciliación\n<<<FIN FUENTE 1>>>",
                 fake_sources, ["co"])
@@ -136,7 +136,7 @@ async def run_gate() -> None:
           "¿Operó la caducidad?" in captured["gather_query"])
 
     # research_node FAIL-SOFT: el corpus caído no tumba el turno
-    async def broken_gather(tenant_id, query):
+    async def broken_gather(tenant_id, query, *, jurisdictions=None):
         raise RuntimeError("DB caída")
     research.gather_sources = graph_mod.research.gather_sources  # (mismo módulo)
     real_resolve = research.resolve_jurisdictions

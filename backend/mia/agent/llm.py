@@ -71,6 +71,7 @@ _TASK_FALLBACK_CHAINS: dict[str, list[str]] = {
     "web_extract": ["mia-local"],                # extracción de contenido web
     "vision": ["mia-local"],                     # comprensión de documentos/imágenes
     "soul": ["mia-local"],                       # generación del SOUL.md (identidad del agente)
+    "mission_decompose": ["mia-local"],          # CP-E5: hitos de un objetivo del expediente
 }
 
 # Tareas cuya cadena es un contrato fijo: un `model` explícito NO puede cambiarla.
@@ -83,7 +84,7 @@ VALID_POLICIES = ("suscripcion", "nube", "soberano")
 
 # Tareas auxiliares (baratas): comparten cadena dentro de cada política.
 _AUX_TASKS = ("verification", "title_generation", "session_search", "web_extract",
-              "vision", "soul")
+              "vision", "soul", "mission_decompose")
 
 # Cadenas por política. Se SUPERPONEN a _TASK_FALLBACK_CHAINS (que queda como mapa base,
 # compat con tests que lo leen/mutan): un task inyectado ahí (no estándar) sigue resolviendo.

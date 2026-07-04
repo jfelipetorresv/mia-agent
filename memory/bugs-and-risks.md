@@ -995,3 +995,37 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
       exige `allow_eval_real_data` (default OFF). En v1 no hay pantalla ni caso que lea matters
       reales; el candado protege un camino futuro. Encenderlo para datos reales requiere aprobación
       explícita de Pipe (regla dura del plan de olas).
+
+
+## Riesgo #52 — CP-E5 (delegación multi-agente + tablero de misión): residuales aceptados (2026-07-04)
+   1. **Colisión silenciosa de `seq` en hitos (m2, capa 2):** `mission_milestones` no tiene
+      `UNIQUE(mission_id, seq)`. Si el abogado edita el `seq` de un hito y luego añade/re-descompone,
+      dos hitos pueden compartir `seq`. El orden queda determinista por el desempate
+      `ORDER BY seq, created_at` (nunca aleatorio ni error) — el peor caso es un empate resuelto por
+      antigüedad. No se añadió UNIQUE porque obligaría a reindexar en cada reordenamiento (más
+      complejidad que valor). Aceptado por el revisor.
+   2. **`matter_id` expuesto en `to_public` de la misión (m3, capa 2):** es un UUID de vínculo que
+      el frontend necesita para ligar la misión a su expediente (como el `id` de la misión). NO es
+      jerga §G y NO filtra `tenant_id` (`_MISSION_COLS` no lo incluye; sin cruce de despachos).
+      Deliberado. Aceptado.
+   3. **Tope de gasto por-turno vs. por-entrada (m4, capa 2 — MITIGADO):** `enforce_budget` es una
+      guardia de ENTRADA de turno (CP-E1), no un límite por-llamada. El swarm añade N+1 llamadas a
+      un turno ya admitido. Mitigación aplicada: `_research_swarm` consulta `budget_status` al inicio
+      y si el despacho YA superó el tope del mes, degrada al camino simple (no amplifica). Residual:
+      un despacho JUSTO por debajo del tope puede sobrepasarlo dentro de un solo turno
+      multi-jurisdicción (acotado por `MAX_WORKERS=8` / concurrencia 4). Inerte para Lexia
+      (mono-jurisdicción). Cierre futuro real = medir gasto acumulado del turno, fuera de alcance.
+   4. **Verificación de citas del memo consolidado:** cada rama del swarm verifica sus citas
+      (determinista) ANTES de sintetizar, pero el memo del SINTETIZADOR no se re-verifica. Es
+      consistente con el camino simple (el memo de investigación tampoco se verifica ahí; la
+      verificación de citas corre sobre el BORRADOR en verification_node, aguas abajo). Cualquier
+      cita nueva introducida por el sintetizador se atrapa igual en la verificación del borrador.
+      Declarado, no es regresión.
+   5. **Investigación paralela GATILLADA por ≥2 jurisdicciones:** para un despacho mono-jurisdicción
+      (Lexia hoy) el camino es byte-idéntico al previo a CP-E5 (cero costo/comportamiento extra). El
+      valor de la delegación es latente hasta que exista corpus de una 2ª jurisdicción (pendiente de
+      subir). A/B en vivo multi-jurisdicción no corrible aún por falta de ese corpus; evidencia del
+      camino nuevo en `test_research_swarm.py`. Ver `docs/comparacion-cpe5.md`.
+   6. **Carrera del compresor compartido en el swarm — CERRADA (M1, capa 2):** los workers pasan su
+      propio `shrink` a `_llm` → nunca alcanzan `self._compressor` (stateful, compartido). Corregido
+      y re-verificado antes del commit. Sin residual.
