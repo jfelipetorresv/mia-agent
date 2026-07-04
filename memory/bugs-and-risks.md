@@ -969,3 +969,29 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
       de las voces canónicas antes de confiar en ellas en producción.
    6. **Capa 3 PENDIENTE:** Cursor construye la pantalla de gestión de personas (endpoints
       `/api/personas` GET/POST/PUT/DELETE listos, ver HANDOFF).
+
+
+## Riesgo #51 — CP-E4 (banco de pruebas de calidad / eval harness): residuales aceptados (2026-07-03)
+   1. **Tenants `[eval]` huérfanos si el proceso se mata a mitad:** `run_eval.py` y el gate crean
+      un despacho EFÍMERO de prueba y lo borran en `finally` (cascada limpia matters/documents/
+      chunks; los checkpoints se borran por thread_id con conexión admin). Un Ctrl-C/SIGKILL entre
+      la creación y el `finally` deja un tenant `[eval]` con datos SINTÉTICOS en la DB. Sin
+      implicación de confidencialidad (nada real). Mitigación futura: barrido de tenants `[eval]`
+      viejos al arrancar, o DB de test separada.
+   2. **Marca `[VERIFICAR]` ANTEPUESTA no detectada (heredado de CP9):** `scan_citations` solo mira
+      la ventana POSTERIOR a la cita; "[VERIFICAR] Ley 100 de 1993" cuenta como sin respaldo. El
+      estilo de la casa pone la marca DESPUÉS, así que en la práctica no ocurre; pero si el modelo
+      cambiara a marca-antepuesta, `compare_reports` podría leer una REGRESIÓN falsa (suben citas
+      sin respaldo). Métrica acotada; documentado. Se cierra arreglando el escáner de CP9 (fuera
+      de alcance de CP-E4).
+   3. **El eval mide DISCIPLINA, no exactitud sustantiva:** las señales son deterministas
+      (citas sin respaldo, cierre del diagnóstico, borrador) — NO juzgan si el derecho es correcto
+      (eso exigiría un LLM-juez o casos con respuesta de oro anotada por un abogado, fuera de v1).
+      Es un semáforo de regresión de FORMA/DISCIPLINA, no un juez de fondo. Declarado.
+   4. **Casos de oro sintéticos, cobertura mínima (3):** cubren formas comunes (caducidad/
+      prescripción/excepción de contrato) para ejercitar el pipeline y el verificador de citas; no
+      pretenden cobertura jurídica amplia. Ampliar el set es trabajo incremental sin riesgo.
+   5. **Datos reales de cliente = candado fail-closed:** correr el banco sobre expedientes reales
+      exige `allow_eval_real_data` (default OFF). En v1 no hay pantalla ni caso que lea matters
+      reales; el candado protege un camino futuro. Encenderlo para datos reales requiere aprobación
+      explícita de Pipe (regla dura del plan de olas).
