@@ -21,7 +21,7 @@ sección detallada más abajo con endpoints y comportamiento. Orden sugerido:
    `GET/POST/PUT/DELETE /api/personas`. **COMPLETADO** (commit `557478c`). Detalle en la sección "CP-E3" arriba de todo.
 3. **Tarjetas de "Recomendaciones de Mia" (CP-V2)** — `GET /api/dreams/prescriptions` +
    `POST .../{id}/decision`. **COMPLETADO** (commit `c61912f`). Detalle en la sección "CP-V2".
-4. **Automatizaciones (CP-P2)** — plantillas + sugerencias consent-first (`/api/automations/*`).
+4. **Automatizaciones (CP-P2)** — plantillas + sugerencias consent-first (`/api/automations/*`). **COMPLETADO** (commit `5642a73`).
 5. **Conectar Microsoft 365 / Google (CP-P3)** — botón "Conectar" (`/api/mailbox/*`). OJO:
    la ACTIVACIÓN real (llaves OAuth) está APLAZADA por decisión de Pipe hasta el producto
    final; puedes dejar la UI lista pero no es urgente.
@@ -1050,6 +1050,19 @@ la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
 - **`npm run build` verde** (12/12 páginas).
 
 **Pendiente de Pipe (capa 3 en vivo):** crear una misión real ("Preparar la contestación"), editar hitos propuestos y marcar avance en un asunto con documentos.
+
+### 2026-07-04 — CP-P2: automatizaciones consent-first (capa 3)
+
+**Qué se construyó** (commit `5642a73`, ya en `origin/main`):
+
+- Sección **Automatizaciones** en el Panel (`AutomationsSection.tsx` + `dashboard/page.tsx`).
+- **Sugerencias de Mia:** `GET /api/automations/suggestions` con botones Activar / Descartar; aviso ámbar en plantillas que tocan plazos procesales.
+- **Automatizaciones activas:** lista con resumen en llano (p. ej. "3 días de anticipación") y Quitar (`DELETE`).
+- **Crear automatización:** catálogo de plantillas (`GET /api/automations/blueprints`) con formularios expandibles por campo (`entero`/`texto`/`opcion`); `POST` con `plantilla` + `valores`. Errores 422 mostrados tal cual.
+- §G: sin "blueprint", "cron" ni "job" en pantalla.
+- **`npm run build` verde** (12/12 páginas).
+
+**Pendiente de Pipe (capa 3 en vivo):** tener un recordatorio procesal pendiente para que Mia proponga el aviso anticipado; aceptar/descartar en pantalla y verificar que queda activa.
 
 ### Corrección post-Cursor (Claude Code · verificación de la entrega integrada)
 
