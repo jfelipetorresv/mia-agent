@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
 import MicButton from "../../_components/MicButton";
+import MissionBoard from "../../_components/MissionBoard";
 
 type Doc = { id: string; name: string; type?: string; created_at?: string };
 type Msg = { role: "user" | "mia"; text: string };
@@ -42,6 +43,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   // CP-Z1b: dictado por voz — el texto transcrito se agrega al campo sin borrar
   // lo ya escrito; los avisos ("no se escuchó voz") van en ámbar bajo el input.
   const [dictationNotice, setDictationNotice] = useState("");
+  const [view, setView] = useState<"chat" | "plan">("chat");
   const dictation = useDictation(
     (text) => {
       setDictationNotice("");
@@ -239,6 +241,16 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex gap-1 border-b border-gray-100 px-6 pt-4">
+          <TabBtn active={view === "chat"} onClick={() => setView("chat")}>Consulta</TabBtn>
+          <TabBtn active={view === "plan"} onClick={() => setView("plan")}>Plan</TabBtn>
+        </div>
+        {view === "plan" ? (
+          <div className="flex-1 overflow-auto px-6 py-6">
+            <MissionBoard matterId={matterId} />
+          </div>
+        ) : (
+          <>
         <div className="flex-1 space-y-4 overflow-auto px-6 py-6">
           {messages.length === 0 ? (
             <p className="mt-20 text-center text-gray-300">Hazle una pregunta a Mia sobre este asunto.</p>
@@ -302,6 +314,8 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
             <p className="mt-2 text-xs text-amber-700">{dictationNotice}</p>
           ) : null}
         </div>
+          </>
+        )}
       </div>
 
       <div className="flex w-[280px] shrink-0 flex-col border-l border-gray-100 px-5 py-6">
@@ -336,5 +350,19 @@ function SummaryRow({ label, text }: { label: string; text?: string }) {
       <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</div>
       <div className="text-sm text-gray-700">{text}</div>
     </div>
+  );
+}
+
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+        active ? "border-gray-900 text-gray-900" : "border-transparent text-gray-400 hover:text-gray-600"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
