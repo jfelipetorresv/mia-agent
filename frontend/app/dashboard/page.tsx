@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
+import AutomationsSection from "@/app/_components/AutomationsSection";
 
 type Stats = {
   matters_active?: number;
@@ -723,6 +724,11 @@ export default function DashboardPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Automatizaciones</h2>
+        <AutomationsSection />
       </section>
 
       <section>
