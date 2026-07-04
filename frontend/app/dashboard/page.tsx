@@ -65,6 +65,15 @@ type SpeechStatus = {
   progreso: SpeechProgress | null;
 };
 
+// CP-E1 · tope de gasto de IA mensual (GET/PUT /api/policy/budget).
+type BudgetStatus = {
+  monthly_budget_usd: number | null;
+  spent_this_month_usd: number;
+  remaining_usd: number | null;
+  over_budget: boolean;
+  unlimited: boolean;
+};
+
 function fmt(s?: string | null): string {
   if (!s) return "—";
   try {
@@ -117,12 +126,29 @@ export default function DashboardPage() {
   // CP-V1: tarifa horaria del despacho (editable desde la tarjeta de valor).
   const [rateInput, setRateInput] = useState("");
   const [rateMsg, setRateMsg] = useState("");
+  // CP-E1: tope de gasto de IA mensual del despacho.
+  const [budget, setBudget] = useState<BudgetStatus | null>(null);
+  const [budgetInput, setBudgetInput] = useState("");
+  const [sinLimite, setSinLimite] = useState(true);
+  const [budgetMsg, setBudgetMsg] = useState("");
+  const [budgetBusy, setBudgetBusy] = useState(false);
 
   async function loadFolders() {
     try {
       setFolders(await apiGet<FoldersData>("/api/folders/detected"));
     } catch {
       setFolders(null);
+    }
+  }
+
+  async function loadBudget() {
+    try {
+      const data = await apiGet<BudgetStatus>("/api/policy/budget");
+      setBudget(data);
+      setSinLimite(data.unlimited);
+      setBudgetInput(data.unlimited || data.monthly_budget_usd == null ? "" : String(data.monthly_budget_usd));
+    } catch {
+      setBudget(null);
     }
   }
 
@@ -136,6 +162,7 @@ export default function DashboardPage() {
     loadFolders();
     apiGet<ObsidianStatus>("/api/obsidian/status").then(setObsidian).catch(() => setObsidian(null));
     apiGet<SpeechStatus>("/api/speech/status").then(setSpeech).catch(() => setSpeech(null));
+    loadBudget();
   }
 
   useEffect(() => {
@@ -173,6 +200,33 @@ export default function DashboardPage() {
       setPolicyMsg(`Listo: Mia trabajará con "${res.nombre}".`);
     } catch {
       setPolicyMsg("No se pudo cambiar el motor. Intenta de nuevo.");
+    }
+  }
+
+  // CP-E1: fija o quita el tope de gasto de IA y refresca la tarjeta con la respuesta.
+  async function saveBudget() {
+    setBudgetMsg("");
+    if (!sinLimite) {
+      const amount = Number(budgetInput.replace(",", "."));
+      if (!budgetInput.trim() || !Number.isFinite(amount) || amount <= 0) {
+        setBudgetMsg("Escribe un tope válido en USD.");
+        return;
+      }
+    }
+    setBudgetBusy(true);
+    try {
+      const res = await apiSend<BudgetStatus>("PUT", "/api/policy/budget", {
+        monthly_budget_usd: sinLimite ? null : Number(budgetInput.replace(",", ".")),
+      });
+      setBudget(res);
+      setSinLimite(res.unlimited);
+      setBudgetInput(res.unlimited || res.monthly_budget_usd == null ? "" : String(res.monthly_budget_usd));
+      setBudgetMsg(sinLimite ? "Sin tope de gasto este mes." : "Tope guardado.");
+    } catch (err: unknown) {
+      const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+      setBudgetMsg(msg || "No se pudo guardar el tope. Intenta de nuevo.");
+    } finally {
+      setBudgetBusy(false);
     }
   }
 
@@ -647,38 +701,121 @@ export default function DashboardPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Valor entregado este mes</h2>
-        <div className="rounded-lg border border-gray-100 p-5">
-          <div className="text-3xl font-semibold">
-            USD {Number(s.value?.net_usd ?? 0).toFixed(2)}
-            <span className="ml-2 text-sm font-normal text-gray-500">de valor neto estimado</span>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div>
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Valor entregado este mes</h2>
+            <div className="rounded-lg border border-gray-100 p-5">
+              <div className="text-3xl font-semibold">
+                USD {Number(s.value?.net_usd ?? 0).toFixed(2)}
+                <span className="ml-2 text-sm font-normal text-gray-500">de valor neto estimado</span>
+              </div>
+              <p className="mt-2 text-sm text-gray-600">
+                {Number(s.value?.hours_saved ?? 0).toFixed(1)} horas ahorradas (estimado) ×
+                USD {Number(s.value?.hourly_rate_usd ?? 0).toFixed(0)}/hora =
+                USD {Number(s.value?.gross_usd ?? 0).toFixed(2)}, menos
+                USD {Number(s.value?.cost_usd ?? 0).toFixed(2)} de costo de la inteligencia artificial.
+              </p>
+              <p className="mt-1 text-sm text-gray-500">
+                Este mes: {s.value?.drafts_approved ?? 0} borradores aprobados y {s.value?.consultations ?? 0} consultas.
+                El cálculo usa estimados configurables{s.value?.is_default_config ? " (valores de fábrica)" : ""}.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <label htmlFor="hourly-rate" className="text-sm text-gray-600">Tu tarifa horaria (USD):</label>
+                <input
+                  id="hourly-rate"
+                  value={rateInput}
+                  onChange={(e) => setRateInput(e.target.value)}
+                  placeholder={String(s.value?.hourly_rate_usd ?? 100)}
+                  inputMode="decimal"
+                  className="w-24 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-gray-400"
+                />
+                <button
+                  onClick={saveRate}
+                  className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
+                >
+                  Guardar
+                </button>
+                {rateMsg ? <span className="text-sm text-gray-500">{rateMsg}</span> : null}
+              </div>
+            </div>
           </div>
-          <p className="mt-2 text-sm text-gray-600">
-            {Number(s.value?.hours_saved ?? 0).toFixed(1)} horas ahorradas (estimado) ×
-            USD {Number(s.value?.hourly_rate_usd ?? 0).toFixed(0)}/hora =
-            USD {Number(s.value?.gross_usd ?? 0).toFixed(2)}, menos
-            USD {Number(s.value?.cost_usd ?? 0).toFixed(2)} de costo de la inteligencia artificial.
-          </p>
-          <p className="mt-1 text-sm text-gray-500">
-            Este mes: {s.value?.drafts_approved ?? 0} borradores aprobados y {s.value?.consultations ?? 0} consultas.
-            El cálculo usa estimados configurables{s.value?.is_default_config ? " (valores de fábrica)" : ""}.
-          </p>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <label className="text-sm text-gray-600">Tu tarifa horaria (USD):</label>
-            <input
-              value={rateInput}
-              onChange={(e) => setRateInput(e.target.value)}
-              placeholder={String(s.value?.hourly_rate_usd ?? 100)}
-              inputMode="decimal"
-              className="w-24 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-gray-400"
-            />
-            <button
-              onClick={saveRate}
-              className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
-            >
-              Guardar
-            </button>
-            {rateMsg ? <span className="text-sm text-gray-500">{rateMsg}</span> : null}
+
+          <div>
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Tope de gasto de IA este mes</h2>
+            <div className="rounded-lg border border-gray-100 p-5">
+              {budget === null ? (
+                <p className="text-sm text-gray-400">No se pudo cargar el tope de gasto. Recarga la página.</p>
+              ) : (
+                <>
+                  {budget.unlimited ? (
+                    <p className="text-sm font-medium text-gray-700">Sin tope de gasto este mes</p>
+                  ) : (
+                    <p className="text-sm font-medium text-gray-700">
+                      Tope fijado: USD {Number(budget.monthly_budget_usd ?? 0).toFixed(2)}
+                    </p>
+                  )}
+                  <p className="mt-2 text-sm text-gray-600">
+                    Gasto este mes: USD {Number(budget.spent_this_month_usd).toFixed(2)}
+                    {!budget.unlimited && budget.remaining_usd != null ? (
+                      <> · Restante: USD {Number(budget.remaining_usd).toFixed(2)}</>
+                    ) : null}
+                  </p>
+                  {budget.over_budget ? (
+                    <p role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      Se alcanzó el tope; los turnos están en pausa.
+                    </p>
+                  ) : null}
+                  <div className="mt-4 space-y-3">
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div>
+                        <label htmlFor="budget-cap" className="mb-1 block text-sm text-gray-600">
+                          Tope mensual (USD)
+                        </label>
+                        <input
+                          id="budget-cap"
+                          value={budgetInput}
+                          onChange={(e) => setBudgetInput(e.target.value)}
+                          disabled={sinLimite || budgetBusy}
+                          placeholder="Ej.: 100"
+                          inputMode="decimal"
+                          className="w-28 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-400"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={saveBudget}
+                        disabled={budgetBusy}
+                        className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                      >
+                        {budgetBusy ? "Guardando…" : "Guardar"}
+                      </button>
+                    </div>
+                    <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={sinLimite}
+                        onChange={(e) => setSinLimite(e.target.checked)}
+                        disabled={budgetBusy}
+                        className="h-4 w-4 rounded border-gray-300 outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1"
+                      />
+                      Sin límite
+                    </label>
+                  </div>
+                  {budgetMsg ? (
+                    <p
+                      role={budgetMsg === "Tope guardado." || budgetMsg === "Sin tope de gasto este mes." ? "status" : "alert"}
+                      className={`mt-3 text-sm ${
+                        budgetMsg === "Tope guardado." || budgetMsg === "Sin tope de gasto este mes."
+                          ? "text-gray-500"
+                          : "text-amber-700"
+                      }`}
+                    >
+                      {budgetMsg}
+                    </p>
+                  ) : null}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </section>
