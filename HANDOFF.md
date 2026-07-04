@@ -16,17 +16,11 @@ quede trazabilidad de ambas revisiones.
 El backend de estos puntos ya está en `origin/main`; falta SOLO la UI. Cada uno tiene su
 sección detallada más abajo con endpoints y comportamiento. Orden sugerido:
 
-1. **Control del tope de gasto de IA (CP-E1)** — `GET/PUT /api/policy/budget`. Ya empezado:
-   hay cambios SIN COMMITEAR en `frontend/app/dashboard/page.tsx` (tu WIP de la tarjeta de
-   tope). **Termínalo y commítealo por separado** (no lo mezclamos con el backend). Detalle
-   en la sección "CP-E1 · control del tope en el Panel".
+1. **Control del tope de gasto de IA (CP-E1)** — `GET/PUT /api/policy/budget`. **COMPLETADO** (commit `7030e5e`). Detalle en la sección "CP-E1 · control del tope en el Panel".
 2. **Pantalla de gestión de Personas jurídicas (CP-E3, lo más nuevo)** — CRUD
-   `GET/POST/PUT/DELETE /api/personas`. Lista editable de roles (litigante, tributarista,
-   revisor de citas + crear). Detalle en la sección "CP-E3" arriba de todo. **Sin jerga:**
-   `model_tier` se muestra como "El motor del despacho" vs "Siempre el motor local — más
-   privado"; nunca nombres de modelo.
+   `GET/POST/PUT/DELETE /api/personas`. **COMPLETADO** (commit `557478c`). Detalle en la sección "CP-E3" arriba de todo.
 3. **Tarjetas de "Recomendaciones de Mia" (CP-V2)** — `GET /api/dreams/prescriptions` +
-   `POST .../{id}/decision`. Sección en el Panel. Detalle en la sección "CP-V2".
+   `POST .../{id}/decision`. **COMPLETADO** (commit `c61912f`). Detalle en la sección "CP-V2".
 4. **Automatizaciones (CP-P2)** — plantillas + sugerencias consent-first (`/api/automations/*`).
 5. **Conectar Microsoft 365 / Google (CP-P3)** — botón "Conectar" (`/api/mailbox/*`). OJO:
    la ACTIVACIÓN real (llaves OAuth) está APLAZADA por decisión de Pipe hasta el producto
@@ -142,7 +136,7 @@ capa 3 al final del archivo.
   para que la regla dura preceda a la voz) + 1 NOTA (el candado 'local' devuelve el motor
   local por CONSTRUCCIÓN, no por posición de la cadena) corregidos y re-verificados ANTES
   del commit. Ver memory/progress.md sesión 32.
-- Capa 3: PENDIENTE — Cursor construye la pantalla de gestión de personas descrita arriba.
+- Capa 3: COMPLETADO — ver "Hallazgos de Cursor (capa 3)" · 2026-07-04 (CP-E3).
 
 ---
 
@@ -247,7 +241,7 @@ capa 3 al final del archivo.
   persistía sobre la fila tenant_settings que todo tenant ya tiene → jsonb_set
   corregido) + 1 MENOR (borde de mes corrido 5h por la zona del servidor)
   corregidos ANTES del commit y re-verificados. Ver memory/progress.md sesión 30.
-- Capa 3: PENDIENTE — Cursor construye el control del tope descrito arriba.
+- Capa 3: COMPLETADO — ver "Hallazgos de Cursor (capa 3)" · 2026-07-04 (CP-E1).
 
 ---
 
@@ -480,7 +474,7 @@ capa 3 al final del archivo.
   ese control) → rediseñada al gasto real pagado + el selector "Motor de IA"
   del Panel de control, verificado que existe y guarda. Menores H5-H7 y
   residuales R1/R2 también cerrados (Riesgo #44).
-- Capa 3 (Cursor): PENDIENTE — construir las tarjetas descritas arriba.
+- Capa 3: COMPLETADO — ver "Hallazgos de Cursor (capa 3)" · 2026-07-04 (CP-V2).
 
 ---
 
@@ -925,6 +919,38 @@ navegador para errores de Aprobar/Rechazar (patrón pre-existente); el resto de
 la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
 
 **Verificación:** `npm run build` verde (11/11 páginas, sin errores de tipos).
+
+### 2026-07-04 — CP-E1 + CP-E3 + CP-V2: UI pendiente construida (capa 3)
+
+**Qué se construyó (3 commits separados, ya en `origin/main`):**
+
+1. **CP-E1 · Tope de gasto de IA** (`frontend/app/dashboard/page.tsx`):
+   - Tarjeta "Tope de gasto de IA este mes" junto a "Valor entregado este mes" (grid de 2 columnas en pantallas grandes).
+   - `GET/PUT /api/policy/budget`: input USD + checkbox "Sin límite"; muestra gasto del mes y restante cuando hay tope.
+   - Aviso ámbar con `role="alert"` cuando `over_budget`: "Se alcanzó el tope; los turnos están en pausa."
+   - Errores del backend (`detail` vía `ApiError`) se muestran tal cual en ámbar.
+   - Verificado en vivo: registro de usuario de prueba → PUT tope 100 USD → respuesta coherente (`unlimited=false`, `monthly_budget_usd=100`).
+
+2. **CP-E3 · Personas jurídicas** (`frontend/app/personas/page.tsx`, enlace en `Sidebar.tsx`):
+   - Pantalla CRUD completa: lista las 3 personas de fábrica en la primera carga (`GET /api/personas` siembra).
+   - Crear, editar (formulario inline), eliminar (con confirmación).
+   - §G: `model_tier` como selector "El motor del despacho" / "Siempre el motor local — más privado" — sin nombres de modelo.
+   - Etiquetas en llano: `role_prompt` → "Cómo debe razonar y hablar esta persona"; `summon_phrases` → "Frases con las que la llamas en el chat".
+   - Errores 422 del backend se propagan tal cual (`ApiError.detail`).
+   - Verificado en vivo: API devuelve Litigante, Tributarista, Revisor de citas tras registro.
+
+3. **CP-V2 · Recomendaciones de Mia** (`frontend/app/dashboard/page.tsx`):
+   - Sección "Recomendaciones de Mia" en el Panel (encima de valor/tope).
+   - `GET /api/dreams/prescriptions` + `POST .../{id}/decision` con botones "Lo haré" / "Descartar".
+   - Evidencia expandible (`aria-expanded`); matiz ámbar para `recurring` con `age_days`.
+   - Estado vacío en llano: "Mia aún no tiene recomendaciones — necesita más actividad para hablar con evidencia."
+   - Verificado en vivo: tenant nuevo → lista vacía (0 recomendaciones); rutas `/dashboard` y `/personas` responden 200.
+
+**Build:** `npm run build` verde tras cada frente (12/12 páginas al final, sin errores de tipos).
+
+**Deuda §G sin tocar (pre-existente):** tarjeta "Pinecone" (vectores, Index) y sección "Salud del second brain" (Skills) siguen con jerga técnica — anotado en CP7.
+
+**Pendiente de Pipe (capa 3 en vivo, no automatizable aquí):** probar aceptar/descartar una recomendación real cuando el cron semanal haya generado tarjetas; invocar una persona editada en el chat de un asunto.
 
 ### Corrección post-Cursor (Claude Code · verificación de la entrega integrada)
 
