@@ -74,6 +74,19 @@ type BudgetStatus = {
   unlimited: boolean;
 };
 
+// CP-V2 · recomendaciones del auto-diagnóstico semanal (GET /api/dreams/prescriptions).
+type Prescription = {
+  id: string;
+  category: string;
+  headline: string;
+  prescription: string;
+  evidence: string[];
+  dollar_impact: number | null;
+  time_impact_mins: number | null;
+  status: "new" | "recurring";
+  age_days: number;
+};
+
 function fmt(s?: string | null): string {
   if (!s) return "—";
   try {
@@ -132,6 +145,12 @@ export default function DashboardPage() {
   const [sinLimite, setSinLimite] = useState(true);
   const [budgetMsg, setBudgetMsg] = useState("");
   const [budgetBusy, setBudgetBusy] = useState(false);
+  // CP-V2: recomendaciones del auto-diagnóstico semanal.
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [prescriptionsLoaded, setPrescriptionsLoaded] = useState(false);
+  const [expandedRx, setExpandedRx] = useState<string | null>(null);
+  const [rxMsg, setRxMsg] = useState("");
+  const [rxBusy, setRxBusy] = useState<string | null>(null);
 
   async function loadFolders() {
     try {
@@ -152,6 +171,17 @@ export default function DashboardPage() {
     }
   }
 
+  async function loadPrescriptions() {
+    try {
+      const data = await apiGet<{ prescriptions: Prescription[] }>("/api/dreams/prescriptions");
+      setPrescriptions(data.prescriptions || []);
+    } catch {
+      setPrescriptions([]);
+    } finally {
+      setPrescriptionsLoaded(true);
+    }
+  }
+
   async function load() {
     const data = await apiGet<Stats>("/api/dashboard/stats");
     setS(data);
@@ -163,6 +193,7 @@ export default function DashboardPage() {
     apiGet<ObsidianStatus>("/api/obsidian/status").then(setObsidian).catch(() => setObsidian(null));
     apiGet<SpeechStatus>("/api/speech/status").then(setSpeech).catch(() => setSpeech(null));
     loadBudget();
+    loadPrescriptions();
   }
 
   useEffect(() => {
@@ -200,6 +231,23 @@ export default function DashboardPage() {
       setPolicyMsg(`Listo: Mia trabajará con "${res.nombre}".`);
     } catch {
       setPolicyMsg("No se pudo cambiar el motor. Intenta de nuevo.");
+    }
+  }
+
+  // CP-V2: el abogado acepta o descarta una recomendación; desaparece de la lista.
+  async function decidePrescription(id: string, action: "accept" | "dismiss") {
+    setRxMsg("");
+    setRxBusy(id);
+    try {
+      await apiSend("POST", `/api/dreams/prescriptions/${id}/decision`, { action });
+      setPrescriptions((items) => items.filter((p) => p.id !== id));
+      if (expandedRx === id) setExpandedRx(null);
+    } catch (err: unknown) {
+      const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+      setRxMsg(msg || "No se pudo registrar tu decisión. Intenta de nuevo.");
+      await loadPrescriptions();
+    } finally {
+      setRxBusy(null);
     }
   }
 
@@ -698,6 +746,86 @@ export default function DashboardPage() {
             </li>
           ))}
         </ul>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Recomendaciones de Mia</h2>
+        <p className="mb-3 text-sm text-gray-500">
+          Diagnóstico de la última consolidación semanal — con evidencia real de la actividad del despacho.
+        </p>
+        {rxMsg ? <p role="alert" className="mb-3 text-sm text-amber-700">{rxMsg}</p> : null}
+        {!prescriptionsLoaded ? (
+          <p className="text-sm text-gray-400">Cargando recomendaciones…</p>
+        ) : prescriptions.length === 0 ? (
+          <p className="rounded-lg border border-gray-100 px-4 py-5 text-sm text-gray-400">
+            Mia aún no tiene recomendaciones — necesita más actividad para hablar con evidencia.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {prescriptions.map((p) => {
+              const expanded = expandedRx === p.id;
+              return (
+                <li key={p.id} className="rounded-xl border border-gray-100 px-4 py-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-gray-900">{p.headline}</div>
+                      {p.status === "recurring" && p.age_days > 0 ? (
+                        <p className="mt-1 text-xs font-medium text-amber-700">
+                          Problema recurrente · lleva {p.age_days} {p.age_days === 1 ? "día" : "días"}
+                        </p>
+                      ) : null}
+                      <p className="mt-2 text-sm text-gray-600">{p.prescription}</p>
+                      {p.dollar_impact != null || p.time_impact_mins != null ? (
+                        <p className="mt-2 text-sm text-gray-500">
+                          {p.dollar_impact != null ? `Impacto estimado: USD ${p.dollar_impact.toFixed(0)}/mes` : null}
+                          {p.dollar_impact != null && p.time_impact_mins != null ? " · " : null}
+                          {p.time_impact_mins != null ? `${p.time_impact_mins} min/mes ahorrables` : null}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                  {p.evidence?.length ? (
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        aria-expanded={expanded}
+                        onClick={() => setExpandedRx(expanded ? null : p.id)}
+                        className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                      >
+                        {expanded ? "Ocultar evidencia" : "Ver evidencia"}
+                      </button>
+                      {expanded ? (
+                        <ul className="mt-2 space-y-1 text-sm text-gray-500">
+                          {p.evidence.map((line, i) => (
+                            <li key={i}>· {line}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => decidePrescription(p.id, "accept")}
+                      disabled={rxBusy === p.id}
+                      className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                    >
+                      Lo haré
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => decidePrescription(p.id, "dismiss")}
+                      disabled={rxBusy === p.id}
+                      className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                    >
+                      Descartar
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
 
       <section>
