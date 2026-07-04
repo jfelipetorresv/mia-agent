@@ -129,6 +129,20 @@ def _last_user_message(state: MatterState) -> str:
     return ""
 
 
+def _persona_voice(state: MatterState) -> str:
+    """CP-E3: bloque de voz de la persona invocada en el turno (o "" si no hay). Se
+    pasa a build_graph_system para enmarcar la instrucción de cada nodo."""
+    persona = state.get("persona") or {}
+    return str(persona.get("voice") or "") if isinstance(persona, dict) else ""
+
+
+def _persona_alias(state: MatterState) -> Optional[str]:
+    """CP-E3: alias de motor que impone la persona (ya acotado por la política; None =
+    sin override). Se pasa a _llm(model=...)."""
+    persona = state.get("persona") or {}
+    return persona.get("alias") if isinstance(persona, dict) else None
+
+
 # CP6: _system_with_soul/_render_soul se retiraron — la identidad (SOUL.md) entra
 # como capa L1 vía prompt_builder.build_graph_system (una sola fuente de verdad).
 
@@ -281,13 +295,17 @@ class MatterGraphBuilder:
     async def _llm(self, messages: list[dict], *, task: str = "main",
                    state: Optional[MatterState] = None, md: Optional[dict] = None,
                    shrink: Optional[Callable[[], list[dict]]] = None,
-                   node: str = "") -> tuple[str, Any]:
+                   node: str = "", model: Optional[str] = None) -> tuple[str, Any]:
         """Llama al LLM por el gateway (cadena de fallback H.5) sin bloquear el event loop.
 
-        Ya NO se fija `model`: call_llm recorre la cadena del task (claude-sonnet→mia-local para
-        'main'). Si el prompt excede la ventana (CONTEXT_TOO_LONG) y aún no se comprimió en este
-        turno (TurnLLMState en md['llm_turn']), reduce UNA vez y reintenta desde el primer
-        proveedor de la cadena. El resto de errores se propaga tal cual (LLMError con su kind).
+        CP-E3: `model` es el alias que impone la persona del turno (o None = sin override).
+        Cuando lo hay, es un alias YA acotado por la política del despacho (personas.
+        resolve_persona_alias — nunca escala a la nube); se pasa TAL CUAL a call_llm en la
+        llamada normal Y en el reintento por contexto largo (misma ruta de motor en ambas).
+        Sin persona (`model=None`) call_llm recorre la cadena del task (claude-sonnet→mia-local
+        para 'main'), idéntico a hoy. Si el prompt excede la ventana (CONTEXT_TOO_LONG) y aún no
+        se comprimió en este turno (TurnLLMState en md['llm_turn']), reduce UNA vez y reintenta
+        desde el primer proveedor de la cadena. El resto de errores se propaga tal cual.
 
         CP1 (Riesgo #33): `shrink` es un callable SIN args que devuelve los messages REDUCIDOS.
         Los nodos con prompt monolítico de 2 mensajes (analysis/draft) lo pasan para recortar su
@@ -299,7 +317,7 @@ class MatterGraphBuilder:
         con 4 nodos LLM en el turno, cada especialista conserva su propio rescate. Dentro
         del MISMO nodo sigue siendo una sola compresión (anti-bucle intacto)."""
         try:
-            resp = await asyncio.to_thread(llm.call_llm, messages, task=task)
+            resp = await asyncio.to_thread(llm.call_llm, messages, task=task, model=model)
         except Exception as exc:  # noqa: BLE001 — solo rescatamos CONTEXT_TOO_LONG; el resto re-lanza
             kind = exc.kind if isinstance(exc, llm.LLMError) else classify_llm_error(exc)
             turn = TurnLLMState.from_dict((md or {}).get("llm_turn"))
@@ -332,7 +350,7 @@ class MatterGraphBuilder:
             logger.warning("call_llm context_too_long (task=%s) → contexto %s, reintento "
                            "desde el 1er proveedor de la cadena", task,
                            "recortado por el nodo" if shrink is not None else "comprimido")
-            resp = await asyncio.to_thread(llm.call_llm, reduced, task=task)
+            resp = await asyncio.to_thread(llm.call_llm, reduced, task=task, model=model)
         content = resp.choices[0].message.content or ""
         return content, getattr(resp, "usage", None)
 
@@ -399,7 +417,8 @@ class MatterGraphBuilder:
                 {"role": "system", "content": prompt_builder.build_graph_system(
                     state, "facts", matter_context=_matter_context_for(
                         {"documents": doc_list,
-                         "knowledge": state.get("knowledge") or []}))},
+                         "knowledge": state.get("knowledge") or []}),
+                    persona_voice=_persona_voice(state))},
                 {"role": "user", "content": f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"},
             ]
 
@@ -408,7 +427,8 @@ class MatterGraphBuilder:
             return _messages(context_recovery.shrink_documents(docs, budget))
 
         facts, usage = await self._llm(
-            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="facts")
+            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="facts",
+            model=_persona_alias(state))
         md.update(stage="facts", facts=facts)
         _accum_usage(md, usage)
         return {"metadata": md}
@@ -432,7 +452,8 @@ class MatterGraphBuilder:
             parts.append("Elabora la memoria de investigación.")
             return [
                 {"role": "system", "content": prompt_builder.build_graph_system(
-                    state, "research", matter_context=_matter_context_for(state))},
+                    state, "research", matter_context=_matter_context_for(state),
+                    persona_voice=_persona_voice(state))},
                 {"role": "user", "content": "\n\n".join(parts)},
             ]
 
@@ -442,7 +463,8 @@ class MatterGraphBuilder:
             return _messages(context_recovery.shrink_text(facts, budget, protect_tail=True))
 
         memo, usage = await self._llm(
-            _messages(facts), task="main", state=state, md=md, shrink=_shrink, node="research")
+            _messages(facts), task="main", state=state, md=md, shrink=_shrink, node="research",
+            model=_persona_alias(state))
         md.update(stage="research", research=memo)
         # Fuentes compactas: las consume el especialista de verificación (respaldo de
         # citas) y quedan en la traza; las jurisdicciones usadas, por transparencia.
@@ -482,7 +504,8 @@ class MatterGraphBuilder:
                 {"role": "system", "content": prompt_builder.build_graph_system(
                     state, "analysis", matter_context=_matter_context_for(
                         {"documents": doc_list,
-                         "knowledge": knowledge if know_section else []}))},
+                         "knowledge": knowledge if know_section else []}),
+                    persona_voice=_persona_voice(state))},
                 {"role": "user", "content": user},
             ]
 
@@ -506,7 +529,8 @@ class MatterGraphBuilder:
             return _messages(context_recovery.shrink_documents(docs, budget), know_small)
 
         diagnosis, usage = await self._llm(
-            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="analysis")
+            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="analysis",
+            model=_persona_alias(state))
         md.update(stage="analysis", diagnosis=diagnosis)
         # CP6: cierre estructurado del diagnóstico (problema/normas/riesgo) para la
         # Pantalla 2. Best-effort: si el modelo no emitió el bloque, summary es None
@@ -539,7 +563,7 @@ class MatterGraphBuilder:
             return [
                 {"role": "system", "content": prompt_builder.build_graph_system(
                     state, "draft", matter_context=_matter_context_for(state),
-                    playbook_index=index)},
+                    playbook_index=index, persona_voice=_persona_voice(state))},
                 {"role": "user", "content": "\n\n".join(parts)},
             ]
 
@@ -556,7 +580,8 @@ class MatterGraphBuilder:
             return _messages(parts, index=index_small)
 
         draft, usage = await self._llm(
-            _messages(user_parts), task="main", state=state, md=md, shrink=_shrink, node="draft")
+            _messages(user_parts), task="main", state=state, md=md, shrink=_shrink, node="draft",
+            model=_persona_alias(state))
         md["stage"] = "draft"
         md["activated_playbooks"] = activated
         _accum_usage(md, usage)
@@ -623,10 +648,11 @@ class MatterGraphBuilder:
         if status == "editing":
             final, usage = await self._llm([
                 {"role": "system", "content": prompt_builder.build_graph_system(
-                    state, "edit", matter_context=_matter_context_for(state))},
+                    state, "edit", matter_context=_matter_context_for(state),
+                    persona_voice=_persona_voice(state))},
                 {"role": "user", "content": f"Borrador:\n{draft}\n\nIndicaciones del abogado:\n"
                                             f"{decision.get('edits', '')}\n\nDevuelve el borrador corregido."},
-            ], task="main", state=state, md=md, node="edit")
+            ], task="main", state=state, md=md, node="edit", model=_persona_alias(state))
             _accum_usage(md, usage)
             # CP9: la edición pudo introducir citas nuevas — el especialista de
             # verificación pasa de nuevo (determinista, solo añade marcas).
