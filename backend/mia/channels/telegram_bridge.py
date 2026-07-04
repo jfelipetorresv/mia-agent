@@ -37,7 +37,7 @@ import sys
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-import httpx
+from .relay import RelayApiError, RelayClient
 
 logger = logging.getLogger("mia.channels.telegram")
 
@@ -81,8 +81,10 @@ class BridgeConfigError(Exception):
     """Configuración incompleta — el mensaje va dirigido al abogado, sin jerga."""
 
 
-class MiaApiError(Exception):
-    """El API de Mia no pudo responder (status inesperado o red caída)."""
+# El puente reusa el cliente de relay común (CP-E6): credenciales fuera del núcleo,
+# login JWT y re-login ante 401. `MiaApiError`/`MiaClient` se conservan como nombres
+# locales por compatibilidad (el gate y start_telegram.ps1 los usan).
+MiaApiError = RelayApiError
 
 
 @dataclass
@@ -143,113 +145,11 @@ def load_settings(env: dict[str, str] | None = None) -> BridgeSettings:
     )
 
 
-class MiaClient:
-    """Cliente HTTP hacia el API de Mia: login JWT + chat, con re-login ante 401.
-
-    ``http`` es inyectable (objeto con ``post(url, json=..., headers=...)`` async)
-    para que el gate pruebe todo sin red. El default es httpx.AsyncClient con
-    timeout de 300s (el motor por suscripción tarda 1-3 min por turno).
-    """
-
-    def __init__(self, api_url: str, email: str, password: str, http=None) -> None:
-        self.api_url = api_url.rstrip("/")
-        self._email = email
-        self._password = password
-        self._http = http or httpx.AsyncClient(
-            timeout=httpx.Timeout(HTTP_TIMEOUT_SECONDS, connect=30.0)
-        )
-        self._token: str | None = None
-
-    async def login(self) -> None:
-        resp = await self._http.post(
-            f"{self.api_url}/api/auth/login",
-            json={"email": self._email, "password": self._password},
-        )
-        if resp.status_code != 200:
-            raise MiaApiError(f"login → status {resp.status_code}")
-        self._token = resp.json()["token"]
-        logger.info("Sesión con el API de Mia iniciada.")
-
-    async def _post_chat(self, message: str, conversation_id: str | None):
-        payload: dict = {"message": message}
-        if conversation_id:
-            payload["conversation_id"] = conversation_id
-        return await self._http.post(
-            f"{self.api_url}/api/assistant/chat",
-            json=payload,
-            headers={"Authorization": f"Bearer {self._token}"},
-        )
-
-    async def chat(self, message: str, conversation_id: str | None = None) -> tuple[str, str]:
-        """Un turno contra /api/assistant/chat → (conversation_id, reply).
-
-        Si el API devuelve 401 (JWT vencido), renueva el token y reintenta UNA vez.
-        """
-        if not self._token:
-            await self.login()
-        resp = await self._post_chat(message, conversation_id)
-        if resp.status_code == 401:
-            logger.info("Token vencido — renovando sesión y reintentando el turno.")
-            self._token = None
-            await self.login()
-            resp = await self._post_chat(message, conversation_id)
-        if resp.status_code != 200:
-            raise MiaApiError(f"chat → status {resp.status_code}")
-        data = resp.json()
-        return data["conversation_id"], data["reply"]
-
-    async def _post_transcribe(self, audio: bytes):
-        return await self._http.post(
-            f"{self.api_url}/api/speech/transcribe",
-            files={"audio": ("nota-de-voz.ogg", audio, "audio/ogg")},
-            data={"pulir": "false"},
-            headers={"Authorization": f"Bearer {self._token}"},
-        )
-
-    async def transcribe(self, audio: bytes) -> str:
-        """Nota de voz (OGG/Opus) → texto, vía POST /api/speech/transcribe.
-
-        El STT corre 100% local en el servidor de Mia; el audio nunca sale de ahí.
-        Renueva el JWT y reintenta UNA vez ante 401. Devuelve texto (posiblemente
-        vacío si no se escuchó voz — el llamador lo maneja)."""
-        if not self._token:
-            await self.login()
-        resp = await self._post_transcribe(audio)
-        if resp.status_code == 401:
-            self._token = None
-            await self.login()
-            resp = await self._post_transcribe(audio)
-        if resp.status_code != 200:
-            raise MiaApiError(f"transcribe → status {resp.status_code}")
-        return (resp.json().get("text") or "").strip()
-
-    async def _post_synthesize(self, text: str):
-        return await self._http.post(
-            f"{self.api_url}/api/speech/synthesize",
-            json={"text": text},
-            headers={"Authorization": f"Bearer {self._token}"},
-        )
-
-    async def synthesize(self, text: str) -> bytes:
-        """Texto → nota de voz OGG/Opus, vía POST /api/speech/synthesize.
-
-        La síntesis es 100% local. Renueva el JWT y reintenta UNA vez ante 401.
-        Devuelve los bytes del audio (OGG/Opus)."""
-        if not self._token:
-            await self.login()
-        resp = await self._post_synthesize(text)
-        if resp.status_code == 401:
-            self._token = None
-            await self.login()
-            resp = await self._post_synthesize(text)
-        if resp.status_code != 200:
-            raise MiaApiError(f"synthesize → status {resp.status_code}")
-        return resp.content
-
-    async def aclose(self) -> None:
-        close = getattr(self._http, "aclose", None)
-        if close:
-            await close()
+class MiaClient(RelayClient):
+    """Cliente del puente de Telegram hacia el API de Mia. Toda la lógica (login JWT,
+    re-login ante 401, chat/transcribe/synthesize) vive en `RelayClient` (channels.relay),
+    reusable por cualquier canal. Se conserva la subclase como punto de extensión y por
+    el nombre que el gate y el runner ya usan."""
 
 
 class TelegramBridge:

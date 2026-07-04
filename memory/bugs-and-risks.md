@@ -1029,3 +1029,28 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
    6. **Carrera del compresor compartido en el swarm — CERRADA (M1, capa 2):** los workers pasan su
       propio `shrink` a `_llm` → nunca alcanzan `self._compressor` (stateful, compartido). Corregido
       y re-verificado antes del commit. Sin residual.
+
+## Riesgo #53 — CP-E6 (canales relay + MCP seguro): residuales aceptados (2026-07-04)
+   1. **Sellado de salida MCP cableado en la ACTIVACIÓN, no ahora (capa 2, MAYOR-andamiaje):**
+      `mcp/security.py` expone `seal_tool_output` (CP-S1), `scan_tool_description` (aviso de
+      inyección) y `write_token_file` (0600), TODOS probados por el gate, pero HOY sin llamador en
+      una ruta viva: no existe aún el cliente JSON-RPC que ejecute una tool y reciba su salida. Es
+      andamiaje honesto de la mitad "conexión en vivo diferida" (igual que el OAuth de correo en
+      CP-P3 quedó listo y apagado). **Regla al activar:** el cliente MCP en vivo DEBE (a) sellar toda
+      salida de servidor con `seal_tool_output` antes de que toque cualquier prompt, (b) pasar cada
+      descripción de tool por `scan_tool_description`, y (c) escribir cualquier token en disco con
+      `write_token_file`. Sin esos tres cableados, NO se enciende. Aceptado por el revisor como
+      andamiaje documentado; no cerrar "salida sellada" como vivo hasta el cableado.
+   2. **`build_safe_env` puede ser pisado por una env DECLARADA homónima de un secreto de sistema
+      (capa 2, NOTA):** si una entrada del catálogo declarara una variable llamada, p. ej., `PATH` o
+      `ANTHROPIC_API_KEY`, el merge la dejaría pasar al subproceso. Ninguna entrada curada lo hace
+      (solo `DMS_*`/`PROCESOS_*`), y el catálogo es curado (no lo edita el usuario). Disciplina a
+      mantener al agregar entradas: no declarar variables con nombre de credencial de la instalación.
+   3. **Permisos 0600 del token no verificados en Windows (capa 2, menor):** el bit POSIX es
+      informativo en Windows (plataforma real del proyecto); el aislamiento lo da la ACL del perfil
+      del usuario donde vive `$MIA_HOME`. El gate lo declara explícito (no finge 0600 en Windows).
+   BLOQUEANTE #1 (los `${VAR}` en `command`/`args` no se interpolaban ni se detectaban como
+   colgantes → fail-closed roto) y MAYOR #2 (`disable` prometía un `forget` inexistente) fueron
+   CORREGIDOS y re-verificados antes del commit: `resolve_server` ahora interpola y valida entorno +
+   comando + args con un resolver único y aborta ante cualquier colgante; `forget_server` + endpoint
+   borran las credenciales; `disable` pasó a jsonb_set atómico.
