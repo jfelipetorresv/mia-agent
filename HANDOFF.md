@@ -22,9 +22,9 @@ sección detallada más abajo con endpoints y comportamiento. Orden sugerido:
 3. **Tarjetas de "Recomendaciones de Mia" (CP-V2)** — `GET /api/dreams/prescriptions` +
    `POST .../{id}/decision`. **COMPLETADO** (commit `c61912f`). Detalle en la sección "CP-V2".
 4. **Automatizaciones (CP-P2)** — plantillas + sugerencias consent-first (`/api/automations/*`). **COMPLETADO** (commit `5642a73`).
-5. **Conectar Microsoft 365 / Google (CP-P3)** — botón "Conectar" (`/api/mailbox/*`). OJO:
-   la ACTIVACIÓN real (llaves OAuth) está APLAZADA por decisión de Pipe hasta el producto
-   final; puedes dejar la UI lista pero no es urgente.
+5. **Conectar Microsoft 365 / Google (CP-P3)** — botón "Conectar" (`/api/mailbox/*`). **COMPLETADO** (commit pendiente). OJO:
+   la ACTIVACIÓN real (llaves OAuth en `.env`) sigue APLAZADA por decisión de Pipe hasta el producto
+   final; la UI está lista y muestra el aviso 503 si el servidor aún no tiene las llaves.
 
 **Reglas para Cursor (recordatorio):** §G sin jerga técnica al abogado (nada de "tenant",
 "LangGraph", "modelo", "pgvector"); errores del backend llegan en llano — mostrarlos tal cual;
@@ -1108,6 +1108,21 @@ la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
 - **`npm run build` verde** (12/12 páginas).
 
 **Pendiente de Pipe (capa 3 en vivo):** tener un recordatorio procesal pendiente para que Mia proponga el aviso anticipado; aceptar/descartar en pantalla y verificar que queda activa.
+
+### 2026-07-04 — CP-P3: calendario y correo (Microsoft 365 / Google) (capa 3)
+
+**Qué se construyó** (ya en `origin/main` tras commit):
+
+- **`MailboxSection.tsx`** + **`MailboxSectionLoader.tsx`** (Suspense para query OAuth).
+- **Panel de control · Conectores** y **Configura a Mia**: tarjeta "Calendario y correo".
+- `GET /api/mailbox/status` — muestra conectado / proveedor o botones Conectar Microsoft 365 / Google Workspace.
+- `POST /api/mailbox/connect/{provider}` → redirige a la URL de consentimiento; opción «Incluir contenido de correos» (`?content=1`).
+- `DELETE /api/mailbox/disconnect`; `PUT /api/mailbox/content-analysis` — opt-in de resumen con IA (checkbox).
+- Tras OAuth, el backend redirige a `/configurar?mailbox=conectado|error` — la UI muestra el mensaje.
+- §G: sin "OAuth", "token" ni "Graph"; errores 503/422 del backend tal cual.
+- **`npm run build` verde** (12/12 páginas).
+
+**Pendiente de Pipe:** registrar la app en Azure/Google, pegar llaves en `.env`, y probar el flujo completo de conexión en vivo.
 
 ### Corrección post-Cursor (Claude Code · verificación de la entrega integrada)
 

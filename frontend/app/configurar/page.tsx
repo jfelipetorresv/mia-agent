@@ -11,6 +11,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
+import MailboxSectionLoader from "@/app/_components/MailboxSectionLoader";
 
 type Guia = {
   que_es: string;
@@ -172,6 +173,11 @@ export default function ConfigurarPage() {
           </li>
         ))}
       </ul>
+
+      <section className="mt-10 rounded-xl border border-gray-200 px-4 py-5">
+        <h2 className="mb-3 text-lg font-semibold">Calendario y correo</h2>
+        <MailboxSectionLoader />
+      </section>
 
       {s.secciones && s.secciones.length ? (
         <section className="mt-10">

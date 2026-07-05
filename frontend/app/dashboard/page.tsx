@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import AutomationsSection from "@/app/_components/AutomationsSection";
+import MailboxSectionLoader from "@/app/_components/MailboxSectionLoader";
 
 type Stats = {
   matters_active?: number;
@@ -577,6 +578,14 @@ export default function DashboardPage() {
               <input type="password" autoComplete="off" value={pineconeKey} onChange={(e) => setPineconeKey(e.target.value)} placeholder="Clave de acceso" className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
               <input value={pineconeIndex} onChange={(e) => setPineconeIndex(e.target.value)} placeholder="Index" className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
             </div>
+          </div>
+
+          <div className="rounded-lg border border-gray-100 p-4">
+            <div className="mb-2 font-medium">Calendario y correo</div>
+            <p className="mb-3 text-sm text-gray-500">
+              Conecta Microsoft 365 o Google Workspace para que Mia avise de eventos y correos urgentes.
+            </p>
+            <MailboxSectionLoader />
           </div>
 
           <div className="rounded-lg border border-gray-100 p-4">
