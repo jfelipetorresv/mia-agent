@@ -22,7 +22,7 @@ sección detallada más abajo con endpoints y comportamiento. Orden sugerido:
 3. **Tarjetas de "Recomendaciones de Mia" (CP-V2)** — `GET /api/dreams/prescriptions` +
    `POST .../{id}/decision`. **COMPLETADO** (commit `c61912f`). Detalle en la sección "CP-V2".
 4. **Automatizaciones (CP-P2)** — plantillas + sugerencias consent-first (`/api/automations/*`). **COMPLETADO** (commit `5642a73`).
-5. **Conectar Microsoft 365 / Google (CP-P3)** — botón "Conectar" (`/api/mailbox/*`). **COMPLETADO** (commit pendiente). OJO:
+5. **Conectar Microsoft 365 / Google (CP-P3)** — botón "Conectar" (`/api/mailbox/*`). **COMPLETADO** (commit `70ac8e7`). OJO:
    la ACTIVACIÓN real (llaves OAuth en `.env`) sigue APLAZADA por decisión de Pipe hasta el producto
    final; la UI está lista y muestra el aviso 503 si el servidor aún no tiene las llaves.
 
@@ -1111,7 +1111,7 @@ la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
 
 ### 2026-07-04 — CP-P3: calendario y correo (Microsoft 365 / Google) (capa 3)
 
-**Qué se construyó** (ya en `origin/main` tras commit):
+**Qué se construyó** (commit `70ac8e7`, ya en `origin/main`):
 
 - **`MailboxSection.tsx`** + **`MailboxSectionLoader.tsx`** (Suspense para query OAuth).
 - **Panel de control · Conectores** y **Configura a Mia**: tarjeta "Calendario y correo".
