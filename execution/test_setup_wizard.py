@@ -55,7 +55,6 @@ from mia.agent import llm  # noqa: E402
 from mia.api.routes import setup as setup_mod  # noqa: E402
 from mia.assistant.core import SETUP_BLOCK_HEADER  # noqa: E402
 from mia.channels import notify  # noqa: E402
-from mia.connectors import obsidian_install  # noqa: E402
 
 PG = dict(
     host=os.getenv("PG_HOST", "127.0.0.1"),
@@ -123,8 +122,7 @@ class Detectors:
     """Simula cada componente del equipo (el gate NO toca winget ni el disco)."""
 
     def __init__(self) -> None:
-        self.obsidian = False
-        self.vault: str | None = None
+        # Obsidian pospuesto (2026-07-06): salió del recorrido → ya no se detecta aquí.
         self.which: dict[str, str | None] = {"claude": None, "ollama": None}
         self.telegram = False
         self.voz = False  # CP-Z1b: el gate NO depende de los pesos de la máquina
@@ -133,16 +131,12 @@ class Detectors:
 
     def install(self) -> None:
         self._saved = [
-            obsidian_install.is_installed,
-            setup_mod.vault_writer_mod.get_tenant_vault_path,
             setup_mod.shutil.which,
             notify.telegram_configured,
             setup_mod.detect_cloud_folders,
             setup_mod.speech_engine.get_engine,
             setup_mod._DETECT_TTL_SECONDS,
         ]
-        obsidian_install.is_installed = lambda: self.obsidian
-        setup_mod.vault_writer_mod.get_tenant_vault_path = self._vault
         setup_mod.shutil.which = lambda name: self.which.get(name)
         notify.telegram_configured = lambda env=None: self.telegram
         setup_mod.detect_cloud_folders = lambda *a, **k: list(self.detected_clouds)
@@ -153,13 +147,8 @@ class Detectors:
         setup_mod._DETECT_TTL_SECONDS = 0.0
         setup_mod._detect_cache.clear()
 
-    async def _vault(self, tenant_id: str):
-        return self.vault
-
     def restore(self) -> None:
-        (obsidian_install.is_installed,
-         setup_mod.vault_writer_mod.get_tenant_vault_path,
-         setup_mod.shutil.which,
+        (setup_mod.shutil.which,
          notify.telegram_configured,
          setup_mod.detect_cloud_folders,
          setup_mod.speech_engine.get_engine,
@@ -196,12 +185,12 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     before = table_counts(tenant_a)
     r = client.get("/api/setup/status", headers=auth_a)
     body = r.json()
-    check("s1 · GET /setup/status → 200 con 7 pasos y campos completos",
-          r.status_code == 200 and len(body["pasos"]) == 7
+    check("s1 · GET /setup/status → 200 con 6 pasos y campos completos",
+          r.status_code == 200 and len(body["pasos"]) == 6
           and all({"id", "titulo", "estado", "detalle", "accion"} <= set(p) for p in body["pasos"]))
     ids = [p["id"] for p in body["pasos"]]
-    check("s2 · los pasos son los del recorrido (perfil→motor→obsidian→carpetas→guías→telegram→voz)",
-          ids == ["perfil", "motor", "obsidian", "carpetas", "guias", "telegram", "voz"])
+    check("s2 · los pasos son los del recorrido (perfil→motor→carpetas→guías→telegram→voz; Obsidian pospuesto)",
+          ids == ["perfil", "motor", "carpetas", "guias", "telegram", "voz"])
     check("s3 · sin nada configurado: 0 listos y el siguiente es el perfil",
           body["completados"] == 0 and body["siguiente"] == "perfil")
     todo_texto = " ".join(
@@ -223,8 +212,6 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
               for g in guias.values()))
     check("g3 · la guía de Telegram trae el paso a paso del bot (@BotFather)",
           any("@BotFather" in paso for paso in guias["telegram"]["como"]))
-    check("g4 · la guía de Obsidian dice cómo se instala (paso a paso, no solo enlace)",
-          any("instala" in paso.lower() for paso in guias["obsidian"]["como"]))
     texto_guias = " ".join(
         f"{g['que_es']} {g['para_que']} " + " ".join(g["como"]) for g in guias.values())
     secciones = body.get("secciones") or []
@@ -238,19 +225,13 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
           and any("Conocimiento" in x["titulo"] for x in secciones))
 
     # ── (s) detección simulada: cada componente cambia su paso ──
-    det.obsidian = True
-    r2 = client.get("/api/setup/status", headers=auth_a).json()
-    obsidian = next(p for p in r2["pasos"] if p["id"] == "obsidian")
-    check("s6 · Obsidian instalado (sin vault) → sigue pendiente pero el texto lo dice",
-          obsidian["estado"] == "pendiente" and "instalado" in obsidian["detalle"])
-    det.vault = "D:\\vault-de-prueba"
     det.which["claude"] = "C:\\bin\\claude.exe"
     det.telegram = True
     det.voz = True
     r3 = client.get("/api/setup/status", headers=auth_a).json()
     estados = {p["id"]: p["estado"] for p in r3["pasos"]}
-    check("s7 · detecciones simuladas → obsidian/motor/telegram/voz quedan LISTOS",
-          estados["obsidian"] == "listo" and estados["motor"] == "listo"
+    check("s7 · detecciones simuladas → motor/telegram/voz quedan LISTOS",
+          estados["motor"] == "listo"
           and estados["telegram"] == "listo" and estados["voz"] == "listo")
     check("s8 · guías y carpetas siguen pendientes (aún no hay datos)",
           estados["guias"] == "pendiente" and estados["carpetas"] == "pendiente")
@@ -263,8 +244,8 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     estados4 = {p["id"]: p["estado"] for p in r4["pasos"]}
     check("s9 · con guía y carpeta registradas → esos pasos quedan LISTOS",
           estados4["guias"] == "listo" and estados4["carpetas"] == "listo")
-    check("s10 · el progreso cuenta bien (6 de 7; falta solo el perfil)",
-          r4["completados"] == 6 and r4["siguiente"] == "perfil")
+    check("s10 · el progreso cuenta bien (5 de 6; falta solo el perfil)",
+          r4["completados"] == 5 and r4["siguiente"] == "perfil")
 
     # ── (k) skip/unskip retomable + RLS ──
     rs = client.post("/api/setup/steps/perfil/skip", headers=auth_a)
