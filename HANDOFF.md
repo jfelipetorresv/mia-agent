@@ -33,7 +33,17 @@ capa 3 al final del archivo.
 
 ---
 
-## ⭐ Rediseño del onboarding — frontend PENDIENTE para Cursor (2026-07-06)
+## ✅ Rediseño del onboarding — COMPLETADO (backend + frontend en `origin/main`, 2026-07-06)
+
+**Backend** (merge `de6c797`) y **frontend de Cursor** (commit `1487ba6`) ya están en
+`origin/main` y verificados (tsc limpio; 3100 sirve 200 sin ChunkError; SummaryMarkdown
+calza con `build_summary`). Cursor entregó: resumen llano + detalle técnico plegable,
+7 días (con fin de semana), herramientas con descripción, y "Conocimiento" de-jergada.
+**Único pendiente = capa 3 EN VIVO de Pipe:** hacer el recorrido de punta a punta en
+`http://localhost:3100` y confirmar que el resumen refleja sus respuestas. La spec
+original se conserva abajo por trazabilidad; NO rehacer.
+
+<details><summary>Spec original (histórica — ya implementada)</summary>
 
 Pipe probó el onboarding real y pidió arreglos. **El backend ya cambió** (rama
 `feat/onboarding-soul-claro`); falta la parte visual. Contexto: el "Configura a Mia"
@@ -89,6 +99,8 @@ debe sentirse fácil para un abogado (cero jerga de agentes), estilo wizard de H
 y explicativos (estilo Hermes: cada opción con su descripción, un default sensato); tras
 `npm run build` reinicia el dev server. **OJO — puerto:** Mia ahora corre en **3100**
 (no 3000; el 3000 es de otro proyecto del equipo). Escribe tus hallazgos abajo.
+
+</details>
 
 ---
 

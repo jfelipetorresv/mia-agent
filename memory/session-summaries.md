@@ -800,3 +800,41 @@ Qué decidimos:
 - Pipe aprobó commit+merge+push de CP-V2 en este diálogo (la sesión 27 lo ejecutó en paralelo).
 Qué sigue (TERMINAL NUEVA, contexto en 0):
 - OLA 3 · CP-Z1 (dictado local con Parakeet v3). Leer TRASPASO-MODELO.md al arrancar.
+
+## 2026-07-06 — Sesión 34
+TL;DR: CP-E6 cierra la Ola 5; rediseño del onboarding (SOUL sin placeholders + resumen
+llano); y se dejó Mia usable para Pipe (puerto 3100, lanzador, cuenta). Todo en origin/main.
+Qué construimos:
+- CP-E6 (más canales por relay + conectar sistemas vía MCP con seguridad): paquete
+  backend/mia/mcp/ (security/catalog/service, fail-closed, entorno saneado, secretos vía
+  ${VAR} bajo scope del tenant, salida sellada CP-S1, forget para borrar credenciales),
+  rutas /api/mcp/*, y channels/relay.py (RelayClient reusable; telegram_bridge lo reusa).
+  3 capas: gate test_mcp 38/38, regresión 60 suites, revisor APROBÓ tras corregir 1
+  bloqueante (${VAR} en command/args no se interpolaba/detectaba). Merge 09330b2, pushed.
+- Rediseño del onboarding (pedido de Pipe tras probarlo): soul_interview.py reescrito a
+  generación DETERMINISTA que omite lo vacío y JAMÁS imprime corchetes (antes rellenaba
+  template fijo de 9 secciones y conservaba placeholders); se quitaron objetivo/pilares
+  (13 preguntas, sin sección mission); build_summary = resumen en lenguaje llano visible,
+  SOUL técnico por debajo. Obsidian fuera del recorrido. 3 capas: e2e+setup_wizard verdes,
+  regresión 60 suites, revisor APROBÓ tras corregir 1 bloqueante (validate_soul marcaba un
+  corchete legítimo del abogado como defecto). Merge de6c797. Frontend de Cursor (resumen,
+  7 días, herramientas con descripción, de-jerga Conocimiento) verificado y pushed (1487ba6).
+- Operación: Mia movida al puerto 3100 (el 3000 lo usa otro proyecto de Pipe,
+  lexia-intelligence-hub); lanzador de un clic "Abrir Mia.cmd" en OneDrive\Escritorio +
+  scripts/start_all.ps1 (enciende litellm/API/frontend y abre el navegador); cuenta de Pipe
+  creada (jfelipetorresv@lexia.co / tenant bc740c10 / "Lexia Abogados"), perfil regenerado limpio.
+Qué decidimos (Pipe):
+- SOUL: resumen llano visible, archivo técnico por debajo. Quitar objetivo/pilares. Obsidian pospuesto.
+- Aprobó merge+push a main de CP-E6 y del rediseño del onboarding en el diálogo.
+Qué sigue (TERMINAL NUEVA, contexto en 0):
+- OLA 5 CERRADA (CP-E1..E6). Roadmap de 5 olas COMPLETO. Próximo trabajo NO es un checkpoint
+  del roadmap; opciones abiertas (decidir con Pipe): (a) capa 3 EN VIVO que solo Pipe puede
+  hacer — recorrer el onboarding de punta a punta en 3100 y confirmar; (b) más "wizard de
+  Hermes" en el onboarding (opciones-con-descripción para preguntas de texto libre, defaults,
+  follow-ups condicionales) — se hizo solo parte; (c) producto: subir corpus jurídico real y
+  guías del despacho (activa citas "respaldadas"), crear bot de Telegram, activar conectores/MCP
+  reales cuando Pipe dé las llaves. Frontend de la pantalla "Sistemas conectados" (CP-E6) DIFERIDO
+  por decisión de Pipe hasta activar un sistema real.
+- Al arrancar: leer CLAUDE.md, TRASPASO-MODELO.md, esta entrada, HANDOFF.md, la memoria
+  persistente del repo. OJO: Mia corre en 3100; Cursor trabaja en paralelo sobre main (verificar
+  git antes de commitear).
