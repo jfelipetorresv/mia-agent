@@ -20,7 +20,6 @@ type AnswerValue =
   | string[]
   | NamePair
   | LocationPair
-  | { pillars: string[] }
   | { no_meetings: string[]; hours: string }
   | { enabled: boolean; trigger: string };
 
@@ -30,11 +29,18 @@ type Status = {
   responses?: Record<string, AnswerValue>;
 };
 
+type CompletionResult = {
+  soul_content: string;
+  summary: string;
+  path: string;
+};
+
 const BLOCK_LABEL: Record<string, string> = {
   identity: "Identidad",
   jurisdiction: "Contexto",
   legal_voice: "Voz",
   mission_rhythm: "Ritmo",
+  rhythm: "Ritmo",
 };
 
 // Riesgo #27 (CP7): el "modo profundo" (triad_mode) NO está implementado — no se
@@ -46,19 +52,30 @@ const HIDDEN_QUESTION_IDS = new Set(["p19"]);
 const REQUIRED_IDS = new Set(["p1", "p2"]);
 
 // Tipos de input por pregunta (onboarding horizontal: sin conocimiento jurídico hardcodeado).
-const TEXT_IDS = new Set(["p4", "p5", "p8", "p9", "p11", "p15"]);
-const TAG_IDS = new Set(["p3", "p6", "p7", "p14", "p18"]);
+const TEXT_IDS = new Set(["p4", "p5", "p8", "p9", "p11"]);
+const TAG_IDS = new Set(["p3", "p6", "p7", "p14"]);
 const SELECT_OPTIONS: Record<string, string[]> = {
   p10: ["Narrativo continuo", "Estructurado con secciones", "Depende del tipo de escrito"],
 };
 const CHECKBOX_OPTIONS: Record<string, string[]> = {
-  p17: ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"],
+  p17: ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"],
 };
+
+const TOOL_OPTIONS: { name: string; description: string; comingSoon?: boolean }[] = [
+  { name: "Correo", description: "Mia vigila tus correos urgentes y te avisa." },
+  { name: "Calendario", description: "Mia te recuerda tus eventos y audiencias próximas." },
+  { name: "Gestor documental", description: "Mia consulta los documentos del despacho para responder." },
+  { name: "Mensajería (Telegram)", description: "Habla con Mia desde tu celular, por texto o por voz." },
+  {
+    name: "Carpetas en la nube (OneDrive/Google Drive)",
+    description: "Mia conoce las carpetas donde guardas tu trabajo.",
+  },
+  { name: "Notas (Obsidian)", description: "Mia guarda y consulta tus notas.", comingSoon: true },
+];
 
 // Sugerencias genéricas (no jurisdicción, ramas del derecho ni tribunales).
 const VOICE_SUGGESTIONS = ["Técnico", "Argumentativo", "Conciso", "Formal", "Directo", "Analítico", "Detallado", "Estratégico"];
 const LIMIT_SUGGESTIONS = ["Revisión humana obligatoria", "Verificar antes de enviar", "Consultar al abogado antes de actuar"];
-const TOOL_SUGGESTIONS = ["Gestor documental", "Calendario", "Mensajería", "Notas", "Correo", "Almacenamiento en la nube"];
 
 // ── Conversores tolerantes (incluyen fallback desde strings de onboardings viejos) ──
 function asText(value: AnswerValue | undefined): string {
@@ -83,16 +100,6 @@ function asLocationPair(value: AnswerValue | undefined): LocationPair {
     return { country: value.country || "", city: value.city || "" };
   }
   return { country: typeof value === "string" ? value : "", city: "" };
-}
-
-function asPillars(value: AnswerValue | undefined): string[] {
-  if (value && typeof value === "object" && !Array.isArray(value) && "pillars" in value) {
-    return [...value.pillars, "", "", ""].slice(0, 3);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return [...value.split(/\n|;/).map((v) => v.trim()).filter(Boolean), "", "", ""].slice(0, 3);
-  }
-  return ["", "", ""];
 }
 
 function asRhythm(value: AnswerValue | undefined): { no_meetings: string[]; hours: string } {
@@ -124,7 +131,7 @@ export default function OnboardingPage() {
   const [alreadyDone, setAlreadyDone] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [soul, setSoul] = useState<string | null>(null);
+  const [completion, setCompletion] = useState<CompletionResult | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -160,12 +167,8 @@ export default function OnboardingPage() {
     setSubmitting(true);
     setError("");
     try {
-      const res = await apiSend<{ soul_content: string; path: string }>(
-        "POST",
-        "/api/onboarding/complete",
-        { responses: answers }
-      );
-      setSoul(res.soul_content);
+      const res = await apiSend<CompletionResult>("POST", "/api/onboarding/complete", { responses: answers });
+      setCompletion(res);
     } catch {
       setError("No se pudo generar tu perfil. Intenta de nuevo.");
     }
@@ -187,18 +190,25 @@ export default function OnboardingPage() {
     );
   }
 
-  if (soul !== null) {
+  if (completion !== null) {
     return (
       <div className="mx-auto max-w-2xl px-8 py-12">
-        <h1 className="mb-2 text-2xl font-semibold">Tu perfil esta listo</h1>
-        <p className="mb-6 text-sm text-gray-500">Asi entiende Mia a tu despacho. Puedes ajustarlo cuando quieras.</p>
-        <pre className="mb-6 max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-lg border border-gray-100 bg-gray-50 p-5 text-sm leading-relaxed text-gray-800">
-          {soul}
-        </pre>
+        <div className="mb-6 rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+          <h1 className="mb-4 text-2xl font-semibold text-gray-900">Tu perfil está listo</h1>
+          <SummaryMarkdown markdown={completion.summary} />
+        </div>
+        <details className="mb-6 rounded-lg border border-gray-100 bg-gray-50">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900">
+            Ver detalle técnico
+          </summary>
+          <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap border-t border-gray-100 px-4 py-3 text-xs leading-relaxed text-gray-600">
+            {completion.soul_content}
+          </pre>
+        </details>
         <div className="flex gap-3">
           <button
             onClick={() => {
-              setSoul(null);
+              setCompletion(null);
               setIdx(0);
               setStarted(true);
               setAlreadyDone(false);
@@ -315,6 +325,84 @@ export default function OnboardingPage() {
   );
 }
 
+function SummaryMarkdown({ markdown }: { markdown: string }) {
+  const elements: ReactNode[] = [];
+  let listItems: ReactNode[] = [];
+  let key = 0;
+
+  function flushList() {
+    if (listItems.length > 0) {
+      elements.push(
+        <ul key={`list-${key++}`} className="space-y-2 text-sm leading-relaxed text-gray-700">
+          {listItems}
+        </ul>
+      );
+      listItems = [];
+    }
+  }
+
+  const bulletRe = /^- \*\*(.+?):\*\* (.+)$/;
+  const rulesRe = /^- \*\*(.+?)\*\*$/;
+  const subRe = /^  - (.+)$/;
+
+  for (const line of markdown.split("\n")) {
+    if (line.startsWith("### ")) {
+      flushList();
+      elements.push(
+        <h2 key={`h-${key++}`} className="mb-4 text-lg font-semibold text-gray-900">
+          {line.slice(4)}
+        </h2>
+      );
+      continue;
+    }
+
+    const bullet = line.match(bulletRe);
+    if (bullet) {
+      listItems.push(
+        <li key={`li-${key++}`}>
+          <span className="font-medium text-gray-900">{bullet[1]}:</span> {bullet[2]}
+        </li>
+      );
+      continue;
+    }
+
+    const rules = line.match(rulesRe);
+    if (rules) {
+      listItems.push(
+        <li key={`li-${key++}`} className="font-medium text-gray-900">
+          {rules[1]}:
+        </li>
+      );
+      continue;
+    }
+
+    const sub = line.match(subRe);
+    if (sub) {
+      listItems.push(
+        <li key={`li-${key++}`} className="ml-4 list-disc text-gray-600">
+          {sub[1]}
+        </li>
+      );
+      continue;
+    }
+
+    if (line.trim() === "") {
+      flushList();
+      continue;
+    }
+
+    flushList();
+    elements.push(
+      <p key={`p-${key++}`} className="text-sm leading-relaxed text-gray-600">
+        {line}
+      </p>
+    );
+  }
+
+  flushList();
+  return <div className="space-y-3">{elements}</div>;
+}
+
 function QuestionInput({
   question,
   value,
@@ -381,29 +469,6 @@ function QuestionInput({
     case "p3":
       return <TagInput value={asList(value)} onChange={onChange} suggestions={VOICE_SUGGESTIONS} max={3} placeholder="Escribe un adjetivo y presiona Enter" />;
 
-    // P16 — 3 pilares (tres campos separados).
-    case "p16": {
-      const pillars = asPillars(value);
-      return (
-        <div className="space-y-3">
-          {pillars.map((pillar, index) => (
-            <input
-              key={index}
-              value={pillar}
-              onChange={(e) => {
-                const next = [...pillars];
-                next[index] = e.target.value;
-                onChange({ pillars: next });
-              }}
-              className={inputCls}
-              placeholder={`Pilar ${index + 1}`}
-              autoFocus={index === 0}
-            />
-          ))}
-        </div>
-      );
-    }
-
     // P17 — ritmo: días sin reuniones + horario de trabajo profundo.
     case "p17": {
       const rhythm = asRhythm(value);
@@ -427,9 +492,9 @@ function QuestionInput({
       );
     }
 
-    // P18 — herramientas (tags libres).
+    // P18 — herramientas (lista curada con descripción).
     case "p18":
-      return <TagInput value={asList(value)} onChange={onChange} suggestions={TOOL_SUGGESTIONS} placeholder="Escribe una herramienta y presiona Enter" />;
+      return <ToolsChecklist value={asList(value)} onChange={onChange} />;
 
     // P19 (triad_mode) se retiró de la UI — Riesgo #27: no ofrecer lo no implementado.
 
@@ -446,8 +511,7 @@ function QuestionInput({
         );
       }
       if (TAG_IDS.has(question.id)) {
-        const hints =
-          question.id === "p14" ? LIMIT_SUGGESTIONS : question.id === "p18" ? TOOL_SUGGESTIONS : [];
+        const hints = question.id === "p14" ? LIMIT_SUGGESTIONS : [];
         return (
           <TagInput
             value={asList(value)}
@@ -486,6 +550,101 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function Spinner() {
   return <div className="h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900" />;
+}
+
+function ToolsChecklist({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
+  const [customDraft, setCustomDraft] = useState("");
+  const curatedNames = new Set(TOOL_OPTIONS.map((t) => t.name));
+  const customTools = value.filter((v) => !curatedNames.has(v));
+
+  function toggle(name: string, checked: boolean) {
+    if (checked) onChange([...value, name]);
+    else onChange(value.filter((v) => v !== name));
+  }
+
+  function addCustom() {
+    const tool = customDraft.trim();
+    if (!tool || value.includes(tool)) {
+      setCustomDraft("");
+      return;
+    }
+    onChange([...value, tool]);
+    setCustomDraft("");
+  }
+
+  return (
+    <div className="space-y-3">
+      {TOOL_OPTIONS.map((tool) => {
+        const checked = value.includes(tool.name);
+        const disabled = Boolean(tool.comingSoon);
+        return (
+          <label
+            key={tool.name}
+            className={`flex gap-3 rounded-lg border px-4 py-3 ${
+              disabled ? "cursor-not-allowed border-gray-100 bg-gray-50 opacity-70" : "cursor-pointer border-gray-200 hover:border-gray-300"
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={disabled}
+              onChange={(e) => toggle(tool.name, e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-gray-900">
+                {tool.name}
+                {tool.comingSoon ? (
+                  <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-normal text-amber-700">Próximamente</span>
+                ) : null}
+              </span>
+              <span className="mt-0.5 block text-sm text-gray-500">{tool.description}</span>
+            </span>
+          </label>
+        );
+      })}
+
+      {customTools.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {customTools.map((tool) => (
+            <button
+              key={tool}
+              type="button"
+              onClick={() => onChange(value.filter((v) => v !== tool))}
+              className="rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white"
+            >
+              {tool} ×
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <Field label="Otra herramienta">
+        <div className="flex gap-2">
+          <input
+            value={customDraft}
+            onChange={(e) => setCustomDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addCustom();
+              }
+            }}
+            className={inputCls}
+            placeholder="Escribe el nombre y presiona Enter"
+          />
+          <button
+            type="button"
+            onClick={addCustom}
+            disabled={!customDraft.trim()}
+            className="shrink-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+          >
+            Añadir
+          </button>
+        </div>
+      </Field>
+    </div>
+  );
 }
 
 function TagInput({

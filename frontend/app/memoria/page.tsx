@@ -12,10 +12,10 @@ export default function MemoriaPage() {
       <h1 className="mb-6 text-2xl font-semibold">Conocimiento</h1>
       <div className="mb-6 flex flex-wrap gap-1 border-b border-gray-100">
         <TabBtn active={tab === "despacho"} onClick={() => setTab("despacho")}>Mi despacho</TabBtn>
-        <TabBtn active={tab === "wiki"} onClick={() => setTab("wiki")}>Wiki del despacho</TabBtn>
-        <TabBtn active={tab === "saber"} onClick={() => setTab("saber")}>Lo que Mia sabe</TabBtn>
-        <TabBtn active={tab === "habilidades"} onClick={() => setTab("habilidades")}>Habilidades</TabBtn>
-        <TabBtn active={tab === "sugerencias"} onClick={() => setTab("sugerencias")}>Sugerencias de Mia</TabBtn>
+        <TabBtn active={tab === "wiki"} onClick={() => setTab("wiki")}>Temas que Mia va aprendiendo</TabBtn>
+        <TabBtn active={tab === "saber"} onClick={() => setTab("saber")}>Documentos y fuentes</TabBtn>
+        <TabBtn active={tab === "habilidades"} onClick={() => setTab("habilidades")}>Lo que Mia sabe hacer</TabBtn>
+        <TabBtn active={tab === "sugerencias"} onClick={() => setTab("sugerencias")}>Mejoras que Mia propone</TabBtn>
       </div>
       {tab === "despacho" ? <Despacho /> : null}
       {tab === "wiki" ? <Wiki /> : null}

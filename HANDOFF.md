@@ -39,6 +39,8 @@ Pipe probó el onboarding real y pidió arreglos. **El backend ya cambió** (ram
 `feat/onboarding-soul-claro`); falta la parte visual. Contexto: el "Configura a Mia"
 debe sentirse fácil para un abogado (cero jerga de agentes), estilo wizard de Hermes.
 
+**COMPLETADO** (Cursor capa 3 · 2026-07-06). Detalle en "Hallazgos de Cursor (capa 3)" al final.
+
 **Ya hecho en backend (no tocar, solo consumir):**
 - La entrevista ahora trae **13 preguntas** (`GET /api/onboarding/questions`); se
   QUITARON las de "objetivo del año" y "los 3 pilares" (eran confusas). Los `id`
@@ -1180,6 +1182,25 @@ la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
 - **`npm run build` verde** (12/12 páginas).
 
 **Pendiente de Pipe:** registrar la app en Azure/Google, pegar llaves en `.env`, y probar el flujo completo de conexión en vivo.
+
+### 2026-07-06 — Rediseño del onboarding + de-jerga de Conocimiento (capa 3)
+
+**Qué se construyó:**
+
+1. **Pantalla final del onboarding** (`frontend/app/onboarding/page.tsx`):
+   - Consume `summary` de `POST /api/onboarding/complete` y lo muestra en tarjeta con Markdown legible (viñetas y negritas).
+   - El `soul_content` técnico quedó en `<details>` plegable "Ver detalle técnico".
+   - Eliminada lógica de preguntas `p15`/`p16` (objetivo del año y pilares) que el backend ya no envía.
+
+2. **Días de la semana (p17):** checkboxes ahora incluyen los 7 días (añadidos Sábado y Domingo).
+
+3. **Herramientas (p18):** reemplazados chips libres por checklist curada con descripción por opción (Correo, Calendario, Gestor documental, Mensajería, Carpetas en la nube, Notas/Obsidian marcada "Próximamente") + campo "Otra herramienta" para texto libre. Los valores se envían como lista de textos en `memory.tools_that_survived`.
+
+4. **Conocimiento** (`frontend/app/memoria/page.tsx`): pestañas renombradas — "Temas que Mia va aprendiendo", "Documentos y fuentes", "Lo que Mia sabe hacer", "Mejoras que Mia propone" (Mi despacho sin cambio).
+
+**Build:** `npm run build` verde (12/12 páginas).
+
+**Pendiente de Pipe (capa 3 en vivo):** completar el onboarding de punta a punta y verificar que el resumen final refleja las respuestas; probar selección de herramientas y días de fin de semana.
 
 ### Corrección post-Cursor (Claude Code · verificación de la entrega integrada)
 
