@@ -22,27 +22,28 @@ function Start-Part($name, $script, $port) {
 
 Write-Host "Encendiendo Mia..."
 Write-Host ""
+# Mia corre en el puerto 3100 (el 3000 lo usa otro proyecto del equipo).
 Start-Part 'Motor de IA'     'scripts\start_litellm.ps1'  4000
 Start-Part 'Cerebro de Mia'  'scripts\start_api.ps1'      8000
-Start-Part 'Pantalla de Mia' 'scripts\start_frontend.ps1' 3000
+Start-Part 'Pantalla de Mia' 'scripts\start_frontend.ps1' 3100
 
 Write-Host ""
 Write-Host "Esperando a que la pantalla de Mia este lista (puede tardar hasta 1 minuto la primera vez)..."
 $ok = $false
 for ($i = 0; $i -lt 90; $i++) {
-  if (Test-Port 3000) { $ok = $true; break }
+  if (Test-Port 3100) { $ok = $true; break }
   Start-Sleep -Seconds 1
 }
 if ($ok) {
   Start-Sleep -Seconds 5   # margen para que Next.js compile la primera pagina
   Write-Host "Abriendo Mia en el navegador..."
-  Start-Process 'http://localhost:3000'
+  Start-Process 'http://localhost:3100'
 } else {
-  Write-Host "La pantalla tardo mas de lo normal. Abre tu navegador en http://localhost:3000"
+  Write-Host "La pantalla tardo mas de lo normal. Abre tu navegador en http://localhost:3100"
 }
 
 Write-Host ""
-Write-Host "Listo. Mia esta abierta en http://localhost:3000"
+Write-Host "Listo. Mia esta abierta en http://localhost:3100"
 Write-Host "Puedes MINIMIZAR las ventanas negras que se abrieron, pero NO las cierres mientras uses Mia."
 Write-Host "Para apagar Mia, cierra esas ventanas negras."
 Start-Sleep -Seconds 6
