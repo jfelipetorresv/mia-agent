@@ -1,26 +1,29 @@
 """Mia · onboarding.soul_interview — la entrevista que construye el SOUL.md (Módulo 5).
 
-El SOUL.md es la capa MÁS importante del sistema de prompts: la capa 1
-(identidad) que el prompt_builder antepone a todo (1b) y que el grafo carga como
-`soul_snapshot` al iniciar cada turno (Módulo 5). La entrevista lo arma de forma
-conversacional: 15 preguntas en 5 bloques → respuestas → call_llm(task="soul")
-genera el SOUL.md en el template de 9 secciones → se guarda en
-$MIA_HOME/soul_{tenant_id}.md.
+El SOUL.md es la capa MÁS importante del sistema de prompts: la capa 1 (identidad)
+que el prompt_builder antepone a todo (1b) y que el grafo carga como `soul_snapshot`
+al iniciar cada turno (Módulo 5). La entrevista lo arma de forma conversacional a
+partir de las respuestas del abogado.
 
-El template y los ejemplos provienen del Doc 4 (SOUL.md Onboarding) — son la fuente
-exacta, no se inventan. Originalmente eran 19 preguntas; se suprimieron 4 que el
-agente aprende del uso (P8/P9 tribunales y cortes, P12/P13 argumentos y fuentes →
-GEPA/uso). La última (triad_mode) es opcional. Los campos del template que esas
-preguntas alimentaban quedan como placeholder hasta que emergen con el uso.
+DISEÑO (rediseño 2026-07-06, decisión de Pipe): la generación es DETERMINISTA y
+OMITE lo vacío — jamás imprime placeholders entre corchetes. Antes el sistema
+rellenaba un template fijo de 9 secciones y CONSERVABA `[CORCHETES]` en todo campo
+que el wizard no preguntaba (T.P., zona horaria, "los 3 pilares", jurisprudencia…);
+el resultado mezclaba respuestas reales con plantilla vacía. Ahora:
+- Solo aparecen las secciones y campos que el abogado respondió; lo demás no existe.
+- Sin LLM en la generación → cero invención (regla dura de Pipe: nada se inventa) y
+  cero riesgo de que un modelo devuelva el molde a medio llenar.
+- Se removieron las preguntas de "objetivo del año" y "los 3 pilares" (estrategia de
+  negocio, no de redacción; reportadas como confusas) — junto con la sección `mission`.
+- `build_summary` produce un RESUMEN en lenguaje llano ("Así entendí a tu despacho")
+  que es lo que ve el abogado; el SOUL.md técnico queda por debajo.
 
 Helpers de archivo (soul_path / load_soul_text / load_soul_snapshot / soul_status):
 puros (solo config + stdlib, sin LLM) para que `agents/state.py` y `agent/core.py`
-los importen sin arrastrar el cliente LLM. La llamada al LLM (run_interview /
-update_soul) importa `agent.llm` de forma diferida.
+los importen sin arrastrar el cliente LLM.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -32,25 +35,26 @@ from .. import config
 
 logger = logging.getLogger("mia.onboarding.soul")
 
-# ── Las 15 preguntas del onboarding (5 bloques; del Doc 4, menos P8/P9/P12/P13) ──
-# Cada pregunta: id · block · field (sección/campo del template que alimenta) ·
-# question (lo que ve el abogado) · example (el ejemplo del Doc 4). Las respuestas
-# del frontend llegan como {field: respuesta}; el campo es la llave.
+# ── Las preguntas del onboarding (bloques del Doc 4, menos P8/P9/P12/P13 que el
+#    agente aprende del uso, y menos P15/P16 de estrategia — decisión de Pipe 2026-07-06).
+# Cada pregunta: id · block · field (sección/campo del SOUL que alimenta) · question
+# (lo que ve el abogado) · example. Las respuestas del frontend llegan como
+# {field: respuesta}; el campo es la llave.
 QUESTIONS: list[dict] = [
-    # Bloque 1 — Identidad (P1-P4)
+    # Bloque 1 — Identidad
     {"id": "p1", "block": "identity", "field": "identity.name",
      "question": "¿Cuál es el nombre completo de tu despacho y tu nombre como abogado principal?",
-     "example": "Lexia Abogados S.A.S. · Juan Felipe Torres · T.P. 227.698"},
+     "example": "Lexia Abogados S.A.S. · Juan Felipe Torres"},
     {"id": "p2", "block": "identity", "field": "identity.location",
      "question": "¿En qué ciudad y país operas principalmente?",
-     "example": "Bogotá, Colombia — UTC-5"},
+     "example": "Bogotá, Colombia"},
     {"id": "p3", "block": "identity", "field": "identity.voice",
      "question": "¿Cómo describirías en 3 adjetivos el estilo de escritura de tu despacho?",
      "example": "Técnico, argumentativo, conciso"},
     {"id": "p4", "block": "identity", "field": "identity.channels",
      "question": "¿Tienes sitio web o canales públicos del despacho?",
      "example": "lexia.co — LinkedIn Lexia Abogados"},
-    # Bloque 2 — Jurisdicción (P5-P7)
+    # Bloque 2 — Jurisdicción
     {"id": "p5", "block": "jurisdiction", "field": "jurisdiction.base",
      "question": "¿En qué jurisdicción trabajas principalmente?",
      "example": "Colombia — también España ocasionalmente"},
@@ -60,158 +64,46 @@ QUESTIONS: list[dict] = [
     {"id": "p7", "block": "jurisdiction", "field": "jurisdiction.client_type",
      "question": "¿Qué tipo de cliente defiende principalmente tu despacho?",
      "example": "Aseguradoras (HDI, Zurich, SURA, Seguros del Estado)"},
-    # P8 (instancias/tribunales) y P9 (cortes que más cita) suprimidas: el agente las
-    # aprende del uso (asuntos aprobados, documentos), no del onboarding.
-    # Bloque 3 — Voz jurídica (P10, P11, P14)
+    # Bloque 3 — Voz jurídica
     {"id": "p10", "block": "legal_voice", "field": "legal_voice.structure",
      "question": "¿Cómo estructuras típicamente tus escritos?",
      "example": "Párrafos narrativos continuos. Sin viñetas en escritos de fondo."},
     {"id": "p11", "block": "legal_voice", "field": "legal_voice.banned_words",
      "question": "¿Hay palabras o expresiones que nunca usas?",
      "example": "Sin latinismos. Sin 'insalvable'. Sin 'en ese orden de ideas'."},
-    # P12 (argumentos que no funcionaron) la detecta GEPA; P13 (jurisprudencia preferida)
-    # emerge con el uso. Ambas suprimidas del onboarding.
     {"id": "p14", "block": "legal_voice", "field": "hard_nos",
      "question": "¿Qué cosas Mia nunca debe hacer en tu nombre?",
      "example": "Nunca presentar borrador sin revisión. Nunca recomendar allanarse sin análisis."},
-    # Bloque 4 — Misión y ritmo (P15-P18)
-    {"id": "p15", "block": "mission_rhythm", "field": "mission.headline",
-     "question": "¿Cuál es tu objetivo más importante para este año, en una oración?",
-     "example": "Consolidar Lexia Intelligence como el primer agente legal cognitivo de LatAm "
-                "con 3+ despachos externos de pago."},
-    {"id": "p16", "block": "mission_rhythm", "field": "mission.pillars",
-     "question": "¿Cuáles son los 3 pilares que sostienen ese objetivo?",
-     "example": "1. Excelencia litigios seguros. 2. Construcción de Mia. 3. Primer cliente externo."},
-    {"id": "p17", "block": "mission_rhythm", "field": "rhythm",
+    # Bloque 4 — Ritmo y herramientas
+    {"id": "p17", "block": "rhythm", "field": "rhythm",
      "question": "¿Cuándo trabajas mejor? ¿Tienes días sin reuniones?",
      "example": "Mañanas 7am-12pm trabajo profundo. Sin reuniones lunes ni viernes."},
-    {"id": "p18", "block": "mission_rhythm", "field": "memory.tools_that_survived",
+    {"id": "p18", "block": "rhythm", "field": "memory.tools_that_survived",
      "question": "¿Hay herramientas que usas a diario que Mia debe conocer?",
-     "example": "Obsidian, Claude Code, Linear, WhatsApp Business."},
-    # Bloque 5 — Triad mode (P19, opcional)
+     "example": "Correo, gestor documental, calendario, mensajería."},
+    # Bloque 5 — Modo profundo (opcional; el frontend puede ocultarlo hasta implementarse)
     {"id": "p19", "block": "triad_mode", "field": "triad_mode",
-     "question": "¿Quieres habilitar el modo de análisis profundo para matters de alta "
+     "question": "¿Quieres habilitar el modo de análisis profundo para asuntos de alta "
                  "complejidad? Tres modelos distintos en ciclo cerrado: más tiempo y costo, "
                  "mayor calidad.",
      "example": "Sí — imputaciones fiscales >$1.000M COP y arbitrajes"},
 ]
 
-# Orden canónico de los 5 bloques (para el progreso del frontend).
-BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "legal_voice", "mission_rhythm", "triad_mode")
+# Orden canónico de los bloques (para el progreso del frontend).
+BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "legal_voice", "rhythm", "triad_mode")
 
-# ── Template del SOUL.md — 9 secciones EXACTAS del Doc 4 ─────────────────────
-# Es el esqueleto que el LLM rellena con las respuestas. Los campos sin respuesta
-# se conservan como placeholders entre corchetes (no se inventan datos).
-SOUL_TEMPLATE = """# SOUL.md — [NOMBRE DEL DESPACHO]
-# Generado: [FECHA] · Próxima revisión: [FECHA + 3 meses]
-
-## identity
-- name: [NOMBRE DESPACHO]
-- lawyer: [NOMBRE] · T.P. [NÚMERO]
-- location: [CIUDAD, PAÍS] · [TIMEZONE]
-- channels: [WEB, LINKEDIN, etc.]
-- voice: [3 ADJETIVOS DE ESTILO]
-
-## jurisdiction
-- base: [COLOMBIA / ESPAÑA / MÉXICO / ARGENTINA / PERÚ / CHILE]
-- practice_areas: [SEGUROS, FISCAL, CIVIL, PENAL, LABORAL, etc.]
-- client_type: [ASEGURADORAS / EMPRESAS / PERSONAS / SECTOR PÚBLICO]
-- courts: [CONSEJO DE ESTADO, CORTE CONSTITUCIONAL, CSJ, ARBITRAJE]
-- process_types: [CONTENCIOSO-ADM, ORDINARIO, FISCAL, PASC, ARBITRAL]
-
-## mission
-- headline: [UNA ORACIÓN. Si se logra este año, el año fue exitoso.]
-- pillars:
-  - [PILAR 1]
-  - [PILAR 2]
-  - [PILAR 3]
-- not_in_scope: [LO QUE NO HACEMOS ESTE AÑO]
-
-## legal_voice
-- register: [FORMAL-TÉCNICO / CONCISO / ARGUMENTATIVO]
-- structure: [PÁRRAFOS CONTINUOS — sin viñetas en escritos de fondo]
-- banned_words: [SIN LATINISMOS. SIN "insalvable". SIN "en ese orden de ideas"]
-- argument_style: [DEDUCTIVO DESDE NORMA / DESDE HECHOS / DESDE JURISPRUDENCIA]
-
-## hard_nos
-- [NUNCA citar sentencias no verificadas en el corpus]
-- [NUNCA recomendar allanarse sin análisis de riesgo previo]
-- [NUNCA usar latinismos en escritos procesales]
-- [NUNCA presentar como final un escrito sin HITL]
-
-## doctrinal_stance
-- preferred_sources: [CONSEJO DE ESTADO ANTES QUE DOCTRINA FORÁNEA]
-- key_jurisprudence:
-  - [T-323/2024 — IA en la Rama Judicial]
-  - [SC1983-2025 — seguros cumplimiento]
-- discarded_args: [ARGS QUE PROBAMOS Y NO FUNCIONARON]
-
-## memory
-- decisions_made:
-  - "[INTENTÉ X, no funcionó porque Y. No sugerir.]"
-- orbit:
-  - "[NOMBRE]: [ROL] · [ÚLTIMA INTERACCIÓN] · [QUÉ SE LE DEBE]"
-- tools_that_survived: [OBSIDIAN · CLAUDE CODE · LINEAR · WHATSAPP BUSINESS]
-
-## rhythm
-- deep_work: [07:00–12:00]
-- no_meetings: [LUNES Y VIERNES]
-- weekend: [SOLO URGENCIAS REALES]
-- energy_curve: [MAÑANA: producción jurídica. TARDE: reuniones. NOCHE: lectura]
-
-## triad_mode
-- enabled: [true / false]
-- trigger: [IMPUTACIÓN >$1.000M COP / ARBITRAJES / SEGÚN CRITERIO]
-"""
-
-# Las 9 secciones (para validación/inspección y para el gate E2E).
+# Secciones que el SOUL.md PUEDE contener (solo aparecen si hay respuesta). Sirve al
+# gate y a la inspección; ya NO es un template fijo obligatorio.
 SOUL_SECTIONS: tuple[str, ...] = (
-    "## identity", "## jurisdiction", "## mission", "## legal_voice", "## hard_nos",
-    "## doctrinal_stance", "## memory", "## rhythm", "## triad_mode",
+    "## identity", "## jurisdiction", "## legal_voice", "## hard_nos",
+    "## rhythm", "## tools", "## triad_mode",
 )
 
-# Modelo de la tarea (decisión: sonnet — la identidad del agente es importante).
-SOUL_TASK = "soul"
-
-
-def validate_soul(content: str) -> list[str]:
-    """Secciones FALTANTES o VACÍAS del SOUL.md generado (CP6 · Riesgo #26).
-
-    Una sección es válida si su encabezado está presente y tiene ALGÚN contenido
-    debajo (aunque sean placeholders entre corchetes — el fallback determinista los
-    conserva a propósito y es válido por construcción). Devuelve [] si el SOUL está
-    bien formado."""
-    text = content or ""
-    problems: list[str] = []
-    for i, section in enumerate(SOUL_SECTIONS):
-        start = text.find(section)
-        if start == -1:
-            problems.append(section)
-            continue
-        # Cuerpo = texto entre este encabezado y el siguiente encabezado presente.
-        body_start = start + len(section)
-        next_positions = [text.find(s, body_start) for s in SOUL_SECTIONS]
-        next_positions = [p for p in next_positions if p != -1]
-        body = text[body_start:(min(next_positions) if next_positions else None)]
-        if not body.strip():
-            problems.append(section)
-    return problems
-
-_GEN_SYSTEM = (
-    "Eres un asistente que redacta el archivo SOUL.md de un despacho de abogados del "
-    "Civil Law hispanoamericano. El SOUL.md define la identidad, la voz y los límites "
-    "del agente legal. Recibes (a) un TEMPLATE con 9 secciones y (b) las RESPUESTAS del "
-    "abogado a la entrevista de onboarding. Tu tarea: rellenar el template con las "
-    "respuestas, respetando EXACTAMENTE los encabezados de sección (## identity, "
-    "## jurisdiction, ## mission, ## legal_voice, ## hard_nos, ## doctrinal_stance, "
-    "## memory, ## rhythm, ## triad_mode) y el formato de viñetas. Reglas: "
-    "(1) Usa SOLO la información de las respuestas; no inventes datos jurídicos, "
-    "nombres, normas ni sentencias. "
-    "(2) Si una respuesta no cubre un campo, CONSERVA el placeholder original entre "
-    "corchetes — no lo borres ni lo inventes. "
-    "(3) Mantén el encabezado del archivo con la fecha de generación y la próxima "
-    "revisión que se te indican. "
-    "(4) Devuelve ÚNICAMENTE el contenido del SOUL.md en Markdown, sin comentarios."
+# Referencia informativa del formato (ya no se "rellena": se construye omitiendo lo
+# vacío). Se conserva por compatibilidad de import.
+SOUL_TEMPLATE = (
+    "# SOUL.md — <despacho>\n## identity\n## jurisdiction\n## legal_voice\n"
+    "## hard_nos\n## rhythm\n## tools\n## triad_mode\n"
 )
 
 
@@ -220,7 +112,7 @@ def _today() -> datetime:
 
 
 def _safe_tenant(tenant_id: str) -> str:
-    """Sanea el tenant_id para usarlo como nombre de archivo (mismo criterio que TraceCapture)."""
+    """Sanea el tenant_id para usarlo como nombre de archivo (igual que TraceCapture)."""
     s = re.sub(r"[^A-Za-z0-9_-]", "_", str(tenant_id))
     return s or "tenant"
 
@@ -231,8 +123,7 @@ def soul_path(tenant_id: str) -> Path:
     """Ruta del SOUL.md del tenant: $MIA_HOME/soul_{tenant_id}.md.
 
     Lee config.MIA_HOME en cada llamada (no se captura al importar) para que los tests
-    puedan apuntarlo a un tempdir reasignando config.MIA_HOME.
-    """
+    puedan apuntarlo a un tempdir reasignando config.MIA_HOME."""
     return Path(config.MIA_HOME) / f"soul_{_safe_tenant(tenant_id)}.md"
 
 
@@ -249,8 +140,7 @@ def load_soul_snapshot(tenant_id: str) -> Optional[dict]:
     """Snapshot frozen del SOUL.md para `MatterState.soul_snapshot` (Módulo 5).
 
     Devuelve {"content": <texto>, "path": <str>} o None si el despacho aún no tiene
-    SOUL.md (onboarding no completado) → el grafo no antepone identidad (no bloquea).
-    """
+    SOUL.md (onboarding no completado) → el grafo no antepone identidad (no bloquea)."""
     text = load_soul_text(tenant_id)
     if not text:
         return None
@@ -296,25 +186,10 @@ def _write_responses(tenant_id: str, responses: dict) -> None:
     p.write_text(json.dumps(responses, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _render_responses(responses: dict) -> str:
-    """Mapea field → respuesta a un bloque legible para el prompt de generación."""
-    by_field = {q["field"]: q for q in QUESTIONS}
-    lines = []
-    for field, answer in responses.items():
-        if answer is None or str(answer).strip() == "":
-            continue
-        label = by_field.get(field, {}).get("question", field)
-        lines.append(f"- [{field}] {label}\n  → {str(answer).strip()}")
-    return "\n".join(lines) or "(el abogado no respondió ninguna pregunta)"
+# ── Normalización de respuestas (str / list / dict → texto o lista limpia) ───
 
-
-def _plain(value) -> str:
-    """Renderiza un valor de respuesta (str / list / dict) a texto plano legible.
-
-    El frontend envía strings, listas (chips/tags/checkboxes) y dicts
-    ({firm,lawyer} / {country,city} / {pillars} / {no_meetings,hours} /
-    {enabled,trigger}). Aquí se aplanan a una línea para el SOUL.md sin LLM.
-    """
+def _text(value) -> str:
+    """Aplana un valor de respuesta a una línea de texto (vacío si no hay dato)."""
     if value is None:
         return ""
     if isinstance(value, list):
@@ -324,285 +199,230 @@ def _plain(value) -> str:
     return str(value).strip()
 
 
+# alias público histórico
+_plain = _text
+
+
+def _items(value) -> list[str]:
+    """Normaliza a lista de líneas no vacías (chips/tags/checkboxes o texto suelto)."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    s = str(value).strip()
+    return [s] if s else []
+
+
+def _firm_lawyer(value) -> tuple[str, str]:
+    """identity.name: {firm, lawyer} (onboarding nuevo) o string (legacy)."""
+    if isinstance(value, dict):
+        return str(value.get("firm", "")).strip(), str(value.get("lawyer", "")).strip()
+    if isinstance(value, str):
+        # legacy: "Despacho · Abogado · T.P. X" → despacho y (si viene) el RESTO como
+        # abogado, preservando la T.P. u otros datos (hallazgo capa 2 MN1: no perderlos).
+        parts = [p.strip() for p in re.split(r"·|\|", value) if p.strip()]
+        return (parts[0] if parts else ""), (" · ".join(parts[1:]) if len(parts) > 1 else "")
+    return "", ""
+
+
+def _location(value) -> str:
+    """identity.location: {country, city} o string → 'Ciudad, País'."""
+    if isinstance(value, dict):
+        city = str(value.get("city", "")).strip()
+        country = str(value.get("country", "")).strip()
+        return ", ".join(p for p in (city, country) if p)
+    return str(value or "").strip()
+
+
+def _rhythm(value) -> tuple[str, str]:
+    """rhythm: {no_meetings:[...], hours:""} o string → (deep_work, dias_sin_reuniones)."""
+    if isinstance(value, dict):
+        deep = str(value.get("hours", "")).strip()
+        days = ", ".join(str(d).strip() for d in value.get("no_meetings", []) if str(d).strip())
+        return deep, days
+    return str(value or "").strip(), ""
+
+
+def _triad(value) -> tuple[bool, str]:
+    """triad_mode: {enabled, trigger} o string → (enabled, trigger)."""
+    if isinstance(value, dict):
+        return bool(value.get("enabled")), str(value.get("trigger", "")).strip()
+    s = str(value or "").strip()
+    on = s.lower().startswith(("si", "sí", "true", "yes")) if s else False
+    # legacy string "Sí — para arbitrajes": el trigger es lo que sigue al "sí" (MN4).
+    trigger = re.sub(r"^\s*(sí|si|yes|true)\b[\s,.:;—-]*", "", s, flags=re.IGNORECASE).strip() if on else s
+    return on, trigger
+
+
+# ── Generación DETERMINISTA del SOUL.md (omite lo vacío; sin corchetes) ──────
+
+def _section(header: str, lines: list[str]) -> str:
+    """Devuelve la sección con su encabezado SOLO si trae al menos una línea."""
+    real = [ln for ln in lines if ln]
+    if not real:
+        return ""
+    return header + "\n" + "\n".join(real) + "\n"
+
+
+def build_soul(responses: dict, *, dates: Optional[tuple[str, str]] = None) -> str:
+    """Construye el SOUL.md desde las respuestas, OMITIENDO todo campo/sección sin
+    dato. Determinista (sin LLM), sin invención, sin placeholders entre corchetes."""
+    r = responses or {}
+    gen_date, review_date = dates or _dates_now()
+
+    firm, lawyer = _firm_lawyer(r.get("identity.name"))
+    voice = _text(r.get("identity.voice"))
+    channels = _text(r.get("identity.channels"))
+    location = _location(r.get("identity.location"))
+
+    base = _text(r.get("jurisdiction.base"))
+    areas = _text(r.get("jurisdiction.practice_areas"))
+    client = _text(r.get("jurisdiction.client_type"))
+
+    structure = _text(r.get("legal_voice.structure"))
+    banned = _text(r.get("legal_voice.banned_words"))
+    hard_nos = _items(r.get("hard_nos"))
+
+    deep_work, no_meetings = _rhythm(r.get("rhythm"))
+    tools = _items(r.get("memory.tools_that_survived"))
+    triad_on, triad_trigger = _triad(r.get("triad_mode"))
+
+    def line(label: str, value: str) -> str:
+        return f"- {label}: {value}" if value else ""
+
+    header = (f"# SOUL.md — {firm or 'Despacho'}\n"
+              f"# Generado: {gen_date} · Próxima revisión: {review_date}\n")
+
+    parts = [
+        header,
+        _section("## identity", [
+            line("name", firm), line("lawyer", lawyer),
+            line("location", location), line("channels", channels), line("voice", voice)]),
+        _section("## jurisdiction", [
+            line("base", base), line("practice_areas", areas), line("client_type", client)]),
+        _section("## legal_voice", [
+            line("structure", structure), line("banned_words", banned)]),
+        _section("## hard_nos", [f"- {h}" for h in hard_nos]),
+        _section("## rhythm", [
+            line("deep_work", deep_work), line("no_meetings", no_meetings)]),
+        _section("## tools", [f"- {t}" for t in tools]),
+        # triad_mode solo aparece si el despacho lo activó (opt-in)
+        _section("## triad_mode", [
+            "- enabled: true", line("trigger", triad_trigger)]) if triad_on else "",
+    ]
+    return "\n".join(p for p in parts if p).rstrip() + "\n"
+
+
+def build_summary(responses: dict) -> str:
+    """Resumen en LENGUAJE LLANO de lo que Mia entendió del despacho — lo que ve el
+    abogado al terminar el onboarding (el SOUL.md técnico queda por debajo). Markdown
+    simple; solo incluye los datos que el abogado respondió."""
+    r = responses or {}
+    firm, lawyer = _firm_lawyer(r.get("identity.name"))
+    location = _location(r.get("identity.location"))
+    voice = _text(r.get("identity.voice"))
+    areas = _text(r.get("jurisdiction.practice_areas"))
+    client = _text(r.get("jurisdiction.client_type"))
+    structure = _text(r.get("legal_voice.structure"))
+    banned = _text(r.get("legal_voice.banned_words"))
+    hard_nos = _items(r.get("hard_nos"))
+    deep_work, no_meetings = _rhythm(r.get("rhythm"))
+    tools = _items(r.get("memory.tools_that_survived"))
+
+    despacho = " — ".join(p for p in (firm, lawyer) if p)
+    ritmo_bits = []
+    if deep_work:
+        ritmo_bits.append(f"trabajo profundo {deep_work}")
+    if no_meetings:
+        ritmo_bits.append(f"sin reuniones {no_meetings}")
+
+    bullets = [
+        ("Despacho", despacho),
+        ("Dónde trabajas", location),
+        ("Áreas de práctica", areas),
+        ("Tipo de cliente", client),
+        ("Estilo de escritura", voice),
+        ("Estructura de tus escritos", structure),
+        ("Palabras que evitas", banned),
+        ("Herramientas que conozco", ", ".join(tools)),
+        ("Tu ritmo", "; ".join(ritmo_bits)),
+    ]
+    lines = ["### Así entendí a tu despacho", ""]
+    for label, value in bullets:
+        if value:
+            lines.append(f"- **{label}:** {value}")
+    if hard_nos:
+        lines.append("- **Reglas que nunca debo romper:**")
+        lines.extend(f"  - {h}" for h in hard_nos)
+    lines.append("")
+    lines.append("Puedes ajustar cualquiera de estos datos cuando quieras desde “Mi despacho”.")
+    return "\n".join(lines)
+
+
+def validate_soul(content: str) -> list[str]:
+    """Defectos del SOUL.md generado. En el diseño DETERMINISTA los placeholders de
+    plantilla son imposibles por construcción (build_soul omite lo vacío, jamás
+    imprime corchetes), así que la única comprobación real es que exista la sección de
+    identidad. Devuelve [] si el SOUL está bien formado.
+
+    Nota (hallazgo capa 2 B1): NO se cazan corchetes en el texto — un abogado puede
+    escribir un corchete legítimo en su respuesta (p. ej. 'No usar [sic]') y ese dato
+    real no debe marcarse como defecto ni tumbar nada."""
+    return [] if "## identity" in (content or "") else ["## identity"]
+
+
+def _dates_now() -> tuple[str, str]:
+    today = _today()
+    review = today + timedelta(days=90)
+    return today.strftime("%Y-%m-%d"), review.strftime("%Y-%m-%d")
+
+
 # ── La entrevista ───────────────────────────────────────────────────────────
 
 class SoulInterview:
     """Conduce el onboarding del SOUL.md y mantiene el archivo por tenant."""
 
     async def get_questions(self) -> list[dict]:
-        """Las 15 preguntas (con id/block/field/question/example) para el frontend."""
+        """Las preguntas (con id/block/field/question/example) para el frontend."""
         return [dict(q) for q in QUESTIONS]
 
     async def run_interview(self, tenant_id: str, responses: dict) -> str:
-        """Genera el SOUL.md a partir de las respuestas, lo guarda y lo devuelve.
-
-        `responses` es {field: respuesta del abogado}. Usa call_llm(task="soul") para
-        rellenar el template de 9 secciones; los campos sin respuesta quedan como
-        placeholder. Escribe en $MIA_HOME/soul_{tenant_id}.md.
-
-        CP6 (Riesgo #26 — el "alma" siempre bien formada): el resultado del LLM se
-        VALIDA contra las 9 secciones (validate_soul). Si quedó incompleto, UN
-        reintento correctivo que nombra lo que falta; si sigue mal (o el LLM falla),
-        fallback al render determinista existente (generate_without_llm) — el abogado
-        SIEMPRE termina el onboarding con un SOUL.md válido.
-        """
-        messages = self._build_messages(responses)
-        try:
-            content = await self._generate(messages)
-            problems = validate_soul(content)
-            if problems:
-                logger.warning(
-                    "SOUL.md incompleto (faltan/vacías: %s) — reintento correctivo (tenant=%s)",
-                    ", ".join(problems), tenant_id,
-                )
-                retry = messages + [
-                    {"role": "assistant", "content": content},
-                    {"role": "user", "content": (
-                        "El SOUL.md que devolviste quedó INCOMPLETO: faltan o están vacías "
-                        f"estas secciones: {', '.join(problems)}. Devuelve el SOUL.md "
-                        "COMPLETO otra vez, con las 9 secciones y sus encabezados exactos; "
-                        "si no tienes información para un campo, conserva su placeholder "
-                        "entre corchetes.")},
-                ]
-                content = await self._generate(retry)
-                problems = validate_soul(content)
-            if problems:
-                logger.warning(
-                    "SOUL.md sigue incompleto tras el reintento — fallback determinista "
-                    "(tenant=%s)", tenant_id,
-                )
-                content = self.generate_without_llm(responses)
-        except Exception:  # noqa: BLE001 — LLM caído/timeout: nunca sin SOUL
-            logger.exception(
-                "generación del SOUL.md falló — fallback determinista (tenant=%s)", tenant_id)
-            content = self.generate_without_llm(responses)
-        _write_soul(tenant_id, content)
-        _write_responses(tenant_id, responses)   # para 'Revisar mi perfil' / revisión trimestral
-        return content
-
-    async def update_soul(self, tenant_id: str, updates: dict) -> str:
-        """Actualiza campos puntuales del SOUL.md existente (revisión trimestral).
-
-        `updates` es {field: nuevo valor}. Reescribe el SOUL.md aplicando los cambios
-        sobre el contenido actual, conservando lo demás. Si no hay SOUL.md previo,
-        equivale a una entrevista nueva con esos campos.
-        """
-        current = load_soul_text(tenant_id)
-        if not current:
-            return await self.run_interview(tenant_id, updates)
-        messages = [
-            {"role": "system", "content": _GEN_SYSTEM},
-            {"role": "user", "content": (
-                "Actualiza el siguiente SOUL.md aplicando SOLO los cambios indicados y "
-                "conservando intacto todo lo demás (incluida la sección no afectada). "
-                "Mantén los 9 encabezados de sección.\n\n"
-                f"Fecha de revisión: {self._dates()[0]} · Próxima revisión: {self._dates()[1]}\n\n"
-                f"=== SOUL.md actual ===\n{current}\n\n"
-                f"=== Cambios a aplicar (field → nuevo valor) ===\n{_render_responses(updates)}\n\n"
-                "Devuelve el SOUL.md completo y actualizado."
-            )},
-        ]
-        # CP6 (hallazgo mayor del revisor): la actualización pasa por el MISMO circuito
-        # validación → reintento → fallback que la entrevista — un output malformado
-        # del LLM JAMÁS sobrescribe un SOUL.md sano.
-        merged = {**load_responses(tenant_id), **updates}   # respuestas previas + cambios
-        try:
-            content = await self._generate(messages)
-            problems = validate_soul(content)
-            if problems:
-                logger.warning(
-                    "SOUL.md actualizado incompleto (faltan/vacías: %s) — reintento "
-                    "correctivo (tenant=%s)", ", ".join(problems), tenant_id)
-                retry = messages + [
-                    {"role": "assistant", "content": content},
-                    {"role": "user", "content": (
-                        "El SOUL.md que devolviste quedó INCOMPLETO: faltan o están vacías "
-                        f"estas secciones: {', '.join(problems)}. Devuelve el SOUL.md "
-                        "COMPLETO otra vez, con las 9 secciones y sus encabezados exactos.")},
-                ]
-                content = await self._generate(retry)
-                problems = validate_soul(content)
-            if problems:
-                logger.warning(
-                    "SOUL.md actualizado sigue incompleto — render determinista desde las "
-                    "respuestas fusionadas (tenant=%s)", tenant_id)
-                content = self.generate_without_llm(merged)
-        except Exception:  # noqa: BLE001 — LLM caído: nunca romper el SOUL existente
-            logger.exception(
-                "actualización del SOUL.md falló — render determinista (tenant=%s)", tenant_id)
-            content = self.generate_without_llm(merged)
-        _write_soul(tenant_id, content)
-        _write_responses(tenant_id, merged)
-        return content
-
-    # ── Fallback sin LLM (timeout / fallo del gateway) ───────────────────────
-    def generate_without_llm(self, responses: dict) -> str:
-        """Construye el SOUL.md directamente desde las respuestas, SIN llamar al LLM.
-
-        Fallback determinista para cuando call_llm(task='soul') hace timeout o falla.
-        Mapea cada respuesta a su campo del template de 9 secciones; los campos sin
-        respuesta quedan como placeholder entre corchetes (no se inventan datos). El
-        abogado puede refinar este perfil base luego desde la pantalla 'Mi despacho'.
-        """
-        r = responses or {}
-        gen_date, review_date = self._dates()
-
-        # identity.name: {firm, lawyer} (onboarding nuevo) o string (legacy).
-        name = r.get("identity.name")
-        firm = lawyer = ""
-        if isinstance(name, dict):
-            firm = str(name.get("firm", "")).strip()
-            lawyer = str(name.get("lawyer", "")).strip()
-        elif isinstance(name, str):
-            firm = name.strip()
-
-        # identity.location: {country, city} o string.
-        loc = r.get("identity.location")
-        country = city = ""
-        if isinstance(loc, dict):
-            country = str(loc.get("country", "")).strip()
-            city = str(loc.get("city", "")).strip()
-        elif isinstance(loc, str):
-            country = loc.strip()
-        location = ", ".join(p for p in (city, country) if p)
-
-        # mission.pillars: {pillars:[...]} | list | string.
-        pillars_val = r.get("mission.pillars")
-        if isinstance(pillars_val, dict):
-            pillars = [str(p).strip() for p in pillars_val.get("pillars", []) if str(p).strip()]
-        elif isinstance(pillars_val, list):
-            pillars = [str(p).strip() for p in pillars_val if str(p).strip()]
-        elif isinstance(pillars_val, str) and pillars_val.strip():
-            pillars = [pillars_val.strip()]
-        else:
-            pillars = []
-
-        # rhythm: {no_meetings:[...], hours:""} | string.
-        rhythm_val = r.get("rhythm")
-        deep_work = no_meetings = ""
-        if isinstance(rhythm_val, dict):
-            deep_work = str(rhythm_val.get("hours", "")).strip()
-            no_meetings = ", ".join(str(d).strip() for d in rhythm_val.get("no_meetings", []) if str(d).strip())
-        elif isinstance(rhythm_val, str):
-            deep_work = rhythm_val.strip()
-
-        # triad_mode: {enabled, trigger} | string.
-        triad_val = r.get("triad_mode")
-        triad_enabled, triad_trigger = "false", ""
-        if isinstance(triad_val, dict):
-            triad_enabled = "true" if triad_val.get("enabled") else "false"
-            triad_trigger = str(triad_val.get("trigger", "")).strip()
-        elif isinstance(triad_val, str) and triad_val.strip():
-            triad_enabled = "true" if triad_val.strip().lower().startswith(("si", "sí", "true", "yes")) else "false"
-
-        # hard_nos: lista de límites | string.
-        hard_nos_val = r.get("hard_nos")
-        if isinstance(hard_nos_val, list):
-            hard_nos = [str(h).strip() for h in hard_nos_val if str(h).strip()]
-        elif isinstance(hard_nos_val, str) and hard_nos_val.strip():
-            hard_nos = [hard_nos_val.strip()]
-        else:
-            hard_nos = []
-
-        def ph(value: str, placeholder: str) -> str:
-            return value if value else placeholder
-
-        pillars_block = "\n".join(f"  - {p}" for p in pillars) if pillars else (
-            "  - [PILAR 1]\n  - [PILAR 2]\n  - [PILAR 3]"
-        )
-        hard_nos_block = "\n".join(f"- {h}" for h in hard_nos) if hard_nos else (
-            "- [NUNCA citar sentencias no verificadas en el corpus]\n"
-            "- [NUNCA recomendar allanarse sin análisis de riesgo previo]\n"
-            "- [NUNCA presentar como final un escrito sin revisión]"
-        )
-
-        return f"""# SOUL.md — {ph(firm, "[NOMBRE DEL DESPACHO]")}
-# Generado: {gen_date} · Próxima revisión: {review_date}
-# (Perfil base sin IA: generado por timeout del modelo. Refínalo desde "Mi despacho".)
-
-## identity
-- name: {ph(firm, "[NOMBRE DESPACHO]")}
-- lawyer: {ph(lawyer, "[NOMBRE] · T.P. [NÚMERO]")}
-- location: {ph(location, "[CIUDAD, PAÍS] · [TIMEZONE]")}
-- channels: {ph(_plain(r.get("identity.channels")), "[WEB, LINKEDIN, etc.]")}
-- voice: {ph(_plain(r.get("identity.voice")), "[3 ADJETIVOS DE ESTILO]")}
-
-## jurisdiction
-- base: {ph(_plain(r.get("jurisdiction.base")), "[JURISDICCIÓN PRINCIPAL]")}
-- practice_areas: {ph(_plain(r.get("jurisdiction.practice_areas")), "[ÁREAS DE PRÁCTICA]")}
-- client_type: {ph(_plain(r.get("jurisdiction.client_type")), "[TIPO DE CLIENTE]")}
-- courts: {ph(_plain(r.get("jurisdiction.courts")), "[INSTANCIAS Y TRIBUNALES]")}
-- key_courts: {ph(_plain(r.get("jurisdiction.key_courts")), "[CORTES MÁS CITADAS]")}
-
-## mission
-- headline: {ph(_plain(r.get("mission.headline")), "[UNA ORACIÓN. Si se logra este año, el año fue exitoso.]")}
-- pillars:
-{pillars_block}
-- not_in_scope: [LO QUE NO HACEMOS ESTE AÑO]
-
-## legal_voice
-- register: [FORMAL-TÉCNICO / CONCISO / ARGUMENTATIVO]
-- structure: {ph(_plain(r.get("legal_voice.structure")), "[ESTRUCTURA DE LOS ESCRITOS]")}
-- banned_words: {ph(_plain(r.get("legal_voice.banned_words")), "[PALABRAS O EXPRESIONES PROHIBIDAS]")}
-- argument_style: [DEDUCTIVO DESDE NORMA / DESDE HECHOS / DESDE JURISPRUDENCIA]
-
-## hard_nos
-{hard_nos_block}
-
-## doctrinal_stance
-- preferred_sources: {ph(_plain(r.get("doctrinal_stance.preferred_sources")), "[FUENTES PREFERIDAS]")}
-- key_jurisprudence:
-  - [JURISPRUDENCIA CLAVE]
-- discarded_args: {ph(_plain(r.get("doctrinal_stance.discarded_args")), "[ARGS QUE PROBAMOS Y NO FUNCIONARON]")}
-
-## memory
-- decisions_made:
-  - "[INTENTÉ X, no funcionó porque Y. No sugerir.]"
-- orbit:
-  - "[NOMBRE]: [ROL] · [ÚLTIMA INTERACCIÓN] · [QUÉ SE LE DEBE]"
-- tools_that_survived: {ph(_plain(r.get("memory.tools_that_survived")), "[HERRAMIENTAS DEL DÍA A DÍA]")}
-
-## rhythm
-- deep_work: {ph(deep_work, "[HORARIO DE TRABAJO PROFUNDO]")}
-- no_meetings: {ph(no_meetings, "[DÍAS SIN REUNIONES]")}
-- weekend: [SOLO URGENCIAS REALES]
-- energy_curve: [MAÑANA: producción jurídica. TARDE: reuniones. NOCHE: lectura]
-
-## triad_mode
-- enabled: {triad_enabled}
-- trigger: {ph(triad_trigger, "[CUÁNDO ACTIVARLO]")}
-"""
-
-    def save_fallback(self, tenant_id: str, responses: dict) -> str:
-        """Genera el SOUL.md SIN LLM, lo guarda y persiste las respuestas; devuelve el contenido.
-
-        Equivalente a run_interview pero por la vía determinista (sin LLM). Marca el
-        onboarding como completado (escribe el archivo que soul_status detecta).
-        """
-        content = self.generate_without_llm(responses)
+        """Genera el SOUL.md desde las respuestas (determinista, sin corchetes), lo
+        guarda y lo devuelve. Persiste también las respuestas crudas para 'Revisar mi
+        perfil' / la revisión trimestral."""
+        content = build_soul(responses)
         _write_soul(tenant_id, content)
         _write_responses(tenant_id, responses)
         return content
 
-    # ── internos ────────────────────────────────────────────────────────────
+    async def update_soul(self, tenant_id: str, updates: dict) -> str:
+        """Actualiza el SOUL.md fusionando las respuestas previas con los cambios y
+        reconstruyéndolo (determinista). Si no hay perfil previo, equivale a una
+        entrevista nueva con esos campos.
+
+        Nota (capa 2 MN2): la reconstrucción usa SOLO los campos que hoy pregunta el
+        onboarding; un `responses.json` viejo con campos ya removidos (objetivo/pilares,
+        cortes) no los reimprime — es la consecuencia deliberada de haber simplificado."""
+        merged = {**load_responses(tenant_id), **(updates or {})}
+        content = build_soul(merged)
+        _write_soul(tenant_id, content)
+        _write_responses(tenant_id, merged)
+        return content
+
+    def generate_without_llm(self, responses: dict) -> str:
+        """Alias histórico: la generación SIEMPRE es determinista ahora."""
+        return build_soul(responses)
+
+    def save_fallback(self, tenant_id: str, responses: dict) -> str:
+        """Genera el SOUL.md (determinista), lo guarda y persiste las respuestas."""
+        content = build_soul(responses)
+        _write_soul(tenant_id, content)
+        _write_responses(tenant_id, responses)
+        return content
+
+    def summary(self, responses: dict) -> str:
+        """Resumen en lenguaje llano para mostrar al abogado."""
+        return build_summary(responses)
+
     def _dates(self) -> tuple[str, str]:
-        today = _today()
-        review = today + timedelta(days=90)
-        return today.strftime("%Y-%m-%d"), review.strftime("%Y-%m-%d")
-
-    def _build_messages(self, responses: dict) -> list[dict]:
-        gen_date, review_date = self._dates()
-        return [
-            {"role": "system", "content": _GEN_SYSTEM},
-            {"role": "user", "content": (
-                f"Fecha de generación: {gen_date} · Próxima revisión: {review_date}\n\n"
-                f"=== TEMPLATE (9 secciones, respétalas) ===\n{SOUL_TEMPLATE}\n\n"
-                f"=== RESPUESTAS DE LA ENTREVISTA ===\n{_render_responses(responses)}\n\n"
-                "Genera el SOUL.md final."
-            )},
-        ]
-
-    async def _generate(self, messages: list[dict]) -> str:
-        from ..agent import llm  # import diferido: la generación es lo único que toca el LLM
-        resp = await asyncio.to_thread(llm.call_llm, messages, task=SOUL_TASK, temperature=0.3)
-        return (resp.choices[0].message.content or "").strip()
+        return _dates_now()

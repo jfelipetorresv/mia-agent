@@ -50,7 +50,7 @@ from mia import config, embeddings                    # noqa: E402
 from mia.agent import llm                              # noqa: E402
 from mia.agents.state import thread_id_for            # noqa: E402
 from mia.onboarding.soul_interview import (           # noqa: E402
-    QUESTIONS, SOUL_SECTIONS, load_soul_snapshot, soul_path,
+    QUESTIONS, validate_soul, load_soul_snapshot, soul_path,
 )
 
 _results: list[tuple[str, bool]] = []
@@ -187,12 +187,12 @@ def run_e2e(client, auth, tid) -> list[str]:
     print("\n-- Paso 1 · Onboarding (SOUL.md) --")
     r = client.get("/api/onboarding/questions", headers=auth)
     qs = r.json() if r.status_code == 200 else []
-    check("GET /api/onboarding/questions -> 15 preguntas (Doc 4 menos P8/P9/P12/P13)",
-          r.status_code == 200 and len(qs) == 15)
+    check("GET /api/onboarding/questions -> 13 preguntas (sin P8/P9/P12/P13 ni objetivo/pilares)",
+          r.status_code == 200 and len(qs) == 13)
     check("cada pregunta trae id/block/field/question/example",
           bool(qs) and all({"id", "block", "field", "question", "example"} <= set(q) for q in qs))
-    check("las 15 preguntas cubren los 5 bloques del Doc 4",
-          {q["block"] for q in qs} == {"identity", "jurisdiction", "legal_voice", "mission_rhythm", "triad_mode"})
+    check("las preguntas cubren los bloques (sin las de estrategia removidas)",
+          {q["block"] for q in qs} == {"identity", "jurisdiction", "legal_voice", "rhythm", "triad_mode"})
 
     r = client.post("/api/onboarding/complete", headers=auth, json={"responses": LEXIA})
     body = r.json() if r.status_code == 200 else {}
@@ -202,8 +202,9 @@ def run_e2e(client, auth, tid) -> list[str]:
     soul_file = soul_path(tid)
     check("soul_{tenant}.md creado en $MIA_HOME", soul_file.exists())
     soul_text = soul_file.read_text(encoding="utf-8") if soul_file.exists() else ""
-    check("el SOUL.md contiene las 9 secciones del template",
-          all(sec in soul_text for sec in SOUL_SECTIONS))
+    check("el SOUL.md sale limpio (sin corchetes), con identidad y SIN sección mission",
+          "## identity" in soul_text and "## mission" not in soul_text
+          and "[" not in soul_text and validate_soul(soul_text) == [])
 
     snap = load_soul_snapshot(tid)
     check("soul_snapshot se carga para el turno (wiring al grafo, Q2)",
@@ -293,62 +294,48 @@ def run_e2e(client, auth, tid) -> list[str]:
 
 
 def run_soul_validation_checks() -> None:
-    """CP6 (Riesgo #26): el SOUL generado se VALIDA; inválido → 1 reintento → fallback.
+    """Rediseño 2026-07-06 (decisión de Pipe): el SOUL se genera DETERMINISTA, OMITE lo
+    vacío y JAMÁS imprime placeholders entre corchetes. Se removieron las preguntas de
+    objetivo/pilares (sección mission). validate_soul marca cualquier corchete sobrante."""
+    print("\n-- SOUL determinista: sin corchetes, omite lo vacío, con resumen llano --")
+    from mia.onboarding.soul_interview import (
+        SoulInterview, build_soul, build_summary, validate_soul)
 
-    Offline (guionando llm.call_llm): el abogado SIEMPRE termina el onboarding con
-    un SOUL.md de 9 secciones bien formadas — del LLM, del reintento o del fallback."""
-    print("\n-- CP6 · validación del SOUL: inválido → reintento correctivo → fallback --")
-    from mia.onboarding.soul_interview import SoulInterview, validate_soul
+    # validate_soul (diseño determinista): solo exige la sección de identidad; ya NO
+    # caza corchetes (un abogado puede escribir uno legítimo — hallazgo capa 2 B1).
+    limpio = build_soul(dict(LEXIA))
+    check("soul-v0 · validate_soul acepta un SOUL con identidad y marca su ausencia",
+          validate_soul(limpio) == [] and validate_soul("## jurisdiction\n- base: X") == ["## identity"])
 
-    invalid = "## identity\nSolo una sección — el resto se perdió."
-    saved_llm = llm.call_llm
+    # build_soul con datos SIN corchetes no emite corchetes (el generador es limpio por
+    # construcción — omite lo vacío, jamás imprime plantilla).
+    check("soul-v1 · el SOUL generado desde respuestas limpias no contiene corchetes",
+          "[" not in limpio and "]" not in limpio)
+    check("soul-v2 · trae ## identity y ## jurisdiction y NO trae ## mission",
+          "## identity" in limpio and "## jurisdiction" in limpio and "## mission" not in limpio)
 
-    def scripted(outputs: list):
-        calls: list[list[dict]] = []
-
-        def fake(messages, *, task=None, model=None, **kw):
-            calls.append(messages)
-            out = outputs.pop(0)
-            if isinstance(out, Exception):
-                raise out
-            return _resp(out)
-        return fake, calls
-
-    check("cp6-s0 · validate_soul detecta secciones faltantes y acepta el fixture",
-          len(validate_soul(invalid)) == 8 and validate_soul(_SOUL_FIXTURE) == [])
+    # B1 (capa 2): un corchete que el abogado ESCRIBIÓ se preserva tal cual y NO rompe
+    # la validación (no es un placeholder de plantilla, es un dato real).
+    con_dato = dict(LEXIA); con_dato["legal_voice.banned_words"] = "Nunca escribir [sic] en un escrito"
+    soul_dato = build_soul(con_dato)
+    check("soul-v0b · un corchete legítimo del abogado se conserva y NO se marca como defecto",
+          "[sic]" in soul_dato and validate_soul(soul_dato) == [])
 
     si = SoulInterview()
-    try:
-        # inválido → el reintento correctivo devuelve un SOUL válido → se usa ese
-        llm.call_llm, calls = scripted([invalid, _SOUL_FIXTURE])
-        content = asyncio.run(si.run_interview("t-soul-valid-a", dict(LEXIA)))
-        retry_user = calls[1][-1]["content"] if len(calls) > 1 else ""
-        check("cp6-s1 · SOUL inválido → UN reintento correctivo que nombra lo que falta",
-              len(calls) == 2 and "INCOMPLETO" in retry_user and "## mission" in retry_user)
-        check("cp6-s2 · el reintento válido se usa (9 secciones presentes)",
-              validate_soul(content) == [] and "Lexia" in content)
+    content = asyncio.run(si.run_interview("t-soul-det-a", dict(LEXIA)))
+    check("soul-v3 · run_interview (determinista) produce un SOUL limpio y con datos",
+          validate_soul(content) == [] and "Lexia" in content)
 
-        # inválido → reintento TAMBIÉN inválido → fallback determinista (sin LLM)
-        llm.call_llm, calls = scripted([invalid, invalid])
-        content2 = asyncio.run(si.run_interview("t-soul-valid-b", dict(LEXIA)))
-        check("cp6-s3 · reintento también inválido → fallback determinista con 9 secciones",
-              len(calls) == 2 and validate_soul(content2) == [])
+    # update_soul fusiona respuestas previas + cambios y RECONSTRUYE (determinista).
+    updated = asyncio.run(si.update_soul("t-soul-det-a", {"identity.channels": "nuevositio.co"}))
+    check("soul-v4 · update_soul reconstruye limpio conservando lo demás",
+          validate_soul(updated) == [] and "nuevositio.co" in updated and "Lexia" in updated)
 
-        # el LLM lanza (timeout/caída) → fallback determinista, nunca sin SOUL
-        llm.call_llm, calls = scripted([RuntimeError("LLM caído (simulado)")])
-        content3 = asyncio.run(si.run_interview("t-soul-valid-c", dict(LEXIA)))
-        check("cp6-s4 · el LLM falla → fallback determinista (el onboarding no se cae)",
-              validate_soul(content3) == [])
-
-        # update_soul (revisión trimestral) pasa por el MISMO circuito: un output
-        # malformado del LLM JAMÁS sobrescribe un SOUL.md sano (corrección del revisor).
-        llm.call_llm, calls = scripted([invalid, invalid])
-        content4 = asyncio.run(si.update_soul(
-            "t-soul-valid-a", {"firm_name": "Lexia Abogados renovada"}))
-        check("cp6-s5 · update_soul con LLM malformado → el SOUL queda VÁLIDO (9 secciones)",
-              len(calls) == 2 and validate_soul(content4) == [])
-    finally:
-        llm.call_llm = saved_llm
+    # resumen en lenguaje llano: es lo que ve el abogado (el SOUL.md queda por debajo).
+    resumen = build_summary(dict(LEXIA))
+    check("soul-v5 · el resumen llano es legible, sin corchetes ni encabezados técnicos",
+          "Así entendí a tu despacho" in resumen and "[" not in resumen
+          and "## identity" not in resumen)
 
 
 def main() -> int:

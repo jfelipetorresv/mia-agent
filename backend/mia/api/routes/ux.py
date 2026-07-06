@@ -49,9 +49,6 @@ router = APIRouter(prefix="/api", tags=["ux"])
 
 logger = logging.getLogger("mia.api.ux")
 
-# Timeout duro para la generación del SOUL.md (Ollama puede tardar mucho con el
-# modelo 32b o en cold-start). Si se supera, se cae al fallback determinista sin LLM.
-_SOUL_TIMEOUT_S = 120
 
 # Precio aproximado USD por token (mezcla entrada/salida) — solo para el estimado del dashboard.
 _USD_PER_TOKEN = 0.000009
@@ -716,7 +713,7 @@ class OnboardingComplete(BaseModel):
 
 @router.get("/onboarding/questions")
 async def onboarding_questions(request: Request):
-    """Las 19 preguntas de la entrevista (id/block/field/question/example)."""
+    """Las 13 preguntas de la entrevista (id/block/field/question/example)."""
     _tenant(request)
     return await SoulInterview().get_questions()
 
@@ -725,9 +722,10 @@ async def onboarding_questions(request: Request):
 async def onboarding_complete(request: Request, body: OnboardingComplete):
     """Genera el SOUL.md del despacho a partir de las respuestas y lo guarda.
 
-    Con timeout duro de 120s: si el LLM (Ollama) no responde a tiempo o falla, se
-    construye el SOUL.md sin LLM desde las respuestas y el onboarding se marca como
-    completado igual. El abogado puede refinar su perfil luego desde 'Mi despacho'.
+    Generación DETERMINISTA (sin LLM, rediseño 2026-07-06): se construye omitiendo lo
+    vacío, sin invención ni placeholders. Devuelve `summary` (resumen en lenguaje llano
+    que muestra el frontend) además del `soul_content` técnico. El abogado puede refinar
+    su perfil luego desde 'Mi despacho'.
     """
     tid = _tenant(request)
     # Persistir la(s) jurisdicción(es) elegidas (Fase 0.C). Es la fuente del routing
@@ -744,21 +742,15 @@ async def onboarding_complete(request: Request, body: OnboardingComplete):
                     (tid, Json({"jurisdictions": codes}), Json(codes)),
                 )
     interview = SoulInterview()
-    try:
-        content = await asyncio.wait_for(
-            interview.run_interview(tid, body.responses), timeout=_SOUL_TIMEOUT_S
-        )
-        # puede_importar_guias: el frontend puede ofrecer el paso opcional de importar
-        # las guías de trabajo del despacho (POST /api/playbooks/import — Riesgo #20).
-        return {"soul_content": content, "path": f"soul_{tid}.md", "generated_by": "llm",
-                "puede_importar_guias": True}
-    except asyncio.TimeoutError:
-        logger.warning("SOUL: timeout (%ss) tenant=%s — fallback sin LLM", _SOUL_TIMEOUT_S, tid)
-    except Exception as exc:  # noqa: BLE001 — cualquier fallo del gateway cae al fallback
-        logger.warning("SOUL: fallo del LLM tenant=%s (%s) — fallback sin LLM", tid, exc)
-    content = interview.save_fallback(tid, body.responses)
-    return {"soul_content": content, "path": f"soul_{tid}.md", "generated_by": "fallback",
-            "puede_importar_guias": True}
+    # Generación DETERMINISTA (sin LLM): construye el SOUL.md omitiendo lo vacío, sin
+    # placeholders ni invención. `summary` es el RESUMEN en lenguaje llano que muestra
+    # el frontend ("Así entendí a tu despacho"); el SOUL.md técnico queda por debajo.
+    content = await interview.run_interview(tid, body.responses)
+    summary = interview.summary(body.responses)
+    # puede_importar_guias: el frontend puede ofrecer el paso opcional de importar
+    # las guías de trabajo del despacho (POST /api/playbooks/import — Riesgo #20).
+    return {"soul_content": content, "summary": summary, "path": f"soul_{tid}.md",
+            "generated_by": "deterministic", "puede_importar_guias": True}
 
 
 @router.get("/onboarding/status")

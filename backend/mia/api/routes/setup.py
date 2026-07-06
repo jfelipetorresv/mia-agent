@@ -27,9 +27,7 @@ from fastapi import APIRouter, HTTPException, Request
 from psycopg.types.json import Json
 
 from ...channels import notify
-from ...connectors import obsidian_install
 from ...connectors.local_folders import detect_cloud_folders, list_sources
-from ...connectors import vault_writer as vault_writer_mod
 from ...db import pool
 from ...onboarding.soul_interview import soul_status
 from ...speech import engine as speech_engine
@@ -40,7 +38,10 @@ logger = logging.getLogger("mia.api.setup")
 # Los pasos del recorrido, en orden. El id es estable (lo usa la UI y el skip).
 # "voz" va al final: es una capacidad opcional (CP-Z1b) — el "siguiente paso"
 # no debe anteponerla a carpetas o guías, que dan más valor al arrancar.
-STEP_IDS = ("perfil", "motor", "obsidian", "carpetas", "guias", "telegram", "voz")
+# Obsidian pospuesto por decisión de Pipe (2026-07-06): fuera del recorrido por ahora
+# (su instalación/sync sigue disponible en el Panel de control). Su guía se conserva
+# en STEP_GUIDES por si se reactiva.
+STEP_IDS = ("perfil", "motor", "carpetas", "guias", "telegram", "voz")
 
 # ── CP-C4b · La guía explicativa de cada paso (encargo de Pipe 2026-07-02) ────
 # El recorrido no solo DETECTA: EXPLICA como un onboarding — qué es cada
@@ -272,15 +273,8 @@ async def collect_setup_status(tid: str) -> dict:
         soul = (await _detected(f"soul:{tid}", lambda: soul_status(tid))) or {}
     except Exception:  # noqa: BLE001
         logger.exception("setup: no pude leer el estado del perfil (tenant=%s)", tid)
-    try:
-        obsidian_ok = bool(await _detected("obsidian", obsidian_install.is_installed))
-    except Exception:  # noqa: BLE001
-        obsidian_ok = False
-    vault_path = None
-    try:
-        vault_path = await vault_writer_mod.get_tenant_vault_path(tid)
-    except Exception:  # noqa: BLE001
-        pass
+    # (Obsidian pospuesto: su detección salía del recorrido — no se corre `winget`
+    # aquí, que tardaba hasta 60s por un dato que ya nadie lee. Hallazgo capa 2 MN3.)
     try:
         sources = [s for s in await list_sources(tid, include_disabled=False)]
     except Exception:  # noqa: BLE001
@@ -333,14 +327,8 @@ async def collect_setup_status(tid: str) -> dict:
               if ollama_ok else
               "No detecté un motor en este equipo. Puedes elegir la opción de nube en el Panel de control."),
              "automatica", "/dashboard"),
-        step("obsidian", "Tu archivo de notas (Obsidian)",
-             obsidian_ok and bool(vault_path),
-             ("Obsidian está instalado y conectado con Mia."
-              if obsidian_ok and vault_path else
-              "Obsidian está instalado; falta conectar tu espacio de notas."
-              if obsidian_ok else
-              "Obsidian no está instalado. Mia puede instalarlo por ti (es gratis)."),
-             "automatica", "/dashboard"),
+        # Obsidian pospuesto (decisión de Pipe 2026-07-06): fuera del recorrido; su
+        # instalación/sync sigue en el Panel de control.
         step("carpetas", "Tus carpetas de trabajo",
              len(sources) > 0,
              (f"Mia conoce {len(sources)} carpeta{'s' if len(sources) != 1 else ''} de trabajo."

@@ -14,17 +14,23 @@ from .soul_interview import (
     QUESTIONS,
     SOUL_TEMPLATE,
     SoulInterview,
+    build_soul,
+    build_summary,
     load_responses,
     load_soul_snapshot,
     load_soul_text,
     soul_path,
     soul_status,
+    validate_soul,
 )
 
 __all__ = [
     "SoulInterview",
     "QUESTIONS",
     "SOUL_TEMPLATE",
+    "build_soul",
+    "build_summary",
+    "validate_soul",
     "soul_path",
     "load_soul_text",
     "load_soul_snapshot",
