@@ -2,10 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  ArrowLeft,
+  FileText,
+  FolderUp,
+  Paperclip,
+  Scale,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
 import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
+import CitationReview, { type Verification } from "../../_components/CitationReview";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type Doc = { id: string; name: string; type?: string; created_at?: string };
 type Msg = { role: "user" | "mia"; text: string };
@@ -33,6 +45,9 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   // CP7: cierre estructurado del diagnostico (problema/normas/riesgo) cuando el
   // backend lo emite (CP6); si no viene, el panel muestra solo la prosa como antes.
   const [summary, setSummary] = useState<DiagnosisSummary | null>(null);
+  // Fase 1(b): informe de verificación de citas del borrador (CP9), en línea en
+  // este panel — null hasta que el backend lo entregue en el draft o el turno.
+  const [verification, setVerification] = useState<Verification | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [uploadSummary, setUploadSummary] = useState("");
@@ -64,10 +79,16 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     apiGet<{ name?: string }>(`/api/matters/${matterId}`).then(setMatter).catch(() => {});
     loadDocs();
     // Si el asunto ya tiene un borrador en curso, recupera tambien su diagnostico.
-    apiGet<{ diagnosis?: string; awaiting_review?: boolean; diagnosis_summary?: DiagnosisSummary | null }>(`/api/matters/${matterId}/draft`)
+    apiGet<{
+      diagnosis?: string;
+      awaiting_review?: boolean;
+      diagnosis_summary?: DiagnosisSummary | null;
+      verification?: Verification | null;
+    }>(`/api/matters/${matterId}/draft`)
       .then((d) => {
         if (d.diagnosis) setDiagnosis(d.diagnosis);
         if (d.diagnosis_summary) setSummary(d.diagnosis_summary);
+        if (d.verification) setVerification(d.verification);
         if (d.awaiting_review) setHasDraft(true);
       })
       .catch(() => {
@@ -132,7 +153,13 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       await streamTurn(
         stream_url,
         (event, data) => {
-          const payload = data as { message?: string; draft?: string; diagnosis?: string; diagnosis_summary?: DiagnosisSummary | null };
+          const payload = data as {
+            message?: string;
+            draft?: string;
+            diagnosis?: string;
+            diagnosis_summary?: DiagnosisSummary | null;
+            verification?: Verification | null;
+          };
           if (event === "thinking") setStatus(payload.message || "Mia esta analizando...");
           else if (event === "draft_ready") setStatus("Mia esta redactando...");
           else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
@@ -141,6 +168,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
             setHasDraft(true);
             if (payload.diagnosis) setDiagnosis(payload.diagnosis);
             if (payload.diagnosis_summary) setSummary(payload.diagnosis_summary);
+            if (payload.verification) setVerification(payload.verification);
             setMessages((m) => {
               const copy = [...m];
               copy[copy.length - 1] = {
@@ -160,30 +188,48 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     }
   }
 
+  const lastIdx = messages.length - 1;
+
   return (
-    <div className="flex h-screen">
-      <div className="flex w-[280px] shrink-0 flex-col border-r border-gray-100">
-        <div className="border-b border-gray-100 px-5 py-4">
-          <button onClick={() => router.push("/")} className="mb-2 text-xs text-gray-400 hover:text-gray-600">
+    <div className="flex h-[100dvh] min-h-0">
+      {/* Expediente (documentos del asunto) */}
+      <aside className="hidden w-[280px] shrink-0 flex-col border-r border-border bg-card/40 lg:flex">
+        <div className="border-b border-border px-5 py-4">
+          <button
+            onClick={() => router.push("/")}
+            className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-3 w-3" />
             Asuntos
           </button>
           <div className="font-semibold leading-tight">{matter?.name || "Asunto"}</div>
         </div>
         <div className="flex-1 overflow-auto px-3 py-3">
           {docs.length === 0 ? (
-            <p className="px-2 py-4 text-sm text-gray-400">Sin documentos todavia.</p>
+            <div className="px-2 py-6 text-center">
+              <FileText className="mx-auto mb-2 h-5 w-5 text-muted-foreground/50" />
+              <p className="text-xs text-muted-foreground">
+                Sube el expediente para que Mia trabaje con las pruebas reales.
+              </p>
+            </div>
           ) : (
             <ul className="space-y-1">
               {docs.map((d) => (
-                <li key={d.id} className="rounded-lg px-2 py-2 text-sm hover:bg-gray-50">
-                  <div className="truncate font-medium">{d.name}</div>
-                  <div className="text-xs text-gray-400">{fmtDate(d.created_at)}</div>
+                <li
+                  key={d.id}
+                  className="flex items-start gap-2 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-accent/60"
+                >
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{d.name}</div>
+                    <div className="text-xs text-muted-foreground">{fmtDate(d.created_at)}</div>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </div>
-        <div className="border-t border-gray-100 p-3">
+        <div className="border-t border-border p-3">
           <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.txt,.md" multiple onChange={onUpload} className="hidden" />
           <input
             ref={folderRef}
@@ -194,24 +240,28 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
             className="hidden"
             {...({ webkitdirectory: "true", directory: "true" } as any)}
           />
-          <button
+          <Button
+            variant="outline"
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+            className="w-full justify-start gap-2"
           >
-            {uploading ? "Subiendo..." : "Agregar documento"}
-          </button>
-          <button
+            <Paperclip className="h-4 w-4" />
+            {uploading ? "Subiendo…" : "Agregar documento"}
+          </Button>
+          <Button
+            variant="ghost"
             onClick={() => folderRef.current?.click()}
             disabled={uploading}
-            className="mt-2 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+            className="mt-2 w-full justify-start gap-2"
           >
+            <FolderUp className="h-4 w-4" />
             Conectar carpeta
-          </button>
+          </Button>
           {uploadItems.length > 0 ? (
             <div className="mt-3 space-y-2">
               {uploadItems.map((item) => (
-                <div key={item.name} className="text-xs text-gray-500">
+                <div key={item.name} className="text-xs text-muted-foreground">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate">{item.name}</span>
                     <span className="shrink-0">
@@ -224,11 +274,12 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                             : "Error"}
                     </span>
                   </div>
-                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-gray-100">
+                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
                     <div
-                      className={`h-full rounded-full ${
-                        item.status === "error" ? "bg-red-500" : item.status === "done" ? "bg-gray-900" : "bg-gray-400"
-                      }`}
+                      className={cn(
+                        "h-full rounded-full transition-all duration-300",
+                        item.status === "error" ? "bg-destructive" : item.status === "done" ? "bg-success" : "bg-primary",
+                      )}
                       style={{ width: item.status === "waiting" ? "15%" : item.status === "uploading" ? "55%" : "100%" }}
                     />
                   </div>
@@ -236,12 +287,13 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
               ))}
             </div>
           ) : null}
-          {uploadSummary ? <div className="mt-3 text-xs font-medium text-gray-600">{uploadSummary}</div> : null}
+          {uploadSummary ? <div className="mt-3 text-xs font-medium text-success">{uploadSummary}</div> : null}
         </div>
-      </div>
+      </aside>
 
+      {/* Consulta / Plan */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex gap-1 border-b border-gray-100 px-6 pt-4">
+        <div className="flex gap-1 border-b border-border px-6 pt-4">
           <TabBtn active={view === "chat"} onClick={() => setView("chat")}>Consulta</TabBtn>
           <TabBtn active={view === "plan"} onClick={() => setView("plan")}>Plan</TabBtn>
         </div>
@@ -251,77 +303,99 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           </div>
         ) : (
           <>
-        <div className="flex-1 space-y-4 overflow-auto px-6 py-6">
-          {messages.length === 0 ? (
-            <p className="mt-20 text-center text-gray-300">Hazle una pregunta a Mia sobre este asunto.</p>
-          ) : (
-            messages.map((m, i) => (
-              <div key={i} className={`flex gap-2 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                {m.role === "mia" ? (
-                  <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
-                    M
+            <div className="flex-1 space-y-5 overflow-auto px-6 py-6">
+              {messages.length === 0 ? (
+                <div className="mt-20 text-center animate-slide-up">
+                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <Sparkles className="h-5 w-5" />
                   </div>
-                ) : null}
-                <div
-                  className={`max-w-[75%] whitespace-pre-wrap rounded-lg px-4 py-2 text-sm ${
-                    m.role === "user" ? "bg-gray-900 text-white" : "bg-[#f8f9fa] text-gray-900"
-                  }`}
-                >
-                  {m.text || <span className="text-gray-400">...</span>}
+                  <p className="text-sm text-muted-foreground">
+                    Hazle una pregunta a Mia sobre este asunto.
+                    <br />
+                    Ella investiga el expediente y te propone un borrador — tú decides.
+                  </p>
                 </div>
+              ) : (
+                messages.map((m, i) => (
+                  <div key={i} className={cn("flex gap-3 animate-message-in", m.role === "user" ? "justify-end" : "justify-start")}>
+                    {m.role === "mia" ? (
+                      <div className="relative mt-0.5 h-8 w-8 shrink-0">
+                        {streaming && i === lastIdx && !m.text ? (
+                          <span className="absolute inset-0 rounded-full bg-primary/40 blur-md animate-pulse-soft" aria-hidden />
+                        ) : null}
+                        <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-sm">
+                          <Scale className="h-4 w-4" />
+                        </div>
+                      </div>
+                    ) : null}
+                    <div
+                      className={
+                        m.role === "user"
+                          ? "max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
+                          : "max-w-[75%] whitespace-pre-wrap pt-1 font-serif text-[15px] leading-relaxed text-foreground"
+                      }
+                    >
+                      {m.text || <ThinkingDots />}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
+              <div className="mb-2 flex min-h-5 items-center justify-between text-sm">
+                <span className="text-muted-foreground">{status}</span>
+                {hasDraft ? (
+                  <Button
+                    variant="cta"
+                    size="sm"
+                    onClick={() => router.push(`/asuntos/${matterId}/revisar`)}
+                    className="gap-1.5 animate-slide-up"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Revisar borrador
+                  </Button>
+                ) : null}
               </div>
-            ))
-          )}
-        </div>
-        <div className="border-t border-gray-100 px-6 py-3">
-          <div className="mb-2 flex items-center justify-between text-sm">
-            <span className="text-gray-500">{status}</span>
-            {hasDraft ? (
-              <button
-                onClick={() => router.push(`/asuntos/${matterId}/revisar`)}
-                className="rounded-lg bg-orange-500 px-3 py-1 text-xs font-medium text-white hover:bg-orange-600"
-              >
-                Revisar
-              </button>
-            ) : null}
-          </div>
-          <div className="flex gap-2">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-              rows={1}
-              placeholder="Escribe tu consulta..."
-              className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-2 text-sm outline-none focus:border-gray-400"
-            />
-            <MicButton state={dictation.state} onToggle={dictation.toggle} />
-            <button
-              onClick={send}
-              disabled={streaming}
-              className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-            >
-              Enviar
-            </button>
-          </div>
-          {dictation.error ? (
-            <p className="mt-2 text-xs text-amber-700">{dictation.error}</p>
-          ) : dictationNotice ? (
-            <p className="mt-2 text-xs text-amber-700">{dictationNotice}</p>
-          ) : null}
-        </div>
+              <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-2 shadow-lg shadow-primary/5 transition-shadow focus-within:border-primary/40 focus-within:shadow-primary/10">
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                  rows={1}
+                  placeholder="Escribe tu consulta sobre este asunto…"
+                  className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
+                />
+                <MicButton state={dictation.state} onToggle={dictation.toggle} />
+                <Button
+                  onClick={send}
+                  disabled={streaming || !input.trim()}
+                  size="icon"
+                  aria-label="Enviar"
+                  className="transition-transform active:scale-95"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+              {dictation.error ? (
+                <p className="mt-2 text-xs text-warning">{dictation.error}</p>
+              ) : dictationNotice ? (
+                <p className="mt-2 text-xs text-warning">{dictationNotice}</p>
+              ) : null}
+            </div>
           </>
         )}
       </div>
 
-      <div className="flex w-[280px] shrink-0 flex-col border-l border-gray-100 px-5 py-6">
-        <h3 className="mb-3 text-sm font-semibold text-gray-700">Diagnóstico</h3>
+      {/* Diagnóstico */}
+      <aside className="hidden w-[300px] shrink-0 flex-col border-l border-border bg-card/40 px-5 py-6 xl:flex">
+        <h3 className="mb-3 text-sm font-semibold">Diagnóstico</h3>
         {diagnosis ? (
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="min-h-0 flex-1 overflow-auto animate-fade-in">
             {summary ? (
               <div className="mb-3 space-y-2">
                 <SummaryRow label="Problema jurídico" text={summary.problema} />
@@ -329,14 +403,23 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                 <SummaryRow label="Riesgo y recomendación" text={summary.riesgo} />
               </div>
             ) : null}
-            <div className="whitespace-pre-wrap rounded-lg bg-[#f8f9fa] px-3 py-3 text-sm text-gray-700">
+            <div className="whitespace-pre-wrap rounded-xl border border-border bg-card px-3 py-3 font-serif text-sm leading-relaxed text-card-foreground shadow-sm">
               {diagnosis}
             </div>
+            {verification && verification.citas > 0 ? (
+              <div className="mt-5">
+                <h3 className="mb-3 text-sm font-semibold">Citas del borrador</h3>
+                <CitationReview verification={verification} />
+              </div>
+            ) : null}
           </div>
         ) : (
-          <p className="text-sm text-gray-400">Mia aún no ha analizado este asunto.</p>
+          <p className="text-sm text-muted-foreground">
+            Cuando le hagas tu primera consulta, aquí verás el problema jurídico, las
+            normas aplicables y el riesgo del caso.
+          </p>
         )}
-      </div>
+      </aside>
     </div>
   );
 }
@@ -346,10 +429,27 @@ type DiagnosisSummary = { problema?: string; normas?: string; riesgo?: string };
 function SummaryRow({ label, text }: { label: string; text?: string }) {
   if (!text) return null;
   return (
-    <div className="rounded-lg border border-gray-100 px-3 py-2">
-      <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</div>
-      <div className="text-sm text-gray-700">{text}</div>
+    <div className="rounded-xl border border-border bg-card px-3 py-2 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-primary/80">{label}</div>
+      <div className="mt-0.5 text-sm text-card-foreground">{text}</div>
     </div>
+  );
+}
+
+function ThinkingDots() {
+  return (
+    <span className="inline-flex gap-1 py-1 align-middle text-muted-foreground">
+      <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
+    </span>
+  );
+}
+
+function Dot({ delay = "0ms" }: { delay?: string }) {
+  return (
+    <span
+      className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-current"
+      style={{ animationDelay: delay }}
+    />
   );
 }
 
@@ -358,9 +458,10 @@ function TabBtn({ active, onClick, children }: { active: boolean; onClick: () =>
     <button
       type="button"
       onClick={onClick}
-      className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-        active ? "border-gray-900 text-gray-900" : "border-transparent text-gray-400 hover:text-gray-600"
-      }`}
+      className={cn(
+        "-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors",
+        active ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+      )}
     >
       {children}
     </button>

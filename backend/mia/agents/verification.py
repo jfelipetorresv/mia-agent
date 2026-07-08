@@ -107,6 +107,33 @@ def _is_backed(citation: str, keys: list[str]) -> bool:
     return any(k in c or c in k for k in keys if k)
 
 
+def source_index(sources: Optional[list[dict]]) -> list[tuple[str, dict]]:
+    """[(clave_normalizada, fuente_compacta)] — como `source_keys` pero conservando la
+    fuente, para que el informe pueda decir CUÁL fuente respaldó cada cita (Fase 1b:
+    la pantalla muestra la referencia y deja saltar al texto)."""
+    index: list[tuple[str, dict]] = []
+    for s in sources or []:
+        if not isinstance(s, dict):
+            continue
+        ref = _normalize(str(s.get("referencia") or ""))
+        if ref:
+            index.append((ref, s))
+    return index
+
+
+def _backing_source(citation: str, index: list[tuple[str, dict]]) -> Optional[dict]:
+    """La fuente del corpus que respalda la cita, o None (mismo match por inclusión
+    normalizada de `_is_backed` — gana la primera coincidencia, que llega en el orden
+    de relevancia con que investigó el turno)."""
+    c = _normalize(citation)
+    if not c:
+        return None
+    for k, s in index:
+        if k and (k in c or c in k):
+            return s
+    return None
+
+
 def scan_citations(text: str, patterns: Optional[list[re.Pattern]] = None) -> list[dict]:
     """Todas las citas detectadas, sin solaparse (gana la más temprana/larga).
 
@@ -152,23 +179,26 @@ def annotate_draft(
     Devuelve (borrador_anotado, informe). El informe es dict serializable (viaja en
     metadata del checkpoint y a la pantalla):
       {"citas": N, "marcadas": n, "respaldadas": n, "anotadas": n,
-       "detalle": [{"cita", "estado"}...]}   estado ∈ marcada|respaldada|anotada
+       "detalle": [{"cita", "estado", "fuente"?}...]}   estado ∈ marcada|respaldada|anotada
+    `fuente` solo aparece en las respaldadas: {"tipo", "referencia", "titulo"} — la
+    fuente compacta del corpus que dio el respaldo (Fase 1b: citas en línea).
 
     Determinista y sin efectos: nunca borra texto, solo INSERTA " [VERIFICAR]" tras
     las citas sin marca ni respaldo en el corpus.
     """
     text = draft or ""
     citations = scan_citations(text, compile_patterns(extra_patterns))
-    keys = source_keys(sources)
+    index = source_index(sources)
     detalle: list[dict] = []
     marcadas = respaldadas = anotadas = 0
     inserts: list[int] = []  # posiciones (end) donde insertar la marca
 
     for c in citations:
+        fuente = None
         if c["marked"]:
             marcadas += 1
             estado = "marcada"
-        elif _is_backed(c["citation"], keys):
+        elif (fuente := _backing_source(c["citation"], index)) is not None:
             respaldadas += 1
             estado = "respaldada"
         else:
@@ -176,7 +206,15 @@ def annotate_draft(
             estado = "anotada"
             inserts.append(c["end"])
         if len(detalle) < 50:
-            detalle.append({"cita": c["citation"], "estado": estado})
+            entry: dict = {"cita": c["citation"], "estado": estado}
+            if fuente is not None:
+                # Solo los campos compactos y serializables (nada extra que traiga la fuente).
+                entry["fuente"] = {
+                    "tipo": str(fuente.get("tipo") or ""),
+                    "referencia": str(fuente.get("referencia") or ""),
+                    "titulo": str(fuente.get("titulo") or ""),
+                }
+            detalle.append(entry)
 
     # insertar de atrás hacia adelante para no desplazar los offsets pendientes
     for pos in sorted(inserts, reverse=True):
