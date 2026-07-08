@@ -1,27 +1,36 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiDownload, apiGet, apiSend } from "@/lib/api";
-
-// Informe del verificador de citas (CP9). Llega en GET /api/matters/{id}/draft;
-// es null en borradores de turnos anteriores.
-type Verification = {
-  citas?: number;
-  marcadas?: number;
-  respaldadas?: number;
-  anotadas?: number;
-  detalle?: { cita: string; estado: string }[];
-};
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Download, Pencil, X } from "lucide-react";
+import { apiDownload, apiGet, streamPost } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import CitationReview, { type Verification } from "../../../_components/CitationReview";
 
 type DraftResponse = { draft: string; verification?: Verification | null };
 
-// Resalta los marcadores [VERIFICAR…] en amarillo con tooltip.
+// Resalta los marcadores [VERIFICAR…]: son la señal de "esto lo confirmas tú".
 function renderDraft(text: string) {
   const parts = text.split(/(\[VERIFICAR[^\]]*\])/g);
   return parts.map((p, i) =>
     p.startsWith("[VERIFICAR") ? (
-      <mark key={i} title="Verificar antes de presentar" className="rounded bg-yellow-200 px-1">
+      <mark
+        key={i}
+        title="Verificar antes de presentar"
+        className="rounded bg-warning/20 px-1 font-sans text-sm font-medium text-warning"
+      >
         {p}
       </mark>
     ) : (
@@ -30,63 +39,100 @@ function renderDraft(text: string) {
   );
 }
 
-// Estado de cada cita en lenguaje llano (los valores vienen del servidor).
-const ESTADO_CITA: Record<string, { label: string; className: string }> = {
-  marcada: { label: "Verifícala tú", className: "bg-yellow-100 text-yellow-800" },
-  respaldada: { label: "Con respaldo", className: "bg-green-100 text-green-800" },
-  anotada: { label: "Anotada", className: "bg-gray-100 text-gray-600" },
-};
-
+// El abogado debe verificar TODA cita con la marca [VERIFICAR] en el borrador
+// final: las que el redactor ya marcó (marcadas) MÁS las que el verificador
+// añadió por no tener respaldo (anotadas). Contar solo `marcadas` subreporta el
+// riesgo que este informe existe para evitar (CP9). El resumen y la lista de
+// citas los renderiza el componente compartido CitationReview (Fase 1b).
 function VerificationReport({ v }: { v: Verification }) {
-  const [open, setOpen] = useState(false);
-  const citas = v.citas ?? 0;
-  // El abogado debe verificar TODA cita con la marca [VERIFICAR] en el borrador
-  // final: las que el redactor ya marcó (marcadas) MÁS las que el verificador
-  // añadió por no tener respaldo (anotadas). Contar solo `marcadas` subreporta el
-  // riesgo que este informe existe para evitar (CP9).
-  const porVerificar = (v.marcadas ?? 0) + (v.anotadas ?? 0);
-  const detalle = v.detalle || [];
-
-  const resumen =
-    citas === 0
-      ? "Mia no encontró citas de normas o sentencias en este borrador."
-      : porVerificar === 0
-        ? `Mia revisó ${citas === 1 ? "1 cita" : `${citas} citas`}; todas quedaron con respaldo.`
-        : `Mia revisó ${citas === 1 ? "1 cita" : `${citas} citas`}; ${
-            porVerificar === 1 ? "1 quedó marcada" : `${porVerificar} quedaron marcadas`
-          } para tu verificación.`;
+  const porVerificar = v.marcadas + v.anotadas;
 
   return (
-    <section aria-label="Revisión de citas" className="mt-4 rounded-lg border border-gray-100 bg-gray-50 px-5 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-gray-700">{resumen}</p>
-        {detalle.length > 0 ? (
-          <button
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            className="text-sm font-medium text-gray-500 underline-offset-2 hover:text-gray-800 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
-          >
-            {open ? "Ocultar detalle" : "Ver cita por cita"}
-          </button>
-        ) : null}
-      </div>
-      {open && detalle.length > 0 ? (
-        <ul className="mt-3 space-y-2">
-          {detalle.map((d, i) => {
-            const estado = ESTADO_CITA[d.estado] || { label: d.estado, className: "bg-gray-100 text-gray-600" };
-            return (
-              <li key={i} className="flex items-start justify-between gap-3 rounded-md bg-white px-3 py-2">
-                <span className="min-w-0 break-words text-sm text-gray-800">{d.cita}</span>
-                <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${estado.className}`}>
-                  {estado.label}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
+    <section
+      aria-label="Revisión de citas"
+      className={`mt-4 rounded-xl border px-5 py-4 ${
+        porVerificar > 0 ? "border-warning/30 bg-warning/5" : "border-border bg-card/60"
+      }`}
+    >
+      <CitationReview verification={v} />
     </section>
   );
+}
+
+// Detonadores de escalamiento (Fase 1c): Mia NUNCA calcula términos ni plazos
+// procesales, prescripción/caducidad ni cuantías — solo puede SEÑALAR que el
+// borrador los menciona para que el abogado los confirme antes de aprobar.
+type DetonadorCategoria = "plazos" | "prescripcion" | "cuantia";
+
+// Los patrones cubren conjugaciones frecuentes por raíz (venc-, prescrib-,
+// prescrit-, caduc-): "vence el 5 de marzo" o "el término caducó" también deben
+// disparar la señal. Falsos negativos residuales son aceptables (señalización
+// best-effort); falsos positivos solo cuestan un aviso de más.
+const DETONADOR_REGEX: Record<DetonadorCategoria, RegExp> = {
+  plazos: /\b(plazos?|t[ée]rminos? (de|para)|d[íi]as (h[áa]biles|calendario)|venc\w+|dentro de los?\s+\d+)\b/i,
+  prescripcion: /\b(prescripci[óo]n|prescrib\w+|prescrit\w+|caduc\w+)\b/i,
+  cuantia: /\b(cuant[íi]as?|salarios? m[íi]nimos?|SMLMV|SMMLV)\b|\$\s?[\d][\d.,]*/i,
+};
+
+const DETONADOR_LABEL: Record<DetonadorCategoria, string> = {
+  plazos: "Plazos o términos",
+  prescripcion: "Prescripción o caducidad",
+  cuantia: "Cuantía o montos",
+};
+
+function detectarDetonadores(text: string): DetonadorCategoria[] {
+  return (Object.keys(DETONADOR_REGEX) as DetonadorCategoria[]).filter((cat) =>
+    DETONADOR_REGEX[cat].test(text),
+  );
+}
+
+function EscalamientoBanner({ categorias }: { categorias: DetonadorCategoria[] }) {
+  if (categorias.length === 0) return null;
+  return (
+    <div
+      role="note"
+      aria-label="Requiere tu decisión antes de aprobar"
+      className="mb-4 flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/5 px-5 py-4 animate-slide-up"
+    >
+      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+      <div>
+        <p className="font-medium text-warning">Requiere tu decisión antes de aprobar</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {categorias.map((cat) => (
+            <Badge key={cat} variant="warning">
+              {DETONADOR_LABEL[cat]}
+            </Badge>
+          ))}
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Mia no calcula términos ni plazos: los datos procesales los confirmas tú antes de presentar.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Texto singular/plural del checkbox del gate de citas (§G: nada de "N=1 citas").
+function textoConfirmacionCitas(n: number): string {
+  return n === 1
+    ? "Verifiqué la cita marcada en el borrador"
+    : `Verifiqué las ${n} citas marcadas en el borrador`;
+}
+
+// Aprobar/rechazar responden con un flujo de eventos (el mismo canal del turno),
+// no con JSON: hay que consumirlo con streamPost y decidir por el evento final.
+// El backend emite "done" al terminar bien y "error" (en llano) si algo falló.
+async function resumeDraft(path: string, body: unknown): Promise<void> {
+  let ok = false;
+  let errMsg = "";
+  await streamPost(path, body, (event, data) => {
+    if (event === "done") ok = true;
+    else if (event === "error") {
+      const d = data as { message?: string } | string | null;
+      errMsg = typeof d === "string" ? d : d?.message || "";
+    }
+  });
+  if (!ok) throw new Error(errMsg || "La operación no terminó bien.");
 }
 
 export default function RevisarPage({ params }: { params: { id: string } }) {
@@ -97,8 +143,15 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [actionMsg, setActionMsg] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [downloadMsg, setDownloadMsg] = useState("");
+  const [citasVerificadas, setCitasVerificadas] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectBusy, setRejectBusy] = useState(false);
+  const [rejectError, setRejectError] = useState("");
+  const [showCelebration, setShowCelebration] = useState(false);
 
   useEffect(() => {
     apiGet<DraftResponse>(`/api/matters/${matterId}/draft`)
@@ -113,25 +166,61 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matterId]);
 
+  // Escaneo de detonadores: se hace sobre el borrador ORIGINAL de Mia, no sobre
+  // lo que el abogado vaya editando — la alerta es sobre lo que Mia propuso.
+  const detonadores = useMemo(() => detectarDetonadores(draft ?? ""), [draft]);
+
+  // Number(...) || 0 blinda contra metadatos malformados: un NaN silencioso
+  // desactivaría el gate justo cuando más se necesita (fail-closed, no fail-open).
+  const porVerificar = verification
+    ? (Number(verification.marcadas) || 0) + (Number(verification.anotadas) || 0)
+    : 0;
+  const gateCitasPendiente = porVerificar > 0 && !citasVerificadas;
+  // Si el abogado borró todo el texto, "aprobar" no significa nada: el backend
+  // ignoraría el texto vacío y aprobaría la propuesta ORIGINAL en silencio —
+  // divergencia entre lo que se ve y lo que se aprueba. Se bloquea con aviso.
+  const versionVacia = text.trim() === "" && text !== draft;
+
+  // La celebración navega con un setTimeout: si el abogado sale de la pantalla
+  // antes de que dispare, hay que limpiarlo para no navegar tras el desmontaje.
+  const celebrationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (celebrationTimer.current) clearTimeout(celebrationTimer.current);
+    };
+  }, []);
+
   async function approve() {
+    if (busy || gateCitasPendiente || versionVacia) return; // anti doble-clic y gate
     setBusy(true);
+    setActionMsg("");
     try {
-      await apiSend("POST", `/api/matters/${matterId}/draft/approve`, editing ? { edited_text: text } : {});
-      router.push(`/asuntos/${matterId}?confirmed=true`);
+      await resumeDraft(
+        `/api/matters/${matterId}/draft/approve`,
+        text !== draft ? { edited_text: text } : {},
+      );
+      // Micro-celebración (Fase 1c): un respiro breve antes de volver al asunto,
+      // reforzando que la decisión fue del abogado y que Mia aprende de ella.
+      setShowCelebration(true);
+      celebrationTimer.current = setTimeout(() => {
+        router.push(`/asuntos/${matterId}?confirmed=true`);
+      }, 900);
     } catch {
       setBusy(false);
-      alert("No se pudo confirmar el borrador. Intenta de nuevo.");
+      setActionMsg("No se pudo confirmar el borrador. Intenta de nuevo.");
     }
   }
 
-  async function reject() {
-    setBusy(true);
+  async function submitReject() {
+    if (rejectBusy) return; // anti doble-clic
+    setRejectBusy(true);
+    setRejectError("");
     try {
-      await apiSend("POST", `/api/matters/${matterId}/draft/reject`, { reason: "" });
+      await resumeDraft(`/api/matters/${matterId}/draft/reject`, { reason: rejectReason });
       router.push(`/asuntos/${matterId}?confirmed=true`);
     } catch {
-      setBusy(false);
-      alert("No se pudo rechazar el borrador. Intenta de nuevo.");
+      setRejectBusy(false);
+      setRejectError("No se pudo rechazar el borrador. Intenta de nuevo.");
     }
   }
 
@@ -148,43 +237,82 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
   }
 
   if (draft === null) {
-    return <div className="p-10 text-gray-400">Cargando borrador…</div>;
+    return (
+      <div className="mx-auto max-w-3xl space-y-4 px-8 py-10">
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-[50vh] w-full rounded-xl" />
+      </div>
+    );
   }
 
   return (
-    <div className="flex h-screen flex-col">
-      <div className="flex items-end justify-between gap-3 border-b border-gray-100 px-8 py-4">
-        <div>
-          <button onClick={() => router.push(`/asuntos/${matterId}`)} className="text-xs text-gray-400 hover:text-gray-600">
-            ← Volver al asunto
+    <div className="flex h-[100dvh] flex-col bg-aurora">
+      <div className="flex items-end justify-between gap-3 border-b border-border bg-background/80 px-6 py-4 backdrop-blur md:px-8">
+        <div className="animate-slide-up">
+          <button
+            onClick={() => router.push(`/asuntos/${matterId}`)}
+            className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Volver al asunto
           </button>
-          <h1 className="mt-1 text-xl font-semibold">Revisar borrador</h1>
+          <h1 className="mt-1 text-xl font-semibold tracking-tight">Revisar borrador</h1>
         </div>
         <div className="text-right">
-          <button
-            onClick={downloadWord}
-            disabled={downloading}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
+          <Button variant="outline" onClick={downloadWord} disabled={downloading} className="gap-2">
+            <Download className="h-4 w-4" />
             {downloading ? "Preparando…" : "Descargar en Word"}
-          </button>
+          </Button>
           {downloadMsg ? (
-            <p role="alert" className="mt-1 text-xs text-amber-700">{downloadMsg}</p>
+            <p role="alert" className="mt-1 text-xs text-warning">{downloadMsg}</p>
           ) : null}
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-8 py-8">
-        <div className="mx-auto max-w-3xl">
+      <div className="flex-1 overflow-auto px-6 py-8 md:px-8">
+        <div className="mx-auto max-w-3xl animate-slide-up" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
+          <EscalamientoBanner categorias={detonadores} />
           {editing ? (
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              aria-label="Texto del borrador"
-              className="h-[60vh] w-full rounded-lg border border-gray-200 p-5 text-[16px] leading-relaxed outline-none focus:border-gray-400"
-            />
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Propuesta de Mia
+                </p>
+                <div className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-card p-6 font-serif text-[16px] leading-relaxed shadow-sm">
+                  {renderDraft(draft)}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Tu versión
+                  </p>
+                  {text !== draft ? (
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-accent px-2 py-0.5 text-xs text-muted-foreground">
+                        Editaste el borrador
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setText(draft)}
+                        className="h-7 px-2 text-xs"
+                      >
+                        Restaurar propuesta de Mia
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  aria-label="Tu versión del borrador"
+                  className="h-[60vh] w-full rounded-xl border border-input bg-card p-6 font-serif text-[16px] leading-relaxed shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+            </div>
           ) : (
-            <div className="whitespace-pre-wrap rounded-lg border border-gray-100 bg-white p-6 text-[16px] leading-relaxed">
+            <div className="whitespace-pre-wrap rounded-xl border border-border bg-card p-8 font-serif text-[16px] leading-relaxed shadow-sm">
               {renderDraft(text)}
             </div>
           )}
@@ -192,28 +320,126 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      <div className="flex justify-center gap-3 border-t border-gray-100 px-8 py-4">
-        <button
-          onClick={approve}
-          disabled={busy}
-          className="rounded-lg bg-green-600 px-6 py-2.5 font-medium text-white hover:bg-green-700 disabled:opacity-50"
-        >
-          Aprobar
-        </button>
-        <button
-          onClick={() => setEditing((v) => !v)}
-          className="rounded-lg bg-blue-600 px-6 py-2.5 font-medium text-white hover:bg-blue-700"
-        >
-          {editing ? "Listo" : "Editar"}
-        </button>
-        <button
-          onClick={reject}
-          disabled={busy}
-          className="rounded-lg bg-red-600 px-6 py-2.5 font-medium text-white hover:bg-red-700 disabled:opacity-50"
-        >
-          Rechazar
-        </button>
+      <div className="border-t border-border bg-background/80 px-6 py-4 backdrop-blur md:px-8">
+        {actionMsg ? (
+          <p role="alert" className="mb-2 text-center text-sm text-warning animate-fade-in">{actionMsg}</p>
+        ) : null}
+        {porVerificar > 0 ? (
+          <div className="mb-3 flex items-center justify-center gap-2">
+            <input
+              type="checkbox"
+              id="citas-verificadas"
+              checked={citasVerificadas}
+              onChange={(e) => setCitasVerificadas(e.target.checked)}
+              className="h-4 w-4 shrink-0 rounded border-input text-primary accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <Label htmlFor="citas-verificadas" className="cursor-pointer font-normal">
+              {textoConfirmacionCitas(porVerificar)}
+            </Label>
+          </div>
+        ) : null}
+        <div className="flex flex-wrap justify-center gap-3">
+          <Button
+            variant="success"
+            size="lg"
+            onClick={approve}
+            disabled={busy || gateCitasPendiente || versionVacia}
+            className="gap-2"
+          >
+            <Check className="h-4 w-4" />
+            Aprobar
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => setEditing((v) => !v)}
+            disabled={busy}
+            className="gap-2"
+          >
+            <Pencil className="h-4 w-4" />
+            {editing ? "Listo" : "Editar"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="lg"
+            onClick={() => setRejectOpen(true)}
+            disabled={busy}
+            className="gap-2 text-muted-foreground hover:text-destructive"
+          >
+            <X className="h-4 w-4" />
+            Rechazar
+          </Button>
+        </div>
+        {gateCitasPendiente ? (
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            Confirma primero que verificaste las citas marcadas.
+          </p>
+        ) : null}
+        {versionVacia ? (
+          <p className="mt-2 text-center text-xs text-warning">
+            Tu versión está vacía — escribe el texto o restaura la propuesta de Mia antes de aprobar.
+          </p>
+        ) : null}
+        <p className="mt-2 text-center text-xs text-muted-foreground/80">
+          Tú tienes la última palabra: nada se envía ni se aplica sin tu aprobación.
+        </p>
       </div>
+
+      <Dialog
+        open={rejectOpen}
+        onOpenChange={(open) => {
+          if (rejectBusy) return;
+          setRejectOpen(open);
+          if (!open) {
+            setRejectReason("");
+            setRejectError("");
+          }
+        }}
+      >
+        <DialogContent aria-label="Rechazar borrador">
+          <DialogHeader>
+            <DialogTitle>¿Qué debe cambiar?</DialogTitle>
+            <DialogDescription>
+              Cuéntale a Mia qué no te convence de este borrador — lo tendrá en cuenta para el siguiente intento.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Por ejemplo: el tono es muy agresivo, falta la excepción de prescripción…"
+            aria-label="Qué debe cambiar en el borrador (opcional)"
+            className="min-h-[110px]"
+          />
+          {rejectError ? (
+            <p role="alert" className="text-sm text-warning">{rejectError}</p>
+          ) : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRejectOpen(false)} disabled={rejectBusy}>
+              Cancelar
+            </Button>
+            <Button
+              variant="outline"
+              onClick={submitReject}
+              disabled={rejectBusy}
+              className="text-destructive"
+            >
+              {rejectBusy ? "Enviando…" : "Rechazar y pedir uno nuevo"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {showCelebration ? (
+        <div
+          role="status"
+          aria-label="Borrador aprobado"
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/90 backdrop-blur animate-fade-in"
+        >
+          <CheckCircle2 className="h-16 w-16 text-success" />
+          <p className="text-lg font-semibold">Borrador aprobado</p>
+          <p className="text-sm text-muted-foreground">Mia aprende de cada decisión tuya.</p>
+        </div>
+      ) : null}
     </div>
   );
 }
