@@ -2,7 +2,12 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, Check, PartyPopper, Scale, Sparkles } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 type Question = {
   id: string;
@@ -27,7 +32,15 @@ type Status = {
   completed: boolean;
   last_updated: string | null;
   responses?: Record<string, AnswerValue>;
+  draft?: { responses: Record<string, AnswerValue>; idx: number; qid?: string | null } | null;
 };
+
+type JurisdictionOption = { code: string; name: string; verified: boolean };
+
+// Clave reservada dentro de `responses` para la selección de jurisdicción (paso local,
+// no viene de las preguntas del backend). Se extrae antes de mandar `complete`.
+const JURISDICTION_FIELD = "_jurisdicciones";
+const JURISDICTION_QUESTION_ID = "_jurisdiction";
 
 type CompletionResult = {
   soul_content: string;
@@ -70,7 +83,7 @@ const TOOL_OPTIONS: { name: string; description: string; comingSoon?: boolean }[
     name: "Carpetas en la nube (OneDrive/Google Drive)",
     description: "Mia conoce las carpetas donde guardas tu trabajo.",
   },
-  { name: "Notas (Obsidian)", description: "Mia guarda y consulta tus notas.", comingSoon: true },
+  { name: "Notas del despacho", description: "Mia guarda y consulta tus notas.", comingSoon: true },
 ];
 
 // Sugerencias genéricas (no jurisdicción, ramas del derecho ni tribunales).
@@ -128,11 +141,17 @@ export default function OnboardingPage() {
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [idx, setIdx] = useState(0);
   const [started, setStarted] = useState(false);
+  // Bienvenida cálida antes de la primera pregunta: la entrevista no arranca en frío.
+  const [welcomed, setWelcomed] = useState(false);
   const [alreadyDone, setAlreadyDone] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [completion, setCompletion] = useState<CompletionResult | null>(null);
   const [error, setError] = useState("");
+  const [draft, setDraft] = useState<{ responses: Record<string, AnswerValue>; idx: number; qid?: string | null } | null>(null);
+  const [jurisdictionOptions, setJurisdictionOptions] = useState<JurisdictionOption[]>([]);
+  // Microtexto discreto de autosave — ayuda, no candado (§ autosave).
+  const [savedFlash, setSavedFlash] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -141,19 +160,58 @@ export default function OnboardingPage() {
           apiGet<Question[]>("/api/onboarding/questions"),
           apiGet<Status>("/api/onboarding/status"),
         ]);
-        setQuestions(qs.filter((q) => !HIDDEN_QUESTION_IDS.has(q.id)));
+        let list = qs.filter((q) => !HIDDEN_QUESTION_IDS.has(q.id));
+
+        // Paso local de jurisdicción (Fase 2): NO viene del backend. Se inserta justo
+        // después de p2. Fail-open: si /api/jurisdictions falla, el paso se omite en silencio.
+        try {
+          const jd = await apiGet<{ jurisdictions: JurisdictionOption[] }>("/api/jurisdictions");
+          if (jd.jurisdictions && jd.jurisdictions.length > 0) {
+            setJurisdictionOptions(jd.jurisdictions);
+            const jurisdictionStep: Question = {
+              id: JURISDICTION_QUESTION_ID,
+              block: "jurisdiction",
+              field: JURISDICTION_FIELD,
+              question: "¿Con las reglas jurídicas de qué país trabaja tu despacho?",
+              example: "",
+            };
+            const p2Index = list.findIndex((q) => q.id === "p2");
+            const insertAt = p2Index >= 0 ? p2Index + 1 : list.length;
+            list = [...list.slice(0, insertAt), jurisdictionStep, ...list.slice(insertAt)];
+          }
+        } catch {
+          /* fail-open: sin jurisdicciones disponibles, el paso se omite */
+        }
+
+        setQuestions(list);
         if (st.completed) {
           setAlreadyDone(true);
           if (st.responses) setAnswers(st.responses);
         } else {
           setStarted(true);
+          if (st.draft) setDraft(st.draft);
         }
       } catch {
-        setError("No se pudo cargar la entrevista. Revisa que el servidor este encendido.");
+        setError("No se pudo cargar la entrevista. Revisa que el servidor esté encendido.");
       }
       setLoading(false);
     })();
   }, []);
+
+  // Autosave fire-and-forget: ayuda, no candado. Si falla, el wizard sigue
+  // funcionando — pero el aviso "Avance guardado" solo aparece si de verdad se
+  // guardó (decirle al abogado que está a salvo cuando no lo está es peor que
+  // callar). Se guarda también el id de la pregunta (qid): al reanudar se busca
+  // por identidad, no por posición.
+  function triggerAutosave(nextIdx: number, snapshot: Record<string, AnswerValue>) {
+    const qid = questions[nextIdx]?.id ?? null;
+    apiSend("POST", "/api/onboarding/draft", { responses: snapshot, idx: nextIdx, qid })
+      .then(() => {
+        setSavedFlash(true);
+        window.setTimeout(() => setSavedFlash(false), 1500);
+      })
+      .catch(() => {});
+  }
 
   const total = questions.length;
   const current = questions[idx];
@@ -167,7 +225,14 @@ export default function OnboardingPage() {
     setSubmitting(true);
     setError("");
     try {
-      const res = await apiSend<CompletionResult>("POST", "/api/onboarding/complete", { responses: answers });
+      // La jurisdicción es un paso local (no del SOUL): se extrae de `responses`
+      // y viaja aparte como `jurisdictions`.
+      const { [JURISDICTION_FIELD]: jurisdictionValue, ...soulResponses } = answers;
+      const jurisdictions = asList(jurisdictionValue);
+      const res = await apiSend<CompletionResult>("POST", "/api/onboarding/complete", {
+        responses: soulResponses,
+        ...(jurisdictions.length > 0 ? { jurisdictions } : {}),
+      });
       setCompletion(res);
     } catch {
       setError("No se pudo generar tu perfil. Intenta de nuevo.");
@@ -176,53 +241,73 @@ export default function OnboardingPage() {
   }
 
   if (loading) {
-    return <div className="mx-auto max-w-2xl px-8 py-16 text-gray-400">Cargando...</div>;
+    return (
+      <div className="mx-auto max-w-2xl space-y-4 px-8 py-16">
+        <Skeleton className="h-3 w-full rounded-full" />
+        <Skeleton className="h-9 w-3/4" />
+        <Skeleton className="h-32 w-full rounded-xl" />
+      </div>
+    );
   }
 
-  // Espera del LLM: spinner visible mientras genera el perfil.
+  // Espera del LLM: Mia "pensando" mientras genera el perfil.
   if (submitting) {
     return (
-      <div className="mx-auto flex max-w-2xl flex-col items-center px-8 py-24 text-center">
-        <Spinner />
-        <p className="mt-6 text-lg font-medium text-gray-700">Generando tu perfil...</p>
-        <p className="mt-2 text-sm text-gray-400">Mia está construyendo la identidad de tu despacho. Toma unos segundos.</p>
+      <div className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center px-8 text-center bg-aurora">
+        <div className="relative">
+          <span className="absolute inset-0 rounded-3xl bg-primary/40 blur-2xl animate-pulse-soft" aria-hidden />
+          <div className="relative flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-lg">
+            <Scale className="h-8 w-8" />
+          </div>
+        </div>
+        <p className="mt-6 text-lg font-medium">Generando tu perfil…</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Mia está construyendo la identidad de tu despacho. Toma unos segundos.
+        </p>
       </div>
     );
   }
 
   if (completion !== null) {
     return (
-      <div className="mx-auto max-w-2xl px-8 py-12">
-        <div className="mb-6 rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-          <h1 className="mb-4 text-2xl font-semibold text-gray-900">Tu perfil está listo</h1>
+      <div className="mx-auto max-w-2xl px-6 py-12 md:px-8">
+        <div className="mb-6 animate-slide-up rounded-2xl border border-border bg-card p-6 shadow-sm md:p-8">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-success/15 text-success">
+              <PartyPopper className="h-5 w-5" />
+            </div>
+            <h1 className="text-2xl font-semibold tracking-tight">Tu perfil está listo</h1>
+          </div>
           <SummaryMarkdown markdown={completion.summary} />
         </div>
-        <details className="mb-6 rounded-lg border border-gray-100 bg-gray-50">
-          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-900">
+        <details className="mb-6 animate-slide-up rounded-xl border border-border bg-card/60" style={{ animationDelay: "80ms", animationFillMode: "backwards" }}>
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
             Ver detalle técnico
           </summary>
-          <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap border-t border-gray-100 px-4 py-3 text-xs leading-relaxed text-gray-600">
+          <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground">
             {completion.soul_content}
           </pre>
         </details>
-        <div className="flex gap-3">
-          <button
+        <div className="flex flex-wrap gap-3 animate-slide-up" style={{ animationDelay: "140ms", animationFillMode: "backwards" }}>
+          <Button
+            variant="ghost"
             onClick={() => {
               setCompletion(null);
               setIdx(0);
               setStarted(true);
+              setWelcomed(true);
               setAlreadyDone(false);
             }}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
           >
             Editar
-          </button>
-          <button
-            onClick={() => router.push("/")}
-            className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700"
-          >
+          </Button>
+          <Button variant="outline" onClick={() => router.push("/")} className="gap-2">
             Continuar a mis asuntos
-          </button>
+          </Button>
+          <Button variant="cta" onClick={() => router.push("/configurar")} className="gap-2">
+            Seguir con la configuración
+            <ArrowRight className="h-4 w-4" />
+          </Button>
         </div>
       </div>
     );
@@ -230,32 +315,124 @@ export default function OnboardingPage() {
 
   if (alreadyDone && !started) {
     return (
-      <div className="mx-auto max-w-2xl px-8 py-16 text-center">
-        <h1 className="mb-3 text-2xl font-semibold">Tu despacho ya esta configurado</h1>
-        <p className="mb-8 text-sm text-gray-500">
-          Mia ya conoce tu identidad, tu voz y tus limites. Puedes revisarlos y actualizarlos.
+      <div className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center px-8 text-center bg-aurora">
+        <div className="mb-5 flex h-14 w-14 animate-slide-up items-center justify-center rounded-2xl bg-success/15 text-success">
+          <Check className="h-7 w-7" />
+        </div>
+        <h1 className="animate-slide-up text-2xl font-semibold tracking-tight" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
+          Tu despacho ya está configurado
+        </h1>
+        <p className="mt-2 max-w-md animate-slide-up text-sm text-muted-foreground" style={{ animationDelay: "120ms", animationFillMode: "backwards" }}>
+          Mia ya conoce tu identidad, tu voz y tus límites. Puedes revisarlos y actualizarlos.
         </p>
-        <div className="flex justify-center gap-3">
-          <button onClick={() => router.push("/")} className="rounded-lg px-5 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100">
+        <div className="mt-8 flex flex-wrap justify-center gap-3 animate-slide-up" style={{ animationDelay: "180ms", animationFillMode: "backwards" }}>
+          <Button variant="ghost" onClick={() => router.push("/")}>
             Ir a mis asuntos
-          </button>
-          <button
+          </Button>
+          <Button variant="outline" onClick={() => router.push("/configurar")}>
+            Ver toda la configuración
+          </Button>
+          <Button
             onClick={() => {
               setStarted(true);
+              setWelcomed(true);
               setIdx(0);
             }}
-            className="rounded-lg bg-gray-900 px-5 py-2 text-sm font-medium text-white hover:bg-gray-700"
           >
             Revisar mi perfil
-          </button>
+          </Button>
         </div>
-        {error ? <p className="mt-6 text-sm text-red-600">{error}</p> : null}
+        {error ? <p className="mt-6 text-sm text-destructive">{error}</p> : null}
       </div>
     );
   }
 
   if (!current) {
-    return <div className="mx-auto max-w-2xl px-8 py-16 text-gray-400">{error || "No hay preguntas disponibles."}</div>;
+    return (
+      <div className="mx-auto max-w-2xl px-8 py-16 text-sm text-muted-foreground">
+        {error || "No hay preguntas disponibles."}
+      </div>
+    );
+  }
+
+  // Bienvenida: qué es esto, cuánto tarda y qué gana el abogado. Una sola vez.
+  if (!welcomed) {
+    return (
+      <div className="mx-auto flex min-h-[80vh] max-w-2xl flex-col items-center justify-center px-8 py-12 text-center bg-aurora">
+        <div className="relative mb-6 animate-slide-up">
+          <div className="absolute inset-0 rounded-3xl bg-primary/30 blur-2xl" aria-hidden />
+          <div className="relative flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-lg">
+            <Scale className="h-8 w-8" />
+          </div>
+        </div>
+        <h1
+          className="text-gradient-brand animate-slide-up text-3xl font-semibold tracking-tight"
+          style={{ animationDelay: "60ms", animationFillMode: "backwards" }}
+        >
+          Hola, soy Mia.
+        </h1>
+        <p
+          className="mt-3 max-w-md animate-slide-up text-muted-foreground"
+          style={{ animationDelay: "120ms", animationFillMode: "backwards" }}
+        >
+          Voy a ser tu asistente jurídica. Para trabajar como a ti te gusta, necesito
+          conocerte: te haré {total} preguntas cortas sobre tu despacho, tu forma de
+          escribir y tus límites. Solo dos son obligatorias; el resto las puedes saltar.
+        </p>
+        <p
+          className="mt-2 animate-slide-up text-sm text-muted-foreground/80"
+          style={{ animationDelay: "160ms", animationFillMode: "backwards" }}
+        >
+          Toma unos 3 minutos. Podrás cambiar todo después.
+        </p>
+        {draft ? (
+          <div
+            className="mt-8 flex flex-wrap justify-center gap-3 animate-slide-up"
+            style={{ animationDelay: "220ms", animationFillMode: "backwards" }}
+          >
+            <Button
+              size="lg"
+              onClick={() => {
+                setAnswers(draft.responses);
+                // Reanudar por IDENTIDAD de pregunta (qid): la lista de pasos puede
+                // cambiar de largo entre sesiones (p.ej. el paso de jurisdicción no
+                // cargó) y un índice posicional mostraría otra pregunta. El índice
+                // guardado queda solo como respaldo.
+                const porId = draft.qid ? questions.findIndex((q) => q.id === draft.qid) : -1;
+                setIdx(porId >= 0 ? porId : Math.max(0, Math.min(total - 1, draft.idx)));
+                setWelcomed(true);
+              }}
+              className="gap-2"
+            >
+              <Sparkles className="h-4 w-4" />
+              Continuar donde ibas
+            </Button>
+            <Button
+              size="lg"
+              variant="ghost"
+              onClick={() => {
+                setAnswers({});
+                setIdx(0);
+                setDraft(null);
+                setWelcomed(true);
+              }}
+            >
+              Empezar de nuevo
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="lg"
+            onClick={() => setWelcomed(true)}
+            className="mt-8 animate-slide-up gap-2"
+            style={{ animationDelay: "220ms", animationFillMode: "backwards" }}
+          >
+            <Sparkles className="h-4 w-4" />
+            Empecemos
+          </Button>
+        )}
+      </div>
+    );
   }
 
   const isLast = idx === total - 1;
@@ -265,61 +442,75 @@ export default function OnboardingPage() {
   const canAdvance = isComplete(current, value);
 
   return (
-    <div className="mx-auto max-w-2xl px-8 py-12">
+    <div className="mx-auto max-w-2xl px-6 py-12 md:px-8">
       <div className="mb-8">
-        <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-xs text-muted-foreground/70">Configuración de Mia — tu perfil</p>
+          <p aria-live="polite" className="text-xs text-muted-foreground/70">
+            {savedFlash ? "Avance guardado" : ""}
+          </p>
+        </div>
+        <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
           <span>
             {BLOCK_LABEL[current.block] ?? current.block} · Pregunta {idx + 1} de {total}
           </span>
-          <span>{pct}%</span>
+          <span className="tabular-nums">{pct}%</span>
         </div>
-        <div className="h-1 w-full overflow-hidden rounded-full bg-gray-100">
-          <div className="h-full rounded-full bg-gray-900 transition-all" style={{ width: `${pct}%` }} />
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-primary to-primary/80 transition-all duration-500"
+            style={{ width: `${pct}%` }}
+          />
         </div>
       </div>
 
-      <h1 className="mb-1 text-center text-2xl font-semibold leading-snug">
-        {current.question}
-        {optional ? <span className="ml-2 align-middle text-sm font-normal text-gray-400">(opcional)</span> : null}
-      </h1>
-      {current.example ? (
-        <p className="mb-6 text-center text-xs text-gray-400">Ej: {current.example}</p>
-      ) : (
-        <div className="mb-6" />
-      )}
+      <div key={current.id} className="animate-slide-up">
+        <h1 className="mb-1 text-center text-2xl font-semibold leading-snug tracking-tight">
+          {current.question}
+          {optional ? <span className="ml-2 align-middle text-sm font-normal text-muted-foreground">(opcional)</span> : null}
+        </h1>
+        {current.id === JURISDICTION_QUESTION_ID ? (
+          <p className="mb-6 text-center text-xs text-muted-foreground">
+            Esto le dice a Mia qué normas y jurisprudencia usar. Puedes elegir más de uno.
+          </p>
+        ) : current.example ? (
+          <p className="mb-6 text-center text-xs text-muted-foreground">Ej: {current.example}</p>
+        ) : (
+          <div className="mb-6" />
+        )}
 
-      <QuestionInput question={current} value={value} onChange={setAnswer} />
+        <QuestionInput question={current} value={value} onChange={setAnswer} jurisdictionOptions={jurisdictionOptions} />
+      </div>
 
-      {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="mt-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
 
       <div className="mt-8 flex items-center justify-between">
-        <button
-          onClick={() => setIdx((i) => Math.max(0, i - 1))}
-          disabled={idx === 0}
-          className="rounded-lg px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-40"
-        >
+        <Button variant="ghost" onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={idx === 0} className="gap-2">
+          <ArrowLeft className="h-4 w-4" />
           Anterior
-        </button>
+        </Button>
         {isLast ? (
-          <button
-            onClick={finish}
-            disabled={!canAdvance}
-            className="rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-          >
+          <Button variant="cta" onClick={finish} disabled={!canAdvance} className="gap-2">
+            <Check className="h-4 w-4" />
             Finalizar
-          </button>
+          </Button>
         ) : (
-          <button
-            onClick={() => setIdx((i) => Math.min(total - 1, i + 1))}
+          <Button
+            onClick={() => {
+              const nextIdx = Math.min(total - 1, idx + 1);
+              setIdx(nextIdx);
+              triggerAutosave(nextIdx, answers);
+            }}
             disabled={!canAdvance}
-            className="rounded-lg bg-gray-900 px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+            className="gap-2"
           >
             Siguiente
-          </button>
+            <ArrowRight className="h-4 w-4" />
+          </Button>
         )}
       </div>
       {!canAdvance ? (
-        <p className="mt-3 text-right text-xs text-gray-400">Completa esta pregunta para continuar.</p>
+        <p className="mt-3 text-right text-xs text-muted-foreground">Completa esta pregunta para continuar.</p>
       ) : null}
     </div>
   );
@@ -333,7 +524,7 @@ function SummaryMarkdown({ markdown }: { markdown: string }) {
   function flushList() {
     if (listItems.length > 0) {
       elements.push(
-        <ul key={`list-${key++}`} className="space-y-2 text-sm leading-relaxed text-gray-700">
+        <ul key={`list-${key++}`} className="space-y-2 text-sm leading-relaxed">
           {listItems}
         </ul>
       );
@@ -349,7 +540,7 @@ function SummaryMarkdown({ markdown }: { markdown: string }) {
     if (line.startsWith("### ")) {
       flushList();
       elements.push(
-        <h2 key={`h-${key++}`} className="mb-4 text-lg font-semibold text-gray-900">
+        <h2 key={`h-${key++}`} className="mb-4 text-lg font-semibold tracking-tight">
           {line.slice(4)}
         </h2>
       );
@@ -360,7 +551,8 @@ function SummaryMarkdown({ markdown }: { markdown: string }) {
     if (bullet) {
       listItems.push(
         <li key={`li-${key++}`}>
-          <span className="font-medium text-gray-900">{bullet[1]}:</span> {bullet[2]}
+          <span className="font-medium">{bullet[1]}:</span>{" "}
+          <span className="text-muted-foreground">{bullet[2]}</span>
         </li>
       );
       continue;
@@ -369,7 +561,7 @@ function SummaryMarkdown({ markdown }: { markdown: string }) {
     const rules = line.match(rulesRe);
     if (rules) {
       listItems.push(
-        <li key={`li-${key++}`} className="font-medium text-gray-900">
+        <li key={`li-${key++}`} className="font-medium">
           {rules[1]}:
         </li>
       );
@@ -379,7 +571,7 @@ function SummaryMarkdown({ markdown }: { markdown: string }) {
     const sub = line.match(subRe);
     if (sub) {
       listItems.push(
-        <li key={`li-${key++}`} className="ml-4 list-disc text-gray-600">
+        <li key={`li-${key++}`} className="ml-4 list-disc text-muted-foreground">
           {sub[1]}
         </li>
       );
@@ -393,7 +585,7 @@ function SummaryMarkdown({ markdown }: { markdown: string }) {
 
     flushList();
     elements.push(
-      <p key={`p-${key++}`} className="text-sm leading-relaxed text-gray-600">
+      <p key={`p-${key++}`} className="text-sm leading-relaxed text-muted-foreground">
         {line}
       </p>
     );
@@ -407,32 +599,35 @@ function QuestionInput({
   question,
   value,
   onChange,
+  jurisdictionOptions,
 }: {
   question: Question;
   value: AnswerValue | undefined;
   onChange: (value: AnswerValue) => void;
+  jurisdictionOptions: JurisdictionOption[];
 }) {
   switch (question.id) {
+    // Paso local de jurisdicción (Fase 2) — no viene de las preguntas del backend.
+    case JURISDICTION_QUESTION_ID:
+      return <JurisdictionCheckboxes options={jurisdictionOptions} value={asList(value)} onChange={onChange} />;
     // P1 — dos campos: despacho + abogado.
     case "p1": {
       const n = asNamePair(value);
       return (
         <div className="space-y-3">
           <Field label="Nombre del despacho">
-            <input
+            <Input
               value={n.firm}
               onChange={(e) => onChange({ ...n, firm: e.target.value })}
-              className={inputCls}
               placeholder="Ej: Lexia Abogados S.A.S."
               autoFocus
             />
           </Field>
           <Field label="Tu nombre (abogado principal)">
-            <input
+            <Input
               value={n.lawyer}
               onChange={(e) => onChange({ ...n, lawyer: e.target.value })}
-              className={inputCls}
-              placeholder="Ej: Juan Felipe Torres · T.P. 227.698"
+              placeholder="Ej: Nombre Apellido · tarjeta profesional 000.000"
             />
           </Field>
         </div>
@@ -445,19 +640,17 @@ function QuestionInput({
       return (
         <div className="space-y-3">
           <Field label="País">
-            <input
+            <Input
               value={l.country}
               onChange={(e) => onChange({ ...l, country: e.target.value })}
-              className={inputCls}
               placeholder="Ej: tu país"
               autoFocus
             />
           </Field>
           <Field label="Ciudad">
-            <input
+            <Input
               value={l.city}
               onChange={(e) => onChange({ ...l, city: e.target.value })}
-              className={inputCls}
               placeholder="Ej: tu ciudad"
             />
           </Field>
@@ -481,10 +674,9 @@ function QuestionInput({
             onChange={(days) => onChange({ ...rhythm, no_meetings: days as string[] })}
           />
           <Field label="Horario de trabajo profundo">
-            <input
+            <Input
               value={rhythm.hours}
               onChange={(e) => onChange({ ...rhythm, hours: e.target.value })}
-              className={inputCls}
               placeholder="Ej: 7am-12pm"
             />
           </Field>
@@ -501,11 +693,10 @@ function QuestionInput({
     default: {
       if (TEXT_IDS.has(question.id)) {
         return (
-          <input
+          <Input
             value={asText(value)}
             onChange={(e) => onChange(e.target.value)}
-            className={inputCls}
-            placeholder="Tu respuesta..."
+            placeholder="Tu respuesta…"
             autoFocus
           />
         );
@@ -525,11 +716,10 @@ function QuestionInput({
         return <RadioGroup options={SELECT_OPTIONS[question.id]} value={asText(value)} onChange={onChange} />;
       }
       return (
-        <input
+        <Input
           value={asText(value)}
           onChange={(e) => onChange(e.target.value)}
-          className={inputCls}
-          placeholder="Tu respuesta..."
+          placeholder="Tu respuesta…"
           autoFocus
         />
       );
@@ -537,19 +727,13 @@ function QuestionInput({
   }
 }
 
-const inputCls = "w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-gray-400";
-
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-gray-500">{label}</span>
+      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</span>
       {children}
     </label>
   );
-}
-
-function Spinner() {
-  return <div className="h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900" />;
 }
 
 function ToolsChecklist({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
@@ -580,25 +764,30 @@ function ToolsChecklist({ value, onChange }: { value: string[]; onChange: (value
         return (
           <label
             key={tool.name}
-            className={`flex gap-3 rounded-lg border px-4 py-3 ${
-              disabled ? "cursor-not-allowed border-gray-100 bg-gray-50 opacity-70" : "cursor-pointer border-gray-200 hover:border-gray-300"
-            }`}
+            className={cn(
+              "flex gap-3 rounded-xl border px-4 py-3 transition-colors",
+              disabled
+                ? "cursor-not-allowed border-border bg-muted/40 opacity-70"
+                : checked
+                  ? "cursor-pointer border-primary/40 bg-primary/5"
+                  : "cursor-pointer border-border bg-card hover:border-primary/25",
+            )}
           >
             <input
               type="checkbox"
               checked={checked}
               disabled={disabled}
               onChange={(e) => toggle(tool.name, e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300"
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-[hsl(var(--primary))]"
             />
             <span className="min-w-0">
-              <span className="block text-sm font-medium text-gray-900">
+              <span className="block text-sm font-medium">
                 {tool.name}
                 {tool.comingSoon ? (
-                  <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-normal text-amber-700">Próximamente</span>
+                  <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-normal text-warning">Próximamente</span>
                 ) : null}
               </span>
-              <span className="mt-0.5 block text-sm text-gray-500">{tool.description}</span>
+              <span className="mt-0.5 block text-sm text-muted-foreground">{tool.description}</span>
             </span>
           </label>
         );
@@ -611,7 +800,7 @@ function ToolsChecklist({ value, onChange }: { value: string[]; onChange: (value
               key={tool}
               type="button"
               onClick={() => onChange(value.filter((v) => v !== tool))}
-              className="rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white"
+              className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85"
             >
               {tool} ×
             </button>
@@ -621,7 +810,7 @@ function ToolsChecklist({ value, onChange }: { value: string[]; onChange: (value
 
       <Field label="Otra herramienta">
         <div className="flex gap-2">
-          <input
+          <Input
             value={customDraft}
             onChange={(e) => setCustomDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -630,17 +819,11 @@ function ToolsChecklist({ value, onChange }: { value: string[]; onChange: (value
                 addCustom();
               }
             }}
-            className={inputCls}
             placeholder="Escribe el nombre y presiona Enter"
           />
-          <button
-            type="button"
-            onClick={addCustom}
-            disabled={!customDraft.trim()}
-            className="shrink-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-          >
+          <Button type="button" variant="outline" onClick={addCustom} disabled={!customDraft.trim()} className="shrink-0">
             Añadir
-          </button>
+          </Button>
         </div>
       </Field>
     </div>
@@ -677,7 +860,7 @@ function TagInput({
 
   return (
     <div>
-      <div className="rounded-lg border border-gray-200 px-3 py-2 focus-within:border-gray-400">
+      <div className="rounded-lg border border-input bg-card px-3 py-2 transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
         {value.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-2">
             {value.map((tag) => (
@@ -685,7 +868,7 @@ function TagInput({
                 key={tag}
                 type="button"
                 onClick={() => onChange(value.filter((v) => v !== tag))}
-                className="rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white"
+                className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85"
               >
                 {tag} ×
               </button>
@@ -693,7 +876,7 @@ function TagInput({
           </div>
         ) : null}
         {atMax ? (
-          <p className="py-1 text-xs text-gray-400">Máximo {max}. Quita uno para cambiarlo.</p>
+          <p className="py-1 text-xs text-muted-foreground">Máximo {max}. Quita uno para cambiarlo.</p>
         ) : (
           <input
             value={draft}
@@ -705,7 +888,7 @@ function TagInput({
               }
             }}
             onBlur={() => addTag()}
-            className="w-full py-1 text-sm outline-none"
+            className="w-full bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
             placeholder={placeholder}
             autoFocus
           />
@@ -718,13 +901,55 @@ function TagInput({
               key={s}
               type="button"
               onClick={() => addTag(s)}
-              className="rounded-full border border-gray-300 px-3 py-1 text-xs text-gray-600 transition-colors hover:border-gray-900 hover:text-gray-900"
+              className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary"
             >
               + {s}
             </button>
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// Paso local de jurisdicción (Fase 2): muestra `name` (viene del API), guarda `code`.
+// Los nombres de jurisdicción NUNCA se hardcodean — llegan siempre de GET /api/jurisdictions.
+function JurisdictionCheckboxes({
+  options,
+  value,
+  onChange,
+}: {
+  options: JurisdictionOption[];
+  value: string[];
+  onChange: (value: string[]) => void;
+}) {
+  function toggle(code: string, checked: boolean) {
+    if (checked) onChange([...value, code]);
+    else onChange(value.filter((v) => v !== code));
+  }
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {options.map((option) => {
+        const checked = value.includes(option.code);
+        return (
+          <label
+            key={option.code}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors",
+              checked ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-primary/25",
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => toggle(option.code, e.target.checked)}
+              className="h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
+            />
+            <span>{option.name}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -742,12 +967,18 @@ function CheckboxGroup({
 }) {
   return (
     <div>
-      {label ? <div className="mb-2 text-xs font-medium uppercase text-gray-400">{label}</div> : null}
+      {label ? <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div> : null}
       <div className="grid gap-2 sm:grid-cols-2">
         {options.map((option) => {
           const checked = value.includes(option);
           return (
-            <label key={option} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2.5 text-sm">
+            <label
+              key={option}
+              className={cn(
+                "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors",
+                checked ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-primary/25",
+              )}
+            >
               <input
                 type="checkbox"
                 checked={checked}
@@ -755,7 +986,7 @@ function CheckboxGroup({
                   if (e.target.checked) onChange([...value, option]);
                   else onChange(value.filter((v) => v !== option));
                 }}
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
               />
               <span>{option}</span>
             </label>
@@ -778,12 +1009,18 @@ function RadioGroup({
   return (
     <div className="space-y-2">
       {options.map((option) => (
-        <label key={option} className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2.5 text-sm">
+        <label
+          key={option}
+          className={cn(
+            "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors",
+            value === option ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-primary/25",
+          )}
+        >
           <input
             type="radio"
             checked={value === option}
             onChange={() => onChange(option)}
-            className="h-4 w-4 border-gray-300"
+            className="h-4 w-4 border-input accent-[hsl(var(--primary))]"
           />
           <span>{option}</span>
         </label>

@@ -10,6 +10,7 @@ y modelos se traducen a etiquetas amigables; nunca pgvector/tenant_id/embedding/
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -711,11 +712,68 @@ class OnboardingComplete(BaseModel):
     jurisdictions: list[str] | None = None
 
 
+class OnboardingDraft(BaseModel):
+    """Borrador parcial de la entrevista (Fase 2): lo que el abogado lleva
+    contestado + en qué pregunta va. Se guarda en tenant_settings para que
+    recargar o cerrar el navegador NO pierda el progreso. `qid` es el id de la
+    pregunta actual: al reanudar se busca POR IDENTIDAD (el índice solo es
+    respaldo — la lista de pasos puede cambiar de largo entre sesiones, p.ej.
+    si el paso de jurisdicción no cargó, y un índice posicional mostraría otra
+    pregunta)."""
+    responses: dict
+    idx: int = 0
+    qid: str | None = None
+
+
+# Tope del borrador serializado: la entrevista real pesa <5 KB; esto solo
+# frena un abuso accidental (respuestas pegadas gigantes) sin molestar a nadie.
+MAX_ONBOARDING_DRAFT_CHARS = 40_000
+
+
+async def _save_onboarding_draft(tid: str, draft: dict | None) -> None:
+    """Escribe (o limpia, con None) el objeto '{onboarding}' completo del config.
+    Se fija el objeto entero — lección del tope de gasto (CP-E1): jsonb_set con
+    create_missing NO crea objetos intermedios y descartaría el dato en silencio."""
+    payload = {"draft": draft} if draft is not None else {}
+    async with pool.tenant_connection(tid) as conn:
+        await conn.execute(
+            "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "config = jsonb_set(tenant_settings.config, '{onboarding}', %s::jsonb, true), "
+            "updated_at = now()",
+            (tid, Json({"onboarding": payload}), Json(payload)),
+        )
+
+
+async def _load_onboarding_draft(tid: str) -> dict | None:
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT config->'onboarding'->'draft' FROM tenant_settings "
+            "WHERE tenant_id = %s::uuid", (tid,))).fetchone()
+    draft = row[0] if row else None
+    return draft if isinstance(draft, dict) and isinstance(draft.get("responses"), dict) else None
+
+
 @router.get("/onboarding/questions")
 async def onboarding_questions(request: Request):
     """Las 13 preguntas de la entrevista (id/block/field/question/example)."""
     _tenant(request)
     return await SoulInterview().get_questions()
+
+
+@router.post("/onboarding/draft")
+async def onboarding_save_draft(request: Request, body: OnboardingDraft):
+    """Guarda el avance parcial de la entrevista (autosave del wizard, Fase 2).
+
+    El frontend lo llama al avanzar de pregunta; si falla, el wizard sigue
+    funcionando (el autosave es ayuda, no candado)."""
+    tid = _tenant(request)
+    if len(json.dumps(body.responses, ensure_ascii=False)) > MAX_ONBOARDING_DRAFT_CHARS:
+        raise HTTPException(status_code=413, detail="Las respuestas son demasiado largas para guardarlas.")
+    idx = max(0, min(int(body.idx), 200))
+    qid = (str(body.qid)[:40] if body.qid else None)
+    await _save_onboarding_draft(tid, {"responses": body.responses, "idx": idx, "qid": qid})
+    return {"ok": True}
 
 
 @router.post("/onboarding/complete")
@@ -728,6 +786,10 @@ async def onboarding_complete(request: Request, body: OnboardingComplete):
     su perfil luego desde 'Mi despacho'.
     """
     tid = _tenant(request)
+    # Defensa en profundidad: las claves reservadas del wizard (prefijo '_', como
+    # '_jurisdicciones') jamás forman parte del perfil — el frontend ya las extrae,
+    # pero una llamada directa al API no debe poder colarlas en responses.json.
+    body.responses = {k: v for k, v in body.responses.items() if not str(k).startswith("_")}
     # Persistir la(s) jurisdicción(es) elegidas (Fase 0.C). Es la fuente del routing
     # jurisdiccional del SAT-Graph, calendario, chunker y PII (resolve_jurisdictions).
     if body.jurisdictions:
@@ -747,6 +809,13 @@ async def onboarding_complete(request: Request, body: OnboardingComplete):
     # el frontend ("Así entendí a tu despacho"); el SOUL.md técnico queda por debajo.
     content = await interview.run_interview(tid, body.responses)
     summary = interview.summary(body.responses)
+    # Entrevista terminada → el borrador parcial ya no aplica. Fail-open: si la
+    # limpieza falla, el status seguirá diciendo completed=true y el frontend
+    # ignora el borrador cuando ya está completo.
+    try:
+        await _save_onboarding_draft(tid, None)
+    except Exception:
+        logger.exception("no se pudo limpiar el borrador de onboarding (tenant=%s)", tid)
     # puede_importar_guias: el frontend puede ofrecer el paso opcional de importar
     # las guías de trabajo del despacho (POST /api/playbooks/import — Riesgo #20).
     return {"soul_content": content, "summary": summary, "path": f"soul_{tid}.md",
@@ -758,10 +827,17 @@ async def onboarding_status(request: Request):
     """¿El despacho ya tiene SOUL.md? {completed, last_updated, responses}.
 
     `responses` trae las respuestas guardadas (o {}) para que 'Revisar mi perfil'
-    precargue lo que el abogado contestó la última vez.
+    precargue lo que el abogado contestó la última vez. `draft` (Fase 2) trae el
+    avance parcial del wizard si el abogado lo dejó a medias (o null) — fail-open:
+    si no se puede leer, el wizard simplemente arranca de cero.
     """
     tid = _tenant(request)
-    return {**soul_status(tid), "responses": load_responses(tid)}
+    try:
+        draft = await _load_onboarding_draft(tid)
+    except Exception:
+        logger.exception("no se pudo leer el borrador de onboarding (tenant=%s)", tid)
+        draft = None
+    return {**soul_status(tid), "responses": load_responses(tid), "draft": draft}
 
 
 # ── Pantalla 5 · dashboard ───────────────────────────────────────────────────

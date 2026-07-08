@@ -313,8 +313,12 @@ def run_frontend_checks() -> None:
           "¿Qué es esto?" in page and "guia.como" in page
           and "¿Qué hace cada sección de Mia?" in page
           and "telegram-setup.md" not in page)
+    # El pase wow (2026-07) extrajo los items de navegación a nav.ts; el Sidebar
+    # los consume desde ahí. El check exige el MISMO comportamiento (el menú
+    # lateral enlaza 'Configura a Mia'), mirando ambos archivos.
+    nav_src = (ROOT / "frontend" / "app" / "_components" / "nav.ts").read_text(encoding="utf-8")
     check("f3 · el Sidebar enlaza 'Configura a Mia'",
-          "/configurar" in sidebar and "Configura a Mia" in sidebar)
+          "/configurar" in (sidebar + nav_src) and "Configura a Mia" in (sidebar + nav_src))
     check("f4 · accesibilidad: barra de progreso con role y valores (hallazgo capa 3 diferido)",
           'role="progressbar"' in page and "aria-valuenow" in page
           and "aria-expanded" in page)

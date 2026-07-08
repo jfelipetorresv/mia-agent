@@ -42,9 +42,18 @@ def main() -> int:
     check("P10 usa opciones genéricas", all(x in onboarding for x in ("Narrativo continuo", "Estructurado con secciones", "Depende del tipo de escrito")))
     check("barra de progreso thin", "h-1 w-full" in onboarding)
     check("pregunta centrada", "text-center text-2xl" in onboarding)
-    check("sidebar activo con borde izquierdo", "border-l-2" in sidebar and "bg-[#f8f9fa]" in sidebar)
-    check("chat usa burbuja Mia gris claro y usuario oscuro", "bg-[#f8f9fa]" in workspace and "bg-gray-900 text-white" in workspace)
-    check("paleta base neutral", "#0f172a" in globals_css and "#ffffff" in globals_css)
+    # Los 3 checks siguientes se actualizaron al design system del pase wow
+    # (2026-07, aprobado por Pipe): tokens HSL de shadcn en vez de hex crudos.
+    # El CONTRATO es el mismo — estado activo visible en el sidebar, burbujas
+    # diferenciadas usuario/Mia, paleta definida — con las clases vigentes.
+    check("sidebar activo con estado visible (tokens DS)",
+          "text-primary" in sidebar and ("bg-accent" in sidebar or "bg-primary/10" in sidebar))
+    check("chat usa burbuja de usuario en primario y Mia en tarjeta",
+          "bg-primary" in workspace and "text-primary-foreground" in workspace
+          and "bg-card" in workspace)
+    check("paleta con tokens HSL (claro y oscuro) y primario definido",
+          "--primary:" in globals_css and "hsl(var(--" in globals_css
+          and globals_css.count("--background:") >= 2)
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)
