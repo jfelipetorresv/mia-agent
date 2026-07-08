@@ -26,6 +26,9 @@ CREATE POLICY p_users ON users
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON users TO mia_app;
 
+-- Si una versión previa devolvía otra fila (p.ej. con 'role', de la rama fases
+-- abandonada), CREATE OR REPLACE falla: se elimina primero (idempotente).
+DROP FUNCTION IF EXISTS auth_user_by_email(varchar);
 CREATE OR REPLACE FUNCTION auth_user_by_email(p_email varchar)
 RETURNS TABLE(id uuid, tenant_id uuid, email varchar, password_hash varchar)
 LANGUAGE sql

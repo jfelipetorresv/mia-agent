@@ -317,6 +317,10 @@ async def db_checks() -> None:
 
 if __name__ == "__main__":
     asyncio.run(offline_checks())
+    # offline_checks deja claves FALSAS en el entorno (prueba de no-filtración e6-02).
+    # Recargar las reales del .env antes de tocar la DB: con pg_hba scram (DB portable)
+    # la clave falsa rompe la autenticación de _sb() y el pool queda huérfano reintentando.
+    load_dotenv(ROOT / ".env", override=True)
     if os.getenv("PG_PASSWORD"):
         asyncio.run(db_checks())
     else:
