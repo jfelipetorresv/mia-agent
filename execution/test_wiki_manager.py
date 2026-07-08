@@ -117,8 +117,13 @@ async def run_checks() -> None:
 
             hitl_src = (ROOT / "backend" / "mia" / "api" / "routes" / "hitl.py").read_text(encoding="utf-8")
             check(
-                "HITL actualiza wiki al aprobar (await con log de error)",
-                "await WikiManager().update_from_approved_matter" in hitl_src,
+                "HITL actualiza wiki al aprobar (tarea de fondo con log de error)",
+                # La decisión del abogado no debe esperar minutos por el aprendizaje
+                # de la wiki: corre como tarea de fondo (con referencia viva) y el
+                # fallo queda en el log (fail-open), nunca bloquea la aprobación.
+                "await WikiManager().update_from_approved_matter" in hitl_src
+                and "asyncio.create_task(_wiki_update())" in hitl_src
+                and "_BACKGROUND_TASKS.add(task)" in hitl_src,
             )
     finally:
         llm.call_llm = original

@@ -7,6 +7,7 @@ decisión #9).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,6 +24,10 @@ from ._common import assert_owns_matter, require_awaiting_review, sse
 
 router = APIRouter(tags=["matters"])
 logger = logging.getLogger("mia.api.hitl")
+
+# Referencias vivas a las tareas de fondo (sin esto, asyncio puede recolectarlas
+# a mitad de camino). Se auto-limpian al terminar.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 class RejectBody(BaseModel):
@@ -59,10 +64,19 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
                         "pending_review_notified_at = NULL "
                         "WHERE id = %s::uuid", (matter_id,))
                 if command.get("decision") == "approved":
-                    try:
-                        await WikiManager().update_from_approved_matter(tenant_id, matter_id)
-                    except Exception:
-                        logger.exception("wiki update falló (tenant=%s matter=%s)", tenant_id, matter_id)
+                    # El aprendizaje del despacho (wiki) hace VARIAS llamadas al modelo
+                    # y puede tardar minutos: no puede retener el "done" — la decisión
+                    # del abogado ya quedó registrada arriba. Corre en segundo plano,
+                    # fail-open: si falla se pierde UNA actualización de wiki (queda en
+                    # el log), nunca la aprobación.
+                    async def _wiki_update(tid: str = tenant_id, mid: str = matter_id) -> None:
+                        try:
+                            await WikiManager().update_from_approved_matter(tid, mid)
+                        except Exception:
+                            logger.exception("wiki update falló (tenant=%s matter=%s)", tid, mid)
+                    task = asyncio.create_task(_wiki_update())
+                    _BACKGROUND_TASKS.add(task)
+                    task.add_done_callback(_BACKGROUND_TASKS.discard)
                 yield sse("done", "Listo.", draft=final_draft, status=command.get("decision"))
         except HTTPException:
             raise
