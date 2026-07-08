@@ -2,7 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Plus, FolderOpen, ChevronRight, FileClock } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Matter = {
   id: string;
@@ -65,81 +80,132 @@ export default function AsuntosPage() {
     }
   }
 
+  const pendientes = matters.filter((m) => m.pending_review).length;
+
   return (
-    <div className="mx-auto max-w-3xl px-8 py-10">
-      <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Asuntos</h1>
-        <button
-          onClick={() => setShowModal(true)}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
-        >
+    <div className="mx-auto max-w-3xl px-6 py-10 md:px-8">
+      <div className="mb-8 flex items-end justify-between gap-4 animate-slide-up">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Asuntos</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {loading
+              ? "Cargando tu despacho…"
+              : matters.length === 0
+                ? "Tu espacio de trabajo con Mia."
+                : pendientes > 0
+                  ? `${matters.length} en curso · ${pendientes} con borrador esperando tu revisión`
+                  : `${matters.length} en curso`}
+          </p>
+        </div>
+        <Button onClick={() => setShowModal(true)} className="gap-2">
+          <Plus className="h-4 w-4" />
           Nuevo asunto
-        </button>
+        </Button>
       </div>
 
       {loading ? (
-        <p className="text-gray-400">Cargando…</p>
+        <div className="space-y-3">
+          <Skeleton className="h-20 w-full rounded-xl" />
+          <Skeleton className="h-20 w-full rounded-xl" />
+          <Skeleton className="h-20 w-full rounded-xl" />
+        </div>
       ) : matters.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-200 py-16 text-center text-gray-400">
-          Aún no tienes asuntos activos.
+        <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <FolderOpen className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-medium">Crea tu primer asunto</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            Un asunto es un caso de tu despacho: sube el expediente, haz tu consulta y
+            Mia te prepara un diagnóstico y un borrador para tu aprobación.
+          </p>
+          <Button onClick={() => setShowModal(true)} className="mt-6 gap-2">
+            <Plus className="h-4 w-4" />
+            Nuevo asunto
+          </Button>
         </div>
       ) : (
-        <ul className="divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-100">
-          {matters.map((m) => (
-            <li key={m.id}>
+        <ul className="space-y-3">
+          {matters.map((m, i) => (
+            <li key={m.id} className="animate-slide-up" style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}>
               <button
                 onClick={() => router.push(`/asuntos/${m.id}`)}
-                className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:-translate-y-px hover:bg-gray-50"
+                className="group flex w-full items-center gap-4 rounded-xl border border-border bg-card px-5 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md"
               >
-                {m.pending_review ? (
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-orange-500" title="Borrador esperando tu revisión" />
-                ) : (
-                  <span className="h-2.5 w-2.5 shrink-0" />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{m.name}</div>
-                  {m.description ? <div className="truncate text-sm text-gray-500">{m.description}</div> : null}
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform duration-200 group-hover:scale-105">
+                  <FolderOpen className="h-5 w-5" />
                 </div>
-                <div className="shrink-0 text-xs text-gray-400">{fmtDate(m.created_at)}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium">{m.name}</span>
+                    {m.pending_review ? (
+                      <Badge className="gap-1 border-transparent bg-cta/15 text-cta hover:bg-cta/20">
+                        <FileClock className="h-3 w-3" />
+                        Borrador por revisar
+                      </Badge>
+                    ) : null}
+                  </div>
+                  {m.description ? (
+                    <div className="mt-0.5 truncate text-sm text-muted-foreground">{m.description}</div>
+                  ) : null}
+                </div>
+                <div className="shrink-0 text-xs text-muted-foreground">{fmtDate(m.created_at)}</div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-primary" />
               </button>
             </li>
           ))}
         </ul>
       )}
 
-      {showModal ? (
-        <div
-          className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4"
-          onClick={() => setShowModal(false)}
-        >
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h2 className="mb-4 text-lg font-semibold">Nuevo asunto</h2>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Nombre</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="mb-4 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
-              placeholder="Ej. Demanda de responsabilidad civil"
-              autoFocus
-            />
-            <label className="mb-1 block text-sm font-medium text-gray-700">Descripción (opcional)</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="mb-2 h-20 w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
-            />
-            {error ? <p className="mb-2 text-sm text-red-600">{error}</p> : null}
-            <div className="mt-2 flex justify-end gap-2">
-              <button onClick={() => setShowModal(false)} className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">
-                Cancelar
-              </button>
-              <button onClick={create} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">
-                Crear
-              </button>
+      <Dialog open={showModal} onOpenChange={(o) => { setShowModal(o); if (!o) setError(""); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nuevo asunto</DialogTitle>
+            <DialogDescription>
+              Dale un nombre claro; podrás subir el expediente en el siguiente paso.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <div className="space-y-1.5">
+              <Label htmlFor="matter-name">Nombre</Label>
+              <Input
+                id="matter-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ej. Demanda de responsabilidad civil"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    create();
+                  }
+                }}
+              />
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="matter-desc">Descripción (opcional)</Label>
+              <Textarea
+                id="matter-desc"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="h-20 resize-none"
+                placeholder="Contexto breve del caso"
+              />
+            </div>
+            {error ? (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            ) : null}
           </div>
-        </div>
-      ) : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowModal(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={create}>Crear asunto</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

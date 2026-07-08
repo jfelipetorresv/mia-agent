@@ -1,7 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  BellRing,
+  BookOpen,
+  CalendarClock,
+  FileText,
+  FolderOpen,
+  FolderSearch,
+  HeartPulse,
+  Layers,
+  Lightbulb,
+  Mail,
+  Mic,
+  NotebookPen,
+  PiggyBank,
+  Repeat,
+  Settings2,
+  Sparkles,
+  TrendingUp,
+} from "lucide-react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import AutomationsSection from "@/app/_components/AutomationsSection";
 import MailboxSectionLoader from "@/app/_components/MailboxSectionLoader";
 
@@ -109,6 +133,18 @@ function fmtHora(s?: string | null): string {
     return "—";
   }
 }
+
+// Navegación interna del panel: el dashboard es largo por naturaleza (aquí vive
+// todo lo operativo) — estas anclas evitan que se sienta un pozo sin fondo.
+const SECCIONES = [
+  { id: "actividad", label: "Actividad" },
+  { id: "recomendaciones", label: "Recomendaciones" },
+  { id: "recordatorios", label: "Recordatorios" },
+  { id: "valor", label: "Valor y gasto" },
+  { id: "conexiones", label: "Conexiones" },
+  { id: "carpetas", label: "Carpetas" },
+  { id: "automatizaciones", label: "Automatizaciones" },
+];
 
 export default function DashboardPage() {
   const [s, setS] = useState<Stats | null>(null);
@@ -415,383 +451,103 @@ export default function DashboardPage() {
         api_key: pineconeKey,
         index_name: pineconeIndex,
       });
-      setStatus(res.status === "active" ? `${res.vectors_count} vectores disponibles` : "No se pudo activar");
+      setStatus(res.status === "active" ? `${res.vectors_count} documentos disponibles` : "No se pudo activar");
       await load();
     } catch {
-      setStatus("No se pudo conectar con Pinecone.");
+      setStatus("No se pudo conectar la memoria ampliada.");
     }
   }
 
-  if (!s) return <div className="p-10 text-gray-400">Cargando...</div>;
+  if (!s) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-6 px-6 py-10 md:px-8">
+        <Skeleton className="h-9 w-64" />
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Skeleton className="h-24 rounded-xl" />
+          <Skeleton className="h-24 rounded-xl" />
+          <Skeleton className="h-24 rounded-xl" />
+          <Skeleton className="h-24 rounded-xl" />
+        </div>
+        <Skeleton className="h-40 w-full rounded-xl" />
+        <Skeleton className="h-40 w-full rounded-xl" />
+      </div>
+    );
+  }
   const c = s.connectors || {};
   const brain = s.second_brain || {};
 
   return (
-    <div className="mx-auto max-w-4xl space-y-10 px-8 py-10">
-      <h1 className="text-2xl font-semibold">Panel de control</h1>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Actividad</h2>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Stat label="Asuntos activos" value={s.matters_active} />
-          <Stat label="Documentos" value={s.documents_indexed} />
-          <Stat label="Conocimiento" value={s.knowledge_items} />
-          <Stat label="Sugerencias" value={s.proposals_pending} />
-        </div>
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Conectores</h2>
-        <div className="space-y-4">
-          <div className="rounded-lg border border-gray-100 p-4">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div>
-                <div className="font-medium">Obsidian</div>
-                <div className="text-sm text-gray-500">
-                  {c.knowledge_base?.active ? `Activo · última sync ${fmt(c.knowledge_base.last_sync)}` : "Inactivo"}
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                {obsidian && !obsidian.installed ? (
-                  <button
-                    onClick={() => setInstallConfirm(true)}
-                    disabled={installBusy}
-                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Instalar Obsidian
-                  </button>
-                ) : null}
-                <button onClick={syncObsidian} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700">Sincronizar</button>
-              </div>
-            </div>
-            {obsidian ? <p className="mb-2 text-sm text-gray-500">{obsidian.message}</p> : null}
-            {installConfirm ? (
-              <div role="alertdialog" aria-label="Confirmar instalación de Obsidian" className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                <p className="text-sm text-amber-800">
-                  Esta acción descarga e instala el programa Obsidian en este equipo. ¿Quieres continuar?
-                </p>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    onClick={installObsidian}
-                    disabled={installBusy}
-                    className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                  >
-                    {installBusy ? "Instalando…" : "Sí, instalar"}
-                  </button>
-                  <button
-                    onClick={() => setInstallConfirm(false)}
-                    disabled={installBusy}
-                    className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            <label htmlFor="vault-path" className="mb-1 block text-sm text-gray-600">Ubicación de tu espacio de notas</label>
-            <input id="vault-path" value={vaultPath} onChange={(e) => setVaultPath(e.target.value)} placeholder="Ej.: D:\Notas del despacho" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
-          </div>
-
-          <div className="rounded-lg border border-gray-100 p-4">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div>
-                <div className="font-medium">Dictado por voz</div>
-                <div className="text-sm text-gray-500">
-                  {speech?.listo
-                    ? "Instalado · dicta con el micrófono desde el chat de tus asuntos"
-                    : speech?.estado === "descargando"
-                      ? "Instalando…"
-                      : "Inactivo"}
-                </div>
-              </div>
-              {speech && !speech.listo && speech.estado !== "descargando" ? (
-                <button
-                  onClick={() => setSpeechConfirm(true)}
-                  disabled={speechBusy}
-                  className="shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Instalar dictado por voz
-                </button>
-              ) : null}
-            </div>
-            {speech ? <p className="mb-2 text-sm text-gray-500">{speech.mensaje}</p> : null}
-            {speech?.estado === "descargando" && speech.progreso ? (
-              <div className="mb-2">
-                <div
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={speech.progreso.porcentaje ?? undefined}
-                  aria-label="Avance de la descarga del dictado por voz"
-                  className="h-2 w-full overflow-hidden rounded-full bg-gray-100"
-                >
-                  <div
-                    className="h-full rounded-full bg-gray-900 transition-all"
-                    style={{ width: `${speech.progreso.porcentaje ?? 5}%` }}
-                  />
-                </div>
-                <p className="mt-1 text-xs text-gray-500">
-                  {speech.progreso.total_mb
-                    ? `${speech.progreso.descargado_mb} de ${speech.progreso.total_mb} MB`
-                    : `${speech.progreso.descargado_mb} MB descargados`}
-                </p>
-              </div>
-            ) : null}
-            {speechConfirm ? (
-              <div role="alertdialog" aria-label="Confirmar instalación del dictado por voz" className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                <p className="text-sm text-amber-800">
-                  Esta acción descarga el componente de dictado por voz (~700 MB) en el servidor de Mia.
-                  Puede tardar varios minutos. Tu voz nunca saldrá del servidor del despacho. ¿Quieres continuar?
-                </p>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    onClick={installSpeech}
-                    disabled={speechBusy}
-                    className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                  >
-                    {speechBusy ? "Iniciando…" : "Sí, instalar"}
-                  </button>
-                  <button
-                    onClick={() => setSpeechConfirm(false)}
-                    disabled={speechBusy}
-                    className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            {speechMsg ? <p className="text-sm text-amber-700">{speechMsg}</p> : null}
-          </div>
-
-          <div className="rounded-lg border border-gray-100 p-4">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div>
-                <div className="font-medium">Pinecone</div>
-                <div className="text-sm text-gray-500">
-                  {c.external_store?.active ? `Activo · ${c.external_store.vectors_count || 0} vectores` : "Inactivo"}
-                </div>
-              </div>
-              <button onClick={connectPinecone} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700">Conectar</button>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <input type="password" autoComplete="off" value={pineconeKey} onChange={(e) => setPineconeKey(e.target.value)} placeholder="Clave de acceso" className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
-              <input value={pineconeIndex} onChange={(e) => setPineconeIndex(e.target.value)} placeholder="Index" className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-gray-100 p-4">
-            <div className="mb-2 font-medium">Calendario y correo</div>
-            <p className="mb-3 text-sm text-gray-500">
-              Conecta Microsoft 365 o Google Workspace para que Mia avise de eventos y correos urgentes.
-            </p>
-            <MailboxSectionLoader />
-          </div>
-
-          <div className="rounded-lg border border-gray-100 p-4">
-            <label className="mb-1 block text-sm font-medium text-gray-700">Motor de IA</label>
-            <p className="mb-2 text-sm text-gray-500">Con qué trabaja Mia. Puedes cambiarlo cuando quieras.</p>
-            <select
-              value={policy?.politica || ""}
-              onChange={(e) => changePolicy(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
-            >
-              {(policy?.opciones || []).map((o) => (
-                <option key={o.id} value={o.id}>{o.nombre}</option>
-              ))}
-            </select>
-            {policyMsg ? <p className="mt-2 text-sm text-gray-600">{policyMsg}</p> : null}
-          </div>
-          {status ? <p className="text-sm text-gray-500">{status}</p> : null}
-        </div>
-      </section>
-
-      <section>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">Carpetas de trabajo</h2>
-          <button
-            onClick={syncFoldersNow}
-            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Revisar carpetas ahora
-          </button>
-        </div>
-        <p className="mb-3 text-sm text-gray-500">
-          Mia solo lee las carpetas que tú registres aquí. Nunca revisa nada fuera de ellas.
+    <div className="mx-auto max-w-5xl px-6 py-10 md:px-8">
+      {/* Encabezado con resumen en llano: el panel saluda con lo que importa hoy. */}
+      <header className="animate-slide-up">
+        <h1 className="text-2xl font-semibold tracking-tight">Panel del despacho</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {s.matters_active || 0} {s.matters_active === 1 ? "asunto activo" : "asuntos activos"}
+          {(s.proposals_pending || 0) > 0
+            ? ` · ${s.proposals_pending} ${s.proposals_pending === 1 ? "sugerencia esperando" : "sugerencias esperando"} tu decisión`
+            : " · todo al día"}
         </p>
-        {folderMsg ? <p role="status" className="mb-3 text-sm text-amber-700">{folderMsg}</p> : null}
-
-        {folders === null ? (
-          <p className="text-sm text-gray-400">No se pudieron cargar tus carpetas. Recarga la página.</p>
-        ) : (
-          <div className="space-y-4">
-            {folders.detected.length > 0 ? (
-              <div>
-                <h3 className="mb-2 text-sm font-medium text-gray-600">Detectadas en este equipo</h3>
-                <ul className="space-y-2">
-                  {folders.detected.map((d) => (
-                    <li key={d.path} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-4 py-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">{d.label}</div>
-                        <div className="truncate text-sm text-gray-500" title={d.path}>{d.path}</div>
-                      </div>
-                      {d.registered ? (
-                        <span className="shrink-0 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">Registrada</span>
-                      ) : (
-                        <button
-                          onClick={() => addFolder(d.path, d.label)}
-                          disabled={folderBusy}
-                          className="shrink-0 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                        >
-                          Registrar
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-gray-600">Registradas</h3>
-              {folders.sources.filter((f) => f.enabled).length === 0 ? (
-                <p className="text-sm text-gray-400">Aún no has registrado ninguna carpeta.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {folders.sources.filter((f) => f.enabled).map((f) => (
-                    <li key={f.id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-4 py-3">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">{f.label}</div>
-                        <div className="truncate text-sm text-gray-500" title={f.path}>{f.path}</div>
-                      </div>
-                      <button
-                        onClick={() => removeFolder(f.id, f.label)}
-                        className="shrink-0 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
-                      >
-                        Quitar
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (folderPath.trim()) addFolder(folderPath.trim(), folderLabel.trim() || undefined);
-              }}
-              className="rounded-lg border border-gray-100 p-4"
+        <nav aria-label="Secciones del panel" className="mt-4 flex flex-wrap gap-1.5">
+          {SECCIONES.map((sec) => (
+            <a
+              key={sec.id}
+              href={`#${sec.id}`}
+              className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
             >
-              <h3 className="mb-2 text-sm font-medium text-gray-600">Registrar otra carpeta</h3>
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                <input
-                  value={folderPath}
-                  onChange={(e) => setFolderPath(e.target.value)}
-                  aria-label="Ubicación de la carpeta"
-                  placeholder="Ej.: D:\Guías del despacho"
-                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
-                />
-                <input
-                  value={folderLabel}
-                  onChange={(e) => setFolderLabel(e.target.value)}
-                  aria-label="Nombre para identificarla (opcional)"
-                  placeholder="Nombre (opcional)"
-                  className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
-                />
-                <button
-                  type="submit"
-                  disabled={folderBusy || !folderPath.trim()}
-                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                >
-                  Registrar
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Recordatorios</h2>
-        {reminderMsg ? <p className="mb-2 text-sm text-amber-700">{reminderMsg}</p> : null}
-        {reminders.length === 0 ? (
-          <p className="text-sm text-gray-400">No tienes recordatorios pendientes. Pídelos en el chat: «recuérdame radicar la tutela mañana a las 9».</p>
-        ) : (
-          <ul className="space-y-2">
-            {reminders.map((r) => (
-              <li key={r.id} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{r.text}</div>
-                  <div className="text-sm text-gray-500">
-                    Para el {fmtHora(r.due_at)}
-                    {r.is_procedural ? " · plazo procesal: confirma tú la fecha" : ""}
-                  </div>
-                </div>
-                <button onClick={() => cancelReminder(r.id)} className="shrink-0 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancelar</button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Automatizaciones</h2>
-        <AutomationsSection />
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Salud del second brain</h2>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Stat label="Aprobación semanal" value={Math.round((brain.weekly_approval_rate || 0) * 100)} suffix="%" />
-          <Stat label="Conceptos" value={brain.concepts_count} />
-          <Stat label="Skills activos" value={brain.skills_active} />
-          <Stat label="Skills archivados" value={brain.skills_archived} />
-        </div>
-        <p className="mt-3 text-sm text-gray-500">Próxima consolidación: {fmt(brain.next_consolidation)}</p>
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Procesos automáticos</h2>
-        <ul className="space-y-2">
-          {(s.scheduler_jobs || []).map((j, i) => (
-            <li key={i} className="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-3 text-sm">
-              <span>{j.label}</span>
-              <span className="text-gray-400">Próxima actualización: {fmt(j.next_run)}</span>
-            </li>
+              {sec.label}
+            </a>
           ))}
-        </ul>
+        </nav>
+      </header>
+
+      {/* ── Actividad ─────────────────────────────────────────────── */}
+      <section id="actividad" className="mt-10 scroll-mt-6">
+        <SectionTitle icon={TrendingUp} title="Actividad" />
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard icon={FolderOpen} label="Asuntos activos" value={s.matters_active} delay={0} />
+          <StatCard icon={FileText} label="Documentos" value={s.documents_indexed} delay={1} />
+          <StatCard icon={BookOpen} label="Conocimiento" value={s.knowledge_items} delay={2} />
+          <StatCard icon={Lightbulb} label="Sugerencias" value={s.proposals_pending} delay={3} />
+        </div>
       </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Recomendaciones de Mia</h2>
-        <p className="mb-3 text-sm text-gray-500">
-          Diagnóstico de la última consolidación semanal — con evidencia real de la actividad del despacho.
-        </p>
-        {rxMsg ? <p role="alert" className="mb-3 text-sm text-amber-700">{rxMsg}</p> : null}
+      {/* ── Recomendaciones de Mia ────────────────────────────────── */}
+      <section id="recomendaciones" className="mt-12 scroll-mt-6">
+        <SectionTitle
+          icon={Sparkles}
+          title="Recomendaciones de Mia"
+          hint="Del diagnóstico semanal, con evidencia real de la actividad del despacho."
+        />
+        {rxMsg ? <p role="alert" className="mb-3 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{rxMsg}</p> : null}
         {!prescriptionsLoaded ? (
-          <p className="text-sm text-gray-400">Cargando recomendaciones…</p>
+          <Skeleton className="h-24 w-full rounded-xl" />
         ) : prescriptions.length === 0 ? (
-          <p className="rounded-lg border border-gray-100 px-4 py-5 text-sm text-gray-400">
+          <EmptyHint icon={Sparkles}>
             Mia aún no tiene recomendaciones — necesita más actividad para hablar con evidencia.
-          </p>
+          </EmptyHint>
         ) : (
           <ul className="space-y-3">
-            {prescriptions.map((p) => {
+            {prescriptions.map((p, i) => {
               const expanded = expandedRx === p.id;
               return (
-                <li key={p.id} className="rounded-xl border border-gray-100 px-4 py-4">
+                <li
+                  key={p.id}
+                  className="animate-slide-up rounded-xl border border-border bg-card p-5 shadow-sm"
+                  style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="font-medium text-gray-900">{p.headline}</div>
-                      {p.status === "recurring" && p.age_days > 0 ? (
-                        <p className="mt-1 text-xs font-medium text-amber-700">
-                          Problema recurrente · lleva {p.age_days} {p.age_days === 1 ? "día" : "días"}
-                        </p>
-                      ) : null}
-                      <p className="mt-2 text-sm text-gray-600">{p.prescription}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{p.headline}</span>
+                        {p.status === "recurring" && p.age_days > 0 ? (
+                          <Badge variant="warning" className="bg-warning/15 text-warning">
+                            Recurrente · {p.age_days} {p.age_days === 1 ? "día" : "días"}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">{p.prescription}</p>
                       {p.dollar_impact != null || p.time_impact_mins != null ? (
-                        <p className="mt-2 text-sm text-gray-500">
+                        <p className="mt-2 text-sm font-medium text-primary">
                           {p.dollar_impact != null ? `Impacto estimado: USD ${p.dollar_impact.toFixed(0)}/mes` : null}
                           {p.dollar_impact != null && p.time_impact_mins != null ? " · " : null}
                           {p.time_impact_mins != null ? `${p.time_impact_mins} min/mes ahorrables` : null}
@@ -805,36 +561,26 @@ export default function DashboardPage() {
                         type="button"
                         aria-expanded={expanded}
                         onClick={() => setExpandedRx(expanded ? null : p.id)}
-                        className="text-sm font-medium text-gray-600 hover:text-gray-900"
+                        className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
                       >
                         {expanded ? "Ocultar evidencia" : "Ver evidencia"}
                       </button>
                       {expanded ? (
-                        <ul className="mt-2 space-y-1 text-sm text-gray-500">
-                          {p.evidence.map((line, i) => (
-                            <li key={i}>· {line}</li>
+                        <ul className="mt-2 space-y-1 rounded-lg bg-muted/60 px-3 py-2 text-sm text-muted-foreground animate-fade-in">
+                          {p.evidence.map((line, j) => (
+                            <li key={j}>· {line}</li>
                           ))}
                         </ul>
                       ) : null}
                     </div>
                   ) : null}
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => decidePrescription(p.id, "accept")}
-                      disabled={rxBusy === p.id}
-                      className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                    >
+                    <Button size="sm" onClick={() => decidePrescription(p.id, "accept")} disabled={rxBusy === p.id}>
                       Lo haré
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => decidePrescription(p.id, "dismiss")}
-                      disabled={rxBusy === p.id}
-                      className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
-                    >
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => decidePrescription(p.id, "dismiss")} disabled={rxBusy === p.id}>
                       Descartar
-                    </button>
+                    </Button>
                   </div>
                 </li>
               );
@@ -843,134 +589,588 @@ export default function DashboardPage() {
         )}
       </section>
 
-      <section>
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Valor entregado este mes</h2>
-            <div className="rounded-lg border border-gray-100 p-5">
-              <div className="text-3xl font-semibold">
-                USD {Number(s.value?.net_usd ?? 0).toFixed(2)}
-                <span className="ml-2 text-sm font-normal text-gray-500">de valor neto estimado</span>
-              </div>
-              <p className="mt-2 text-sm text-gray-600">
-                {Number(s.value?.hours_saved ?? 0).toFixed(1)} horas ahorradas (estimado) ×
-                USD {Number(s.value?.hourly_rate_usd ?? 0).toFixed(0)}/hora =
-                USD {Number(s.value?.gross_usd ?? 0).toFixed(2)}, menos
-                USD {Number(s.value?.cost_usd ?? 0).toFixed(2)} de costo de la inteligencia artificial.
-              </p>
-              <p className="mt-1 text-sm text-gray-500">
-                Este mes: {s.value?.drafts_approved ?? 0} borradores aprobados y {s.value?.consultations ?? 0} consultas.
-                El cálculo usa estimados configurables{s.value?.is_default_config ? " (valores de fábrica)" : ""}.
-              </p>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <label htmlFor="hourly-rate" className="text-sm text-gray-600">Tu tarifa horaria (USD):</label>
-                <input
-                  id="hourly-rate"
-                  value={rateInput}
-                  onChange={(e) => setRateInput(e.target.value)}
-                  placeholder={String(s.value?.hourly_rate_usd ?? 100)}
-                  inputMode="decimal"
-                  className="w-24 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-gray-400"
-                />
-                <button
-                  onClick={saveRate}
-                  className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
-                >
-                  Guardar
-                </button>
-                {rateMsg ? <span className="text-sm text-gray-500">{rateMsg}</span> : null}
-              </div>
+      {/* ── Recordatorios ─────────────────────────────────────────── */}
+      <section id="recordatorios" className="mt-12 scroll-mt-6">
+        <SectionTitle icon={BellRing} title="Recordatorios" />
+        {reminderMsg ? <p className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{reminderMsg}</p> : null}
+        {reminders.length === 0 ? (
+          <EmptyHint icon={BellRing}>
+            No tienes recordatorios pendientes. Pídelos en el chat: «recuérdame radicar la tutela mañana a las 9».
+          </EmptyHint>
+        ) : (
+          <ul className="space-y-2">
+            {reminders.map((r, i) => (
+              <li
+                key={r.id}
+                className="flex animate-slide-up items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm"
+                style={{ animationDelay: `${i * 40}ms`, animationFillMode: "backwards" }}
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{r.text}</div>
+                  <div className="mt-0.5 text-sm text-muted-foreground">
+                    Para el {fmtHora(r.due_at)}
+                    {r.is_procedural ? (
+                      <span className="ml-1.5 font-medium text-warning">· plazo procesal: confirma tú la fecha</span>
+                    ) : null}
+                  </div>
+                </div>
+                <Button size="sm" variant="ghost" className="shrink-0" onClick={() => cancelReminder(r.id)}>
+                  Cancelar
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* ── Valor entregado + tope de gasto ───────────────────────── */}
+      <section id="valor" className="mt-12 scroll-mt-6">
+        <SectionTitle icon={PiggyBank} title="Valor y gasto del mes" />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="animate-slide-up rounded-xl border border-border bg-card p-6 shadow-sm">
+            <div className="mb-1 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <TrendingUp className="h-4 w-4 text-success" />
+              Valor entregado este mes
+            </div>
+            <div className="mt-2 text-3xl font-semibold tracking-tight">
+              USD {Number(s.value?.net_usd ?? 0).toFixed(2)}
+              <span className="ml-2 text-sm font-normal text-muted-foreground">de valor neto estimado</span>
+            </div>
+            <p className="mt-3 text-sm text-muted-foreground">
+              {Number(s.value?.hours_saved ?? 0).toFixed(1)} horas ahorradas (estimado) ×
+              USD {Number(s.value?.hourly_rate_usd ?? 0).toFixed(0)}/hora =
+              USD {Number(s.value?.gross_usd ?? 0).toFixed(2)}, menos
+              USD {Number(s.value?.cost_usd ?? 0).toFixed(2)} de costo de la inteligencia artificial.
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Este mes: {s.value?.drafts_approved ?? 0} borradores aprobados y {s.value?.consultations ?? 0} consultas.
+              El cálculo usa estimados configurables{s.value?.is_default_config ? " (valores de fábrica)" : ""}.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Label htmlFor="hourly-rate" className="text-sm text-muted-foreground">
+                Tu tarifa horaria (USD):
+              </Label>
+              <Input
+                id="hourly-rate"
+                value={rateInput}
+                onChange={(e) => setRateInput(e.target.value)}
+                placeholder={String(s.value?.hourly_rate_usd ?? 100)}
+                inputMode="decimal"
+                className="h-9 w-24"
+              />
+              <Button size="sm" onClick={saveRate}>
+                Guardar
+              </Button>
+              {rateMsg ? <span className="text-sm text-muted-foreground">{rateMsg}</span> : null}
             </div>
           </div>
 
-          <div>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">Tope de gasto de IA este mes</h2>
-            <div className="rounded-lg border border-gray-100 p-5">
-              {budget === null ? (
-                <p className="text-sm text-gray-400">No se pudo cargar el tope de gasto. Recarga la página.</p>
-              ) : (
-                <>
-                  {budget.unlimited ? (
-                    <p className="text-sm font-medium text-gray-700">Sin tope de gasto este mes</p>
-                  ) : (
-                    <p className="text-sm font-medium text-gray-700">
-                      Tope fijado: USD {Number(budget.monthly_budget_usd ?? 0).toFixed(2)}
-                    </p>
-                  )}
-                  <p className="mt-2 text-sm text-gray-600">
-                    Gasto este mes: USD {Number(budget.spent_this_month_usd).toFixed(2)}
-                    {!budget.unlimited && budget.remaining_usd != null ? (
-                      <> · Restante: USD {Number(budget.remaining_usd).toFixed(2)}</>
-                    ) : null}
-                  </p>
-                  {budget.over_budget ? (
-                    <p role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                      Se alcanzó el tope; los turnos están en pausa.
-                    </p>
-                  ) : null}
-                  <div className="mt-4 space-y-3">
-                    <div className="flex flex-wrap items-end gap-2">
-                      <div>
-                        <label htmlFor="budget-cap" className="mb-1 block text-sm text-gray-600">
-                          Tope mensual (USD)
-                        </label>
-                        <input
-                          id="budget-cap"
-                          value={budgetInput}
-                          onChange={(e) => setBudgetInput(e.target.value)}
-                          disabled={sinLimite || budgetBusy}
-                          placeholder="Ej.: 100"
-                          inputMode="decimal"
-                          className="w-28 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-400"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={saveBudget}
-                        disabled={budgetBusy}
-                        className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                      >
-                        {budgetBusy ? "Guardando…" : "Guardar"}
-                      </button>
-                    </div>
-                    <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={sinLimite}
-                        onChange={(e) => setSinLimite(e.target.checked)}
-                        disabled={budgetBusy}
-                        className="h-4 w-4 rounded border-gray-300 outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1"
-                      />
-                      Sin límite
-                    </label>
-                  </div>
-                  {budgetMsg ? (
-                    <p
-                      role={budgetMsg === "Tope guardado." || budgetMsg === "Sin tope de gasto este mes." ? "status" : "alert"}
-                      className={`mt-3 text-sm ${
-                        budgetMsg === "Tope guardado." || budgetMsg === "Sin tope de gasto este mes."
-                          ? "text-gray-500"
-                          : "text-amber-700"
-                      }`}
-                    >
-                      {budgetMsg}
-                    </p>
-                  ) : null}
-                </>
-              )}
+          <div className="animate-slide-up rounded-xl border border-border bg-card p-6 shadow-sm" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
+            <div className="mb-1 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <PiggyBank className="h-4 w-4 text-cta" />
+              Tope de gasto de IA este mes
             </div>
+            {budget === null ? (
+              <p className="mt-3 text-sm text-muted-foreground">No se pudo cargar el tope de gasto. Recarga la página.</p>
+            ) : (
+              <>
+                <div className="mt-2 text-3xl font-semibold tracking-tight">
+                  USD {Number(budget.spent_this_month_usd).toFixed(2)}
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    {budget.unlimited
+                      ? "gastados · sin tope este mes"
+                      : `de USD ${Number(budget.monthly_budget_usd ?? 0).toFixed(2)}`}
+                  </span>
+                </div>
+                {!budget.unlimited && budget.remaining_usd != null ? (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Restante: USD {Number(budget.remaining_usd).toFixed(2)}
+                  </p>
+                ) : null}
+                {budget.over_budget ? (
+                  <p role="alert" className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+                    Se alcanzó el tope; los turnos están en pausa.
+                  </p>
+                ) : null}
+                <div className="mt-4 space-y-3">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div>
+                      <Label htmlFor="budget-cap" className="mb-1 block text-sm text-muted-foreground">
+                        Tope mensual (USD)
+                      </Label>
+                      <Input
+                        id="budget-cap"
+                        value={budgetInput}
+                        onChange={(e) => setBudgetInput(e.target.value)}
+                        disabled={sinLimite || budgetBusy}
+                        placeholder="Ej.: 100"
+                        inputMode="decimal"
+                        className="h-9 w-28"
+                      />
+                    </div>
+                    <Button size="sm" onClick={saveBudget} disabled={budgetBusy}>
+                      {budgetBusy ? "Guardando…" : "Guardar"}
+                    </Button>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={sinLimite}
+                      onChange={(e) => setSinLimite(e.target.checked)}
+                      disabled={budgetBusy}
+                      className="h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
+                    />
+                    Sin límite
+                  </label>
+                </div>
+                {budgetMsg ? (
+                  <p
+                    role={budgetMsg === "Tope guardado." || budgetMsg === "Sin tope de gasto este mes." ? "status" : "alert"}
+                    className={`mt-3 text-sm ${
+                      budgetMsg === "Tope guardado." || budgetMsg === "Sin tope de gasto este mes."
+                        ? "text-muted-foreground"
+                        : "text-warning"
+                    }`}
+                  >
+                    {budgetMsg}
+                  </p>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
+      </section>
+
+      {/* ── Conexiones ────────────────────────────────────────────── */}
+      <section id="conexiones" className="mt-12 scroll-mt-6">
+        <SectionTitle
+          icon={Settings2}
+          title="Conexiones"
+          hint="Lo que Mia puede usar para ayudarte. Todo se activa solo si tú lo decides."
+        />
+        <div className="space-y-4">
+          {/* Espacio de notas (Obsidian) */}
+          <ConnectorCard
+            icon={NotebookPen}
+            title="Tu espacio de notas"
+            active={Boolean(c.knowledge_base?.active)}
+            subtitle={
+              c.knowledge_base?.active
+                ? `Activo · última sincronización ${fmt(c.knowledge_base.last_sync)}`
+                : "Inactivo"
+            }
+            actions={
+              <>
+                {obsidian && !obsidian.installed ? (
+                  <Button variant="outline" size="sm" onClick={() => setInstallConfirm(true)} disabled={installBusy}>
+                    Instalar Obsidian
+                  </Button>
+                ) : null}
+                <Button size="sm" onClick={syncObsidian}>
+                  Sincronizar
+                </Button>
+              </>
+            }
+          >
+            {obsidian ? <p className="mb-3 text-sm text-muted-foreground">{obsidian.message}</p> : null}
+            {installConfirm ? (
+              <div
+                role="alertdialog"
+                aria-label="Confirmar instalación de Obsidian"
+                className="mb-3 rounded-lg border border-warning/30 bg-warning/10 p-3 animate-fade-in"
+              >
+                <p className="text-sm text-warning">
+                  Esta acción descarga e instala el programa Obsidian en este equipo. ¿Quieres continuar?
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <Button size="sm" onClick={installObsidian} disabled={installBusy}>
+                    {installBusy ? "Instalando…" : "Sí, instalar"}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setInstallConfirm(false)} disabled={installBusy}>
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            <Label htmlFor="vault-path" className="mb-1.5 block text-sm text-muted-foreground">
+              Ubicación de tu espacio de notas
+            </Label>
+            <Input
+              id="vault-path"
+              value={vaultPath}
+              onChange={(e) => setVaultPath(e.target.value)}
+              placeholder="Ej.: D:\Notas del despacho"
+            />
+          </ConnectorCard>
+
+          {/* Dictado por voz */}
+          <ConnectorCard
+            icon={Mic}
+            title="Dictado por voz"
+            active={Boolean(speech?.listo)}
+            subtitle={
+              speech?.listo
+                ? "Instalado · dicta con el micrófono desde el chat de tus asuntos"
+                : speech?.estado === "descargando"
+                  ? "Instalando…"
+                  : "Inactivo"
+            }
+            actions={
+              speech && !speech.listo && speech.estado !== "descargando" ? (
+                <Button variant="outline" size="sm" onClick={() => setSpeechConfirm(true)} disabled={speechBusy}>
+                  Instalar dictado por voz
+                </Button>
+              ) : null
+            }
+          >
+            {speech ? <p className="mb-3 text-sm text-muted-foreground">{speech.mensaje}</p> : null}
+            {speech?.estado === "descargando" && speech.progreso ? (
+              <div className="mb-3">
+                <div
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={speech.progreso.porcentaje ?? undefined}
+                  aria-label="Avance de la descarga del dictado por voz"
+                  className="h-2 w-full overflow-hidden rounded-full bg-muted"
+                >
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${speech.progreso.porcentaje ?? 5}%` }}
+                  />
+                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {speech.progreso.total_mb
+                    ? `${speech.progreso.descargado_mb} de ${speech.progreso.total_mb} MB`
+                    : `${speech.progreso.descargado_mb} MB descargados`}
+                </p>
+              </div>
+            ) : null}
+            {speechConfirm ? (
+              <div
+                role="alertdialog"
+                aria-label="Confirmar instalación del dictado por voz"
+                className="mb-3 rounded-lg border border-warning/30 bg-warning/10 p-3 animate-fade-in"
+              >
+                <p className="text-sm text-warning">
+                  Esta acción descarga el componente de dictado por voz (~700 MB) en el servidor de Mia.
+                  Puede tardar varios minutos. Tu voz nunca saldrá del servidor del despacho. ¿Quieres continuar?
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <Button size="sm" onClick={installSpeech} disabled={speechBusy}>
+                    {speechBusy ? "Iniciando…" : "Sí, instalar"}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setSpeechConfirm(false)} disabled={speechBusy}>
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {speechMsg ? <p className="text-sm text-warning">{speechMsg}</p> : null}
+          </ConnectorCard>
+
+          {/* Calendario y correo */}
+          <ConnectorCard icon={Mail} title="Calendario y correo" subtitle="Microsoft 365 o Google Workspace">
+            <p className="mb-3 text-sm text-muted-foreground">
+              Conecta tu cuenta para que Mia avise de eventos y correos urgentes.
+            </p>
+            <MailboxSectionLoader />
+          </ConnectorCard>
+
+          {/* Motor de IA */}
+          <ConnectorCard icon={Settings2} title="Motor de IA" subtitle="Con qué trabaja Mia. Puedes cambiarlo cuando quieras.">
+            <select
+              value={policy?.politica || ""}
+              onChange={(e) => changePolicy(e.target.value)}
+              aria-label="Motor de IA"
+              className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {(policy?.opciones || []).map((o) => (
+                <option key={o.id} value={o.id}>{o.nombre}</option>
+              ))}
+            </select>
+            {policyMsg ? <p className="mt-2 text-sm text-muted-foreground">{policyMsg}</p> : null}
+          </ConnectorCard>
+
+          {/* Memoria ampliada (avanzado) — plegada: casi nadie la necesita el día 1. */}
+          <details className="group rounded-xl border border-border bg-card shadow-sm">
+            <summary className="flex cursor-pointer items-center gap-3 px-5 py-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <Layers className="h-4 w-4" />
+              </span>
+              <span className="flex-1">
+                Memoria ampliada
+                <span className="ml-2 text-xs font-normal text-muted-foreground">(opcional, avanzado)</span>
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {c.external_store?.active ? `Activa · ${c.external_store.vectors_count || 0} documentos` : "Inactiva"}
+              </span>
+            </summary>
+            <div className="border-t border-border px-5 py-4">
+              <p className="mb-3 text-sm text-muted-foreground">
+                Un almacén adicional para despachos con miles de documentos. Si no sabes qué es, no lo necesitas.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                <Input
+                  type="password"
+                  autoComplete="off"
+                  value={pineconeKey}
+                  onChange={(e) => setPineconeKey(e.target.value)}
+                  placeholder="Clave de acceso"
+                  aria-label="Clave de acceso"
+                />
+                <Input
+                  value={pineconeIndex}
+                  onChange={(e) => setPineconeIndex(e.target.value)}
+                  placeholder="Nombre del índice"
+                  aria-label="Nombre del índice"
+                />
+                <Button onClick={connectPinecone}>Conectar</Button>
+              </div>
+            </div>
+          </details>
+
+          {status ? <p role="status" className="text-sm text-muted-foreground animate-fade-in">{status}</p> : null}
+        </div>
+      </section>
+
+      {/* ── Carpetas de trabajo ───────────────────────────────────── */}
+      <section id="carpetas" className="mt-12 scroll-mt-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <SectionTitle
+            icon={FolderSearch}
+            title="Carpetas de trabajo"
+            hint="Mia solo lee las carpetas que tú registres aquí. Nunca revisa nada fuera de ellas."
+            className="mb-0"
+          />
+          <Button variant="outline" size="sm" onClick={syncFoldersNow} className="shrink-0">
+            Revisar carpetas ahora
+          </Button>
+        </div>
+        {folderMsg ? <p role="status" className="mb-3 rounded-md bg-accent px-3 py-2 text-sm text-accent-foreground animate-fade-in">{folderMsg}</p> : null}
+
+        {folders === null ? (
+          <p className="text-sm text-muted-foreground">No se pudieron cargar tus carpetas. Recarga la página.</p>
+        ) : (
+          <div className="space-y-5">
+            {folders.detected.length > 0 ? (
+              <div>
+                <h3 className="mb-2 text-sm font-medium text-muted-foreground">Detectadas en este equipo</h3>
+                <ul className="space-y-2">
+                  {folders.detected.map((d) => (
+                    <li key={d.path} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">{d.label}</div>
+                        <div className="truncate text-sm text-muted-foreground" title={d.path}>{d.path}</div>
+                      </div>
+                      {d.registered ? (
+                        <Badge variant="success" className="shrink-0 bg-success/15 text-success">Registrada</Badge>
+                      ) : (
+                        <Button size="sm" onClick={() => addFolder(d.path, d.label)} disabled={folderBusy} className="shrink-0">
+                          Registrar
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-muted-foreground">Registradas</h3>
+              {folders.sources.filter((f) => f.enabled).length === 0 ? (
+                <EmptyHint icon={FolderSearch}>Aún no has registrado ninguna carpeta.</EmptyHint>
+              ) : (
+                <ul className="space-y-2">
+                  {folders.sources.filter((f) => f.enabled).map((f) => (
+                    <li key={f.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">{f.label}</div>
+                        <div className="truncate text-sm text-muted-foreground" title={f.path}>{f.path}</div>
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => removeFolder(f.id, f.label)} className="shrink-0">
+                        Quitar
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (folderPath.trim()) addFolder(folderPath.trim(), folderLabel.trim() || undefined);
+              }}
+              className="rounded-xl border border-dashed border-border bg-card/50 p-4"
+            >
+              <h3 className="mb-3 text-sm font-medium text-muted-foreground">Registrar otra carpeta</h3>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                <Input
+                  value={folderPath}
+                  onChange={(e) => setFolderPath(e.target.value)}
+                  aria-label="Ubicación de la carpeta"
+                  placeholder="Ej.: D:\Guías del despacho"
+                />
+                <Input
+                  value={folderLabel}
+                  onChange={(e) => setFolderLabel(e.target.value)}
+                  aria-label="Nombre para identificarla (opcional)"
+                  placeholder="Nombre (opcional)"
+                  className="sm:w-44"
+                />
+                <Button type="submit" disabled={folderBusy || !folderPath.trim()}>
+                  Registrar
+                </Button>
+              </div>
+            </form>
+          </div>
+        )}
+      </section>
+
+      {/* ── Automatizaciones ──────────────────────────────────────── */}
+      <section id="automatizaciones" className="mt-12 scroll-mt-6">
+        <SectionTitle icon={Repeat} title="Automatizaciones" />
+        <AutomationsSection />
+      </section>
+
+      {/* ── Sistema (lo que Mia hace sola, en segundo plano) ──────── */}
+      <section className="mt-12 scroll-mt-6">
+        <SectionTitle
+          icon={HeartPulse}
+          title="La salud de Mia"
+          hint="Cómo va el conocimiento que Mia construye de tu despacho y sus procesos de fondo."
+        />
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard icon={HeartPulse} label="Aprobación semanal" value={Math.round((brain.weekly_approval_rate || 0) * 100)} suffix="%" delay={0} />
+          <StatCard icon={BookOpen} label="Conceptos" value={brain.concepts_count} delay={1} />
+          <StatCard icon={Lightbulb} label="Habilidades activas" value={brain.skills_active} delay={2} />
+          <StatCard icon={FileText} label="Habilidades archivadas" value={brain.skills_archived} delay={3} />
+        </div>
+        <p className="mt-3 text-sm text-muted-foreground">Próxima consolidación: {fmt(brain.next_consolidation)}</p>
+
+        {(s.scheduler_jobs || []).length > 0 ? (
+          <ul className="mt-5 space-y-2">
+            {(s.scheduler_jobs || []).map((j, i) => (
+              <li key={i} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-sm">
+                <span className="flex items-center gap-2.5">
+                  <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  {j.label}
+                </span>
+                <span className="shrink-0 text-muted-foreground">Próxima actualización: {fmt(j.next_run)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </section>
     </div>
   );
 }
 
-function Stat({ label, value, suffix = "" }: { label: string; value?: number; suffix?: string }) {
+function SectionTitle({
+  icon: Icon,
+  title,
+  hint,
+  className = "mb-4",
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  hint?: string;
+  className?: string;
+}) {
   return (
-    <div className="rounded-lg border border-gray-100 p-4">
-      <div className="text-2xl font-semibold">{value ?? 0}{suffix}</div>
-      <div className="mt-1 text-sm text-gray-500">{label}</div>
+    <div className={className}>
+      <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+        <Icon className="h-4 w-4 text-primary" />
+        {title}
+      </h2>
+      {hint ? <p className="mt-1 text-sm text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  suffix = "",
+  delay = 0,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value?: number;
+  suffix?: string;
+  delay?: number;
+}) {
+  return (
+    <div
+      className="animate-slide-up rounded-xl border border-border bg-card p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+      style={{ animationDelay: `${delay * 45}ms`, animationFillMode: "backwards" }}
+    >
+      <Icon className="mb-2 h-4 w-4 text-primary" />
+      <div className="text-2xl font-semibold tracking-tight">{value ?? 0}{suffix}</div>
+      <div className="mt-0.5 text-sm text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
+function EmptyHint({
+  icon: Icon,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-4">
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
+      <p className="text-sm text-muted-foreground">{children}</p>
+    </div>
+  );
+}
+
+function ConnectorCard({
+  icon: Icon,
+  title,
+  subtitle,
+  active,
+  actions,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  subtitle?: string;
+  active?: boolean;
+  actions?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+              active ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 font-medium">
+              {title}
+              {active ? (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                  Activo
+                </span>
+              ) : null}
+            </div>
+            {subtitle ? <div className="mt-0.5 truncate text-sm text-muted-foreground">{subtitle}</div> : null}
+          </div>
+        </div>
+        {actions ? <div className="flex shrink-0 gap-2">{actions}</div> : null}
+      </div>
+      {children}
     </div>
   );
 }

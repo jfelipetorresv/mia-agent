@@ -1,41 +1,93 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import {
+  BookMarked,
+  BookOpen,
+  Building2,
+  Check,
+  FileText,
+  FolderOpen,
+  GraduationCap,
+  Lightbulb,
+  Loader2,
+  Plus,
+  Sparkles,
+  Upload,
+  X,
+} from "lucide-react";
 import { apiGet, apiSend, apiUploadMany } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type Tab = "despacho" | "wiki" | "saber" | "habilidades" | "sugerencias";
 
 export default function MemoriaPage() {
   const [tab, setTab] = useState<Tab>("despacho");
   return (
-    <div className="mx-auto max-w-3xl px-8 py-10">
-      <h1 className="mb-6 text-2xl font-semibold">Conocimiento</h1>
-      <div className="mb-6 flex flex-wrap gap-1 border-b border-gray-100">
-        <TabBtn active={tab === "despacho"} onClick={() => setTab("despacho")}>Mi despacho</TabBtn>
-        <TabBtn active={tab === "wiki"} onClick={() => setTab("wiki")}>Temas que Mia va aprendiendo</TabBtn>
-        <TabBtn active={tab === "saber"} onClick={() => setTab("saber")}>Documentos y fuentes</TabBtn>
-        <TabBtn active={tab === "habilidades"} onClick={() => setTab("habilidades")}>Lo que Mia sabe hacer</TabBtn>
-        <TabBtn active={tab === "sugerencias"} onClick={() => setTab("sugerencias")}>Mejoras que Mia propone</TabBtn>
+    <div className="mx-auto max-w-3xl px-6 py-10 md:px-8">
+      <div className="mb-8 animate-slide-up">
+        <h1 className="text-2xl font-semibold tracking-tight">Conocimiento</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Lo que Mia sabe de tu despacho y cómo lo va aprendiendo contigo. Mia propone; tú decides.
+        </p>
       </div>
-      {tab === "despacho" ? <Despacho /> : null}
-      {tab === "wiki" ? <Wiki /> : null}
-      {tab === "saber" ? <Saber /> : null}
-      {tab === "habilidades" ? <Habilidades /> : null}
-      {tab === "sugerencias" ? <Sugerencias /> : null}
-    </div>
-  );
-}
 
-function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-        active ? "border-gray-900 text-gray-900" : "border-transparent text-gray-400 hover:text-gray-600"
-      }`}
-    >
-      {children}
-    </button>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+        <TabsList className="mb-6 h-auto flex-wrap justify-start gap-1">
+          <TabsTrigger value="despacho" className="gap-1.5">
+            <Building2 className="h-4 w-4" />
+            Mi despacho
+          </TabsTrigger>
+          <TabsTrigger value="wiki" className="gap-1.5">
+            <BookOpen className="h-4 w-4" />
+            Criterios aprendidos
+          </TabsTrigger>
+          <TabsTrigger value="saber" className="gap-1.5">
+            <BookMarked className="h-4 w-4" />
+            Guías y documentos
+          </TabsTrigger>
+          <TabsTrigger value="habilidades" className="gap-1.5">
+            <Sparkles className="h-4 w-4" />
+            Lo que Mia sabe hacer
+          </TabsTrigger>
+          <TabsTrigger value="sugerencias" className="gap-1.5">
+            <Lightbulb className="h-4 w-4" />
+            Mejoras que Mia propone
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="despacho">
+          <Despacho />
+        </TabsContent>
+        <TabsContent value="wiki">
+          <Wiki />
+        </TabsContent>
+        <TabsContent value="saber">
+          <Saber />
+        </TabsContent>
+        <TabsContent value="habilidades">
+          <Habilidades />
+        </TabsContent>
+        <TabsContent value="sugerencias">
+          <Sugerencias />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
 
@@ -49,12 +101,14 @@ type Profile = {
 
 function Despacho() {
   const [p, setP] = useState<Profile>({ jurisdiction: "", practice_areas: [], voice_adjectives: [] });
+  const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     apiGet<Profile>("/api/profile")
       .then((d) => setP({ jurisdiction: "", practice_areas: [], voice_adjectives: [], ...d }))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   async function save() {
@@ -63,16 +117,35 @@ function Despacho() {
     setTimeout(() => setSaved(false), 2000);
   }
 
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-14 w-full rounded-xl" />
+        <Skeleton className="h-14 w-full rounded-xl" />
+        <Skeleton className="h-14 w-full rounded-xl" />
+        <Skeleton className="h-14 w-full rounded-xl" />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-4">
+    <div className="animate-slide-up space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Estos datos le dan contexto a Mia en cada asunto: quién eres, dónde ejerces y cómo te gusta escribir.
+      </p>
       <TextField label="Nombre del despacho" value={p.name || ""} onChange={(v) => setP({ ...p, name: v })} />
       <TextField label="Abogado responsable" value={p.lawyer_name || ""} onChange={(v) => setP({ ...p, lawyer_name: v })} />
       <TextField label="País y sistema jurídico principal" value={p.jurisdiction || ""} onChange={(v) => setP({ ...p, jurisdiction: v })} />
       <ChipsField label="Áreas de práctica" value={p.practice_areas || []} onChange={(v) => setP({ ...p, practice_areas: v })} />
       <ChipsField label="Estilo" value={p.voice_adjectives || []} onChange={(v) => setP({ ...p, voice_adjectives: v })} />
       <div className="flex items-center gap-3 pt-2">
-        <button onClick={save} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">Guardar</button>
-        {saved ? <span className="text-sm text-green-600">Guardado</span> : null}
+        <Button onClick={save}>Guardar</Button>
+        {saved ? (
+          <span className="flex items-center gap-1.5 text-sm text-success animate-fade-in">
+            <Check className="h-4 w-4" />
+            Guardado
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -82,12 +155,16 @@ type Concept = { name: string; confidence: number; case_count: number; last_upda
 
 function Wiki() {
   const [items, setItems] = useState<Concept[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Concept | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [correction, setCorrection] = useState("");
 
   useEffect(() => {
-    apiGet<Concept[]>("/api/wiki/concepts").then(setItems).catch(() => setItems([]));
+    apiGet<Concept[]>("/api/wiki/concepts")
+      .then(setItems)
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false));
   }, []);
 
   async function open(c: Concept) {
@@ -108,46 +185,105 @@ function Wiki() {
     setSelected(null);
   }
 
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-xl" />
+      </div>
+    );
+  }
+
   if (items.length === 0) {
-    return <p className="py-8 text-center text-gray-400">Mia construirá este wiki a medida que trabajen juntos.</p>;
+    return (
+      <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <BookOpen className="h-6 w-6" />
+        </div>
+        <h2 className="text-lg font-medium">Aún no hay criterios aprendidos</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+          A medida que trabajen asuntos juntos, Mia irá consolidando aquí los criterios
+          jurídicos de tu despacho: cómo analizas cada tema y qué posiciones defiendes.
+        </p>
+        <Button asChild variant="outline" className="mt-6 gap-2">
+          <Link href="/">
+            <FolderOpen className="h-4 w-4" />
+            Ir a mis asuntos
+          </Link>
+        </Button>
+      </div>
+    );
   }
 
   return (
     <div>
-      <ul className="space-y-2">
-        {items.map((c) => (
-          <li key={c.name}>
-            <button onClick={() => open(c)} className="w-full rounded-lg border border-gray-100 px-4 py-3 text-left hover:bg-gray-50">
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="truncate font-medium">{c.name}</div>
-                  <div className="text-sm text-gray-500">{c.case_count} casos · {c.last_updated || "sin fecha"}</div>
+      <ul className="space-y-3">
+        {items.map((c, i) => (
+          <li key={c.name} className="animate-slide-up" style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}>
+            <button
+              onClick={() => open(c)}
+              className="group flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-card px-5 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md"
+            >
+              <div className="min-w-0">
+                <div className="truncate font-medium">{c.name}</div>
+                <div className="mt-0.5 text-sm text-muted-foreground">
+                  {c.case_count} {c.case_count === 1 ? "caso" : "casos"} · {c.last_updated || "sin fecha"}
                 </div>
-                <div className="w-28">
-                  <div className="h-1.5 rounded-full bg-gray-100">
-                    <div className="h-1.5 rounded-full bg-gray-900" style={{ width: `${Math.round((c.confidence || 0) * 100)}%` }} />
-                  </div>
-                  <div className="mt-1 text-right text-xs text-gray-400">{Math.round((c.confidence || 0) * 100)}%</div>
+              </div>
+              <div className="w-28 shrink-0">
+                <div className="h-1.5 rounded-full bg-muted">
+                  <div
+                    className="h-1.5 rounded-full bg-primary transition-all duration-200"
+                    style={{ width: `${Math.round((c.confidence || 0) * 100)}%` }}
+                  />
+                </div>
+                <div className="mt-1 text-right text-xs text-muted-foreground">
+                  {Math.round((c.confidence || 0) * 100)}% consolidado
                 </div>
               </div>
             </button>
           </li>
         ))}
       </ul>
-      {selected ? (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4" onClick={() => setSelected(null)}>
-          <div className="max-h-[85vh] w-full max-w-2xl overflow-auto rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h2 className="mb-4 text-lg font-semibold">{selected.name}</h2>
-            <pre className="whitespace-pre-wrap rounded-lg bg-gray-50 p-4 text-sm text-gray-700">{markdown}</pre>
-            <label className="mb-1 mt-4 block text-sm font-medium text-gray-700">Sugerir corrección</label>
-            <textarea value={correction} onChange={(e) => setCorrection(e.target.value)} className="h-24 w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
-            <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setSelected(null)} className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">Cerrar</button>
-              <button onClick={sendCorrection} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">Enviar</button>
+
+      <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+        <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{selected?.name}</DialogTitle>
+            <DialogDescription>
+              Así entiende Mia este tema hoy. Si algo no refleja el criterio del despacho, corrígelo abajo.
+            </DialogDescription>
+          </DialogHeader>
+          {markdown ? (
+            <div className="whitespace-pre-wrap rounded-lg bg-muted/50 p-4 font-serif text-sm leading-relaxed text-foreground">
+              {markdown}
             </div>
+          ) : (
+            <div className="space-y-2 rounded-lg bg-muted/50 p-4">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="wiki-correction">Sugerir corrección</Label>
+            <Textarea
+              id="wiki-correction"
+              value={correction}
+              onChange={(e) => setCorrection(e.target.value)}
+              className="h-24 resize-none"
+              placeholder="Explícale a Mia qué debe ajustar de este criterio"
+            />
           </div>
-        </div>
-      ) : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSelected(null)}>
+              Cerrar
+            </Button>
+            <Button onClick={sendCorrection}>Enviar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -156,6 +292,7 @@ type Playbook = { id: string; title: string; summary: string; applies_when?: str
 
 function Saber() {
   const [items, setItems] = useState<Playbook[]>([]);
+  const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({ title: "", applies_when: "", content: "", summary: "" });
 
@@ -163,7 +300,7 @@ function Saber() {
     setItems(await apiGet<Playbook[]>("/api/playbooks").catch(() => []));
   }
   useEffect(() => {
-    load();
+    load().finally(() => setLoading(false));
   }, []);
 
   async function create() {
@@ -181,6 +318,7 @@ function Saber() {
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [importError, setImportError] = useState(false);
   const [importDetail, setImportDetail] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
 
@@ -188,6 +326,7 @@ function Saber() {
     if (!files || files.length === 0) return;
     setImporting(true);
     setImportMsg(null);
+    setImportError(false);
     setImportDetail([]);
     try {
       const res = await apiUploadMany<{ importados: string[]; omitidos: string[]; errores: string[] }>(
@@ -205,6 +344,7 @@ function Saber() {
       setImportDetail([...(res.errores || []), ...(res.omitidos || []).map((t) => `${t}: ya existía; se conservó la versión guardada.`)]);
       await load();
     } catch {
+      setImportError(true);
       setImportMsg("No se pudieron importar las guías. Intenta de nuevo.");
     } finally {
       setImporting(false);
@@ -214,48 +354,117 @@ function Saber() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-end gap-2">
-        <input ref={fileInput} type="file" multiple accept=".md,.txt,.docx" className="hidden"
-               onChange={(e) => importFiles(e.target.files)} />
-        <button onClick={() => fileInput.current?.click()} disabled={importing}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          accept=".md,.txt,.docx"
+          className="hidden"
+          onChange={(e) => importFiles(e.target.files)}
+        />
+        <Button variant="outline" onClick={() => fileInput.current?.click()} disabled={importing} className="gap-2">
+          {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
           {importing ? "Importando…" : "Importar guías"}
-        </button>
-        <button onClick={() => setModal(true)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50">Agregar conocimiento</button>
+        </Button>
+        <Button variant="outline" onClick={() => setModal(true)} className="gap-2">
+          <GraduationCap className="h-4 w-4" />
+          Enseñarle algo a Mia
+        </Button>
       </div>
-      {importMsg ? <p className="mb-1 text-sm text-gray-600">{importMsg}</p> : null}
+
+      {importMsg ? (
+        <p
+          className={`mb-2 rounded-md px-3 py-2 text-sm ${
+            importError ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success"
+          }`}
+        >
+          {importMsg}
+        </p>
+      ) : null}
       {importDetail.length > 0 ? (
-        <ul className="mb-3 space-y-0.5 text-sm text-gray-500">
+        <ul className="mb-3 space-y-0.5 text-sm text-muted-foreground">
           {importDetail.map((d, i) => <li key={i}>· {d}</li>)}
         </ul>
       ) : null}
-      {items.length === 0 ? (
-        <p className="py-8 text-center text-gray-400">Mia todavía no tiene conocimiento guardado. Puedes importar las guías de trabajo del despacho (.md, .txt o Word).</p>
+
+      {loading ? (
+        <div className="space-y-3">
+          <Skeleton className="h-16 w-full rounded-xl" />
+          <Skeleton className="h-16 w-full rounded-xl" />
+          <Skeleton className="h-16 w-full rounded-xl" />
+        </div>
+      ) : items.length === 0 ? (
+        <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <BookMarked className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-medium">Mia aún no tiene guías del despacho</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            Aquí viven las guías de trabajo de tu despacho: cómo contestar una demanda,
+            cómo estructurar un recurso. Impórtalas (.md, .txt o Word) o escríbelas tú mismo.
+          </p>
+          <div className="mt-6 flex flex-wrap justify-center gap-2">
+            <Button onClick={() => fileInput.current?.click()} disabled={importing} className="gap-2">
+              <Upload className="h-4 w-4" />
+              Importar guías
+            </Button>
+            <Button variant="outline" onClick={() => setModal(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Escribir una guía
+            </Button>
+          </div>
+        </div>
       ) : (
-        <ul className="space-y-2">
-          {items.map((p) => (
-            <li key={p.id} className="rounded-xl border border-gray-100 px-4 py-3">
-              <div className="font-medium">{p.title}</div>
-              <div className="text-sm text-gray-500">{p.summary}</div>
+        <ul className="space-y-3">
+          {items.map((p, i) => (
+            <li
+              key={p.id}
+              className="flex animate-slide-up items-start gap-4 rounded-xl border border-border bg-card px-5 py-4 shadow-sm"
+              style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="truncate font-medium">{p.title}</div>
+                <div className="mt-0.5 text-sm text-muted-foreground">{p.summary}</div>
+              </div>
             </li>
           ))}
         </ul>
       )}
-      {modal ? (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/30 p-4" onClick={() => setModal(false)}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h2 className="mb-4 text-lg font-semibold">Enseñarle algo a Mia</h2>
+
+      <Dialog open={modal} onOpenChange={setModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enseñarle algo a Mia</DialogTitle>
+            <DialogDescription>
+              Escribe una guía de trabajo del despacho para que Mia la aplique en sus borradores.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
             <TextField label="Título" value={form.title} onChange={(v) => setForm({ ...form, title: v })} />
             <TextField label="Cuándo aplica" value={form.applies_when} onChange={(v) => setForm({ ...form, applies_when: v })} />
-            <div className="mb-1 mt-3 block text-sm font-medium text-gray-700">Contenido</div>
-            <textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} className="h-28 w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
-            <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setModal(false)} className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">Cancelar</button>
-              <button onClick={create} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700">Guardar</button>
+            <div className="space-y-1.5">
+              <Label htmlFor="playbook-content">Contenido</Label>
+              <Textarea
+                id="playbook-content"
+                value={form.content}
+                onChange={(e) => setForm({ ...form, content: e.target.value })}
+                className="h-28 resize-none"
+                placeholder="Explica el paso a paso como se lo explicarías a un abogado junior"
+              />
             </div>
           </div>
-        </div>
-      ) : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setModal(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={create}>Guardar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -274,31 +483,66 @@ function Habilidades() {
   }, []);
 
   if (!loaded) {
-    return <p className="py-8 text-center text-gray-400">Cargando…</p>;
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-xl" />
+      </div>
+    );
   }
+
   if (items.length === 0) {
-    return <p className="py-8 text-center text-gray-400">Mia todavía no tiene habilidades medidas. Se construyen a medida que apruebas o corriges su trabajo.</p>;
+    return (
+      <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <Sparkles className="h-6 w-6" />
+        </div>
+        <h2 className="text-lg font-medium">Mia todavía no tiene habilidades medidas</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+          Cada vez que apruebas o corriges el trabajo de Mia, aquí verás qué tan bien le va
+          con cada procedimiento del despacho. Empieza aprobando su primer borrador.
+        </p>
+        <Button asChild variant="outline" className="mt-6 gap-2">
+          <Link href="/">
+            <FolderOpen className="h-4 w-4" />
+            Ir a mis asuntos
+          </Link>
+        </Button>
+      </div>
+    );
   }
 
   return (
     <div>
-      <p className="mb-4 text-sm text-gray-500">Qué tan bien le va a Mia con cada procedimiento del despacho, según tus aprobaciones y correcciones.</p>
-      <ul className="space-y-2">
-        {items.map((s) => (
-          <li key={s.skill_id} className="rounded-xl border border-gray-100 px-4 py-3">
+      <p className="mb-4 text-sm text-muted-foreground">
+        Qué tan bien le va a Mia con cada procedimiento del despacho, según tus aprobaciones y correcciones.
+      </p>
+      <ul className="space-y-3">
+        {items.map((s, i) => (
+          <li
+            key={s.skill_id}
+            className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm"
+            style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+          >
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="truncate font-medium">{s.title}</div>
-                <div className="text-sm text-gray-500">
+                <div className="mt-0.5 text-sm text-muted-foreground">
                   Usada {s.activations} {s.activations === 1 ? "vez" : "veces"}
                   {s.activations > 0 ? ` · corregida el ${Math.round((s.edit_rate || 0) * 100)}%` : ""}
                 </div>
               </div>
               <div className="w-28 shrink-0">
-                <div className="h-1.5 rounded-full bg-gray-100">
-                  <div className="h-1.5 rounded-full bg-gray-900" style={{ width: `${Math.round((s.approval_rate || 0) * 100)}%` }} />
+                <div className="h-1.5 rounded-full bg-muted">
+                  <div
+                    className="h-1.5 rounded-full bg-primary transition-all duration-200"
+                    style={{ width: `${Math.round((s.approval_rate || 0) * 100)}%` }}
+                  />
                 </div>
-                <div className="mt-1 text-right text-xs text-gray-400">{Math.round((s.approval_rate || 0) * 100)}% aprobado</div>
+                <div className="mt-1 text-right text-xs text-muted-foreground">
+                  {Math.round((s.approval_rate || 0) * 100)}% aprobado
+                </div>
               </div>
             </div>
           </li>
@@ -324,6 +568,7 @@ function Sugerencias() {
   const [curator, setCurator] = useState<CuratorProposal[]>([]);
   const [report, setReport] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   async function load() {
     setItems(await apiGet<Proposal[]>("/api/proposals").catch(() => []));
@@ -332,7 +577,7 @@ function Sugerencias() {
     setReport(weekly.report);
   }
   useEffect(() => {
-    load();
+    load().finally(() => setLoading(false));
   }, []);
 
   async function act(id: string, action: "apply" | "ignore") {
@@ -354,57 +599,102 @@ function Sugerencias() {
     await load();
   }
 
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-24 w-full rounded-xl" />
+        <Skeleton className="h-24 w-full rounded-xl" />
+      </div>
+    );
+  }
+
   if (items.length === 0 && curator.length === 0 && !report) {
-    return <p className="py-8 text-center text-gray-400">Mia aún no tiene sugerencias. Aparecerán con el uso.</p>;
+    return (
+      <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <Lightbulb className="h-6 w-6" />
+        </div>
+        <h2 className="text-lg font-medium">Mia aún no propone mejoras</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+          Cuando Mia detecte formas de mejorar sus guías o de ordenar el conocimiento del
+          despacho, te las propondrá aquí. Nada cambia sin tu aprobación.
+        </p>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-3">
       {report ? (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <div className="mb-2 text-sm font-semibold">Resumen semanal</div>
-          <p className="whitespace-pre-wrap text-sm text-gray-700">{report}</p>
+        <div className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+            <Lightbulb className="h-4 w-4 text-primary" />
+            Resumen semanal
+          </div>
+          <p className="whitespace-pre-wrap font-serif text-sm leading-relaxed text-foreground">{report}</p>
         </div>
       ) : null}
       <ul className="space-y-3">
-        {items.map((p) => (
-          <li key={p.id} className="rounded-xl border border-gray-100 px-4 py-3">
-            <div className="mb-1 inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">{p.type}</div>
+        {items.map((p, i) => (
+          <li
+            key={p.id}
+            className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm"
+            style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+          >
+            <Badge variant="secondary" className="mb-2">{p.type}</Badge>
             {p.target ? (
-              <div className="mb-1 text-sm font-medium text-gray-800">Procedimiento que se modificaría: {p.target}</div>
+              <div className="mb-1 text-sm font-medium">Procedimiento que se modificaría: {p.target}</div>
             ) : null}
-            <div className="mb-2 whitespace-pre-wrap text-sm text-gray-700">{p.suggestion}</div>
-            <div className="text-sm text-gray-500">{p.reason}</div>
+            <div className="mb-2 whitespace-pre-wrap text-sm">{p.suggestion}</div>
+            <div className="text-sm text-muted-foreground">{p.reason}</div>
             <div className="mt-3 flex gap-2">
-              <button onClick={() => act(p.id, "apply")} className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700">Aplicar</button>
-              <button onClick={() => act(p.id, "ignore")} className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Ignorar</button>
+              <Button size="sm" onClick={() => act(p.id, "apply")} className="gap-1.5">
+                <Check className="h-3.5 w-3.5" />
+                Aplicar
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => act(p.id, "ignore")}>
+                Ignorar
+              </Button>
             </div>
           </li>
         ))}
       </ul>
       {curator.length > 0 ? (
         <div>
-          <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-gray-400">Orden del conocimiento</h3>
-          {msg ? <p className="mb-2 text-sm text-amber-700">{msg}</p> : null}
+          <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Orden del conocimiento
+          </h3>
+          {msg ? (
+            <p className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{msg}</p>
+          ) : null}
           <ul className="space-y-3">
-            {curator.map((c) => {
+            {curator.map((c, i) => {
               const merges = c.merges || c.proposed_merges || [];
               const deletions = c.deletions || c.proposed_deletions || [];
               return (
-                <li key={c.id} className="rounded-xl border border-gray-100 px-4 py-3">
-                  <div className="mb-2 text-sm text-gray-700">
+                <li
+                  key={c.id}
+                  className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm"
+                  style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+                >
+                  <div className="mb-2 text-sm">
                     Mia propone ordenar el conocimiento del despacho:
                     {merges.length > 0 ? ` unir ${merges.length} pareja${merges.length === 1 ? "" : "s"} de guías muy parecidas` : ""}
                     {merges.length > 0 && deletions.length > 0 ? " y" : ""}
                     {deletions.length > 0 ? ` archivar ${deletions.length} guía${deletions.length === 1 ? "" : "s"} sin uso` : ""}.
                   </div>
-                  <ul className="mb-2 space-y-1 text-sm text-gray-500">
-                    {merges.map((m, i) => <li key={`m${i}`}>· {m.target_title || m.reason}</li>)}
-                    {deletions.map((d, i) => <li key={`d${i}`}>· Archivar: {d.title}</li>)}
+                  <ul className="mb-3 space-y-1 text-sm text-muted-foreground">
+                    {merges.map((m, j) => <li key={`m${j}`}>· {m.target_title || m.reason}</li>)}
+                    {deletions.map((d, j) => <li key={`d${j}`}>· Archivar: {d.title}</li>)}
                   </ul>
                   <div className="flex gap-2">
-                    <button onClick={() => curatorAct(c.id, "approve")} className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700">Aprobar</button>
-                    <button onClick={() => curatorAct(c.id, "reject")} className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Rechazar</button>
+                    <Button size="sm" onClick={() => curatorAct(c.id, "approve")} className="gap-1.5">
+                      <Check className="h-3.5 w-3.5" />
+                      Aprobar
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => curatorAct(c.id, "reject")}>
+                      Rechazar
+                    </Button>
                   </div>
                 </li>
               );
@@ -417,10 +707,11 @@ function Sugerencias() {
 }
 
 function TextField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const id = `field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">{label}</label>
-      <input value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400" />
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
@@ -433,14 +724,21 @@ function ChipsField({ label, value, onChange }: { label: string; value: string[]
     setDraft("");
   }
   return (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">{label}</label>
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 px-2 py-2">
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-input bg-card px-2 py-2 transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
         {value.map((chip) => (
-          <span key={chip} className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-sm">
+          <Badge key={chip} variant="secondary" className="gap-1 pr-1">
             {chip}
-            <button onClick={() => onChange(value.filter((c) => c !== chip))} className="text-gray-400 hover:text-gray-700">x</button>
-          </span>
+            <button
+              type="button"
+              onClick={() => onChange(value.filter((c) => c !== chip))}
+              aria-label={`Quitar ${chip}`}
+              className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
         ))}
         <input
           value={draft}
@@ -451,8 +749,8 @@ function ChipsField({ label, value, onChange }: { label: string; value: string[]
               add();
             }
           }}
-          placeholder="Escribe y Enter..."
-          className="min-w-[120px] flex-1 text-sm outline-none"
+          placeholder="Escribe y presiona Enter"
+          className="min-w-[120px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
         />
       </div>
     </div>

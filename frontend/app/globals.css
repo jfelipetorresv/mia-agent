@@ -2,12 +2,130 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body {
-  height: 100%;
+@layer base {
+  :root {
+    /* MIA · tema claro — off-white cálido + índigo profundo + terracota */
+    --background: 40 33% 97%;
+    --foreground: 30 10% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 30 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 30 10% 10%;
+
+    --primary: 241 37% 48%; /* índigo #4F4DA8 — confianza + foco */
+    --primary-foreground: 40 33% 98%;
+
+    --secondary: 43 22% 93%;
+    --secondary-foreground: 30 10% 22%;
+
+    --muted: 43 22% 93%;
+    --muted-foreground: 37 9% 42%;
+
+    --accent: 43 25% 91%; /* superficie sutil de hover */
+    --accent-foreground: 30 10% 18%;
+
+    --cta: 27 51% 47%; /* terracota #B4703A — CTA cálido, con moderación */
+    --cta-foreground: 40 33% 98%;
+
+    --destructive: 4 55% 47%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 149 33% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 60% 45%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 43 20% 89%;
+    --input: 43 20% 89%;
+    --ring: 241 37% 48%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    /* MIA · tema oscuro — carbón cálido con tinte índigo (de primera clase) */
+    --background: 250 12% 10%;
+    --foreground: 43 26% 91%;
+
+    --card: 253 13% 14%;
+    --card-foreground: 43 26% 91%;
+
+    --popover: 253 13% 14%;
+    --popover-foreground: 43 26% 91%;
+
+    --primary: 241 61% 71%; /* índigo aclarado #8C8AE0 */
+    --primary-foreground: 250 12% 10%;
+
+    --secondary: 253 10% 20%;
+    --secondary-foreground: 43 26% 91%;
+
+    --muted: 253 10% 20%;
+    --muted-foreground: 43 12% 66%;
+
+    --accent: 253 12% 22%;
+    --accent-foreground: 43 26% 91%;
+
+    --cta: 27 55% 58%;
+    --cta-foreground: 250 12% 10%;
+
+    --destructive: 4 60% 56%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 149 40% 55%;
+    --success-foreground: 250 12% 10%;
+
+    --warning: 38 70% 60%;
+    --warning-foreground: 250 12% 10%;
+
+    --border: 253 10% 22%;
+    --input: 253 10% 24%;
+    --ring: 241 61% 71%;
+  }
 }
 
-body {
-  background: #ffffff;
-  color: #0f172a;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  /* Foco visible consistente en todo el producto (accesibilidad) */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+  /* Barra de desplazamiento sutil y acorde al tema */
+  * {
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+}
+
+@layer utilities {
+  /* Aurora: lavado radial índigo muy sutil para pantallas hero (chat, login).
+     Da profundidad sin ruido; se intensifica apenas en dark. */
+  .bg-aurora {
+    background-image:
+      radial-gradient(1100px 520px at 50% -12%, hsl(var(--primary) / 0.07), transparent 60%),
+      radial-gradient(700px 380px at 85% 8%, hsl(var(--cta) / 0.05), transparent 55%);
+  }
+  .dark .bg-aurora {
+    background-image:
+      radial-gradient(1100px 520px at 50% -12%, hsl(var(--primary) / 0.14), transparent 60%),
+      radial-gradient(700px 380px at 85% 8%, hsl(var(--cta) / 0.08), transparent 55%);
+  }
+  /* Titular con degradado de marca (usar solo en saludos/hero). */
+  .text-gradient-brand {
+    background-image: linear-gradient(115deg, hsl(var(--foreground)) 30%, hsl(var(--primary)) 85%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
 }

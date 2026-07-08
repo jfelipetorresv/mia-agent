@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Scale } from "lucide-react";
 import { ApiError, apiSend, setToken } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 type AuthResponse = { token: string; tenant_id: string };
 
@@ -19,10 +23,7 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await apiSend<AuthResponse>("POST", "/api/auth/login", {
-        email,
-        password,
-      });
+      const res = await apiSend<AuthResponse>("POST", "/api/auth/login", { email, password });
       setToken(res.token);
       router.replace("/");
     } catch (err: any) {
@@ -37,47 +38,61 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-white px-6">
-      <form onSubmit={submit} className="w-full max-w-sm">
-        <h1 className="text-2xl font-semibold text-gray-900">Ingresar</h1>
-        <p className="mt-2 text-sm text-gray-500">Accede al espacio de tu despacho.</p>
+    <div className="flex min-h-screen w-full items-center justify-center bg-background px-6">
+      <div className="w-full max-w-sm animate-slide-up">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+            <Scale className="h-6 w-6" />
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight">Bienvenido a Mia</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Tu asistente jurídica. Accede al espacio de tu despacho.</p>
+        </div>
 
-        <label className="mt-8 block text-sm font-medium text-gray-700">Email</label>
-        <input
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          type="email"
-          autoComplete="email"
-          className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
-          required
-        />
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              autoComplete="email"
+              placeholder="tu@despacho.com"
+              required
+            />
+          </div>
 
-        <label className="mt-4 block text-sm font-medium text-gray-700">Contraseña</label>
-        <input
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          type="password"
-          autoComplete="current-password"
-          className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
-          required
-        />
+          <div className="space-y-1.5">
+            <Label htmlFor="password">Contraseña</Label>
+            <Input
+              id="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              autoComplete="current-password"
+              placeholder="••••••••"
+              required
+            />
+          </div>
 
-        {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
+          {error ? (
+            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+              {error}
+            </p>
+          ) : null}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="mt-6 w-full rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-60"
-        >
-          {loading ? "Ingresando..." : "Ingresar"}
-        </button>
+          <Button type="submit" disabled={loading} className="w-full" size="lg">
+            {loading ? "Ingresando…" : "Ingresar"}
+          </Button>
+        </form>
 
-        <p className="mt-5 text-center text-sm text-gray-500">
-          <Link href="/register" className="font-medium text-gray-900 hover:underline">
+        <p className="mt-6 text-center text-sm text-muted-foreground">
+          ¿Aún no tienes cuenta?{" "}
+          <Link href="/register" className="font-medium text-primary hover:underline">
             Crear cuenta
           </Link>
         </p>
-      </form>
+      </div>
     </div>
   );
 }

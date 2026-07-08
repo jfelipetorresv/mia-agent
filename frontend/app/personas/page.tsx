@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Drama, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type Persona = {
   id: string;
@@ -152,32 +159,37 @@ export default function PersonasPage() {
   }
 
   if (!loaded) {
-    return <div className="p-10 text-gray-400">Cargando...</div>;
+    return (
+      <div className="mx-auto max-w-3xl space-y-4 px-6 py-10 md:px-8">
+        <Skeleton className="h-9 w-64" />
+        <Skeleton className="h-28 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-xl" />
+      </div>
+    );
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 px-8 py-10">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="mx-auto max-w-3xl space-y-8 px-6 py-10 md:px-8">
+      <div className="flex flex-wrap items-start justify-between gap-4 animate-slide-up">
         <div>
-          <h1 className="text-2xl font-semibold">Personas jurídicas</h1>
-          <p className="mt-2 text-sm text-gray-500">
+          <h1 className="text-2xl font-semibold tracking-tight">Personas jurídicas</h1>
+          <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             Roles especializados que invocas en el chat — por ejemplo «actúa como litigante» o «revisa las citas».
             Cada persona colorea el tono de Mia en ese turno; nada se activa solo.
           </p>
         </div>
         {!creating && !editing ? (
-          <button
-            onClick={openCreate}
-            className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
-          >
+          <Button onClick={openCreate} className="shrink-0 gap-2">
+            <Plus className="h-4 w-4" />
             Crear persona
-          </button>
+          </Button>
         ) : null}
       </div>
 
-      {loadErr ? <p role="alert" className="text-sm text-amber-700">{loadErr}</p> : null}
+      {loadErr ? <p role="alert" className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{loadErr}</p> : null}
       {formMsg && !creating && !editing ? (
-        <p role="alert" className="text-sm text-amber-700">{formMsg}</p>
+        <p role="alert" className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{formMsg}</p>
       ) : null}
 
       {creating || editing ? (
@@ -193,45 +205,82 @@ export default function PersonasPage() {
       ) : null}
 
       {personas.length === 0 && !loadErr ? (
-        <p className="py-8 text-center text-gray-400">
-          Aún no hay personas configuradas. Crea la primera o recarga para ver las de fábrica.
-        </p>
+        <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <Drama className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-medium">Aún no hay personas configuradas</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            Una persona es un rol que Mia adopta cuando se lo pides en el chat:
+            un litigante agresivo, un revisor de citas escéptico, un conciliador.
+            Crea la primera o recarga para ver las de fábrica.
+          </p>
+          <Button onClick={openCreate} className="mt-6 gap-2">
+            <Plus className="h-4 w-4" />
+            Crear persona
+          </Button>
+        </div>
       ) : (
         <ul className="space-y-3">
-          {personas.map((p) => (
-            <li key={p.id} className="rounded-xl border border-gray-100 px-4 py-4">
+          {personas.map((p, i) => (
+            <li
+              key={p.id}
+              className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm transition-all duration-200 hover:border-primary/25"
+              style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+            >
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{p.name}</span>
-                    {!p.enabled ? (
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
-                        Deshabilitada
-                      </span>
+                <div className="flex min-w-0 gap-3.5">
+                  <div
+                    className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                      p.enabled ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    <Drama className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{p.name}</span>
+                      {p.title ? <span className="text-sm text-muted-foreground">· {p.title}</span> : null}
+                      {!p.enabled ? <Badge variant="secondary">Deshabilitada</Badge> : null}
+                      {p.model_tier === "local" ? (
+                        <Badge variant="secondary" className="gap-1 bg-success/15 text-success">
+                          <Lock className="h-3 w-3" />
+                          Motor local
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <p className="mt-1.5 text-sm text-muted-foreground line-clamp-2">
+                      {p.description || p.role_prompt}
+                    </p>
+                    {p.summon_phrases?.length ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs text-muted-foreground">Invócala con:</span>
+                        {p.summon_phrases.map((f) => (
+                          <span
+                            key={f}
+                            className="rounded-full bg-accent px-2 py-0.5 text-xs text-accent-foreground"
+                          >
+                            «{f}»
+                          </span>
+                        ))}
+                      </div>
                     ) : null}
                   </div>
-                  {p.title ? <div className="text-sm text-gray-500">{p.title}</div> : null}
-                  <p className="mt-2 text-sm text-gray-600 line-clamp-2">{p.description || p.role_prompt}</p>
-                  <p className="mt-2 text-xs text-gray-400">{motorLabel(p.model_tier)}</p>
-                  {p.summon_phrases?.length ? (
-                    <p className="mt-1 text-xs text-gray-400">
-                      Frases: {p.summon_phrases.join(" · ")}
-                    </p>
-                  ) : null}
                 </div>
-                <div className="flex shrink-0 gap-2">
-                  <button
-                    onClick={() => openEdit(p)}
-                    className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
-                  >
+                <div className="flex shrink-0 gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => openEdit(p)} className="gap-1.5">
+                    <Pencil className="h-3.5 w-3.5" />
                     Editar
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     onClick={() => removePersona(p)}
-                    className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+                    className="gap-1.5 text-muted-foreground hover:text-destructive"
                   >
+                    <Trash2 className="h-3.5 w-3.5" />
                     Eliminar
-                  </button>
+                  </Button>
                 </div>
               </div>
             </li>
@@ -260,21 +309,20 @@ function PersonaFormPanel({
   msg: string;
 }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 p-5">
-      <h2 className="mb-4 text-lg font-semibold">{title}</h2>
+    <div className="animate-slide-up rounded-xl border border-primary/25 bg-card p-6 shadow-md">
+      <h2 className="mb-5 text-lg font-semibold tracking-tight">{title}</h2>
       <div className="space-y-4">
         <TextField label="Nombre" value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
         <TextField label="Título (opcional)" value={form.title} onChange={(v) => setForm({ ...form, title: v })} />
-        <div>
-          <label htmlFor="role-prompt" className="mb-1 block text-sm font-medium text-gray-700">
-            Cómo debe razonar y hablar esta persona
-          </label>
-          <textarea
+        <div className="space-y-1.5">
+          <Label htmlFor="role-prompt">Cómo debe razonar y hablar esta persona</Label>
+          <Textarea
             id="role-prompt"
             value={form.role_prompt}
             onChange={(e) => setForm({ ...form, role_prompt: e.target.value })}
             rows={5}
-            className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
+            className="resize-y"
+            placeholder="Descríbelo como le darías instrucciones a un colega: qué prioriza, cómo argumenta, qué evita"
           />
         </div>
         <TextField label="Tono (opcional)" value={form.tone} onChange={(v) => setForm({ ...form, tone: v })} />
@@ -288,74 +336,60 @@ function PersonaFormPanel({
           value={form.summon_phrases}
           onChange={(v) => setForm({ ...form, summon_phrases: v })}
         />
-        <div>
-          <label htmlFor="motor-tier" className="mb-1 block text-sm font-medium text-gray-700">
-            Motor de trabajo
-          </label>
+        <div className="space-y-1.5">
+          <Label htmlFor="motor-tier">Motor de trabajo</Label>
           <select
             id="motor-tier"
             value={form.model_tier}
             onChange={(e) => setForm({ ...form, model_tier: e.target.value as "estandar" | "local" })}
-            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
+            className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="estandar">El motor del despacho</option>
             <option value="local">Siempre el motor local — más privado</option>
           </select>
+          <p className="text-xs text-muted-foreground">{motorLabel(form.model_tier)}</p>
         </div>
-        <div>
-          <label htmlFor="persona-desc" className="mb-1 block text-sm font-medium text-gray-700">
-            Descripción breve (opcional)
-          </label>
-          <textarea
+        <div className="space-y-1.5">
+          <Label htmlFor="persona-desc">Descripción breve (opcional)</Label>
+          <Textarea
             id="persona-desc"
             value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
             rows={2}
-            className="w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
+            className="resize-y"
           />
         </div>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={form.enabled}
             onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
-            className="h-4 w-4 rounded border-gray-300"
+            className="h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
           />
           Persona habilitada (se puede invocar en el chat)
         </label>
       </div>
       {msg ? (
-        <p role="alert" className="mt-4 text-sm text-amber-700">{msg}</p>
+        <p role="alert" className="mt-4 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{msg}</p>
       ) : null}
-      <div className="mt-4 flex gap-2">
-        <button
-          onClick={onSave}
-          disabled={busy}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-        >
+      <div className="mt-5 flex gap-2">
+        <Button onClick={onSave} disabled={busy}>
           {busy ? "Guardando…" : "Guardar"}
-        </button>
-        <button
-          onClick={onCancel}
-          disabled={busy}
-          className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
-        >
+        </Button>
+        <Button variant="ghost" onClick={onCancel} disabled={busy}>
           Cancelar
-        </button>
+        </Button>
       </div>
     </div>
   );
 }
 
 function TextField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const id = `persona-field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
-      />
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
@@ -368,16 +402,21 @@ function ChipsField({ label, value, onChange }: { label: string; value: string[]
     setDraft("");
   }
   return (
-    <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">{label}</label>
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-2">
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-input bg-card px-2 py-2 transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
         {value.map((chip) => (
-          <span key={chip} className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-sm">
+          <Badge key={chip} variant="secondary" className="gap-1 pr-1">
             {chip}
-            <button type="button" onClick={() => onChange(value.filter((c) => c !== chip))} className="text-gray-400 hover:text-gray-700">
-              ×
+            <button
+              type="button"
+              onClick={() => onChange(value.filter((c) => c !== chip))}
+              aria-label={`Quitar ${chip}`}
+              className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
             </button>
-          </span>
+          </Badge>
         ))}
         <input
           value={draft}
@@ -388,8 +427,8 @@ function ChipsField({ label, value, onChange }: { label: string; value: string[]
               add();
             }
           }}
-          placeholder="Escribe y Enter…"
-          className="min-w-[120px] flex-1 text-sm outline-none"
+          placeholder="Escribe y presiona Enter"
+          className="min-w-[120px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
         />
       </div>
     </div>

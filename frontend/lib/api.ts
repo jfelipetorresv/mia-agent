@@ -131,14 +131,9 @@ export async function apiDownload(path: string, filename: string): Promise<void>
 
 export type SseHandler = (event: string, data: unknown) => void;
 
-// Consume un SSE (event/data) sobre fetch para poder mandar el header Authorization.
-export async function streamTurn(
-  streamPath: string,
-  onEvent: SseHandler,
-  signal?: AbortSignal,
-): Promise<void> {
-  const res = await fetch(`${API}${streamPath}`, { headers: authHeaders(), signal, cache: "no-store" });
-  await checkResponse(res);
+// Núcleo compartido: parsea el cuerpo de una respuesta SSE (event/data) obtenida
+// por fetch — así podemos mandar el header Authorization (EventSource no lo admite).
+async function consumeSse(res: Response, onEvent: SseHandler): Promise<void> {
   if (!res.body) throw new Error("Sin cuerpo en la respuesta");
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -147,7 +142,10 @@ export async function streamTurn(
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split("\n\n");
+    // El servidor separa eventos con \r\n\r\n (así emite sse-starlette); el spec
+    // SSE admite \r\n, \n o mezcla. Un separador partido entre chunks (p.ej. el
+    // buffer termina en "\r\n\r") no matchea aún y espera al siguiente chunk.
+    const blocks = buffer.split(/\r?\n\r?\n/);
     buffer = blocks.pop() ?? "";
     for (const block of blocks) {
       let event = "message";
@@ -181,6 +179,38 @@ export async function streamTurn(
       }
     }
   }
+}
+
+// Consume un SSE por GET (el mensaje viaja en el query param del path). Lo usa el
+// turno del asunto (/matters/{id}/stream), donde el mensaje es corto.
+export async function streamTurn(
+  streamPath: string,
+  onEvent: SseHandler,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API}${streamPath}`, { headers: authHeaders(), signal, cache: "no-store" });
+  await checkResponse(res);
+  await consumeSse(res, onEvent);
+}
+
+// Consume un SSE por POST con cuerpo JSON — para turnos cuyo mensaje puede ser
+// largo (chat general del asistente): no cabe con garantías en un query param, así
+// que abrimos el stream directamente sobre el POST (fetch, no EventSource).
+export async function streamPost(
+  streamPath: string,
+  body: unknown,
+  onEvent: SseHandler,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${API}${streamPath}`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+    signal,
+    cache: "no-store",
+  });
+  await checkResponse(res);
+  await consumeSse(res, onEvent);
 }
 
 export const apiConfig = { hasToken: () => Boolean(getToken()) };

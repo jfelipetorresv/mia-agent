@@ -13,15 +13,23 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 from ...assistant.core import AssistantService, ConversationNotFound
 from ...assistant.reminders import ReminderService
 from ...policy import budget as policy_budget
+from ._common import sse
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
+
+# CP-S3: latido del SSE (igual que el turno del asunto en stream.py). El turno del
+# asistente corre sobre el motor por suscripción (CLI), que responde en BLOQUE: el
+# ping mantiene viva la conexión durante los segundos que tarda el modelo en pensar.
+SSE_PING_SECONDS = 15
 logger = logging.getLogger("mia.api.assistant")
 
 # Servicio del proceso — SIN estado entre requests: el ContextCompressor se crea por
@@ -74,6 +82,51 @@ async def assistant_chat(body: ChatBody, request: Request):
             detail="No pude responder en este momento. Intenta de nuevo en unos minutos.",
         )
     return {"conversation_id": conversation_id, "reply": reply}
+
+
+@router.post("/chat/stream")
+async def assistant_chat_stream(body: ChatBody, request: Request):
+    """Igual que POST /chat pero por SSE — la respuesta llega en cuanto está lista,
+    precedida de un aviso de "pensando" para que la pantalla nunca muestre un
+    spinner mudo (Fase 1: velocidad percibida).
+
+    El motor por suscripción responde en BLOQUE (no hay tokens sueltos que streamear),
+    así que reutilizamos íntegro `_service.chat()` — misma lógica, mismos recordatorios,
+    misma persistencia, mismo tope de gasto. El SSE solo cambia la ENTREGA: emite
+    `thinking` de inmediato y luego `reply` con el texto completo; el efecto de
+    escritura progresiva lo hace el navegador. Contrato listo para tokens reales el
+    día que el motor los soporte, sin tocar la pantalla.
+
+    Las validaciones que deben ser HTTP (sin sesión → 401, tope de gasto → 402) se
+    lanzan ANTES de abrir el stream, igual que el turno del asunto (stream.py)."""
+    tid = _tenant(request)
+    # CP-E1: tope de gasto de IA del despacho ANTES de abrir el stream (como en stream.py).
+    try:
+        await policy_budget.enforce_budget(tid)
+    except policy_budget.BudgetExceeded as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    uid = await _user_id(request, tid)
+
+    async def gen() -> AsyncIterator[dict]:
+        yield sse("thinking", "Mia está pensando…")
+        try:
+            conversation_id, reply = await _service.chat(
+                tid, uid, body.conversation_id, body.message
+            )
+        except ConversationNotFound:
+            yield sse("error", "No encontré esa conversación.")
+            return
+        except ValueError as e:
+            # §G: los ValueError del asistente ya vienen en lenguaje llano.
+            yield sse("error", str(e))
+            return
+        except Exception:  # noqa: BLE001 — §G: nunca exponer el error técnico al abogado
+            logger.exception("assistant_chat_stream falló (tenant=%s)", tid)
+            yield sse("error", "No pude responder en este momento. Intenta de nuevo en unos minutos.")
+            return
+        yield sse("reply", reply, conversation_id=conversation_id)
+
+    return EventSourceResponse(gen(), ping=SSE_PING_SECONDS)
 
 
 @router.get("/conversations")

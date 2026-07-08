@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Repeat, Sparkles } from "lucide-react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type BlueprintField = {
   name: string;
@@ -159,51 +164,51 @@ export default function AutomationsSection() {
   }
 
   if (!loaded) {
-    return <p className="text-sm text-gray-400">Cargando automatizaciones…</p>;
+    return (
+      <div className="space-y-2">
+        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-xl" />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-8">
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-muted-foreground">
         Mia puede avisarte con anticipación de plazos o eventos que tú ya fijaste. Nada se activa solo: tú creas o aceptas cada automatización.
       </p>
-      {msg ? <p role="alert" className="text-sm text-amber-700">{msg}</p> : null}
+      {msg ? <p role="alert" className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{msg}</p> : null}
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-gray-700">Sugerencias de Mia</h3>
+        <h3 className="mb-2 text-sm font-semibold">Sugerencias de Mia</h3>
         {sugerencias.length === 0 ? (
-          <p className="text-sm text-gray-400">No hay sugerencias pendientes.</p>
+          <div className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-4">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
+            <p className="text-sm text-muted-foreground">
+              No hay sugerencias pendientes. A medida que uses a Mia, ella te propondrá avisos útiles aquí.
+            </p>
+          </div>
         ) : (
           <ul className="space-y-3">
             {sugerencias.map((s) => (
-              <li key={s.id} className="rounded-xl border border-gray-100 px-4 py-3">
-                <div className="font-medium text-gray-900">{s.nombre}</div>
-                <p className="mt-1 text-sm text-gray-600">{s.rationale}</p>
+              <li key={s.id} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                <div className="font-medium">{s.nombre}</div>
+                <p className="mt-1 text-sm text-muted-foreground">{s.rationale}</p>
                 {Object.keys(s.params || {}).length ? (
-                  <p className="mt-1 text-xs text-gray-500">{paramsSummary(s.params)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{paramsSummary(s.params)}</p>
                 ) : null}
                 {s.toca_plazo_procesal ? (
-                  <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
-                    Toca plazos procesales — Mia no calcula términos; tú confirmas cada fecha [VERIFICAR]
+                  <p className="mt-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1.5 text-xs text-warning">
+                    Toca plazos procesales — Mia no calcula términos; cada fecha queda pendiente de tu confirmación.
                   </p>
                 ) : null}
                 <div className="mt-3 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => acceptSuggestion(s.id)}
-                    disabled={busy === s.id}
-                    className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                  >
+                  <Button size="sm" onClick={() => acceptSuggestion(s.id)} disabled={busy === s.id}>
                     Activar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => dismissSuggestion(s.id)}
-                    disabled={busy === s.id}
-                    className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
-                  >
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => dismissSuggestion(s.id)} disabled={busy === s.id}>
                     Descartar
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
@@ -212,30 +217,36 @@ export default function AutomationsSection() {
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-gray-700">Automatizaciones activas</h3>
+        <h3 className="mb-2 text-sm font-semibold">Automatizaciones activas</h3>
         {automatizaciones.length === 0 ? (
-          <p className="text-sm text-gray-400">Aún no tienes automatizaciones activas.</p>
+          <div className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-4">
+            <Repeat className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
+            <p className="text-sm text-muted-foreground">
+              Aún no tienes automatizaciones activas. Crea una abajo o acepta una sugerencia de Mia.
+            </p>
+          </div>
         ) : (
           <ul className="space-y-2">
             {automatizaciones.map((a) => (
-              <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 px-4 py-3">
+              <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
                 <div className="min-w-0">
                   <div className="text-sm font-medium">
                     {nameByKey[a.blueprint_key] || a.kind}
                   </div>
-                  <div className="text-sm text-gray-500">{paramsSummary(a.params || {})}</div>
+                  <div className="text-sm text-muted-foreground">{paramsSummary(a.params || {})}</div>
                   {a.is_procedural ? (
-                    <p className="mt-1 text-xs text-amber-700">Plazo procesal — confirma tú las fechas</p>
+                    <p className="mt-1 text-xs font-medium text-warning">Plazo procesal — confirma tú las fechas</p>
                   ) : null}
                 </div>
-                <button
-                  type="button"
+                <Button
+                  size="sm"
+                  variant="ghost"
                   onClick={() => removeAutomation(a.id)}
                   disabled={busy === a.id}
-                  className="shrink-0 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                  className="shrink-0"
                 >
                   Quitar
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -243,33 +254,33 @@ export default function AutomationsSection() {
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-gray-700">Crear automatización</h3>
+        <h3 className="mb-2 text-sm font-semibold">Crear automatización</h3>
         <ul className="space-y-3">
           {plantillas.map((p) => {
             const open = expandedKey === p.key;
             return (
-              <li key={p.key} className="rounded-xl border border-gray-100 px-4 py-3">
+              <li key={p.key} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm transition-colors hover:border-primary/25">
                 <button
                   type="button"
                   aria-expanded={open}
                   onClick={() => setExpandedKey(open ? null : p.key)}
                   className="w-full text-left"
                 >
-                  <div className="font-medium text-gray-900">{p.nombre}</div>
-                  <p className="mt-1 text-sm text-gray-500">{p.descripcion}</p>
+                  <div className="font-medium">{p.nombre}</div>
+                  <p className="mt-1 text-sm text-muted-foreground">{p.descripcion}</p>
                 </button>
                 {p.toca_plazo_procesal ? (
-                  <p className="mt-2 text-xs text-amber-700">
+                  <p className="mt-2 text-xs font-medium text-warning">
                     Toca plazos procesales — solo avisa lo que tú ya registraste; nunca calcula un término.
                   </p>
                 ) : null}
                 {open ? (
-                  <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
+                  <div className="mt-3 space-y-3 border-t border-border pt-3 animate-fade-in">
                     {p.campos.map((c) => (
                       <div key={c.name}>
-                        <label htmlFor={`${p.key}-${c.name}`} className="mb-1 block text-sm text-gray-700">
+                        <Label htmlFor={`${p.key}-${c.name}`} className="mb-1.5 block text-sm">
                           {c.etiqueta}
-                        </label>
+                        </Label>
                         {c.tipo === "opcion" && c.opciones.length ? (
                           <select
                             id={`${p.key}-${c.name}`}
@@ -280,14 +291,14 @@ export default function AutomationsSection() {
                                 [p.key]: { ...fv[p.key], [c.name]: e.target.value },
                               }))
                             }
-                            className="w-full max-w-xs rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+                            className="h-10 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             {c.opciones.map((o) => (
                               <option key={o} value={o}>{o}</option>
                             ))}
                           </select>
                         ) : (
-                          <input
+                          <Input
                             id={`${p.key}-${c.name}`}
                             type={c.tipo === "entero" ? "number" : "text"}
                             inputMode={c.tipo === "entero" ? "numeric" : undefined}
@@ -300,26 +311,21 @@ export default function AutomationsSection() {
                                 [p.key]: { ...fv[p.key], [c.name]: e.target.value },
                               }))
                             }
-                            className="w-full max-w-xs rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+                            className="max-w-xs"
                           />
                         )}
-                        {c.ayuda ? <p className="mt-1 text-xs text-gray-400">{c.ayuda}</p> : null}
+                        {c.ayuda ? <p className="mt-1 text-xs text-muted-foreground">{c.ayuda}</p> : null}
                       </div>
                     ))}
-                    <button
-                      type="button"
-                      onClick={() => createAutomation(p.key)}
-                      disabled={busy === p.key}
-                      className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                    >
+                    <Button size="sm" onClick={() => createAutomation(p.key)} disabled={busy === p.key}>
                       {busy === p.key ? "Guardando…" : "Activar"}
-                    </button>
+                    </Button>
                   </div>
                 ) : (
                   <button
                     type="button"
                     onClick={() => setExpandedKey(p.key)}
-                    className="mt-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+                    className="mt-2 text-sm font-medium text-primary transition-colors hover:text-primary/80"
                   >
                     Configurar
                   </button>
