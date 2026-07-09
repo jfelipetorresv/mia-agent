@@ -1,11 +1,33 @@
 """Mia · config — carga .env y expone la configuración del backend."""
 from __future__ import annotations
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]   # backend/mia/config.py -> mia/
+# Ancla del estado de INSTANCIA (.env, mia-data). Tres modos, en orden de precedencia:
+# 1. MIA_APP_DIR (env): la cáscara de escritorio (Fase 4) le dice al motor dónde vive
+#    su instancia — también útil para tests. Manda siempre que venga.
+# 2. Empaquetado (PyInstaller expone sys.frozen): __file__ vive DENTRO del bundle y no
+#    hay repo → el estado va a la carpeta de datos de la app del usuario.
+# 3. Desarrollo (default, sin cambios): la raíz del repo (backend/mia/config.py -> mia/).
+_app_dir = os.getenv("MIA_APP_DIR", "").strip()
+if _app_dir:
+    PROJECT_ROOT = Path(_app_dir).resolve()
+    # Fallo ruidoso, no silencioso: si la cáscara pasó una ruta sin .env, el motor
+    # arrancaría con TODOS los defaults (DATABASE_URL vacío, etc.) y el síntoma
+    # aguas abajo ("JWT_SECRET faltante") no diría la causa real.
+    if not (PROJECT_ROOT / ".env").exists():
+        print(
+            f"[mia.config] AVISO: MIA_APP_DIR={PROJECT_ROOT} no contiene un .env — "
+            "el motor arranca con valores por defecto.",
+            file=sys.stderr,
+        )
+elif getattr(sys, "frozen", False):
+    PROJECT_ROOT = (Path(os.getenv("LOCALAPPDATA") or Path.home()) / "Mia").resolve()
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
 PG_DB = os.getenv("PG_DB", "mia")

@@ -40,9 +40,12 @@ _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _default_traces_dir() -> Path:
-    """backend/mia/memory/trace_capture.py → parents[3] = raíz del proyecto `mia`,
-    que es donde vive `mia-data/` (gitignored, hermano de backend/)."""
-    return Path(__file__).resolve().parents[3] / "mia-data" / "traces"
+    """Las trazas son estado de INSTANCIA (flywheel HITL, decisión #19): viven bajo
+    config.MIA_HOME, que ya respeta MIA_APP_DIR / modo empaquetado (Fase 4 · R1).
+    En desarrollo resuelve al mismo lugar histórico (mia/mia-data/traces). Se lee
+    config en cada llamada para que los tests puedan reasignar config.MIA_HOME."""
+    from mia import config
+    return Path(config.MIA_HOME) / "traces"
 
 
 def _safe_name(s: str) -> str:

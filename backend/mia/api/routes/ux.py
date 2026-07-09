@@ -87,7 +87,10 @@ def _concept_from_wiki_correction(rationale: str) -> str:
 
 
 def _available_models() -> list[str]:
-    cfg = Path(__file__).resolve().parents[4] / "litellm_config.yaml"
+    # Ancla de instancia (Fase 4 · R1): la cáscara empaquetada coloca el yaml junto
+    # al .env; en desarrollo PROJECT_ROOT es la raíz del repo (mismo lugar histórico).
+    from mia import config as _config
+    cfg = Path(_config.PROJECT_ROOT) / "litellm_config.yaml"
     if not cfg.exists():
         return []
     out: list[str] = []

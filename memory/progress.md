@@ -1994,3 +1994,38 @@ Se ejecutó el **spike aislado de la Fase 4 (distribución)** que ordenaba el pl
   Trusted Signing de Pipe) es requisito de LANZAMIENTO, no de construcción.
 - **R5:** Postgres portable y LiteLLM quedan FUERA del bundle — la cáscara debe orquestarlos como
   procesos propios (hoy la DB ya es portable; patrón conocido).
+
+---
+
+## 2026-07-09 — Sesión 37 (continuación 2) — Fase 4 · bloque 1: ancla de instancia (R1) + veredicto de ruta del frontend
+
+**Qué se construyó (cirugía mínima aprobada por revisor adversarial):**
+- `backend/mia/config.py`: `PROJECT_ROOT` (ancla del estado de instancia: `.env`, `mia-data`)
+  ahora resuelve con precedencia **`MIA_APP_DIR`** (env — así la cáscara de escritorio le dice
+  al motor empaquetado dónde vive su instancia) → **`sys.frozen`** (PyInstaller →
+  `%LOCALAPPDATA%\Mia`) → **default histórico intacto** (raíz del repo). Si `MIA_APP_DIR`
+  viene sin `.env`, aviso RUIDOSO en stderr (no arranque mudo con defaults).
+- **Capa 2 (revisor adversarial Opus, contexto fresco): APROBADO CON MENORES — todos corregidos:**
+  - **MAYOR-1:** `memory/trace_capture.py::_default_traces_dir()` anclaba las trazas del
+    flywheel HITL a `__file__` → en bundle onefile se PERDÍAN cada sesión y en onedir bajo
+    Program Files reventaba el arranque del grafo. Ahora: `config.MIA_HOME / "traces"`
+    (leído en cada llamada; en dev resuelve al mismo lugar histórico).
+  - **MENOR-1:** `api/routes/ux.py::_available_models()` leía `litellm_config.yaml` vía
+    `__file__` → ahora `config.PROJECT_ROOT` (la cáscara podrá colocar el yaml junto al .env).
+  - **MENOR-2:** el aviso de `.env` faltante (arriba).
+  - NOTA de seguridad aceptada: `MIA_APP_DIR` no amplía superficie de ataque (quien fija env
+    vars ya controlaba `DATABASE_URL`/`LITELLM_BASE_URL` directo).
+- Gate nuevo `execution/test_config_anchor.py` **8/8** (los 3 modos de resolución, MIA_HOME
+  y traces anclados a la instancia, precedencia sobre frozen, aviso sin .env).
+
+**Spike de frontend (agente ejecutor, evidencia en `../spike-fase4-frontend/`):** el export
+estático de Next NO es el camino — las 2 pantallas core (`/asuntos/[id]` y su `/revisar`)
+exigen reestructura + fallback SPA manual + mover los headers de seguridad a FastAPI.
+**Decisión de ruta (Fable):** puente = **Node portable + `next start`** en el instalador
+(cero riesgo de regresión en las pantallas críticas, +80-100 MB); el destino final sigue
+siendo la migración a Vite ya planeada. El repo quedó limpio (config y rutas restauradas).
+
+**Verificación:** gates dirigidos post-corrección: `test_config_anchor` 8/8,
+`test_trace_capture` 26/26, `test_ux` 34/34 (falló una vez por colisión con el build del
+spike en paralelo — se re-corrió limpio), `test_rls` 12/12 (HALT). Regresión completa de
+las 71 suites corrida como capa final antes del commit (resultado en este mismo commit).
