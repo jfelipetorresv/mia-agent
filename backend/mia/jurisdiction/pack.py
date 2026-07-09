@@ -3,7 +3,9 @@
 Un `JurisdictionPack` agrupa los DATOS de referencia de una jurisdicción. Se compone de
 archivos JSON opcionales bajo `packs/{code}/`:
 
-  meta.json          {code, name, version, verified, verified_at, sources[]}
+  meta.json          {code, name, version, verified, verified_at, sources[], freshness?}
+                     `freshness` (opcional) declara vigencia POR ARCHIVO del pack:
+                     {archivo: {last_verified, freshness_window_days, freshness_category}}
   holidays.json      {"2025": ["2025-01-01", ...], ...}
   recess.json        [{"name", "start": "MM-DD", "end": "MM-DD"}]   (feria/vacancia judicial)
   id_formats.json    {"cedula": {"label", "regex"}, ...}            (consumido por PII redactor)
@@ -22,7 +24,8 @@ Los consumidores (calendario, investigación) deben marcar supuestos no verifica
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 PACKS_DIR = Path(__file__).resolve().parent / "packs"
@@ -49,10 +52,37 @@ class JurisdictionPack:
     term_catalog: dict      # término → {label, days, kind}
     citation_style: dict
     is_generic: bool = False
+    # Quick win §5.3 (docs/analisis-claude-for-legal.md): vigencia declarativa POR
+    # ARCHIVO del pack (no solo el verified/verified_at global de meta.json) — un
+    # festivo y un plazo procesal envejecen a velocidades muy distintas. Viene de
+    # `meta.json → "freshness"` (aditivo; sin él, `{}` — ningún consumidor se rompe).
+    # {archivo: {last_verified, freshness_window_days, freshness_category}}. Todavía
+    # NO se conecta a ningún resolver/consumidor — es solo el dato disponible.
+    freshness: dict = field(default_factory=dict)
 
     def holiday_dates(self, year: int) -> list[str]:
         """Fechas ISO de festivos del año dado (lista vacía si el pack no las trae)."""
         return list(self.holidays.get(str(year), []))
+
+    def is_stale(self, file_key: str) -> bool | None:
+        """¿El archivo `file_key` (p. ej. "term_catalog") superó su ventana de vigencia?
+
+        `None` = no se puede evaluar (sin entrada de freshness, sin `last_verified`, o
+        `freshness_window_days` es `None` = sin vencimiento declarado — p. ej. un dato
+        casi estático como festivos históricos). Nunca lanza con datos mal formados
+        (fail-soft: un pack mal editado no puede tumbar al consumidor)."""
+        entry = self.freshness.get(file_key)
+        if not isinstance(entry, dict):
+            return None
+        last_verified = entry.get("last_verified")
+        window = entry.get("freshness_window_days")
+        if not last_verified or window is None:
+            return None
+        try:
+            verified_on = date.fromisoformat(str(last_verified))
+            return (date.today() - verified_on).days > int(window)
+        except (TypeError, ValueError):
+            return None
 
 
 def _read_json(path: Path):
@@ -96,6 +126,10 @@ def load_pack(code: str | None) -> JurisdictionPack:
 
     meta = _read_json(pack_dir / "meta.json") or {}
     data = {name: _read_json(pack_dir / f"{name}.json") for name in _DATA_FILES}
+    # fail-soft (revisión capa 2): un meta.json mal editado con "freshness" NO-dict
+    # (lista/string) no debe tumbar is_stale() más adelante — se descarta, no se lanza.
+    raw_freshness = meta.get("freshness")
+    freshness = raw_freshness if isinstance(raw_freshness, dict) else {}
 
     return JurisdictionPack(
         code=code,
@@ -110,6 +144,7 @@ def load_pack(code: str | None) -> JurisdictionPack:
         doc_markers=data["doc_markers"] or {},
         term_catalog=data["term_catalog"] or {},
         citation_style=data["citation_style"] or {},
+        freshness=freshness,
     )
 
 

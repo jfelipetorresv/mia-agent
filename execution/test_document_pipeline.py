@@ -55,6 +55,26 @@ async def run_gate() -> None:
           pb.DIAGNOSIS_CLOSING_HEADER in pb.GRAPH_NODE_INSTRUCTIONS["analysis"]
           and pb.DIAGNOSIS_CLOSING_FOOTER in pb.GRAPH_NODE_INSTRUCTIONS["analysis"]
           and "especialista de hechos" in pb.GRAPH_NODE_INSTRUCTIONS["analysis"])
+    # Quick win claude-for-legal §5.4: el menú de próximos pasos va ANTES del bloque de
+    # cierre — el bloque (que termina en "Riesgo y recomendación") debe seguir siendo lo
+    # ÚLTIMO que emite el especialista, porque `context_recovery.shrink_text(...,
+    # protect_tail=True)` (graph.py, draft_node) protege el FINAL del diagnóstico bajo
+    # presupuesto — si el menú quedara al final, un recorte por presupuesto protegería
+    # el menú y arriesgaría cortar el riesgo/recomendación real (hallazgo de capa 2).
+    check("cp9-04b · el menú de próximos pasos del análisis va ANTES del bloque de cierre",
+          pb.GRAPH_NODE_INSTRUCTIONS["analysis"].find("pregunta de segundo orden")
+          < pb.GRAPH_NODE_INSTRUCTIONS["analysis"].find(pb.DIAGNOSIS_CLOSING_HEADER))
+    check("cp9-04c · el bloque de cierre sigue siendo lo ÚLTIMO de la instrucción (protect_tail)",
+          pb.GRAPH_NODE_INSTRUCTIONS["analysis"].rstrip().endswith(pb.DIAGNOSIS_CLOSING_FOOTER))
+    check("cp9-04e · prosa de menú ANTES de un bloque de cierre real sigue parseando igual (CP6 intacto)",
+          pb.parse_diagnosis_closing(
+              "Caminos: redactar / esperar / escalar. ¿Segundo orden?\n"
+              f"{pb.DIAGNOSIS_CLOSING_HEADER}\nProblema jurídico: x.\nNormas y fuentes: y.\n"
+              f"Riesgo y recomendación: z.\n{pb.DIAGNOSIS_CLOSING_FOOTER}"
+          ) == {"problema": "x.", "normas": "y.", "riesgo": "z."})
+    check("cp9-04d · el borrador (draft) pide avisar la duda de vigencia sin bloquear el escrito",
+          "no puedes confirmarlo" in pb.GRAPH_NODE_INSTRUCTIONS["draft"]
+          and "No bloquees el borrador" in pb.GRAPH_NODE_INSTRUCTIONS["draft"])
     sys_facts = pb.build_graph_system({"soul_snapshot": {"content": "Voz sobria."}}, "facts")
     check("cp9-05 · build_graph_system('facts') compone las 10 capas (identidad+SOUL+L8)",
           pb.GRAPH_FALLBACK_IDENTITY in sys_facts and "Voz sobria." in sys_facts

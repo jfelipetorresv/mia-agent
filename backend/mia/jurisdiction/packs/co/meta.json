@@ -5,5 +5,14 @@
   "verified": false,
   "verified_at": null,
   "sources": ["SUIN-Juriscol", "Función Pública", "Rama Judicial"],
+  "_freshness_note": "Vigencia POR ARCHIVO (quick win de docs/analisis-claude-for-legal.md §5.3): festivos y plazos procesales envejecen a velocidades muy distintas. last_verified=null y freshness_window_days=null mientras nadie haya contrastado el archivo contra la fuente oficial (is_stale() da None = 'no evaluable', nunca un falso 'vigente'). Nota aparte (no dentro de \"freshness\"): ese objeto solo debe tener entradas {archivo: {...}} — un consumidor futuro que itere pack.freshness.items() no debe toparse con un valor que no sea dict.",
+  "freshness": {
+    "holidays": {"last_verified": null, "freshness_window_days": 365, "freshness_category": "estable"},
+    "recess": {"last_verified": null, "freshness_window_days": 365, "freshness_category": "estable"},
+    "id_formats": {"last_verified": null, "freshness_window_days": null, "freshness_category": "estable"},
+    "doc_markers": {"last_verified": null, "freshness_window_days": null, "freshness_category": "estable"},
+    "term_catalog": {"last_verified": null, "freshness_window_days": 90, "freshness_category": "volatil"},
+    "citation_style": {"last_verified": null, "freshness_window_days": 180, "freshness_category": "moderado"}
+  },
   "_note": "Estructura inicial del pack Colombia. Festivos y términos procesales son PROVISIONALES y deben contrastarse contra fuente oficial antes de marcar verified:true (trabajo de D.4). Mientras verified=false, los consumidores marcan supuestos no verificados."
 }

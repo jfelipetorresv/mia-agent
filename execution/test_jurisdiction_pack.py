@@ -13,6 +13,7 @@ Salida: exit 0 = PASS.
 """
 from __future__ import annotations
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +76,57 @@ def main() -> int:
     # 5 · un pack provisional NO se presenta como verificado (regla cardinal)
     check("co.verified is False (provisional)", co.verified is False)
     check("co.verified_at is None (provisional)", co.verified_at is None)
+
+    # 6 · quick win freshness declarativo por archivo (docs/analisis-claude-for-legal.md §5.3)
+    check("co.freshness trae entrada por archivo de datos (term_catalog)",
+          isinstance(co.freshness, dict) and "term_catalog" in co.freshness)
+    check("sin last_verified (pack provisional) -> is_stale es None (no evaluable, no 'vigente')",
+          co.is_stale("term_catalog") is None)
+    check("is_stale de un archivo sin entrada de freshness -> None",
+          co.is_stale("archivo_inexistente") is None)
+    check("genérico sin freshness ({})", g.freshness == {})
+    check("genérico is_stale siempre None", g.is_stale("holidays") is None)
+
+    import dataclasses
+    vencido = dataclasses.replace(co, freshness={
+        "term_catalog": {"last_verified": "2000-01-01", "freshness_window_days": 90}})
+    vigente = dataclasses.replace(co, freshness={
+        "term_catalog": {"last_verified": date.today().isoformat(), "freshness_window_days": 90}})
+    sin_ventana = dataclasses.replace(co, freshness={
+        "term_catalog": {"last_verified": "2000-01-01", "freshness_window_days": None}})
+    malformado = dataclasses.replace(co, freshness={"term_catalog": {"last_verified": "no-es-fecha", "freshness_window_days": 90}})
+    check("is_stale True cuando pasó la ventana de vigencia", vencido.is_stale("term_catalog") is True)
+    check("is_stale False dentro de la ventana", vigente.is_stale("term_catalog") is False)
+    check("freshness_window_days=None (sin vencimiento) -> is_stale None", sin_ventana.is_stale("term_catalog") is None)
+    check("fecha malformada -> is_stale None (fail-soft, no lanza)", malformado.is_stale("term_catalog") is None)
+
+    # 7 · fail-soft de load_pack ante "freshness" de tipo equivocado en meta.json
+    # (revisión capa 2: is_stale() solo validaba la entrada POR ARCHIVO, no el valor
+    # de nivel superior — un meta.json con "freshness": [...] tumbaba is_stale con
+    # AttributeError. load_pack ahora descarta el valor si no es dict).
+    import json as _json
+    import tempfile
+    from mia.jurisdiction import pack as pack_mod
+
+    def _malformed_top_level_freshness_is_safe() -> bool:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / "zz").mkdir()
+            (tmp_path / "zz" / "meta.json").write_text(_json.dumps({
+                "code": "zz", "name": "Zeta", "version": "0",
+                "verified": False, "verified_at": None, "sources": [],
+                "freshness": ["esto no es un dict"],
+            }), encoding="utf-8")
+            original = pack_mod.PACKS_DIR
+            pack_mod.PACKS_DIR = tmp_path
+            try:
+                zz = pack_mod.load_pack("zz")
+                return zz.freshness == {} and zz.is_stale("cualquiera") is None
+            finally:
+                pack_mod.PACKS_DIR = original
+
+    check("load_pack fail-soft ante 'freshness' de tipo equivocado en meta.json (no lanza, da {})",
+          _malformed_top_level_freshness_is_safe())
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

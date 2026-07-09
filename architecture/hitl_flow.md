@@ -188,3 +188,53 @@ checkpoint (`graph.aget_state(cfg)`) **antes** de abrir el SSE, y mapear los est
 > La causa-raíz del 3.er bug del smoke (la conexión a la BD se rompía al arrancar uvicorn en
 > Windows) NO es del flujo HITL sino del event loop de asyncio en Windows — documentada aparte en
 > `architecture/windows_notes.md`.
+
+> **Nota de desfase (2026-07-08):** la sección "Los 5 nodos" arriba describe el grafo previo a
+> CP9. El grafo real hoy (`agents/graph.py`) tiene 8 nodos: `intake → facts → research → analysis
+> → draft → verification → hitl_checkpoint → finalize` (equipo de especialistas, ver
+> `docs/analisis-referencias-2026-07.md`/HANDOFF CP9). `graph.py` es la fuente de verdad; esta
+> sección no se reescribió todavía — pendiente de un refresco aparte de este documento.
+
+---
+
+## 7 · Menú de próximos pasos (presentación) — quick win de `claude-for-legal` (2026-07-08)
+
+Ingeniería inversa del plugin marketplace legal de Anthropic (`docs/analisis-claude-for-legal.md`
+§2.9, §5.4) señaló un patrón de presentación que MIA no tenía: todo análisis debe cerrar con un
+**menú de opciones para que el abogado elija**, nunca con una recomendación implícita única — *"a
+draft of the OPTIONS, not a draft of the DECISION... the tree IS the output"*.
+
+**Qué se adoptó (prompt, sin tocar lógica ni el HITL):** la instrucción del especialista de
+**análisis** (`agent/prompt_builder.py → GRAPH_NODE_INSTRUCTIONS["analysis"]`) ahora pide, ANTES
+del bloque de cierre estructurado (`=== CIERRE DEL DIAGNÓSTICO ===` … `=== FIN DEL CIERRE ===`, que
+sigue intacto y se sigue parseando igual con `parse_diagnosis_closing`):
+
+1. **2 a 5 caminos concretos** que el abogado pueda elegir (redactar X / pedir más hechos / esperar
+   y observar / escalar o consultar / otro camino) — Mia nunca elige por él.
+2. **Una pregunta de segundo orden** — la observación que un revisor pensante notaría y que el
+   checklist/análisis de arriba no capturó.
+
+**Ojo (hallazgo de revisor capa 2, corregido antes del commit):** el menú va ANTES del bloque de
+cierre, no después — el bloque (que termina en "Riesgo y recomendación") debe seguir siendo lo
+ÚLTIMO que emite el especialista. `context_recovery.shrink_text(..., protect_tail=True)` (usado por
+`draft_node._shrink()` en `graph.py` cuando el diagnóstico no cabe en el presupuesto) protege el
+FINAL del texto recortando el MEDIO — si el menú quedara al final, un recorte por presupuesto
+protegería el menú de próximos pasos y arriesgaría cortar el riesgo/recomendación real, justo el
+dato jurídico que `protect_tail` existe para proteger. Con el menú ANTES del bloque, `strip_diagnosis_closing`
+lo sigue conservando como prosa visible al abogado (queda en la parte "antes del bloque", que la
+función preserva igual); es puramente aditivo a la presentación, cero cambio de lógica jurídica.
+
+El especialista de **borrador** (`GRAPH_NODE_INSTRUCTIONS["draft"]`) recibió por separado la regla
+del "3er valor" (`claude-for-legal` §2.1, quick win #1): si sospecha que una norma citada pudo
+haber sido derogada/modulada pero no puede confirmarlo en el turno, debe DECIRLO dentro del propio
+escrito en vez de omitirlo o usarla sin duda — sin bloquear el borrador por esto.
+
+**Deliberadamente NO se tocó el cuerpo del `draft`** con un menú de próximos pasos: a diferencia del
+diagnóstico (que no es un documento a radicar), el borrador SÍ se exporta a `.docx` como escrito
+judicial — anexarle un menú de opciones ahí contaminaría el documento final. El patrón de "menú"
+vive solo en el análisis/diagnóstico que ve el abogado en pantalla.
+
+**Pendiente (quick win #5, `docs/analisis-claude-for-legal.md` §5):** un checklist de
+pre-entrega EJECUTADO (no solo texto) en el propio gate de aprobación del borrador — toca el flujo
+de HITL que Pipe ya clasificó como "resultado legal", así que requiere su aprobación previa antes
+de tocar `hitl_checkpoint`/la UI de aprobación. No implementado en esta sesión.
