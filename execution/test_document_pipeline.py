@@ -132,8 +132,12 @@ async def run_gate() -> None:
           and res_md.get("research_jurisdictions") == ["co"])
     check("cp9-13 · el prompt de investigación lleva hechos + fuentes fenceadas del corpus",
           "especialista de hechos" in user_res and "<<<FUENTE 1" in user_res)
-    check("cp9-14 · la consulta FTS combina el mensaje del abogado con los hechos",
-          "¿Operó la caducidad?" in captured["gather_query"])
+    # Bugfix build_fts_query (research.py): la consulta FTS YA NO es el mensaje completo
+    # tal cual (websearch_to_tsquery lo AND-earía entero) — son los términos clave del
+    # mensaje ("operó", "caducidad"; "la" es stopword) unidos con OR.
+    check("cp9-14 · la consulta FTS trae los términos clave del mensaje del abogado (OR)",
+          "operó" in captured["gather_query"] and "caducidad" in captured["gather_query"]
+          and " or " in captured["gather_query"])
 
     # research_node FAIL-SOFT: el corpus caído no tumba el turno
     async def broken_gather(tenant_id, query, *, jurisdictions=None):

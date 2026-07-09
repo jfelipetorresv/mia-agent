@@ -16,12 +16,13 @@ que el knowledge de CP3): son datos, no instrucciones.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from ..jurisdiction.pack import load_pack
 from ..jurisdiction.resolver import resolve_jurisdictions
 from ..rag.sat_graph import SATGraph
-from . import untrusted
+from . import untrusted, verification
 
 logger = logging.getLogger("mia.agents.research")
 
@@ -71,6 +72,121 @@ def _ruling_reference(r: dict) -> str:
 def _clip(text: Any, limit: int = MAX_SOURCE_CHARS) -> str:
     s = str(text or "").strip()
     return s if len(s) <= limit else s[:limit].rstrip() + " […]"
+
+
+# ── construcción de la consulta FTS (bugfix: websearch_to_tsquery AND-ea TODOS los ──
+# términos no citados; una pregunta de abogado de 20-40 palabras casi nunca aparece
+# completa en un fts_vector -> 0 resultados. build_fts_query() extrae lo que de verdad
+# sirve para buscar: citas normativas explícitas (frase exacta) + términos clave sueltos
+# (unidos con OR, no AND) — ver docstring de build_fts_query.
+FTS_MAX_ELEMENTS = 12
+FTS_MIN_TERM_LEN = 4
+FTS_MIN_NUMBER_LEN = 4
+
+# Palabras vacías del español (artículos, preposiciones, pronombres, verbos auxiliares y
+# muletillas conversacionales frecuentes en la pregunta de un abogado). Whitelist NEGATIVA:
+# solo se descartan estas — cualquier término jurídico ("cliente", "demanda", "contesta",
+# "prescripción"...) sobrevive. Sin tildes normalizadas a propósito: los tokens SÍ
+# conservan tilde (websearch_to_tsquery + el diccionario 'spanish' las manejan), así que
+# la lista trae ambas formas donde aplica.
+STOPWORDS_ES: frozenset[str] = frozenset({
+    "que", "de", "la", "el", "en", "por", "para", "con", "una", "del", "los", "las",
+    "se", "es", "al", "lo", "como", "más", "pero", "sus", "le", "ya", "o", "este", "sí",
+    "porque", "esta", "entre", "cuando", "muy", "sin", "sobre", "también", "me", "hasta",
+    "hay", "donde", "quien", "desde", "todo", "nos", "durante", "todos", "uno", "les",
+    "ni", "contra", "otros", "ese", "eso", "ante", "ellos", "e", "esto", "mí", "antes",
+    "algunos", "qué", "unos", "yo", "otro", "otras", "otra", "él", "tanto", "esa",
+    "estos", "mucho", "quienes", "nada", "muchos", "cual", "poco", "ella", "estar",
+    "estas", "algunas", "algo", "nosotros", "mi", "mis", "tú", "te", "ti", "tu", "tus",
+    "ellas", "nosotras", "vosotros", "vosotras", "os", "mío", "mía", "favor", "podría",
+    "quisiera", "necesito", "ayuda", "hacer", "tiene", "tengo", "puede", "debe",
+    "sería", "fue", "ser", "hay",
+    # complemento de criterio (m1): conectores/auxiliares/muletillas conversacionales
+    # que sobreviven al filtro de longitud (>=4 chars) pero no aportan a la búsqueda.
+    "un", "una", "unas", "son", "está", "están", "eran", "era", "así", "cada", "cómo",
+    "si", "no", "pues", "cuál", "cuáles", "cuánto", "cuánta", "cuántos", "cuántas",
+    "dónde", "pasa", "tiempo", "vez", "caso", "puedo", "podemos", "debería", "quiero",
+    "quisiéramos", "gustaría", "quisieran", "buenas", "buenos", "días", "tardes",
+    "noches", "gracias", "saludos", "cordial", "cordialmente", "atentamente",
+    "estimado", "estimada", "doctor", "doctora", "señor", "señora", "abogado",
+    "abogada", "aquello", "aquel", "aquella",
+})
+
+_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _fallback_query(message: str, facts: str) -> str:
+    """Comportamiento previo (mensaje + arranque de hechos, sin tocar) — usado en
+    fail-open y como base de la consulta cuando no hay nada mejor que extraer."""
+    return (str(message or "") + "\n" + str(facts or "")[:300]).strip()
+
+
+def build_fts_query(message: str, facts: str = "", extra_patterns: list[str] | None = None) -> str:
+    """Consulta FTS del turno de investigación: citas normativas EXACTAS (entre
+    comillas, frase literal para websearch_to_tsquery) + términos clave sueltos, unidos
+    con ` or ` (OR, no AND — la falla de origen de este módulo era que el mensaje
+    completo del abogado viajaba tal cual y websearch_to_tsquery AND-ea todo término no
+    citado: una pregunta de 20-40 palabras exige que TODAS aparezcan en el fts_vector,
+    casi siempre 0 resultados).
+
+    Pasos:
+      1. Detecta citas normativas/jurisprudenciales explícitas (reusa
+         `verification.scan_citations` — mismo escáner del especialista de verificación)
+         sobre mensaje + arranque de hechos (300 chars, igual recorte que el comportamiento
+         anterior). Cada cita entra como frase exacta `"Ley 80 de 1993"`.
+      2. Tokeniza el TEXTO RESTANTE (sin los tramos ya capturados como cita), descarta
+         palabras vacías del español y tokens cortos (< 4 chars; números sueltos de
+         menos de 4 dígitos también se descartan — un año o un radicado corto no aporta
+         como palabra clave suelta), dedup preservando el orden de aparición.
+      3. Query final = citas (prioridad) + términos, topada a FTS_MAX_ELEMENTS, unidos
+         con ` or `.
+
+    FAIL-OPEN: si no se extrae nada (texto vacío, solo stopwords, solo ruido) devuelve
+    el comportamiento de SIEMPRE (mensaje + hechos[:300] sin tocar) — cero regresión.
+    """
+    message = str(message or "")
+    facts = str(facts or "")
+    combined = message + "\n" + facts[:300]
+
+    citations_raw = verification.scan_citations(
+        combined, verification.compile_patterns(extra_patterns))
+
+    # Quita los tramos ya reconocidos como cita del texto antes de tokenizar el resto
+    # (de atrás hacia adelante para no desplazar los offsets pendientes) — así el año o
+    # el número de una cita ("1993", "1437") no reaparece como término suelto.
+    remainder = combined
+    for c in sorted(citations_raw, key=lambda c: c["start"], reverse=True):
+        remainder = remainder[:c["start"]] + " " + remainder[c["end"]:]
+
+    quoted_citations: list[str] = []
+    seen_cit: set[str] = set()
+    for c in citations_raw:
+        cit = " ".join(c["citation"].split())  # colapsa espacios internos
+        key = cit.lower()
+        if key in seen_cit:
+            continue
+        seen_cit.add(key)
+        quoted_citations.append(f'"{cit}"')
+
+    terms: list[str] = []
+    seen_terms: set[str] = set()
+    for tok in _TOKEN_RE.findall(remainder):
+        low = tok.lower()
+        if low.isdigit():
+            if len(low) < FTS_MIN_NUMBER_LEN:
+                continue
+        else:
+            if len(low) < FTS_MIN_TERM_LEN or low in STOPWORDS_ES:
+                continue
+        if low in seen_terms:
+            continue
+        seen_terms.add(low)
+        terms.append(low)
+
+    elements = (quoted_citations + terms)[:FTS_MAX_ELEMENTS]
+    if not elements:
+        return _fallback_query(message, facts)
+    return " or ".join(elements)
 
 
 async def resolve_jurisdictions_for(tenant_id: str) -> list[str]:
