@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 type Milestone = {
   id: string;
@@ -28,7 +29,10 @@ function apiMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : fallback;
 }
 
-export default function MissionBoard({ matterId }: { matterId: string }) {
+// `compact`: se usa cuando el tablero vive en un espacio angosto (el aside del
+// asunto, junto al Diagnóstico) — apila la lista de misiones y el detalle en
+// vertical en vez del layout de dos columnas pensado para el ancho completo.
+export default function MissionBoard({ matterId, compact = false }: { matterId: string; compact?: boolean }) {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -276,8 +280,8 @@ export default function MissionBoard({ matterId }: { matterId: string }) {
       ) : null}
 
       {missions.length > 0 ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-          <ul className="flex shrink-0 gap-2 overflow-x-auto lg:w-52 lg:flex-col lg:overflow-visible">
+        <div className={cn("flex min-h-0 flex-1 flex-col gap-4", !compact && "lg:flex-row")}>
+          <ul className={cn("flex shrink-0 gap-2 overflow-x-auto", !compact && "lg:w-52 lg:flex-col lg:overflow-visible")}>
             {missions.map((m) => (
               <li key={m.id}>
                 <button
