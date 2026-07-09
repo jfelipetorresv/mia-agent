@@ -15,3 +15,4 @@ mia_backend.egg-info/
 # Herramientas locales de desarrollo (no del producto)
 .claude/
 frontend/.playwright-cli/
+.playwright-cli/
