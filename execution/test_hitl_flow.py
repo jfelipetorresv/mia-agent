@@ -96,12 +96,13 @@ def setup_data():
         b = c.execute("INSERT INTO tenants(name) VALUES('B test 1d') RETURNING id").fetchone()[0]
         m = c.execute("INSERT INTO matters(tenant_id,title) VALUES(%s,'Asunto 1d') RETURNING id", (a,)).fetchone()[0]
         m2 = c.execute("INSERT INTO matters(tenant_id,title) VALUES(%s,'Asunto 1d stream') RETURNING id", (a,)).fetchone()[0]
-    return str(a), str(b), str(m), str(m2)
+        m3 = c.execute("INSERT INTO matters(tenant_id,title) VALUES(%s,'Asunto 1d rechazo') RETURNING id", (a,)).fetchone()[0]
+    return str(a), str(b), str(m), str(m2), str(m3)
 
 
-def cleanup(a, b, m, m2):
+def cleanup(a, b, m, m2, m3):
     with psycopg.connect(autocommit=True, **PG) as c:
-        for tid in (thread_id_for(a, m), thread_id_for(a, m2)):
+        for tid in (thread_id_for(a, m), thread_id_for(a, m2), thread_id_for(a, m3)):
             for t in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
                 c.execute(f"DELETE FROM {t} WHERE thread_id=%s", (tid,))
         c.execute("DELETE FROM tenants WHERE id = ANY(%s)", ([a, b],))
@@ -158,6 +159,32 @@ async def graph_flow(a, b, m, trace_dir):
         await pool.close_pool()
 
 
+# ── B1 (frente B): el motivo del rechazo llega a la traza ──────────────────
+async def reject_flow(a, m3, trace_dir):
+    """Corre el grafo hasta el interrupt y lo reanuda con un RECHAZO + motivo; verifica que
+    la traza final registra hitl_outcome='rejected' y el motivo textual en rejection_reason."""
+    await pool.open_pool()
+    try:
+        tc = TraceCapture(trace_dir)
+        cfg = {"configurable": {"thread_id": thread_id_for(a, m3)}}
+        inp = initial_state(a, m3, "¿Prescribió la acción?",
+                            profile_snapshot={"despacho": "Defendemos aseguradoras."})
+        async with open_checkpointer() as cp:
+            graph = build_matter_graph(cp, trace_capture=tc)
+            _ = [ch async for ch in graph.astream(inp, cfg, stream_mode="updates")]
+        motivo = "Confundió la caducidad con la prescripción; la excepción correcta era otra."
+        async with open_checkpointer() as cp:
+            graph = build_matter_graph(cp, trace_capture=tc)
+            _ = [ch async for ch in graph.astream(
+                Command(resume={"decision": "rejected", "feedback": motivo}),
+                cfg, stream_mode="updates")]
+        traces = tc.read(a)
+        last = traces[-1] if traces else {}
+        return {"outcome": last.get("hitl_outcome"), "reason": last.get("rejection_reason") or ""}
+    finally:
+        await pool.close_pool()
+
+
 # ── HTTP (401 cruzado + stream SSE del dueño) ──────────────────────────────
 def api_checks(a, b, m, m2):
     import jwt
@@ -188,7 +215,7 @@ def main() -> int:
         print("  [FAIL] JWT_SECRET vacío en .env — necesario para el test HTTP")
         return 1
 
-    a, b, m, m2 = setup_data()
+    a, b, m, m2, m3 = setup_data()
     trace_dir = tempfile.mkdtemp(prefix="mia_traces_")
     try:
         obs = asyncio.run(graph_flow(a, b, m, trace_dir))
@@ -218,6 +245,13 @@ def main() -> int:
         check("la traza tiene los 8 campos requeridos", obs["trace_fields"])
         check("la traza guarda el borrador final como output", obs["trace_out"] == obs["draft2"])
 
+        # B1 · el rechazo con motivo escribe rejection_reason en la traza
+        rej = asyncio.run(reject_flow(a, m3, trace_dir))
+        check("B1: el rechazo registra hitl_outcome='rejected' en la traza",
+              rej["outcome"] == "rejected")
+        check("B1: el motivo del abogado queda en rejection_reason de la traza",
+              rej["reason"].startswith("Confundió la caducidad"))
+
         # 3 · HTTP
         api = api_checks(a, b, m, m2)
         check("tenant cruzado (B aprueba asunto de A) -> 401", api["xtenant_status"] == 401)
@@ -227,7 +261,7 @@ def main() -> int:
         check("stream SIN jerga técnica (§G)", api["stream_no_jargon"])
     finally:
         shutil.rmtree(trace_dir, ignore_errors=True)
-        cleanup(a, b, m, m2)
+        cleanup(a, b, m, m2, m3)
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

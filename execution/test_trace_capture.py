@@ -124,6 +124,24 @@ def main() -> int:
         check("CP-C3: activated_playbooks SOLO (sin otros campos HITL) también es v2",
               v2solo.schema == "mia.trace.v2")
 
+        # 8 · B1 (frente B): el motivo del rechazo se captura, hace roundtrip y sube a v2.
+        rej = tc.capture(tenant_id="t-4", matter_id="m-1", input="i", output="o",
+                         model="claude-sonnet", tokens=10, latency_ms=50.0,
+                         hitl_outcome="rejected",
+                         rejection_reason="Confundió caducidad con prescripción.")
+        rec4 = tc.read("t-4")[0]
+        check("B1: rejection_reason hace roundtrip por el JSONL",
+              rec4.get("rejection_reason") == "Confundió caducidad con prescripción."
+              and rec4.get("schema") == "mia.trace.v2")
+        check("B1: rejection_reason SOLO (sin otros campos HITL) también sube a v2",
+              tc.capture(tenant_id="t-4", matter_id="m-2", input="i", output="o",
+                         model="m", tokens=1, latency_ms=1.0,
+                         rejection_reason="motivo").schema == "mia.trace.v2")
+        # Compat hacia atrás: una traza v1 (sin el campo) trae rejection_reason="" por default.
+        rec1 = tc.read("t-1")[0]
+        check("B1: traza sin rechazo trae rejection_reason vacío (compat)",
+              rec1.get("rejection_reason", "") == "")
+
     # 6 · dir por defecto.
     default = _default_traces_dir()
     check("el dir por defecto termina en mia-data/traces",

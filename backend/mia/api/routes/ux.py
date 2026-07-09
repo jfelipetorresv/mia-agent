@@ -69,6 +69,22 @@ _JOB_LABEL = {
     "dreams_weekly": "Consolidación semanal",
 }
 
+# B4 (frente B): el nombre del concepto de una `wiki_correction` vive en la columna
+# `target_concept` (migración 026). Antes viajaba codificado dentro de `rationale` con
+# este prefijo — el parseo por texto libre quedaba roto en silencio si el prefijo
+# cambiaba o el rationale se editaba (hallazgo de revisor capa 2); se conserva SOLO
+# como fallback de lectura para filas creadas antes de la migración.
+_WIKI_CORRECTION_RATIONALE_PREFIX = "Corrección sugerida para "
+
+
+def _concept_from_wiki_correction(rationale: str) -> str:
+    """Fallback legado: extrae el concepto del `rationale` de una wiki_correction creada
+    antes de que existiera la columna `target_concept`."""
+    r = (rationale or "").strip()
+    if r.startswith(_WIKI_CORRECTION_RATIONALE_PREFIX):
+        return r[len(_WIKI_CORRECTION_RATIONALE_PREFIX):].strip()
+    return ""
+
 
 def _available_models() -> list[str]:
     cfg = Path(__file__).resolve().parents[4] / "litellm_config.yaml"
@@ -457,7 +473,8 @@ async def list_proposals(request: Request):
             # QUÉ procedimiento se modificará al aplicar (hallazgo mayor del revisor).
             await cur.execute(
                 "SELECT fp.id, fp.proposal_type, fp.suggested_content, fp.rationale, "
-                "       fp.signal_count, fp.created_at, pb.title AS target_title "
+                "       fp.signal_count, fp.created_at, "
+                "       COALESCE(pb.title, fp.target_concept) AS target_title "
                 "FROM feedback_proposals fp "
                 "LEFT JOIN playbooks pb ON pb.id = fp.target_playbook_id "
                 "WHERE fp.status = 'pending' ORDER BY fp.created_at DESC")
@@ -476,11 +493,12 @@ async def apply_proposal(proposal_id: str, request: Request):
     async with pool.tenant_connection(tid) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                "SELECT proposal_type, target_playbook_id, suggested_content "
+                "SELECT proposal_type, target_playbook_id, suggested_content, rationale, target_concept "
                 "FROM feedback_proposals WHERE id = %s::uuid AND status = 'pending'", (proposal_id,))
             p = await cur.fetchone()
         if not p:
             raise HTTPException(status_code=404, detail="Sugerencia no encontrada o ya revisada.")
+        note: str | None = None
         if p["proposal_type"] == "improve_playbook" and p["target_playbook_id"]:
             # H.6: no se puede sobrescribir un playbook protegido (semilla/core) desde una
             # sugerencia automática. La propuesta queda pendiente; se responde 409.
@@ -508,11 +526,38 @@ async def apply_proposal(proposal_id: str, request: Request):
                 "VALUES (%s::uuid, %s, %s, %s, %s) ON CONFLICT (tenant_id, title) DO NOTHING",
                 (tid, f"Sugerencia {proposal_id[:8]}", "Propuesta aplicada de Mia",
                  "(por afinar)", p["suggested_content"]))
-        # flag_gap: no crea playbook; solo se marca como atendida.
-        await conn.execute(
-            "UPDATE feedback_proposals SET status = 'applied', reviewed_at = now() "
-            "WHERE id = %s::uuid", (proposal_id,))
-    return {"status": "applied"}
+        # wiki_correction: el append al archivo del concepto es E/S de disco bloqueante
+        # (el vault puede vivir en OneDrive) — se hace DESPUÉS de soltar esta conexión
+        # pooled (revisor capa 2: sostenerla durante la escritura arriesgaba agotar el
+        # pool del tenant bajo carga concurrente). Para los demás tipos, se marca
+        # 'applied' aquí mismo, igual que antes.
+        if p["proposal_type"] != "wiki_correction":
+            await conn.execute(
+                "UPDATE feedback_proposals SET status = 'applied', reviewed_at = now() "
+                "WHERE id = %s::uuid", (proposal_id,))
+
+    if p["proposal_type"] == "wiki_correction":
+        # B4 (frente B): aprobar una corrección de la wiki la APLICA de verdad
+        # (determinista, sin LLM): appendea la corrección del abogado al archivo del
+        # concepto. Si el concepto ya no existe, se marca atendida con nota (fail-open,
+        # sin 500) — la corrección igual quedó registrada como propuesta.
+        concept = p.get("target_concept") or _concept_from_wiki_correction(p["rationale"])
+        appended = False
+        if concept:
+            try:
+                appended = await WikiManager().append_correction(
+                    tid, concept, p["suggested_content"] or "")
+            except Exception:  # noqa: BLE001 — el archivo de wiki nunca tumba la aprobación
+                logger.exception(
+                    "no se pudo appendear la corrección al concepto '%s' (tenant=%s)",
+                    concept, tid)
+        if not appended:
+            note = "La corrección quedó registrada; no se encontró el concepto para actualizar."
+        async with pool.tenant_connection(tid) as conn2:
+            await conn2.execute(
+                "UPDATE feedback_proposals SET status = 'applied', reviewed_at = now() "
+                "WHERE id = %s::uuid", (proposal_id,))
+    return {"status": "applied", "note": note} if note else {"status": "applied"}
 
 
 @router.post("/proposals/{proposal_id}/ignore")
@@ -623,9 +668,9 @@ async def wiki_feedback(concept_name: str, request: Request, body: WikiFeedbackB
     async with pool.tenant_connection(tid) as conn:
         await conn.execute(
             "INSERT INTO feedback_proposals "
-            "  (tenant_id, proposal_type, suggested_content, rationale) "
-            "VALUES (%s::uuid, 'wiki_correction', %s, %s)",
-            (tid, body.correction, f"Corrección sugerida para {concept_name}"),
+            "  (tenant_id, proposal_type, suggested_content, rationale, target_concept) "
+            "VALUES (%s::uuid, 'wiki_correction', %s, %s, %s)",
+            (tid, body.correction, f"{_WIKI_CORRECTION_RATIONALE_PREFIX}{concept_name}", concept_name),
         )
     return {"status": "pending"}
 
@@ -918,10 +963,15 @@ async def dashboard_stats(request: Request):
     gross_usd = round(hours_saved * vcfg["hourly_rate_usd"], 2)
     net_usd = round(gross_usd - cost_month_usd, 2)
 
+    # B3 (frente B): el panel muestra el reloj REAL de los jobs (next_run/last_run). Hay que
+    # leer el scheduler VIVO (el que corre en el lifespan, api/main.py) — no construir uno
+    # nuevo, que nace con next_run/last_run en None. Fallback fail-open a uno recién armado
+    # (p. ej. en tests sin lifespan): el panel sigue respondiendo aunque sin horas reales.
+    live = getattr(request.app.state, "scheduler", None)
+    raw_jobs = live.list_jobs() if live is not None else build_scheduler().list_jobs()
     jobs = [{"label": _JOB_LABEL.get(j["name"], j["name"]),
              "next_run": j["next_run"], "last_run": j["last_run"]}
-            for j in build_scheduler().list_jobs()]
-    raw_jobs = build_scheduler().list_jobs()
+            for j in raw_jobs]
     dreams_next = next((j["next_run"] for j in raw_jobs if j["name"] == "dreams_weekly"), None)
     concepts_count = len(await WikiManager().list_concepts(tid))
     dreams_metrics = ((config_json or {}).get("dreams") or {}).get("last_metrics") or {}

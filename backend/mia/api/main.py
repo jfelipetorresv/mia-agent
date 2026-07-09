@@ -18,9 +18,9 @@ from ..cron import build_scheduler
 from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, auth, automations, curator, folders, hitl, mailbox,
-                     matter_folders, mcp, missions, personas, policy, settings, setup,
-                     sources, speech, stream, traces, ux, value)
+from .routes import (assistant, auth, automations, curator, folders, hitl, learning,
+                     mailbox, matter_folders, mcp, missions, personas, policy, settings,
+                     setup, sources, speech, stream, traces, ux, value)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -149,6 +149,8 @@ app.include_router(settings.router)
 app.include_router(ux.router)
 # HITL del Curator (H.2, cierra Riesgo #19): propuestas de depuración de playbooks.
 app.include_router(curator.router)
+# Frente B (B2): disparo manual del aprendizaje de Mia → POST /api/learning/run.
+app.include_router(learning.router)
 # Búsqueda FTS de trazas (H.3): session_search sin LLM.
 app.include_router(traces.router)
 # MODO ASISTENTE (CP-B1, Pilar B): conversación libre fuera de un asunto → /api/assistant/*.

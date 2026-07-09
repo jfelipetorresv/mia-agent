@@ -104,6 +104,18 @@ async def run_checks() -> None:
             hits = await mgr.search_wiki(tenant, "Patron")
             check("search_wiki devuelve excerpt y metadata", bool(hits) and {"concept", "excerpt", "confidence", "case_count"}.issubset(hits[0].keys()))
 
+            # B4 (frente B): append_correction appendea la corrección del abogado al concepto.
+            appended = await mgr.append_correction(
+                tenant, "Concepto Alfa", "El plazo correcto es de dos años, no de uno.")
+            alfa_txt = mgr.concept_path(tenant, "Concepto Alfa").read_text(encoding="utf-8")
+            check("B4 append_correction: devuelve True y appendea la sección al concepto existente",
+                  appended is True and "## Corrección del abogado" in alfa_txt
+                  and "El plazo correcto es de dos años" in alfa_txt)
+            missing = await mgr.append_correction(
+                tenant, "Concepto Inexistente", "cualquier corrección")
+            check("B4 append_correction: concepto inexistente -> False (fail-open, sin error)",
+                  missing is False)
+
             old = mgr.concept_path(tenant, "Concepto Viejo")
             old.write_text(
                 "---\nconcept: Concepto Viejo\nconfidence: 0.20\nlast_updated: 2000-01-01\ncase_count: 1\n---\n# Concepto Viejo\n",

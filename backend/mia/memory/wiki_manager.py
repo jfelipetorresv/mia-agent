@@ -345,6 +345,23 @@ class WikiManager:
                 low_confidence.append(name)
         return {"stale": stale, "orphan": orphan, "low_confidence": low_confidence}
 
+    async def append_correction(self, tenant_id: str, concept_name: str, correction: str) -> bool:
+        """Appendea una corrección del abogado al archivo del concepto (frente B · B4).
+
+        Determinista, SIN LLM: añade al final del markdown una sección
+        `## Corrección del abogado (YYYY-MM-DD)` con el texto tal cual. Devuelve True si el
+        concepto existía y se escribió; False si no existe (fail-open: quien llama registra
+        la propuesta como atendida sin archivo, sin error 500)."""
+        await self.init_wiki(tenant_id)
+        path = self.concept_path(tenant_id, concept_name)
+        if not path.exists():
+            return False
+        text = (correction or "").strip()
+        section = f"\n\n## Corrección del abogado ({_today()})\n{text}\n"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(section)
+        return True
+
     async def archive_concept(self, tenant_id: str, concept_name: str) -> None:
         await self.init_wiki(tenant_id)
         src = self.concept_path(tenant_id, concept_name)

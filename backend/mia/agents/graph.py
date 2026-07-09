@@ -455,11 +455,17 @@ class MatterGraphBuilder:
         return await self._research_single(state, md, jurisdictions)
 
     def _research_query(self, state: MatterState, md: dict) -> tuple[str, str]:
-        """(mensaje del abogado, consulta FTS) del turno de investigación. La consulta
-        FTS = mensaje + arranque de los hechos (los hechos completos diluirían el ranking)."""
+        """(mensaje del abogado, consulta FTS) del turno de investigación.
+
+        La consulta FTS delega en `research.build_fts_query` (bugfix): citas
+        normativas explícitas como frase exacta + términos clave sueltos unidos con OR,
+        en vez del mensaje completo + hechos[:300] tal cual (websearch_to_tsquery AND-ea
+        todo término no citado -> una pregunta larga de abogado casi nunca hace match
+        completo -> 0 resultados). Fail-open: build_fts_query cae al comportamiento
+        anterior si no logra extraer nada útil."""
         msg = _last_user_message(state)
         facts = str(md.get("facts") or "")
-        return msg, (msg + "\n" + facts[:300]).strip()
+        return msg, research.build_fts_query(msg, facts)
 
     async def _research_single(
         self, state: MatterState, md: dict, jurisdictions: list[str],
@@ -813,6 +819,12 @@ class MatterGraphBuilder:
         # Señales HITL para el Feedback processor (3e, decisión #19): la traza v2 registra
         # el desenlace, el borrador original vs. final y los documentos recuperados.
         _OUTCOME = {"approved": "approved", "rejected": "rejected", "editing": "edited"}
+        # B1 (frente B): cuando el abogado RECHAZA, su motivo textual (RejectBody.feedback,
+        # llega en decision["feedback"]) es el oro del loop — se guarda en la traza truncado
+        # a 2000 chars para que el Feedback processor ataque el porqué real del rechazo.
+        rejection_reason = ""
+        if status == "rejected":
+            rejection_reason = (decision.get("feedback") or "")[:2000]
         retrieved_doc_ids = [d["id"] for d in (state.get("documents") or [])
                              if isinstance(d, dict) and d.get("id")]
         started = md.get("turn_started_at")
@@ -832,6 +844,7 @@ class MatterGraphBuilder:
             draft_final=final,
             retrieved_doc_ids=retrieved_doc_ids,
             activated_playbooks=activated or None,
+            rejection_reason=rejection_reason or None,
         )
         trace_id = f"{state['tenant_id']}:{state['matter_id']}:{trace.timestamp}"
         # Dual-write H.3: además del JSONL (SFT), indexa la traza en Postgres para session_search

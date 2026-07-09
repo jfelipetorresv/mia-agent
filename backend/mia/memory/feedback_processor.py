@@ -88,9 +88,9 @@ class FeedbackProcessor:
         traza v2) — así la propuesta apunta al procedimiento que participó en el turno
         que falló, no a uno arbitrario."""
         signals: dict[str, dict] = {
-            "HITL_REJECTION": {"count": 0, "trace_ids": [], "playbooks": {}},
-            "HITL_EDIT": {"count": 0, "trace_ids": [], "playbooks": {}},
-            "NO_RESULT": {"count": 0, "trace_ids": [], "playbooks": {}},
+            "HITL_REJECTION": {"count": 0, "trace_ids": [], "playbooks": {}, "rejection_reasons": []},
+            "HITL_EDIT": {"count": 0, "trace_ids": [], "playbooks": {}, "rejection_reasons": []},
+            "NO_RESULT": {"count": 0, "trace_ids": [], "playbooks": {}, "rejection_reasons": []},
         }
 
         def _hit(signal: str, trace: dict) -> None:
@@ -99,6 +99,11 @@ class FeedbackProcessor:
             for pid in trace_playbook_ids(trace):
                 pbs = signals[signal]["playbooks"]
                 pbs[pid] = pbs.get(pid, 0) + 1
+            # B1: acumula el motivo textual del rechazo (traza v2). Solo lo traen las
+            # trazas de rechazo; el resto lo deja vacío. Es el "porqué" que redacta la propuesta.
+            reason = (trace.get("rejection_reason") or "").strip()
+            if reason:
+                signals[signal]["rejection_reasons"].append(reason)
 
         for t in traces:
             outcome = t.get("hitl_outcome")
@@ -152,7 +157,8 @@ class FeedbackProcessor:
                 rationale += (f" Se sugiere revisar el procedimiento «{brief['title']}» "
                               "(el más usado del despacho; las trazas no señalan uno específico).")
             suggested = await asyncio.to_thread(
-                self._draft_proposal, signal, info["count"], brief)
+                self._draft_proposal, signal, info["count"], brief,
+                info.get("rejection_reasons") or [])
             proposals.append({
                 "type": ptype,
                 "target_playbook_id": target,
@@ -192,19 +198,32 @@ class FeedbackProcessor:
             return None
         return {"title": row[0], "content": (row[1] or "")[:self._BRIEF_CONTENT_MAX_CHARS]}
 
+    # Cuántos motivos de rechazo distintos ve el LLM (evita prompts enormes si hay muchos).
+    _MAX_REJECTION_REASONS = 10
+
     @staticmethod
-    def _draft_proposal(signal: str, count: int, brief: dict | None = None) -> str:
+    def _draft_proposal(signal: str, count: int, brief: dict | None = None,
+                        rejection_reasons: list[str] | None = None) -> str:
         """Pide al LLM (task=curator → claude-sonnet) el contenido de la propuesta.
 
         Hallazgo del revisor CP-C3: cuando hay un playbook target, el LLM ve su
         contenido ACTUAL y propone la versión mejorada COMPLETA (aplicar la propuesta
-        reemplaza el contenido — sin ver el original, la metodología real se perdería)."""
+        reemplaza el contenido — sin ver el original, la metodología real se perdería).
+
+        B1 (frente B): cuando el abogado dejó motivos al rechazar, viajan como contexto
+        para que la mejora ataque el porqué real del rechazo, no el mero síntoma."""
         system = (
             "Eres un curador de la metodología de un despacho. A partir de una señal "
             "repetida en el trabajo de Mia, propones UNA mejora concreta y accionable a los "
             "playbooks (o un playbook nuevo, o señalar un vacío de conocimiento). Devuelve "
             "solo el texto de la propuesta.")
         user = f"Señal: {signal}. Ocurrencias en el período: {count}."
+        reasons = [r.strip() for r in (rejection_reasons or []) if r and r.strip()]
+        if reasons:
+            viñetas = "\n".join(f"- {r}" for r in reasons[:FeedbackProcessor._MAX_REJECTION_REASONS])
+            user += (
+                "\n\nMotivos que dio el abogado al rechazar:\n" + viñetas +
+                "\n\nLa mejora debe atender estos motivos concretos.")
         if brief:
             system = (
                 "Eres un curador de la metodología de un despacho. Un procedimiento existente "

@@ -93,6 +93,10 @@ def cleanup(tid: str, threads: list[str]) -> None:
             for t in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
                 c.execute(f"DELETE FROM {t} WHERE thread_id=%s", (th,))
         c.execute("DELETE FROM tenants WHERE id=%s", (tid,))
+    # B4: la wiki del tenant de prueba vive en MIA_HOME/wiki/{tid} — se borra al terminar.
+    import shutil
+    from mia.memory.wiki_manager import WikiManager
+    shutil.rmtree(WikiManager().wiki_dir(tid), ignore_errors=True)
 
 
 def make_pdf() -> bytes:
@@ -224,6 +228,33 @@ def run_checks(client, auth, tid) -> list[str]:
     check("GET /api/dashboard/stats -> 200 con todas las claves",
           r.status_code == 200 and keys.issubset(r.json().keys()))
     visible_payloads.append(r.text)
+
+    # 16b · B2 (frente B) · disparo manual del aprendizaje
+    r = client.post("/api/learning/run", headers=auth)
+    check("POST /api/learning/run -> 200 con propuestas_nuevas",
+          r.status_code == 200 and "propuestas_nuevas" in r.json()
+          and isinstance(r.json()["propuestas_nuevas"], int))
+
+    # 16c · B4 (frente B) · aprobar una wiki_correction la APLICA (appendea al concepto)
+    from mia.memory.wiki_manager import WikiManager
+    wm = WikiManager()
+    cpath = wm.concept_path(tid, "Caducidad")
+    cpath.parent.mkdir(parents=True, exist_ok=True)
+    cpath.write_text(
+        "---\nconcept: Caducidad\n---\n# Caducidad\nContenido base del concepto.\n",
+        encoding="utf-8")
+    r = client.post("/api/wiki/concepts/Caducidad/feedback", headers=auth,
+                    json={"correction": "El término es de dos años contados desde el daño."})
+    check("POST /api/wiki/concepts/{c}/feedback -> 201", r.status_code == 201)
+    props = client.get("/api/proposals", headers=auth).json()
+    wc = next((p for p in props if p["type"] == "Corrección pendiente"), None)
+    check("la corrección aparece como propuesta pendiente", wc is not None)
+    r = client.post(f"/api/proposals/{wc['id']}/apply", headers=auth)
+    check("POST /api/proposals/{id}/apply (wiki_correction) -> 200 applied",
+          r.status_code == 200 and r.json().get("status") == "applied")
+    ctxt = cpath.read_text(encoding="utf-8")
+    check("B4: la corrección del abogado quedó appendida al archivo del concepto",
+          "## Corrección del abogado" in ctxt and "El término es de dos años" in ctxt)
 
     # 17 · §G — sin jerga técnica en lo que ve el abogado
     blob = " ".join(visible_payloads).lower()

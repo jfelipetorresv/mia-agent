@@ -173,6 +173,35 @@ async def db_checks(fp: FeedbackProcessor, tc: TraceCapture, t: dict) -> None:
         nores = await fp.analyze([trace_dict("n1", outcome="approved", docs=[])])
         check("analyze: retrieved_doc_ids=[] -> NO_RESULT", nores["NO_RESULT"]["count"] == 1)
 
+        # === B1 (frente B): el motivo del rechazo alimenta la propuesta ===
+        rr = await fp.analyze([
+            trace_dict("rr1", outcome="rejected", docs=["d"]) | {"rejection_reason": "Motivo A"},
+            trace_dict("rr2", outcome="rejected", docs=["d"]) | {"rejection_reason": "Motivo B"},
+            trace_dict("rr3", outcome="rejected", docs=["d"]),   # sin motivo → no aporta viñeta
+        ])
+        check("B1 analyze: la señal de rechazo acumula los motivos textuales no vacíos",
+              rr["HITL_REJECTION"]["rejection_reasons"] == ["Motivo A", "Motivo B"])
+
+        # _draft_proposal debe llevar esos motivos al prompt de la propuesta (spy sobre el LLM).
+        captured: dict = {}
+
+        def _spy(messages, *, task=None, model=None, **kw):
+            captured["user"] = messages[-1]["content"]
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="X"))],
+                usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+
+        _orig = llm.call_llm
+        llm.call_llm = _spy
+        try:
+            FeedbackProcessor._draft_proposal(
+                "HITL_REJECTION", 2, None, ["Confundió las fechas", "Faltó la excepción"])
+        finally:
+            llm.call_llm = _orig
+        check("B1 _draft_proposal: los motivos del abogado viajan al prompt de la propuesta",
+              "Motivos que dio el abogado al rechazar" in captured.get("user", "")
+              and "Confundió las fechas" in captured.get("user", ""))
+
         # === propose: umbral + tipos ===
         def analysis(signal, count):
             base = {"HITL_REJECTION": {"count": 0, "trace_ids": []},

@@ -569,6 +569,9 @@ function Sugerencias() {
   const [report, setReport] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // B2 · disparo manual del aprendizaje ("Revisar ahora").
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewMsg, setReviewMsg] = useState<string | null>(null);
 
   async function load() {
     setItems(await apiGet<Proposal[]>("/api/proposals").catch(() => []));
@@ -599,6 +602,50 @@ function Sugerencias() {
     await load();
   }
 
+  // B2 · Mia revisa su trabajo reciente AHORA (sin esperar al ciclo diario) y propone mejoras.
+  async function revisarAhora() {
+    setReviewMsg(null);
+    setReviewing(true);
+    try {
+      const res = await apiSend<{ propuestas_nuevas: number }>("POST", "/api/learning/run");
+      await load();
+      const n = res?.propuestas_nuevas ?? 0;
+      setReviewMsg(
+        n > 0
+          ? `Mia propuso ${n} mejora${n === 1 ? "" : "s"} nueva${n === 1 ? "" : "s"} para tu revisión.`
+          : "Mia no encontró nada nuevo que proponer todavía."
+      );
+    } catch {
+      setReviewMsg("No se pudo completar la revisión. Intenta de nuevo.");
+    } finally {
+      setReviewing(false);
+    }
+  }
+
+  const reviewBar = (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        {reviewMsg ? (
+          <p className="text-sm text-muted-foreground">{reviewMsg}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Mia revisa su trabajo reciente y te propone mejoras. Puedes pedirle que revise ahora.
+          </p>
+        )}
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={revisarAhora}
+        disabled={reviewing}
+        className="gap-1.5"
+      >
+        {reviewing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+        {reviewing ? "Mia está revisando su trabajo reciente…" : "Revisar ahora"}
+      </Button>
+    </div>
+  );
+
   if (loading) {
     return (
       <div className="space-y-3">
@@ -610,21 +657,25 @@ function Sugerencias() {
 
   if (items.length === 0 && curator.length === 0 && !report) {
     return (
-      <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-          <Lightbulb className="h-6 w-6" />
+      <div className="space-y-4">
+        {reviewBar}
+        <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <Lightbulb className="h-6 w-6" />
+          </div>
+          <h2 className="text-lg font-medium">Mia aún no propone mejoras</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+            Cuando Mia detecte formas de mejorar sus guías o de ordenar el conocimiento del
+            despacho, te las propondrá aquí. Nada cambia sin tu aprobación.
+          </p>
         </div>
-        <h2 className="text-lg font-medium">Mia aún no propone mejoras</h2>
-        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-          Cuando Mia detecte formas de mejorar sus guías o de ordenar el conocimiento del
-          despacho, te las propondrá aquí. Nada cambia sin tu aprobación.
-        </p>
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
+      {reviewBar}
       {report ? (
         <div className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold">

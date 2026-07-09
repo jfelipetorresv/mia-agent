@@ -70,6 +70,10 @@ class Trace:
     draft_final: Optional[str] = None         # texto final (== output)
     retrieved_doc_ids: Optional[list] = None  # ids de docs citados; [] = NO_RESULT
     activated_playbooks: Optional[list] = None  # ids activados en draft (GEPA/Dreams)
+    # Motivo textual que dio el abogado al RECHAZAR el borrador (frente B · B1). El
+    # oro del loop de aprendizaje: sin esto la propuesta ataca el síntoma, no el porqué.
+    # Vacío ("") en trazas que no son rechazo y en trazas viejas (compat hacia atrás).
+    rejection_reason: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -110,6 +114,7 @@ class TraceCapture:
         draft_final: str | None = None,
         retrieved_doc_ids: list | None = None,
         activated_playbooks: list | None = None,
+        rejection_reason: str | None = None,
     ) -> Trace:
         """Genera una traza y la añade (append) al JSONL del tenant. Devuelve la traza.
 
@@ -118,6 +123,7 @@ class TraceCapture:
         ts = timestamp or datetime.now(timezone.utc).isoformat()
         is_v2 = any(v is not None for v in (
             hitl_outcome, draft_original, draft_final, retrieved_doc_ids, activated_playbooks,
+            rejection_reason,
         ))
         trace = Trace(
             tenant_id=tenant_id,
@@ -134,6 +140,7 @@ class TraceCapture:
             draft_final=draft_final,
             retrieved_doc_ids=retrieved_doc_ids,
             activated_playbooks=activated_playbooks,
+            rejection_reason=rejection_reason or "",
         )
         path = self._path_for(tenant_id)
         with path.open("a", encoding="utf-8") as f:
