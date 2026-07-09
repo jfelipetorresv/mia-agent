@@ -1702,3 +1702,69 @@ motor de CP-Z1 no tenía botón — inusable para el usuario objetivo.
 **(A) Tablero de misión por expediente.** Migración `024_missions.sql` (`missions` + `mission_milestones`, RLS fail-closed ENABLE+FORCE, GRANT a mia_app; **SIN columna de fecha** — regla dura: Mia nunca calcula plazos). `execution/init_missions.py`. Paquete `backend/mia/missions/`: `decompose.py` (descompone un objetivo en hitos vía LLM auxiliar barato `task='mission_decompose'` —respeta política del despacho, en soberano local— con GUARDAS DETERMINISTAS: `_PROCEDURAL_RE` marca `is_procedural` aunque el modelo no lo diga —fail-closed sobre "nunca plazos"—, prompt prohíbe fechas, anti-invención con plantilla genérica fail-soft, tope MAX_MILESTONES), `service.py` (`MissionService` CRUD bajo `pool.tenant_connection`; verifica PROPIEDAD del expediente vía `_matter_context` bajo RLS —cierra el hueco del FK que no filtra por tenant—; topes MAX_MISSIONS_PER_MATTER/MAX_MILESTONES_PER_MISSION; consent-first: la descomposición PROPONE hitos 'queued' editables, nada se auto-ejecuta). Router `api/routes/missions.py` (9 endpoints bajo `/api/missions`, patrón de personas: `request.state.tenant_id`, 422 validación/404/502 en llano §G) + registro en `api/main.py`. Tarea `mission_decompose` añadida a `_AUX_TASKS` y `_TASK_FALLBACK_CHAINS` en `agent/llm.py`.
 
 **Verificación 3 capas:** Capa 1 — 3 gates nuevos: `test_delegation.py` **11/11** (orden estable, fail-soft, concurrencia acotada real, tope duro, saturación), `test_missions.py` **40/40** (guardas de descomposición incl. fuerza-procesal; CRUD e hitos; topes; PROPIEDAD del expediente ajeno→MissionError; AISLAMIENTO B↛A completo; parseo JSON tolerante; fail-soft del modelo→plantilla), `test_research_swarm.py` **21/21** (1-juris=simple sin costo extra; 2-juris=workers+verificación por rama+síntesis; usage acumulado en serie; md aislado por worker; fail-soft total→simple; **M1** shrink por worker; **m4** degradación por tope; **m1** dedup). Regresión **ALL PASS (59 suites)** ×2 con `test_rls` HALT. Un fix de compat: `test_document_pipeline.py` stub `fake_gather` firma nueva `jurisdictions=`. **Capa 2 (revisor adversarial independiente, contexto fresco):** confirmó CORRECTOS RLS/aislamiento, regla de plazos (sin columna de fecha + guarda fail-closed), §G, fail-soft, concurrencia de usage (Lock en `usage.record`), SQL parametrizado, TOCTOU de `create_mission` cerrado (re-valida propiedad en la 2ª conexión). **1 MAYOR + 2 MENORES corregidos y RE-VERIFICADOS ANTES del commit** (veredicto del revisor: "M1/m1/m4 CERRADO; sin motivo para bloquear el commit"): (M1) carrera sobre `self._compressor` compartido —stateful— entre workers paralelos → ahora cada worker pasa su propio `shrink` a `_llm`, que así jamás alcanza el compresor; (m1) `resolve_jurisdictions_for` no deduplicaba → workers/costo duplicados con config sucia → dedup; (m4) el swarm amplifica el costo de un turno ya admitido por el tope de entrada → `_research_swarm` consulta `budget_status` y si el despacho ya superó el tope degrada al camino simple (fail-open). 2 residuales aceptados (Riesgo #52): (m2) colisión silenciosa de `seq` de hitos —orden determinista por desempate, UNIQUE complicaría reordenar—; (m3) `matter_id` en `to_public` —vínculo que el frontend necesita, no jerga §G, no filtra tenant—. **Capa 3: PENDIENTE de Cursor** (tablero de misión; endpoints en HANDOFF §CP-E5). A/B: la investigación en paralelo es INERTE para Lexia (mono-jurisdicción); `docs/comparacion-cpe5.md` explica ANTES/DESPUÉS y por qué no hay corrida en vivo (falta corpus de 2ª jurisdicción). **Commits en rama `feat/cp-e5-delegacion-mision`; merge+push a main PENDIENTE de aprobación de Pipe.** Deuda de árbol evitada: `frontend/app/dashboard/page.tsx` (WIP de tope CP-E1 de Cursor) sigue SIN commitear, NO mezclado.
+
+
+## 2026-07-08 — Sesión 35 (retomada de sesión trabada) · Frentes B/C + Data Factory del corpus + bugfix FTS
+
+**Contexto:** al iniciar esta sesión ("retoma que te trabaste") el repo tenía ~5h de trabajo de una
+sesión previa sin commitear, sin entrada de progreso y sin HANDOFF actualizado (nunca corrió /cierre).
+Reconstruido por lectura de código (nada de TODOs/FIXME, sin rastro en memoria): 3 hilos paralelos +
+un bugfix suelto.
+
+**Bugfix — `agents/research.py`:** la consulta FTS de investigación mandaba el mensaje completo del
+abogado a `websearch_to_tsquery` (exige TODOS los términos) → casi siempre 0 resultados del corpus.
+`build_fts_query` nuevo: citas exactas entre comillas + términos clave (sin stopwords) unidos con OR.
+Gate nuevo `test_research_query.py` 11/11; `test_document_pipeline.py` actualizado (cp9-14).
+
+**Frente B (aprendizaje):** B1 — el motivo textual del rechazo del abogado viaja en la traza
+(`graph.py`, `trace_capture.py: rejection_reason`) y alimenta al `feedback_processor` al redactar
+propuestas. B2 — `POST /api/learning/run` (routes/learning.py) dispara el aprendizaje manualmente;
+botón "Revisar ahora" en `memoria/page.tsx`. B4 — aprobar una `wiki_correction` ya la APLICA de verdad
+(appendea al archivo del concepto vía `WikiManager.append_correction`; antes solo quedaba registrada).
+
+**Fase 3 · frente C (bóveda visible) + Data Factory del corpus:** `rag/corpus_factory.py` reemplaza la
+semilla hardcodeada de `ingest_corpus.py` (deprecado, queda solo como fixture de `test_sat_graph`) por
+ingesta declarativa desde `jurisdiction/packs/{jur}/corpus_sources.json` (hoy solo "co"): motor único +
+adaptadores por portal (Función Pública, SUIN-Juriscol, Corte Constitucional), validación de identidad
+fail-closed, segmentación de normas grandes, gate de ToS. **El motor no tiene a Colombia hardcodeada —
+la jurisdicción la pone el pack** (pedido explícito de Pipe, ver [[mia-decisiones-pipe-fase3]]:
+"nutrir la jurisdicción QUE APLIQUE" a cada abogado, no solo Colombia). `connectors/vault_export.py`
+hace el backfill al vault de Obsidian: playbooks activos → `Mia/procedimientos/`, fichas cortas (nunca
+el texto completo) de normas/jurisprudencia del Data Factory → `Mia/corpus/{normativa,jurisprudencia}/`.
+
+**docs/analisis-claude-for-legal.md** (aparte, no tocó código): ingeniería inversa del plugin
+marketplace "Claude for Legal" de Anthropic — confirma la arquitectura de MIA y deja 5 quick wins
+identificados, pendientes de aplicar.
+
+**Verificación 3 capas — capa 1:** regresión completa 66/66 suites verdes (dos corridas, antes y
+después de las correcciones de capa 2; `test_rls` y `check_env_pins` HALT intactos). **Capa 2 (revisor
+adversarial independiente, workflow multi-agente, contexto fresco):** 5 hallazgos CONFIRMADOS, los 5
+corregidos y RE-VERIFICADOS (regresión completa otra vez en verde) ANTES de commitear:
+1. `vault_writer.export_playbook`: dos playbooks activos cuyo título difiere solo en acentos/mayúsculas
+   colapsaban al MISMO slug y se sobreescribían en silencio → `VaultWriter._dedupe_slug` desambigua
+   colisiones por corrida de exportación (sufijo `-2`, `-3`…), con log de advertencia.
+2. `ux.py` `wiki_correction`: el nombre del concepto vivía codificado como prefijo de texto libre
+   dentro de `rationale` — un cambio de prefijo o edición del rationale rompía el parseo EN SILENCIO y
+   la corrección aprobada quedaba "applied" sin efecto → columna dedicada `target_concept` (migración
+   `026_feedback_proposal_target_concept.sql`, `init_feedback_target_concept.py`), mismo criterio que
+   `target_playbook_id`; el parseo viejo queda solo como fallback de lectura.
+3. `apply_proposal` sostenía la conexión pooled del tenant durante la escritura de disco (bloqueante,
+   vault posiblemente en OneDrive) → riesgo de agotar el pool bajo aprobaciones concurrentes → el
+   archivo se escribe FUERA de la conexión; "applied" se marca en una conexión corta aparte.
+4. `corpus_factory.py`: validación de identidad fail-closed duplicada letra por letra entre
+   FuncionPublicaAdapter y SuinJuriscolAdapter (una corrección futura aplicada a uno y olvidada en el
+   otro dejaría esa fuente con una garantía distinta) → extraída a `_identity_confirmed`/
+   `_build_norm_record` compartidos.
+5. `vault_export.export_corpus_fichas`: dos lecturas de DB independientes en secuencia → paralelas
+   (`asyncio.gather`), la mitad de latencia.
+
+**Capa 3 (visual):** PENDIENTE — sin navegador conectado en esta sesión (extensión Chrome no
+disponible); el único cambio visual es el botón "Revisar ahora" en `memoria/page.tsx`, cubierto por
+`npm run build` verde + el test de API que ejercita el mismo endpoint.
+
+**4 commits en `main`** (sin push): `9f62b4e` (bugfix FTS), `4ea4126` (frente B), `cb32ebb` (frente C +
+Data Factory), `00728c8` (docs análisis Claude for Legal).
+
+**Pendiente para la próxima sesión:** capa 3 en vivo del botón "Revisar ahora"; Gmail/OneDrive vía
+Graph API (bloque 2 de [[mia-decisiones-pipe-fase3]], aún no arrancado); aplicar los 5 quick wins de
+`docs/analisis-claude-for-legal.md`; decidir si se hace push a origin/main.

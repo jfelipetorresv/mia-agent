@@ -185,3 +185,18 @@ aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
 | Tarea | Estado | Qué pidió |
 |----|--------|--------|
 | CP-C4b | 🟡 | Wizard "Configura a Mia" explicativo estilo onboarding: cada paso trae `guia` (qué es / para qué al despacho / cómo paso a paso) + mapa `secciones` de Mia; el asistente acompaña por chat. Rama `feat/cp-c4b-wizard-onboarding`. Capa 2 APROBADO CON CORRECCIONES (L1 guía truncada; U1/U2/U4 guías describían UI inexistente → reescritas a la realidad de hoy; UI faltante documentada para Cursor). Gate `test_setup_wizard` 30/30 · regresión 43/43. **PENDIENTE merge de Pipe** |
+
+---
+
+## Fase 3 · frentes B/C + Data Factory del corpus (Sesión 35, 2026-07-08)
+- [x] Bugfix FTS de investigación (`build_fts_query`, gate `test_research_query.py` 11/11)
+- [x] Frente B (aprendizaje): B1 motivo del rechazo en la traza · B2 `POST /api/learning/run`
+      ("Revisar ahora") · B4 wiki_correction se aplica de verdad
+- [x] Fase 3 · frente C (bóveda visible): `vault_export.py` backfill de playbooks + fichas del corpus
+- [x] Data Factory del corpus (`rag/corpus_factory.py` + `jurisdiction/packs/co/corpus_sources.json`),
+      reemplaza la semilla hardcodeada de `ingest_corpus.py` (deprecado)
+- [x] Regresión 66/66 + revisor capa 2 (5 hallazgos corregidos) — ver `progress.md` sesión 35
+- [ ] Capa 3 visual (botón "Revisar ahora") — pendiente de Pipe en vivo
+- [ ] Gmail/OneDrive vía Graph API (bloque 2 de la Fase 3, ver `mia-decisiones-pipe-fase3` en memoria)
+- [ ] Aplicar los 5 quick wins de `docs/analisis-claude-for-legal.md`
+- [ ] Decisión de Pipe: push a `origin/main` de los 4 commits de esta sesión

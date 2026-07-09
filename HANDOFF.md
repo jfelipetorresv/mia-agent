@@ -11,6 +11,48 @@ quede trazabilidad de ambas revisiones.
 
 ---
 
+## Checkpoint más reciente: Sesión 35 (2026-07-08) — Frentes B/C + Data Factory del corpus + bugfix FTS
+
+### Qué se hizo esta sesión
+
+Sesión de retoma: había ~5h de trabajo de una sesión previa sin commitear ni documentar (nunca corrió
+`/cierre`). Se reconstruyó por lectura de código, se verificó y se corrigió antes de commitear:
+
+- **Bugfix** `agents/research.py`: la consulta FTS de investigación mandaba el mensaje completo del
+  abogado (0 resultados casi siempre) → ahora usa términos clave + citas exactas en OR.
+- **Frente B (aprendizaje):** motivo del rechazo en la traza (B1), botón "Revisar ahora" en
+  Conocimiento → `POST /api/learning/run` (B2), aprobar una corrección de wiki ya la aplica de verdad
+  al archivo del concepto (B4).
+- **Fase 3 · frente C + Data Factory del corpus:** `rag/corpus_factory.py` (motor único, jurisdicción
+  por pack JSON — nada de Colombia hardcodeado, ver decisión de Pipe en `memory/progress.md` sesión
+  35) + `connectors/vault_export.py` (backfill de playbooks y fichas del corpus al vault de Obsidian).
+
+Detalle completo, con los 5 hallazgos de capa 2 y sus correcciones, en `memory/progress.md` (sesión 35).
+
+### Frontend a revisar (Cursor — capa 3)
+
+- `frontend/app/memoria/page.tsx` (pestaña Sugerencias): botón nuevo **"Revisar ahora"** sobre la
+  lista de propuestas — dispara `POST /api/learning/run`, muestra spinner mientras corre y un mensaje
+  de resultado ("Mia propuso N mejoras nuevas" / "no encontró nada nuevo"). `npm run build` verde y
+  cubierto por gate de API; falta el recorrido visual en vivo (clic real, estados de carga/error).
+- Nada más cambió en `frontend/`; el resto de esta sesión fue backend puro (Data Factory, vault export,
+  bugfix de investigación) sin superficie nueva para el abogado más allá del botón de arriba.
+
+### Resultado de verificación (3 capas)
+
+- Capa 1: regresión completa **66/66 suites verdes** (dos corridas — antes y después de aplicar las
+  correcciones de capa 2), `test_rls`/`check_env_pins` HALT intactos. Gates nuevos: `test_research_query`
+  11/11, `test_corpus_factory` 12/12, `test_vault_export` 38/38.
+- Capa 2 (revisor adversarial independiente, workflow multi-agente): 5 hallazgos CONFIRMADOS, los 5
+  corregidos y RE-VERIFICADOS antes del commit (colisión de slug al exportar playbooks; parseo frágil
+  del concepto de una wiki_correction → columna dedicada; conexión pooled sostenida durante E/S de
+  disco; lógica de identidad duplicada entre adaptadores del corpus; fetches secuenciales evitables).
+- Capa 3: **PENDIENTE** — sin navegador conectado en esta sesión para el recorrido en vivo del botón.
+
+**4 commits en `main` (sin push):** `9f62b4e`, `4ea4126`, `cb32ebb`, `00728c8`.
+
+---
+
 ## ⭐ Trabajo de frontend PENDIENTE para Cursor (consolidado · priorizado · 2026-07-03)
 
 El backend de estos puntos ya está en `origin/main`; falta SOLO la UI. Cada uno tiene su
