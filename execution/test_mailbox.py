@@ -207,7 +207,7 @@ async def run_gate() -> None:
             self._creds = creds
             self.saved: list = []
 
-        async def load_tokens(self, tid):
+        async def load_tokens(self, tid, provider=None):
             return self._creds
 
         async def save_tokens(self, tid, creds):
@@ -280,11 +280,26 @@ async def run_gate() -> None:
             return self._bodies.get(external_id, "")
 
     class FakeMailbox:
+        """Doble de MailboxService. `connector` puede ser UN conector (se asume su
+        `.provider`, o 'microsoft' si no lo trae — compatibilidad con los conectores
+        de proveedor único de este gate) o un dict {provider: conector} para simular
+        VARIOS proveedores conectados a la vez (Fase 1 de fuentes remotas)."""
         def __init__(self, connector):
             self._c = connector
 
-        async def connector_for(self, tid):
+        async def connector_for(self, tid, provider=None):
+            if isinstance(self._c, dict):
+                if provider:
+                    return self._c.get(provider)
+                return next(iter(self._c.values()), None)
             return self._c
+
+        async def connectors_for(self, tid):
+            if isinstance(self._c, dict):
+                return dict(self._c)
+            if self._c is None:
+                return {}
+            return {getattr(self._c, "provider", "microsoft"): self._c}
 
         async def aclose(self):
             pass
@@ -318,13 +333,14 @@ async def run_gate() -> None:
           r.get("surfaced") is True and len(sent) == 1 and "Audiencia HDI" in sent[0])
     check("mp-18 · calendario: evento procesal lleva [VERIFICAR] (regla dura)",
           "[VERIFICAR]" in sent[0])
-    check("mp-19 · calendario: tras avisar, marca el debounce (no re-avisa)",
-          ws.marked == [("calendar", ["ev1"])])
+    check("mp-19 · calendario: tras avisar, marca el debounce prefijado por proveedor "
+          "(no re-avisa)",
+          ws.marked == [("calendar", ["microsoft:ev1"])])
 
     # ya avisado → silencio
     watch2 = we.calendar_events_watch(resolve_tenant=lambda: "t-1",
                                       mailbox=FakeMailbox(FakeConnector(events=[ev_proc])),
-                                      store_mod=FakeWatchStore(already=["ev1"]),
+                                      store_mod=FakeWatchStore(already=["microsoft:ev1"]),
                                       telegram_configured=lambda: True)
     sent.clear()
     r = await we.run_watch(watch2, notify_fn=fake_notify, claim=False)
@@ -361,7 +377,7 @@ async def run_gate() -> None:
     r = await we.run_watch(mwatch, claim=False)
     check("mp-22 · correo: solo el que PARECE urgente se superficia (el trivial no)",
           r.get("surfaced") is True and "URGENTE traslado" in sent[0]
-          and "Almuerzo" not in sent[0] and wsm.marked == [("mail", ["m1"])])
+          and "Almuerzo" not in sent[0] and wsm.marked == [("mail", ["microsoft:m1"])])
     check("mp-23 · correo (metadata): el aviso deja claro que NO se miró el contenido",
           "no el contenido" in sent[0].lower())
 
@@ -411,7 +427,7 @@ async def run_gate() -> None:
     check("mp-c1 · contenido: con opt-in, on_surface resume con IA (no el aviso metadata)",
           r.get("surfaced") is True and r.get("result", {}).get("summarized") is True
           and "traslado por 3 días" in sent[0] and "resumen de mia" in sent[0].lower()
-          and wsc.marked == [("mail", ["m1"])])
+          and wsc.marked == [("mail", ["microsoft:m1"])])
     check("mp-c2 · contenido: el aviso invita a verificar antes de actuar (regla dura)",
           "[VERIFICAR]" in sent[0] and "antes de actuar" in sent[0].lower())
     # el cuerpo llegó SELLADO al LLM (aviso de no-confianza + bloque de cuarentena)
@@ -506,10 +522,22 @@ async def run_gate() -> None:
     check("mp-c8 · Google.fetch_body: text/plain base64url se decodifica",
           (await g_c.fetch_body("gm1")) == "Cuerpo en texto plano")
 
-    # scopes de contenido: Google gmail.readonly (contenido) vs gmail.metadata (metadata)
-    check("mp-c9 · oauth.scopes_for: contenido añade gmail.readonly; metadata usa gmail.metadata",
-          any("gmail.readonly" in s for s in oauth.scopes_for("google", content=True))
-          and any("gmail.metadata" in s for s in oauth.scopes_for("google", content=False)))
+    # scopes por feature: mail_content añade gmail.readonly; mail (default) usa gmail.metadata
+    check("mp-c9 · oauth.scopes_for: mail_content añade gmail.readonly; mail usa gmail.metadata",
+          any("gmail.readonly" in s for s in oauth.scopes_for("google", features=("mail_content",)))
+          and any("gmail.metadata" in s for s in oauth.scopes_for("google", features=("mail",))))
+    def _raises_value_error(fn) -> bool:
+        try:
+            fn()
+            return False
+        except ValueError:
+            return True
+
+    check("mp-c9b · oauth.scopes_for: 'drive' (Microsoft) añade Files.Read; Google lo rechaza",
+          "Files.Read" in oauth.scopes_for("microsoft", features=("mail", "drive"))
+          and _raises_value_error(lambda: oauth.scopes_for("google", features=("drive",))))
+    check("mp-c9c · oauth.scopes_for: sin features reconocidas cae al mínimo de 'mail'",
+          oauth.scopes_for("microsoft", features=()) == oauth.scopes_for("microsoft", features=("mail",)))
 
     # ── G · cableado ─────────────────────────────────────────────────────────
     names = [j["name"] for j in build_scheduler().list_jobs()]
@@ -624,11 +652,13 @@ def _sb():
 
 async def db_checks() -> None:
     import init_mailbox
+    import init_remote_sources
     from mia.connectors.mailbox import store
     from mia.connectors.mailbox.base import OAuthCreds
     from mia.db import pool
 
     init_mailbox.apply()
+    init_remote_sources.apply()   # PK compuesta (tenant_id, provider) — Fase 1
     await pool.open_pool()
 
     now = datetime.now(timezone.utc)

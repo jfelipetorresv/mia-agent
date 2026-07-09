@@ -18,7 +18,7 @@ primera cuenta real (mismo criterio que agent_hub.build_args)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Iterable, Optional
 from urllib.parse import urlencode
 
 from .base import OAuthCreds
@@ -64,6 +64,21 @@ _CONTENT_SCOPES: dict[str, tuple[str, ...]] = {
                "openid", "email"),
 }
 
+# Scopes para "drive" (Fase 1 de fuentes remotas — cimiento de OneDrive remoto selectivo,
+# feature que construye OTRA fase; aquí solo se prepara el scope). SOLO Microsoft: Google
+# no ofrece esta feature en este proyecto (Google Drive no es el conector en alcance).
+# Mínimo de lectura: Files.Read (no Files.Read.All — no hace falta leer TODO el drive,
+# el abogado elige qué carpeta compartir en la fase que consuma esto).
+_DRIVE_SCOPES: dict[str, tuple[str, ...]] = {
+    "microsoft": ("Files.Read",),
+}
+
+# Features de conexión reconocidas. Cada una exige su propio scope mínimo — ver
+# `scopes_for`. "mail" es la base (CP-P3, siempre presente salvo que se pida solo
+# "drive"); "mail_content" es el opt-in de leer el CUERPO del correo (CP-P4, lo que antes
+# viajaba como `?content=1`); "drive" es el cimiento de OneDrive remoto (solo Microsoft).
+FEATURES: tuple[str, ...] = ("mail", "mail_content", "drive")
+
 
 def _cfg(provider: str) -> dict:
     cfg = PROVIDER_OAUTH.get(provider)
@@ -72,24 +87,59 @@ def _cfg(provider: str) -> dict:
     return cfg
 
 
-def scopes_for(provider: str, content: bool = False) -> tuple[str, ...]:
-    """Scopes de lectura. `content=False` (default) = calendario + metadata de correo
-    (CP-P3). `content=True` = incluye la lectura del cuerpo del correo (CP-P4, opt-in)."""
-    if content:
-        return tuple(_CONTENT_SCOPES.get(provider) or _cfg(provider)["scopes"])
-    return tuple(_cfg(provider)["scopes"])
+def _validate_features(provider: str, features: set[str]) -> None:
+    unknown = features - set(FEATURES)
+    if unknown:
+        raise ValueError(f"funciones de conexión desconocidas: {sorted(unknown)}")
+    if "drive" in features and provider != "microsoft":
+        raise ValueError(f"la función 'drive' no está disponible para {provider!r} "
+                         f"(solo Microsoft / OneDrive)")
+
+
+def scopes_for(provider: str, features: Iterable[str] = ("mail",)) -> tuple[str, ...]:
+    """Scopes de lectura que exige el conjunto de FEATURES pedido, compuestos sin
+    duplicar. Documentado por feature (qué exige cada una):
+
+      - "mail" (default): calendario + METADATA de correo (CP-P3, sin cuerpo).
+      - "mail_content": añade la lectura del CUERPO del correo (CP-P4, opt-in). En
+        Google, gmail.readonly reemplaza a gmail.metadata (metadata no trae cuerpo);
+        en Microsoft, Mail.Read ya lo cubre (no cambia scopes, no hace falta reconsentir).
+      - "drive" (SOLO Microsoft): añade Files.Read — cimiento de OneDrive remoto
+        selectivo (Fase 1; la feature que lo CONSUME la construye otra fase).
+
+    Sin features reconocidas (p.ej. conjunto vacío) cae al mínimo de "mail"."""
+    feats = set(features)
+    _validate_features(provider, feats)
+    scopes: list[str] = []
+    seen: set[str] = set()
+
+    def add(items: Iterable[str]) -> None:
+        for s in items:
+            if s not in seen:
+                seen.add(s)
+                scopes.append(s)
+
+    if "mail_content" in feats:
+        add(_CONTENT_SCOPES.get(provider) or _cfg(provider)["scopes"])
+    elif "mail" in feats:
+        add(_cfg(provider)["scopes"])
+    if "drive" in feats:
+        add(_DRIVE_SCOPES["microsoft"])
+    if not scopes:   # ninguna feature reconocida aportó scopes → mínimo de siempre
+        add(_cfg(provider)["scopes"])
+    return tuple(scopes)
 
 
 def authorize_url(provider: str, *, client_id: str, redirect_uri: str, state: str,
-                  login_hint: str = "", content: bool = False) -> str:
+                  login_hint: str = "", features: Iterable[str] = ("mail",)) -> str:
     """URL de consentimiento a la que el abogado va una vez para conectar su cuenta.
-    `content=True` pide además la lectura del cuerpo del correo (análisis con IA, CP-P4)."""
+    `features` compone los scopes pedidos (ver `scopes_for`); default solo "mail"."""
     cfg = _cfg(provider)
     params = {
         "client_id": client_id,
         "response_type": "code",
         "redirect_uri": redirect_uri,
-        "scope": " ".join(scopes_for(provider, content)),
+        "scope": " ".join(scopes_for(provider, features)),
         "state": state,
         **cfg.get("extra_authorize", {}),
     }

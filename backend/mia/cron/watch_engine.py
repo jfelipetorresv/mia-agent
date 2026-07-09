@@ -390,15 +390,26 @@ def calendar_events_watch(
         except Exception:  # noqa: BLE001
             window = within_hours
         svc, own = _open_mailbox(mailbox)
+        # Un tenant puede tener Microsoft Y Google conectados a la vez (Fase 1 de fuentes
+        # remotas): se vigilan TODOS los proveedores conectados; si uno falla, no tumba a
+        # los demás (cada lectura va en su propio try/except).
         try:
-            connector = await svc.connector_for(tenant_id)
-            if connector is None:
+            try:
+                connectors = await svc.connectors_for(tenant_id)
+            except Exception:  # noqa: BLE001 — API caída/migración ausente: no tumbar el loop
+                logger.exception("vigilancia de calendario: no se pudieron resolver "
+                                 "conectores (tenant %s)", tenant_id)
+                return WatchResult(False, meta={"error": "lectura fallida"})
+            if not connectors:
                 return WatchResult(False, meta={"skipped": "sin cuenta conectada",
                                                 "tenant_id": tenant_id})
-            events = await connector.upcoming_events(window)
-        except Exception:  # noqa: BLE001 — API caída/migración ausente: no tumbar el loop
-            logger.exception("vigilancia de calendario: lectura fallida (tenant %s)", tenant_id)
-            return WatchResult(False, meta={"error": "lectura fallida"})
+            events: list = []
+            for provider, connector in connectors.items():
+                try:
+                    events.extend(await connector.upcoming_events(window))
+                except Exception:  # noqa: BLE001 — un proveedor caído no calla a los demás
+                    logger.exception("vigilancia de calendario: lectura fallida de %s "
+                                     "(tenant %s)", provider, tenant_id)
         finally:
             if own:
                 await svc.aclose()
@@ -406,13 +417,17 @@ def calendar_events_watch(
         events = [e for e in events if e.external_id and e.start]
         if not events:
             return WatchResult(False, meta={"tenant_id": tenant_id})   # wake-gate
+        # dedupe por (proveedor, external_id): dos proveedores distintos podrían, en
+        # teoría, coincidir en el mismo id crudo — el prefijo evita que se pisen entre sí
+        # en el ledger de debounce.
+        id_map = {f"{e.provider}:{e.external_id}": e for e in events}
         try:
             fresh = await _mailbox_store(store_mod).filter_unnotified(
-                tenant_id, "calendar", [e.external_id for e in events])
+                tenant_id, "calendar", list(id_map))
         except Exception:  # noqa: BLE001 — sin debounce, peor caso: re-aviso (no callar)
             logger.exception("vigilancia de calendario: debounce fallido (tenant %s)", tenant_id)
-            fresh = {e.external_id for e in events}
-        events = [e for e in events if e.external_id in fresh]
+            fresh = set(id_map)
+        events = [ev for key, ev in id_map.items() if key in fresh]
         if not events:
             return WatchResult(False, meta={"tenant_id": tenant_id})   # todo ya avisado
         return WatchResult(True, message=_build_calendar_message(events),
@@ -423,7 +438,7 @@ def calendar_events_watch(
             try:
                 await _mailbox_store(store_mod).mark_notified(
                     result.meta["tenant_id"], "calendar",
-                    [e.external_id for e in result.items])
+                    [f"{e.provider}:{e.external_id}" for e in result.items])
             except Exception:  # noqa: BLE001 — marcar es best-effort
                 logger.warning("vigilancia de calendario: no se pudo marcar el debounce")
 
@@ -461,11 +476,18 @@ async def _summarize_urgent_mail(tenant_id: str, headers: list, mailbox, summari
 
     svc, own = _open_mailbox(mailbox)
     try:
-        connector = await svc.connector_for(tenant_id)
-        if connector is None or not hasattr(connector, "fetch_body"):
+        # Cada correo puede venir de un proveedor distinto (Microsoft/Google conectados a
+        # la vez): se resuelve el conector de CADA cabecera por su propio `h.provider`,
+        # nunca uno solo asumido para todos.
+        connectors = await svc.connectors_for(tenant_id)
+        if not connectors:
             return None
         items = []
         for h in headers:
+            connector = connectors.get(getattr(h, "provider", None))
+            if connector is None or not hasattr(connector, "fetch_body"):
+                items.append((h, ""))
+                continue
             try:
                 body = await connector.fetch_body(h.external_id)
             except Exception:  # noqa: BLE001 — un correo ilegible no tumba el resumen
@@ -525,15 +547,26 @@ def urgent_mail_watch(
             return WatchResult(False, meta={"skipped": "sin tenant de canal"})
 
         svc, own = _open_mailbox(mailbox)
+        # Igual criterio que calendar_events_watch: se vigilan TODOS los proveedores
+        # conectados; un proveedor caído no calla a los demás.
         try:
-            connector = await svc.connector_for(tenant_id)
-            if connector is None:
+            try:
+                connectors = await svc.connectors_for(tenant_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("vigilancia de correo: no se pudieron resolver "
+                                 "conectores (tenant %s)", tenant_id)
+                return WatchResult(False, meta={"error": "lectura fallida"})
+            if not connectors:
                 return WatchResult(False, meta={"skipped": "sin cuenta conectada",
                                                 "tenant_id": tenant_id})
-            headers = await connector.recent_mail(max_results=max_scan, unread_only=True)
-        except Exception:  # noqa: BLE001
-            logger.exception("vigilancia de correo: lectura fallida (tenant %s)", tenant_id)
-            return WatchResult(False, meta={"error": "lectura fallida"})
+            headers: list = []
+            for provider, connector in connectors.items():
+                try:
+                    headers.extend(await connector.recent_mail(max_results=max_scan,
+                                                               unread_only=True))
+                except Exception:  # noqa: BLE001
+                    logger.exception("vigilancia de correo: lectura fallida de %s "
+                                     "(tenant %s)", provider, tenant_id)
         finally:
             if own:
                 await svc.aclose()
@@ -541,13 +574,14 @@ def urgent_mail_watch(
         urgentes = [h for h in headers if h.external_id and mail_looks_urgent(h)]
         if not urgentes:
             return WatchResult(False, meta={"tenant_id": tenant_id})   # wake-gate
+        id_map = {f"{h.provider}:{h.external_id}": h for h in urgentes}
         try:
             fresh = await _mailbox_store(store_mod).filter_unnotified(
-                tenant_id, "mail", [h.external_id for h in urgentes])
+                tenant_id, "mail", list(id_map))
         except Exception:  # noqa: BLE001
             logger.exception("vigilancia de correo: debounce fallido (tenant %s)", tenant_id)
-            fresh = {h.external_id for h in urgentes}
-        urgentes = [h for h in urgentes if h.external_id in fresh]
+            fresh = set(id_map)
+        urgentes = [h for key, h in id_map.items() if key in fresh]
         if not urgentes:
             return WatchResult(False, meta={"tenant_id": tenant_id})
         return WatchResult(True, items=urgentes, meta={"tenant_id": tenant_id})
@@ -577,7 +611,7 @@ def urgent_mail_watch(
         if ok and tenant_id:   # debounce SOLO si el aviso se entregó (si falló, se reintenta)
             try:
                 await _mailbox_store(store_mod).mark_notified(
-                    tenant_id, "mail", [h.external_id for h in headers])
+                    tenant_id, "mail", [f"{h.provider}:{h.external_id}" for h in headers])
             except Exception:  # noqa: BLE001
                 logger.warning("vigilancia de correo: no se pudo marcar el debounce")
         return {"sent": bool(ok), "summarized": summarized, "count": len(headers)}

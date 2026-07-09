@@ -1,12 +1,19 @@
-"""Mia · connectors.mailbox.service — orquesta tokens + refresco + conector (CP-P3).
+"""Mia · connectors.mailbox.service — orquesta tokens + refresco + conector (CP-P3;
+Fase 1 "fuentes remotas": multi-proveedor).
 
-`MailboxService.connector_for(tenant_id)` es la puerta única que usan las vigilancias:
+`MailboxService.connector_for(tenant_id, provider=None)` resuelve UN conector:
   1. carga los tokens del tenant (store, RLS) — sin cuenta conectada → None (silencio).
   2. si el access token expiró, lo REFRESCA con el refresh token y PERSISTE el nuevo.
   3. construye el conector del proveedor (Microsoft/Google) con `http` inyectado.
+Sin `provider`, conserva compatibilidad (primera conexión); con él, esa conexión puntual.
+
+`MailboxService.connectors_for(tenant_id)` resuelve TODOS los conectores conectados
+(dict provider -> conector) — es la puerta que usan las vigilancias desde que un tenant
+puede tener Microsoft Y Google a la vez: cada proveedor conectado se vigila, sin que uno
+tumbe al otro.
 
 Degradación con gracia: cualquier fallo (sin app OAuth configurada, refresh caído,
-proveedor desconocido) → None + log. Una vigilancia nunca revienta por esto."""
+proveedor desconocido) → None/{} + log. Una vigilancia nunca revienta por esto."""
 from __future__ import annotations
 
 import logging
@@ -84,10 +91,13 @@ class MailboxService:
                            tenant_id)
         return refreshed
 
-    async def connector_for(self, tenant_id: str):
-        """Conector listo para el tenant, o None (sin cuenta / error → silencio)."""
+    async def connector_for(self, tenant_id: str, provider: Optional[str] = None):
+        """Conector listo para el tenant, o None (sin cuenta / error → silencio).
+
+        Con `provider`, la conexión de ESE proveedor puntual; sin él (compatibilidad),
+        la primera conexión disponible (ver `store.load_tokens`)."""
         try:
-            creds = await self._store.load_tokens(tenant_id)
+            creds = await self._store.load_tokens(tenant_id, provider)
         except Exception:  # noqa: BLE001 — migración ausente u otra falla: no hay conector
             logger.warning("mailbox: no se pudieron leer los tokens del tenant %s", tenant_id)
             return None
@@ -97,3 +107,25 @@ class MailboxService:
         if fresh is None:
             return None
         return providers.build_connector(fresh, http=self._client_http())
+
+    async def connectors_for(self, tenant_id: str) -> dict:
+        """Un conector por CADA proveedor conectado del tenant (dict provider -> conector).
+
+        Sin cuentas conectadas o si `list_connections` falla (migración ausente, DB
+        caída) → {} (silencio, igual criterio que connector_for). Un proveedor cuyo
+        refresh falle se omite (no tumba a los demás)."""
+        try:
+            conexiones = await self._store.list_connections(tenant_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("mailbox: no se pudieron listar las conexiones del tenant %s",
+                           tenant_id)
+            return {}
+        out: dict = {}
+        for c in conexiones:
+            provider = c.get("provider") if isinstance(c, dict) else None
+            if not provider:
+                continue
+            conn = await self.connector_for(tenant_id, provider)
+            if conn is not None:
+                out[provider] = conn
+        return out

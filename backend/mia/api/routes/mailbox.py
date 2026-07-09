@@ -1,10 +1,13 @@
-"""Mia · api.routes.mailbox — conectar calendario y correo (CP-P3, Ola 2).
+"""Mia · api.routes.mailbox — conectar calendario y correo (CP-P3, Ola 2; Fase 1 "fuentes
+remotas": multi-proveedor — Microsoft Y Google a la vez).
 
-GET    /api/mailbox/status              → ¿hay cuenta conectada? proveedor + opt-in IA
-POST   /api/mailbox/connect/{provider}  → URL de consentimiento (con `state` FIRMADO)
-GET    /api/mailbox/oauth/callback      → el proveedor devuelve el code; canjea y guarda
-DELETE /api/mailbox/disconnect          → borra los tokens (desconecta la cuenta)
-PUT    /api/mailbox/content-analysis    → opt-in de análisis de contenido con IA (CP-P4)
+GET    /api/mailbox/status                  → conexiones POR PROVEEDOR + opt-in IA
+POST   /api/mailbox/connect/{provider}      → URL de consentimiento (con `state` FIRMADO);
+                                               ?features= (default "mail") compone scopes
+GET    /api/mailbox/oauth/callback          → el proveedor devuelve el code; canjea y guarda
+DELETE /api/mailbox/disconnect?provider=... → borra los tokens de ESE proveedor (o de
+                                               todos si se omite — compatibilidad)
+PUT    /api/mailbox/content-analysis        → opt-in de análisis de contenido con IA (CP-P4)
 
 Seguridad del flujo OAuth:
 - El `state` que viaja al proveedor es un JWT FIRMADO (JWT_SECRET) con el tenant_id, el
@@ -23,6 +26,7 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import jwt
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -43,6 +47,30 @@ _PROVIDER_LABELS = {"microsoft": "Microsoft 365", "google": "Google Workspace"}
 _STATE_PURPOSE = "mailbox_oauth"
 _STATE_TTL_MINUTES = 10          # el consentimiento debe completarse pronto
 _NONCE_COOKIE = "mia_oauth_nonce"  # ata el consentimiento a la sesión que lo inició
+
+
+def _parse_features(raw: str) -> set[str]:
+    """`?features=mail,drive` -> {"mail","drive"}. Vacío -> {"mail"} (default).
+    Funciones no reconocidas → 400 en llano (§G: nunca "scope" ni "OAuth" al abogado)."""
+    feats = {f.strip() for f in (raw or "").split(",") if f.strip()}
+    if not feats:
+        return {"mail"}
+    invalid = feats - set(oauth.FEATURES)
+    if invalid:
+        raise HTTPException(status_code=400,
+                            detail=f"No se reconoce lo que pediste conectar: {', '.join(sorted(invalid))}")
+    return feats
+
+
+def _funciones_en_llano(scopes: tuple[str, ...]) -> list[str]:
+    """Traduce los scopes técnicos otorgados a una lista en lenguaje llano (§G): nunca
+    'scope', 'OAuth' ni 'Graph' — solo lo que el abogado autorizó, en sus palabras."""
+    out = ["calendario y correo"]
+    if any("gmail.readonly" in s for s in scopes):
+        out = ["calendario y correo, incluido el contenido de correos"]
+    if "Files.Read" in scopes:
+        out.append("archivos de OneDrive")
+    return out
 
 
 def _tenant(request: Request) -> str:
@@ -82,18 +110,38 @@ def verify_state(token: str) -> tuple[str, str, str]:
 
 @router.get("/mailbox/status")
 async def status(request: Request):
-    """¿El despacho tiene una cuenta conectada? Proveedor y si autorizó análisis con IA."""
+    """Estado de conexión POR PROVEEDOR (un despacho puede tener Microsoft Y Google a la
+    vez desde la Fase 1 de fuentes remotas) + si autorizó el análisis de contenido con IA.
+
+    Mantiene compatibilidad razonable de forma con la versión anterior (un solo
+    proveedor): si hay AL MENOS una conexión, `proveedor`/`proveedor_nombre` reflejan la
+    primera (mismo campo de antes); `conexiones` es la lista completa, nueva."""
     tenant_id = _tenant(request)
-    creds = await store.load_tokens(tenant_id)
-    if creds is None:
-        return {"conectado": False,
-                "proveedores": [{"id": p, "nombre": _PROVIDER_LABELS[p]} for p in PROVIDERS]}
-    return {
-        "conectado": True,
-        "proveedor": creds.provider,
-        "proveedor_nombre": _PROVIDER_LABELS.get(creds.provider, creds.provider),
-        "analisis_contenido": await store.content_analysis_allowed(tenant_id),
+    conexiones_db = await store.list_connections(tenant_id)
+    by_provider = {c["provider"]: c for c in conexiones_db}
+    analisis_contenido = await store.content_analysis_allowed(tenant_id)
+
+    conexiones = [
+        {
+            "proveedor": p,
+            "proveedor_nombre": _PROVIDER_LABELS[p],
+            "conectado": p in by_provider,
+            "funciones": _funciones_en_llano(by_provider[p]["scopes"]) if p in by_provider else [],
+        }
+        for p in PROVIDERS
+    ]
+    resp = {
+        "conectado": bool(conexiones_db),
+        "conexiones": conexiones,
+        "analisis_contenido": analisis_contenido,
     }
+    if conexiones_db:
+        primero = conexiones_db[0]["provider"]
+        resp["proveedor"] = primero
+        resp["proveedor_nombre"] = _PROVIDER_LABELS.get(primero, primero)
+    else:
+        resp["proveedores"] = [{"id": p, "nombre": _PROVIDER_LABELS[p]} for p in PROVIDERS]
+    return resp
 
 
 @router.post("/mailbox/connect/{provider}")
@@ -112,9 +160,10 @@ async def connect(provider: str, request: Request, response: Response):
             status_code=503,
             detail=f"La conexión con {_PROVIDER_LABELS[provider]} no está habilitada en "
                    f"este servidor todavía.")
-    # ?content=1 pide además la lectura del CUERPO del correo (análisis con IA, CP-P4).
-    # En Google exige reconsentir (gmail.readonly); en Microsoft Mail.Read ya lo cubre.
-    content = str(request.query_params.get("content") or "").strip().lower() in ("1", "true", "yes", "on")
+    # ?features=mail,mail_content,drive compone los scopes pedidos (default "mail"). En
+    # Google, "mail_content" exige reconsentir (gmail.readonly); en Microsoft Mail.Read ya
+    # lo cubre. "drive" (cimiento de OneDrive remoto, solo Microsoft) valida en scopes_for.
+    features = _parse_features(request.query_params.get("features") or "")
     nonce = secrets.token_urlsafe(24)
     state = sign_state(tenant_id, provider, nonce)
     # SameSite=Lax: la cookie viaja en la navegación de nivel superior con que el
@@ -123,10 +172,13 @@ async def connect(provider: str, request: Request, response: Response):
     response.set_cookie(_NONCE_COOKIE, nonce, max_age=_STATE_TTL_MINUTES * 60,
                         httponly=True, samesite="lax", secure=config.IS_PRODUCTION,
                         path="/api/mailbox")
-    url = oauth.authorize_url(
-        provider, client_id=client_id,
-        redirect_uri=config.MAILBOX_OAUTH_REDIRECT_URI, state=state,
-        login_hint=getattr(request.state, "email", "") or "", content=content)
+    try:
+        url = oauth.authorize_url(
+            provider, client_id=client_id,
+            redirect_uri=config.MAILBOX_OAUTH_REDIRECT_URI, state=state,
+            login_hint=getattr(request.state, "email", "") or "", features=features)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"url": url, "proveedor_nombre": _PROVIDER_LABELS[provider]}
 
 
@@ -167,10 +219,15 @@ async def oauth_callback(request: Request):
 
 
 @router.delete("/mailbox/disconnect")
-async def disconnect(request: Request):
-    """Desconecta la cuenta del despacho (borra los tokens)."""
+async def disconnect(request: Request, provider: Optional[str] = None):
+    """Desconecta la cuenta del despacho (borra los tokens).
+
+    Con `?provider=microsoft|google`, desconecta SOLO esa conexión (deja la otra
+    intacta si hay dos). Sin él (compatibilidad), desconecta todas las conectadas."""
     tenant_id = _tenant(request)
-    removed = await store.disconnect(tenant_id)
+    if provider is not None and provider not in PROVIDERS:
+        raise HTTPException(status_code=404, detail="Proveedor no soportado")
+    removed = await store.disconnect(tenant_id, provider)
     return {"desconectado": bool(removed)}
 
 

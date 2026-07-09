@@ -9,14 +9,22 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 type Provider = { id: string; nombre: string };
 
-type MailboxStatus =
-  | { conectado: false; proveedores: Provider[] }
-  | {
-      conectado: true;
-      proveedor: string;
-      proveedor_nombre: string;
-      analisis_contenido: boolean;
-    };
+type Conexion = {
+  proveedor: string;
+  proveedor_nombre: string;
+  conectado: boolean;
+  funciones: string[];
+};
+
+// El backend ahora reporta conexiones POR PROVEEDOR (un despacho puede tener Microsoft
+// Y Google a la vez). `conexiones` siempre viene; `proveedores` solo si nadie está
+// conectado (compatibilidad de forma con la versión anterior).
+type MailboxStatus = {
+  conectado: boolean;
+  conexiones: Conexion[];
+  analisis_contenido: boolean;
+  proveedores?: Provider[];
+};
 
 function apiMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : fallback;
@@ -60,7 +68,7 @@ export default function MailboxSection() {
     setBusy(provider);
     setMsg("");
     try {
-      const q = incluirContenido ? "?content=1" : "";
+      const q = incluirContenido ? "?features=mail_content" : "";
       const res = await apiSend<{ url: string }>("POST", `/api/mailbox/connect/${provider}${q}`);
       window.location.href = res.url;
     } catch (err) {
@@ -69,12 +77,12 @@ export default function MailboxSection() {
     }
   }
 
-  async function disconnect() {
-    if (!window.confirm("¿Desconectar tu calendario y correo? Mia dejará de avisarte de eventos y correos urgentes.")) return;
-    setBusy("disconnect");
+  async function disconnect(provider: string, nombre: string) {
+    if (!window.confirm(`¿Desconectar ${nombre}? Mia dejará de avisarte de sus eventos y correos urgentes.`)) return;
+    setBusy(`disconnect-${provider}`);
     setMsg("");
     try {
-      await apiSend("DELETE", "/api/mailbox/disconnect");
+      await apiSend("DELETE", `/api/mailbox/disconnect?provider=${provider}`);
       await load();
       setMsg("Cuenta desconectada.");
     } catch (err) {
@@ -92,7 +100,8 @@ export default function MailboxSection() {
         activar,
       });
       await load();
-      if (res.analisis_contenido && status?.conectado && status.proveedor === "google") {
+      const googleConectado = status?.conexiones.some((c) => c.proveedor === "google" && c.conectado);
+      if (res.analisis_contenido && googleConectado) {
         setMsg(
           "Preferencia guardada. Si aún no diste permiso de leer el contenido, desconecta y vuelve a conectar con «Incluir contenido de correos» marcado.",
         );
@@ -108,14 +117,22 @@ export default function MailboxSection() {
     return <Skeleton className="h-16 w-full rounded-xl" />;
   }
 
-  const proveedores =
-    status && !status.conectado ? status.proveedores : [{ id: "microsoft", nombre: "Microsoft 365" }, { id: "google", nombre: "Google Workspace" }];
+  // Lista para ofrecer "Conectar X": las conexiones que el backend reporta, o el
+  // default (ambos proveedores) si el status no cargó bien.
+  const todasLasConexiones: Conexion[] =
+    status?.conexiones ?? [
+      { proveedor: "microsoft", proveedor_nombre: "Microsoft 365", conectado: false, funciones: [] },
+      { proveedor: "google", proveedor_nombre: "Google Workspace", conectado: false, funciones: [] },
+    ];
+  const conectadas = todasLasConexiones.filter((c) => c.conectado);
+  const disponibles = todasLasConexiones.filter((c) => !c.conectado);
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         Mia puede avisarte de audiencias y plazos próximos en tu agenda, y de correos que parecen urgentes.
-        Solo lee fechas, remitente y asunto — nunca el contenido del correo, salvo que lo autorices abajo.
+        Solo lee fechas, remitente y asunto — nunca el contenido del correo, salvo que lo autorices abajo. Puedes
+        conectar Microsoft 365 y Google Workspace a la vez.
       </p>
       {msg ? (
         <p
@@ -130,26 +147,35 @@ export default function MailboxSection() {
         </p>
       ) : null}
 
-      {status?.conectado ? (
-        <div className="rounded-xl border border-success/25 bg-success/10 px-4 py-3">
+      {conectadas.map((c) => (
+        <div key={c.proveedor} className="rounded-xl border border-success/25 bg-success/10 px-4 py-3">
           <p className="flex items-center gap-2 text-sm font-medium text-success">
             <CheckCircle2 className="h-4 w-4" />
-            Conectado con {status.proveedor_nombre}
+            Conectado con {c.proveedor_nombre}
           </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Mia revisará tu calendario y correo para avisarte. Los plazos siempre quedan pendientes de tu
+            Mia revisará su calendario y correo para avisarte. Los plazos siempre quedan pendientes de tu
             confirmación — tú validas cada fecha.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" variant="ghost" onClick={disconnect} disabled={busy !== null}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => disconnect(c.proveedor, c.proveedor_nombre)}
+              disabled={busy !== null}
+            >
               Desconectar
             </Button>
           </div>
         </div>
-      ) : (
+      ))}
+
+      {disponibles.length > 0 ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Elige tu proveedor para autorizar la lectura (solo lectura, nunca escribe):
+            {conectadas.length > 0
+              ? "Conecta también:"
+              : "Elige tu proveedor para autorizar la lectura (solo lectura, nunca escribe):"}
           </p>
           <label className="flex cursor-pointer items-start gap-2 text-sm">
             <input
@@ -163,21 +189,21 @@ export default function MailboxSection() {
             </span>
           </label>
           <div className="flex flex-wrap gap-2">
-            {proveedores.map((p) => (
-              <Button key={p.id} onClick={() => connect(p.id)} disabled={busy !== null}>
-                {busy === p.id ? "Abriendo…" : `Conectar ${p.nombre}`}
+            {disponibles.map((c) => (
+              <Button key={c.proveedor} onClick={() => connect(c.proveedor)} disabled={busy !== null}>
+                {busy === c.proveedor ? "Abriendo…" : `Conectar ${c.proveedor_nombre}`}
               </Button>
             ))}
           </div>
         </div>
-      )}
+      ) : null}
 
-      {status?.conectado ? (
+      {conectadas.length > 0 ? (
         <div className="rounded-xl border border-border bg-card p-4">
           <label className="flex cursor-pointer items-start gap-2 text-sm">
             <input
               type="checkbox"
-              checked={status.analisis_contenido}
+              checked={status?.analisis_contenido ?? false}
               onChange={(e) => setContentAnalysis(e.target.checked)}
               disabled={busy !== null}
               className="mt-0.5 h-4 w-4 rounded border-input accent-[hsl(var(--primary))] disabled:opacity-50"

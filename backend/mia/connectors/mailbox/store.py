@@ -1,9 +1,17 @@
-"""Mia · connectors.mailbox.store — persistencia de tokens y debounce (CP-P3).
+"""Mia · connectors.mailbox.store — persistencia de tokens y debounce (CP-P3, Fase 1
+"fuentes remotas": multi-proveedor).
 
 Todo bajo RLS (`pool.tenant_connection`): los tokens OAuth y el ledger de avisos son
 datos POR DESPACHO. El opt-in de análisis de contenido con IA vive en
 `tenant_settings.config['mailbox']['allow_content_analysis']` (default False), leído
-igual que `allow_openrouter` (agent/llm.py) — fail-closed."""
+igual que `allow_openrouter` (agent/llm.py) — fail-closed.
+
+Desde la migración 027, `tenant_oauth_tokens` tiene PK (tenant_id, provider): un
+despacho puede tener Microsoft Y Google conectados A LA VEZ. `load_tokens`/`disconnect`
+reciben `provider` opcional — con él, operan sobre ESA conexión puntual; sin él,
+conservan compatibilidad hacia atrás (primera conexión / todas) para los llamadores que
+aún no migraron. Los llamadores NUEVOS deben pasar `provider` explícito cuando lo
+conocen (services.py, rutas)."""
 from __future__ import annotations
 
 import logging
@@ -16,15 +24,18 @@ logger = logging.getLogger("mia.connectors.mailbox.store")
 
 
 async def save_tokens(tenant_id: str, creds: OAuthCreds) -> None:
-    """Guarda (o reemplaza) los tokens OAuth del tenant. Un proveedor por tenant (v1)."""
+    """Guarda (o reemplaza) los tokens OAuth del tenant para `creds.provider`.
+
+    Desde la 027, un tenant puede tener varias filas (una por proveedor): el UPSERT es
+    sobre (tenant_id, provider), así conectar Google no pisa la conexión de Microsoft."""
     scopes = " ".join(creds.scopes or ())
     async with pool.tenant_connection(tenant_id) as conn:
         await conn.execute(
             "INSERT INTO tenant_oauth_tokens "
             "  (tenant_id, provider, access_token, refresh_token, expires_at, scopes) "
             "VALUES (%s::uuid, %s, %s, %s, %s, %s) "
-            "ON CONFLICT (tenant_id) DO UPDATE SET "
-            "  provider = EXCLUDED.provider, access_token = EXCLUDED.access_token, "
+            "ON CONFLICT (tenant_id, provider) DO UPDATE SET "
+            "  access_token = EXCLUDED.access_token, "
             "  refresh_token = CASE WHEN EXCLUDED.refresh_token <> '' "
             "                       THEN EXCLUDED.refresh_token "
             "                       ELSE tenant_oauth_tokens.refresh_token END, "
@@ -35,14 +46,27 @@ async def save_tokens(tenant_id: str, creds: OAuthCreds) -> None:
         )
 
 
-async def load_tokens(tenant_id: str) -> Optional[OAuthCreds]:
-    """Tokens OAuth del tenant, o None si no ha conectado ninguna cuenta."""
+async def load_tokens(tenant_id: str, provider: Optional[str] = None) -> Optional[OAuthCreds]:
+    """Tokens OAuth del tenant.
+
+    Con `provider`, la conexión de ESE proveedor puntual (o None si no está conectado).
+    Sin él (compatibilidad), la PRIMERA conexión por orden de proveedor — sirve mientras
+    un llamador viejo no sepa aún de cuál proveedor se trata; los llamadores que SÍ
+    conocen el proveedor deben pasarlo."""
     async with pool.tenant_connection(tenant_id) as conn:
-        row = await (await conn.execute(
-            "SELECT provider, access_token, refresh_token, expires_at, scopes "
-            "FROM tenant_oauth_tokens WHERE tenant_id = %s::uuid",
-            (tenant_id,),
-        )).fetchone()
+        if provider is not None:
+            row = await (await conn.execute(
+                "SELECT provider, access_token, refresh_token, expires_at, scopes "
+                "FROM tenant_oauth_tokens WHERE tenant_id = %s::uuid AND provider = %s",
+                (tenant_id, provider),
+            )).fetchone()
+        else:
+            row = await (await conn.execute(
+                "SELECT provider, access_token, refresh_token, expires_at, scopes "
+                "FROM tenant_oauth_tokens WHERE tenant_id = %s::uuid "
+                "ORDER BY provider LIMIT 1",
+                (tenant_id,),
+            )).fetchone()
     if not row:
         return None
     return OAuthCreds(
@@ -52,11 +76,40 @@ async def load_tokens(tenant_id: str) -> Optional[OAuthCreds]:
     )
 
 
-async def disconnect(tenant_id: str) -> bool:
-    """Elimina los tokens del tenant (desconecta la cuenta). False si no había."""
+async def list_connections(tenant_id: str) -> list[dict]:
+    """Todas las conexiones del tenant (SIN tokens/secretos): provider, scopes otorgados,
+    expiración y fecha de conexión. Para /mailbox/status y para que el servicio resuelva
+    UN conector por cada proveedor conectado (connectors_for)."""
     async with pool.tenant_connection(tenant_id) as conn:
-        cur = await conn.execute(
-            "DELETE FROM tenant_oauth_tokens WHERE tenant_id = %s::uuid", (tenant_id,))
+        rows = await (await conn.execute(
+            "SELECT provider, scopes, expires_at, connected_at "
+            "FROM tenant_oauth_tokens WHERE tenant_id = %s::uuid ORDER BY provider",
+            (tenant_id,),
+        )).fetchall()
+    return [
+        {
+            "provider": str(r[0]),
+            "scopes": tuple((r[1] or "").split()),
+            "expires_at": r[2],
+            "connected_at": r[3],
+        }
+        for r in rows
+    ]
+
+
+async def disconnect(tenant_id: str, provider: Optional[str] = None) -> bool:
+    """Elimina los tokens del tenant (desconecta la cuenta). False si no había nada.
+
+    Con `provider`, desconecta SOLO esa conexión (deja las demás intactas). Sin él
+    (compatibilidad), desconecta TODAS las conexiones del tenant."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        if provider is not None:
+            cur = await conn.execute(
+                "DELETE FROM tenant_oauth_tokens WHERE tenant_id = %s::uuid AND provider = %s",
+                (tenant_id, provider))
+        else:
+            cur = await conn.execute(
+                "DELETE FROM tenant_oauth_tokens WHERE tenant_id = %s::uuid", (tenant_id,))
     return cur.rowcount > 0
 
 
