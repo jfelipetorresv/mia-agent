@@ -1,0 +1,519 @@
+"""Mia · connectors.graph_drive — OneDrive remoto SELECTIVO (Fase 3 · fuentes remotas).
+
+El abogado NAVEGA su OneDrive (vía Microsoft Graph, para quien NO usa el cliente de
+escritorio), ELIGE subcarpetas concretas ("la información que yo quiero ver", nunca todo
+el drive) y Mia las sincroniza de forma incremental hacia el conocimiento del despacho
+(kind='knowledge' → knowledge_chunks) o hacia un expediente (kind='matters' → documents +
+chunks, origin='drive'). SOLO LECTURA: jamás se escribe contra Graph.
+
+Consent-first / allowlist: solo se recorre lo que el despacho registró en
+`remote_drive_sources` (migración 027). Molde del motor: connectors/local_folders.py
+(LocalFolderSync) — dos pasadas conceptuales (identificación barata por eTag → ingesta con
+embeddings solo de lo cambiado), incremental por `remote_file_hashes`, límites por corrida.
+Diferencia con la carpeta local: los archivos NUNCA tocan disco (se descargan a memoria).
+
+Aislamiento: TODA operación de DB por-tenant pasa por `pool.tenant_connection(tenant_id)`
+(RLS activo, fail-closed). El motor de embeddings, el troceo y la extracción de texto se
+reutilizan de local_folders/ingest para no divergir.
+
+DEUDAS conocidas (anotadas, ver reporte):
+  · Renombrar/mover un archivo remoto cuyo eTag NO cambia deja sus fragmentos bajo la ruta
+    vieja hasta que su contenido cambie (los hashes se llevan por item_id estable, pero los
+    chunks/documents se guardan por ruta relativa). La poda por ruta corrige el caso común
+    (borrado) y el renombrado CON cambio de eTag/contenido.
+  · Simetría con LocalFolderSync en el borrado: 'knowledge' borra sus chunks; 'matters' poda
+    los documentos origin='drive' cuyo archivo remoto ya no existe (los origin='upload' y
+    origin='folder' JAMÁS se tocan).
+"""
+from __future__ import annotations
+
+import hashlib
+import logging
+from typing import Optional
+from urllib.parse import quote
+
+from ..db import pool
+from ..ingest.extract import extract_text
+from ..ingest.ingest import chunk_text
+from .local_folders import (
+    MAX_FILE_BYTES,
+    MAX_FILES_PER_SYNC,
+    MAX_SCAN_FILES,
+    LocalFolderSync,
+    _guess_mime,
+)
+from .mailbox.service import MailboxService
+
+logger = logging.getLogger("mia.connectors.graph_drive")
+
+GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+SOURCE_PREFIX = "drive:"                 # knowledge_chunks.source = 'drive:<source_id>'
+ALLOWED_SUFFIXES = {".pdf", ".docx", ".txt", ".md"}
+MAX_FOLDERS_PER_SCAN = 5000              # tope duro de carpetas visitadas por corrida (defensivo)
+MAX_SOURCES_PER_TENANT = 20             # tope de carpetas remotas registradas por despacho
+
+
+# ── errores del dominio ──────────────────────────────────────────────────────────
+class GraphDriveError(RuntimeError):
+    """Fallo al leer OneDrive vía Graph (se traduce a 502 en llano en la ruta)."""
+
+
+class RemoteSourceError(RuntimeError):
+    """Base de los errores de registro de una fuente remota (se mapean a HTTP en la ruta)."""
+
+
+class DuplicateSourceError(RemoteSourceError):
+    """La carpeta remota ya está registrada para ese tenant/kind (→ 409)."""
+
+
+class SourceLimitError(RemoteSourceError):
+    """Se alcanzó el tope de carpetas remotas por despacho (→ 422)."""
+
+
+class MatterNotFoundError(RemoteSourceError):
+    """El expediente indicado no existe o es de otro despacho (→ 404)."""
+
+
+# ── cliente Graph de SOLO LECTURA (http inyectable, patrón de mailbox/providers.py) ─
+class GraphDrive:
+    """Lectura de OneDrive vía Microsoft Graph. `http` (get async estilo httpx) se inyecta
+    para probar sin red. Ante cualquier error de API se lanza `GraphDriveError`."""
+
+    provider = "microsoft"
+
+    def __init__(self, creds, *, http, base: str = GRAPH_BASE) -> None:
+        self._creds = creds
+        self._http = http
+        self._base = base
+
+    async def _get_json(self, url: str, *, params: Optional[dict] = None) -> dict:
+        headers = {"Authorization": f"Bearer {self._creds.access_token}",
+                   "Accept": "application/json"}
+        resp = await self._http.get(url, params=params or {}, headers=headers)
+        status = getattr(resp, "status_code", 0)
+        if status != 200:
+            raise GraphDriveError(f"GET {url.split('?')[0]} devolvió status {status}")
+        return resp.json()
+
+    async def list_children(self, item_id: Optional[str] = None) -> list[dict]:
+        """Carpetas y archivos de UN nivel (raíz si `item_id` es None). Sigue la paginación
+        `@odata.nextLink` y devuelve la FORMA COMÚN neutral al proveedor:
+        {id, name, is_folder, size, etag, modified}."""
+        if item_id:
+            url = f"{self._base}/me/drive/items/{quote(str(item_id))}/children"
+        else:
+            url = f"{self._base}/me/drive/root/children"
+        params = {
+            "$select": "id,name,folder,file,size,eTag,lastModifiedDateTime",
+            "$top": "200",
+        }
+        out: list[dict] = []
+        next_url: Optional[str] = url
+        first = True
+        while next_url:
+            data = await self._get_json(next_url, params=params if first else None)
+            first = False
+            for it in data.get("value") or []:
+                out.append(self._to_common(it))
+            next_url = data.get("@odata.nextLink")
+        return out
+
+    async def download_file(self, item_id: str) -> bytes:
+        """Bytes de UN archivo. Graph responde `/content` con un 302 hacia una URL
+        pre-firmada de descarga; se sigue el redirect con un GET sin cabecera de autorización
+        (la URL ya viene firmada). El tope de 20 MB se controla ANTES en el motor de sync
+        usando el tamaño del árbol, así un archivo grande nunca llega a descargarse."""
+        url = f"{self._base}/me/drive/items/{quote(str(item_id))}/content"
+        headers = {"Authorization": f"Bearer {self._creds.access_token}"}
+        resp = await self._http.get(url, headers=headers)
+        status = getattr(resp, "status_code", 0)
+        if status in (301, 302, 303, 307, 308):
+            location = _resp_header(resp, "Location")
+            if not location:
+                raise GraphDriveError("descarga sin URL de redirección")
+            resp = await self._http.get(location, headers={})
+            status = getattr(resp, "status_code", 0)
+        if status != 200:
+            raise GraphDriveError(f"descarga de archivo devolvió status {status}")
+        content = getattr(resp, "content", b"")
+        return content if isinstance(content, (bytes, bytearray)) else bytes(content or b"")
+
+    @staticmethod
+    def _to_common(it: dict) -> dict:
+        """driveItem de Graph → forma común. `folder` presente ⇒ carpeta; `eTag`/`cTag`
+        detectan cambios baratos sin descargar."""
+        return {
+            "id": str(it.get("id") or ""),
+            "name": str(it.get("name") or ""),
+            "is_folder": it.get("folder") is not None,
+            "size": int(it.get("size") or 0),
+            "etag": str(it.get("eTag") or it.get("cTag") or ""),
+            "modified": str(it.get("lastModifiedDateTime") or ""),
+        }
+
+
+def _resp_header(resp, name: str) -> str:
+    """Lee una cabecera de la respuesta HTTP tolerando mayúsculas/minúsculas (httpx.Headers
+    es case-insensitive; un doble de test usa un dict simple)."""
+    headers = getattr(resp, "headers", None) or {}
+    try:
+        val = headers.get(name)
+        if val is None:
+            val = headers.get(name.lower())
+        return str(val or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# ── servicio: resuelve el conector de OneDrive del tenant (tokens + refresco) ─────
+class GraphDriveService:
+    """Resuelve un `GraphDrive` listo para el tenant, reutilizando la plomería de tokens de
+    MailboxService (cargar + refrescar + persistir). Devuelve None si el despacho no tiene
+    Microsoft conectado, o si lo conectó SIN permiso de archivos (Files.Read) — en ambos
+    casos la ruta responde 503 en llano. `http`/`store_mod`/... se inyectan para pruebas."""
+
+    def __init__(self, *, http=None, store_mod=None, oauth_mod=None,
+                 client_credentials=None) -> None:
+        self._svc = MailboxService(http=http, store_mod=store_mod, oauth_mod=oauth_mod,
+                                   client_credentials=client_credentials)
+
+    async def connector_for(self, tenant_id: str, provider: str = "microsoft"):
+        """GraphDrive del tenant, o None (sin cuenta Microsoft / sin permiso de archivos)."""
+        creds = await self._svc.fresh_creds(tenant_id, provider)
+        if creds is None:
+            return None
+        if "Files.Read" not in (creds.scopes or ()):
+            # Conectado, pero sin el permiso de archivos: se trata como "no disponible"
+            # (la ruta pide reconectar con permiso de archivos).
+            return None
+        return GraphDrive(creds, http=self._svc.client_http())
+
+    async def aclose(self) -> None:
+        await self._svc.aclose()
+
+
+# ── allowlist de fuentes remotas (RLS por tenant) ────────────────────────────────
+async def register_source(tenant_id: str, remote_item_id: str, label: str | None = None,
+                          kind: str = "knowledge", matter_id: str | None = None,
+                          provider: str = "microsoft") -> dict:
+    """Registra una carpeta de OneDrive en la allowlist del tenant.
+
+    kind='knowledge' (default): conocimiento del despacho (matter_id NULL).
+    kind='matters': vinculada a UN expediente — exige matter_id del propio despacho (se
+    valida bajo RLS: un asunto ajeno es invisible → MatterNotFoundError).
+
+    Errores: kind inválido / item vacío → ValueError; expediente ajeno → MatterNotFoundError;
+    ya registrada → DuplicateSourceError; tope por despacho → SourceLimitError."""
+    if kind not in ("knowledge", "matters"):
+        raise ValueError("No reconozco ese tipo de carpeta.")
+    if not remote_item_id or not str(remote_item_id).strip():
+        raise ValueError("Necesito la carpeta de OneDrive que quieres que Mia conozca.")
+    remote_item_id = str(remote_item_id).strip()
+    if kind == "matters":
+        if not matter_id:
+            raise ValueError("Necesito el expediente al que quieres vincular la carpeta.")
+        async with pool.tenant_connection(tenant_id) as conn:
+            row = await (await conn.execute(
+                "SELECT 1 FROM matters WHERE id=%s::uuid", (matter_id,))).fetchone()
+        if row is None:
+            raise MatterNotFoundError("No encontré ese expediente en tu despacho.")
+    else:
+        matter_id = None
+    label = (label or "Carpeta de OneDrive")[:200]
+
+    async with pool.tenant_connection(tenant_id) as conn:
+        total = (await (await conn.execute(
+            "SELECT count(*) FROM remote_drive_sources WHERE enabled")).fetchone())[0]
+        if total >= MAX_SOURCES_PER_TENANT:
+            raise SourceLimitError(
+                f"Llegaste al máximo de {MAX_SOURCES_PER_TENANT} carpetas de OneDrive. "
+                f"Quita alguna que ya no uses antes de agregar otra.")
+        row = await (await conn.execute(
+            "INSERT INTO remote_drive_sources (tenant_id, provider, remote_item_id, label, kind, matter_id) "
+            "VALUES (%s::uuid, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (tenant_id, provider, remote_item_id, kind) DO NOTHING RETURNING id",
+            (tenant_id, provider, remote_item_id, label, kind, matter_id),
+        )).fetchone()
+    if row is None:
+        raise DuplicateSourceError("Esa carpeta de OneDrive ya está agregada.")
+    return {"id": str(row[0]), "remote_item_id": remote_item_id, "label": label,
+            "kind": kind, "matter_id": matter_id, "enabled": True, "provider": provider}
+
+
+async def list_sources(tenant_id: str) -> list[dict]:
+    """Fuentes remotas registradas del tenant, con su última sincronización (si la hubo)."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        rows = await (await conn.execute(
+            "SELECT s.id, s.label, s.kind, s.matter_id, s.enabled, s.remote_item_id, s.created_at, "
+            "  (SELECT max(synced_at) FROM remote_file_hashes h WHERE h.source_id = s.id) AS last_sync "
+            "FROM remote_drive_sources s WHERE s.enabled ORDER BY s.created_at",
+        )).fetchall()
+    return [
+        {"id": str(r[0]), "label": r[1], "kind": r[2],
+         "matter_id": str(r[3]) if r[3] else None, "enabled": r[4],
+         "remote_item_id": r[5], "created_at": r[6].isoformat(),
+         "last_sync": r[7].isoformat() if r[7] else None}
+        for r in rows
+    ]
+
+
+async def get_source(tenant_id: str, source_id: str) -> dict | None:
+    """Una fuente remota registrada del tenant, o None si no existe (o es ajena)."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT id, label, kind, matter_id, enabled, remote_item_id "
+            "FROM remote_drive_sources WHERE id=%s::uuid AND enabled", (source_id,))).fetchone()
+    if row is None:
+        return None
+    return {"id": str(row[0]), "label": row[1], "kind": row[2],
+            "matter_id": str(row[3]) if row[3] else None, "enabled": row[4],
+            "remote_item_id": row[5]}
+
+
+async def source_last_sync(tenant_id: str, source_id: str):
+    """Momento de la última sincronización (max synced_at de sus hashes), o None."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT max(synced_at) FROM remote_file_hashes WHERE source_id=%s::uuid",
+            (source_id,))).fetchone()
+    return row[0] if row else None
+
+
+async def delete_source(tenant_id: str, source_id: str) -> bool:
+    """Quita una fuente remota. False si no existe (o es ajena).
+
+    Simétrico con folders.py: 'knowledge' BORRA su conocimiento indexado (privacidad
+    primero — quitar la carpeta la saca del conocimiento de Mia de inmediato); 'matters'
+    CONSERVA los documentos ya traídos al expediente (el abogado los sigue viendo). En
+    ambos casos se elimina la fila registrada y sus hashes (cascade por FK)."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT kind FROM remote_drive_sources WHERE id=%s::uuid", (source_id,))).fetchone()
+        if row is None:
+            return False
+        kind = row[0]
+        if kind == "knowledge":
+            await conn.execute(
+                "DELETE FROM knowledge_chunks WHERE tenant_id=%s::uuid AND source=%s",
+                (tenant_id, SOURCE_PREFIX + str(source_id)))
+        res = await conn.execute(
+            "DELETE FROM remote_drive_sources WHERE id=%s::uuid", (source_id,))
+    return res.rowcount > 0
+
+
+# ── motor de sincronización (calcado de LocalFolderSync.sync_source) ──────────────
+class RemoteDriveSync:
+    """Sincroniza UNA carpeta remota registrada. Recibe el conector `GraphDrive` ya resuelto
+    (o un doble en las pruebas). Reutiliza el troceo/embeddings/upsert de LocalFolderSync
+    para 'knowledge' y un molde propio (origin='drive') para 'matters'."""
+
+    def __init__(self, connector: "GraphDrive") -> None:
+        self._drive = connector
+        self._local = LocalFolderSync()   # reutiliza chunking/embeddings/upsert/poda
+
+    async def sync_source(self, tenant_id: str, source: dict) -> dict:
+        """Recorre el árbol de la carpeta remota (BFS), detecta cambios por eTag (barato,
+        sin descargar) y por sha256 (contenido), ingiere solo lo nuevo/cambiado y poda lo
+        borrado. Devuelve {ingested, unchanged, skipped, deleted, errors, deferred}."""
+        stats = {"ingested": 0, "unchanged": 0, "skipped": 0, "deleted": 0,
+                 "errors": 0, "deferred": 0}
+        kind = source.get("kind") or "knowledge"
+        matter_id = source.get("matter_id")
+        source_id = str(source["id"])
+        root_id = source["remote_item_id"]
+        db_source = SOURCE_PREFIX + source_id
+
+        try:
+            files, oversize, truncated = await self._scan_tree(root_id)
+        except Exception:  # noqa: BLE001 — no se pudo leer la carpeta raíz remota
+            logger.warning("fuente remota %s: no pude leer la carpeta en OneDrive", source_id)
+            stats["errors"] += 1
+            return stats
+        stats["skipped"] += oversize
+
+        current_rels = {f["rel"] for f in files}
+        stored = await self._get_stored_hashes(tenant_id, source_id)
+
+        new_hashes: dict[str, tuple[str, str]] = {}
+        to_process: list[dict] = []
+        for f in files:
+            st = stored.get(f["item_id"])
+            if st is not None and st[0] and st[0] == f["etag"]:
+                # eTag idéntico → sin cambios: no se descarga (pasada barata).
+                stats["unchanged"] += 1
+                new_hashes[f["item_id"]] = st
+            else:
+                to_process.append(f)
+
+        # Ventana por corrida: lo diferido queda SIN hash guardado → la corrida siguiente lo
+        # retoma (nada se pierde en silencio, igual criterio que LocalFolderSync).
+        if len(to_process) > MAX_FILES_PER_SYNC:
+            deferred = to_process[MAX_FILES_PER_SYNC:]
+            to_process = to_process[:MAX_FILES_PER_SYNC]
+            stats["deferred"] = len(deferred)
+            logger.warning("fuente remota %s: %d archivos superan el límite de %d por corrida; "
+                           "%d quedan pendientes", source_id, len(to_process) + len(deferred),
+                           MAX_FILES_PER_SYNC, len(deferred))
+
+        for f in to_process:
+            try:
+                blob = await self._drive.download_file(f["item_id"])
+                sha = hashlib.sha256(blob).hexdigest()
+                st = stored.get(f["item_id"])
+                if st is not None and st[1] and st[1] == sha:
+                    # Cambió el eTag pero el contenido es idéntico: solo se actualiza el eTag.
+                    stats["unchanged"] += 1
+                    new_hashes[f["item_id"]] = (f["etag"], sha)
+                    continue
+                text = self._text_from_bytes(f["name"], blob)
+                if kind == "matters":
+                    await self._ingest_matter_file(tenant_id, matter_id, f["rel"], f["name"],
+                                                   text, sha)
+                else:
+                    chunks = self._local._chunk_file(text, f["rel"])
+                    vectors = await self._local._embed_chunks([c["text"] for c in chunks])
+                    await self._local._upsert_chunks(tenant_id, db_source, f["rel"], chunks, vectors)
+                new_hashes[f["item_id"]] = (f["etag"], sha)
+                stats["ingested"] += 1
+            except Exception:  # noqa: BLE001 — un archivo malo no tumba la corrida
+                stats["errors"] += 1
+                logger.exception("fuente remota %s: no pude ingerir %s", source_id, f.get("rel"))
+                # sin hash guardado → se reintenta en la próxima sincronización
+
+        if truncated:
+            # Escaneo incompleto: no se poda NADA (los no vistos podrían existir).
+            await self._save_hashes(tenant_id, source_id, new_hashes, prune=False)
+        else:
+            if kind == "matters":
+                stats["deleted"] = await self._prune_matter_docs(tenant_id, matter_id, current_rels)
+            else:
+                stats["deleted"] = await self._local._delete_removed(tenant_id, db_source, current_rels)
+            await self._save_hashes(tenant_id, source_id, new_hashes, prune=True)
+        return stats
+
+    # ── escaneo del árbol remoto (BFS, tope duro defensivo) ──────────────────────
+    async def _scan_tree(self, root_id: str) -> tuple[list[dict], int, bool]:
+        """Archivos indexables bajo la carpeta remota (BFS). Excluye extensiones no
+        soportadas y archivos > 20 MB (contados como omitidos, sin descargarse). Corta en
+        MAX_SCAN_FILES / MAX_FOLDERS_PER_SCAN (defensivo). Devuelve (archivos, omitidos,
+        truncado). Un fallo listando la RAÍZ propaga; listar una SUBCARPETA que falla se
+        omite (fail-soft, no tumba la corrida)."""
+        files: list[dict] = []
+        oversize = 0
+        truncated = False
+        # La raíz puede fallar (propaga → sync_source cuenta error y sale).
+        root_children = await self._drive.list_children(root_id)
+        queue: list[tuple[dict, str]] = [(c, "") for c in root_children]
+        folders_seen = 0
+        while queue:
+            node, prefix = queue.pop(0)
+            name = node.get("name") or ""
+            if name.startswith(".") or name.startswith("~"):
+                continue
+            if node.get("is_folder"):
+                if folders_seen >= MAX_FOLDERS_PER_SCAN:
+                    truncated = True
+                    logger.warning("fuente remota: se alcanzó el tope de carpetas (%d); "
+                                   "escaneo INCOMPLETO", MAX_FOLDERS_PER_SCAN)
+                    break
+                folders_seen += 1
+                child_prefix = f"{prefix}{name}/"
+                try:
+                    kids = await self._drive.list_children(node["id"])
+                except Exception:  # noqa: BLE001 — subcarpeta ilegible: se omite ese subárbol
+                    logger.warning("fuente remota: no pude leer una subcarpeta; se omite")
+                    continue
+                for k in kids:
+                    queue.append((k, child_prefix))
+                continue
+            # archivo
+            suffix = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+            if suffix not in ALLOWED_SUFFIXES:
+                continue
+            if int(node.get("size") or 0) > MAX_FILE_BYTES:
+                oversize += 1
+                continue
+            files.append({"item_id": str(node["id"]), "rel": f"{prefix}{name}",
+                          "name": name, "size": int(node.get("size") or 0),
+                          "etag": str(node.get("etag") or "")})
+            if len(files) >= MAX_SCAN_FILES:
+                truncated = True
+                logger.warning("fuente remota: se alcanzó el tope de archivos (%d); "
+                               "escaneo INCOMPLETO", MAX_SCAN_FILES)
+                break
+        return files, oversize, truncated
+
+    @staticmethod
+    def _text_from_bytes(name: str, blob: bytes) -> str:
+        """Texto plano del archivo: PDF/Word vía extract_text; .md/.txt decodificados."""
+        if name.lower().endswith((".pdf", ".docx")):
+            return extract_text(name, blob)
+        return blob.decode("utf-8", errors="replace")
+
+    # ── persistencia del EXPEDIENTE VINCULADO (documents origin='drive' + chunks) ──
+    async def _ingest_matter_file(self, tenant_id: str, matter_id, rel: str, name: str,
+                                  text: str, sha256: str) -> None:
+        """Ingesta un archivo remoto al expediente: reemplaza SIEMPRE el documento previo de
+        esa ruta (origin='drive'). Los origin='upload'/'folder' NUNCA se tocan aquí."""
+        chunks = chunk_text(text)
+        async with pool.tenant_connection(tenant_id) as conn:
+            await conn.execute(
+                "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='drive' "
+                "AND source_path=%s", (matter_id, rel))
+            if not chunks:
+                return
+            vectors = await self._local._embed_chunks(chunks)
+            doc_id = (await (await conn.execute(
+                "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
+                "source_path, origin) VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'drive') "
+                "RETURNING id",
+                (tenant_id, matter_id, name, _guess_mime(name), sha256, rel),
+            )).fetchone())[0]
+            for i, (content, vec) in enumerate(zip(chunks, vectors)):
+                await conn.execute(
+                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s)",
+                    (tenant_id, doc_id, i, content, vec))
+
+    async def _prune_matter_docs(self, tenant_id: str, matter_id, current_rels) -> int:
+        """Poda los documentos origin='drive' del expediente cuyo archivo remoto ya no existe.
+        Los origin='upload'/'folder' JAMÁS se tocan. Devuelve el número de ARCHIVOS podados."""
+        current = set(current_rels)
+        async with pool.tenant_connection(tenant_id) as conn:
+            rows = await (await conn.execute(
+                "SELECT DISTINCT source_path FROM documents "
+                "WHERE matter_id=%s::uuid AND origin='drive'", (matter_id,))).fetchall()
+            removed = sorted({r[0] for r in rows if r[0] is not None} - current)
+            if removed:
+                await conn.execute(
+                    "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='drive' "
+                    "AND source_path = ANY(%s)", (matter_id, removed))
+        return len(removed)
+
+    # ── hashes remotos (RLS por tenant) ──────────────────────────────────────────
+    async def _get_stored_hashes(self, tenant_id: str, source_id: str) -> dict[str, tuple[str, str]]:
+        async with pool.tenant_connection(tenant_id) as conn:
+            rows = await (await conn.execute(
+                "SELECT item_id, etag, sha256 FROM remote_file_hashes "
+                "WHERE tenant_id=%s::uuid AND source_id=%s::uuid",
+                (tenant_id, source_id))).fetchall()
+        return {r[0]: (r[1] or "", r[2] or "") for r in rows}
+
+    async def _save_hashes(self, tenant_id: str, source_id: str,
+                           hashes: dict[str, tuple[str, str]], prune: bool = True) -> None:
+        """Upsert de los hashes vigentes (por item_id) + (si prune) borra los de archivos que
+        ya no están. Con escaneo truncado se llama con prune=False (los no vistos podrían
+        existir; borrar su hash forzaría re-indexarlos o perder su rastro)."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            for item_id, (etag, sha) in hashes.items():
+                await conn.execute(
+                    "INSERT INTO remote_file_hashes (tenant_id, source_id, item_id, etag, sha256) "
+                    "VALUES (%s::uuid, %s::uuid, %s, %s, %s) "
+                    "ON CONFLICT (tenant_id, source_id, item_id) DO UPDATE SET "
+                    "  etag=EXCLUDED.etag, sha256=EXCLUDED.sha256, synced_at=now()",
+                    (tenant_id, source_id, item_id, etag, sha))
+            if prune:
+                await conn.execute(
+                    "DELETE FROM remote_file_hashes WHERE tenant_id=%s::uuid "
+                    "AND source_id=%s::uuid AND NOT (item_id = ANY(%s))",
+                    (tenant_id, source_id, list(hashes.keys()) or [""]))

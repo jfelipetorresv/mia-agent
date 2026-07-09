@@ -91,11 +91,16 @@ class MailboxService:
                            tenant_id)
         return refreshed
 
-    async def connector_for(self, tenant_id: str, provider: Optional[str] = None):
-        """Conector listo para el tenant, o None (sin cuenta / error → silencio).
+    def client_http(self):
+        """Cliente HTTP compartido del servicio (inyectado o propio). Público para que
+        otros conectores del mismo proveedor (p. ej. el de OneDrive, connectors.graph_drive)
+        reutilicen el MISMO cliente y su ciclo de vida (aclose)."""
+        return self._client_http()
 
-        Con `provider`, la conexión de ESE proveedor puntual; sin él (compatibilidad),
-        la primera conexión disponible (ver `store.load_tokens`)."""
+    async def fresh_creds(self, tenant_id: str, provider: Optional[str] = None) -> Optional[OAuthCreds]:
+        """Credenciales OAuth VIGENTES del tenant (refresca y PERSISTE el token si expiró),
+        o None (sin cuenta / error → silencio). Es el ladrillo que comparten el conector de
+        buzón y el de OneDrive: cargar tokens + refrescar + persistir, sin construir conector."""
         try:
             creds = await self._store.load_tokens(tenant_id, provider)
         except Exception:  # noqa: BLE001 — migración ausente u otra falla: no hay conector
@@ -103,7 +108,14 @@ class MailboxService:
             return None
         if creds is None:
             return None
-        fresh = await self._ensure_fresh(tenant_id, creds)
+        return await self._ensure_fresh(tenant_id, creds)
+
+    async def connector_for(self, tenant_id: str, provider: Optional[str] = None):
+        """Conector listo para el tenant, o None (sin cuenta / error → silencio).
+
+        Con `provider`, la conexión de ESE proveedor puntual; sin él (compatibilidad),
+        la primera conexión disponible (ver `store.load_tokens`)."""
+        fresh = await self.fresh_creds(tenant_id, provider)
         if fresh is None:
             return None
         return providers.build_connector(fresh, http=self._client_http())
