@@ -1,5 +1,11 @@
 """Mia · rag.ingest_corpus — ingesta del corpus base del SAT-Graph (Módulo 3a).
 
+DEPRECADO a favor de `rag/corpus_factory.py` (Data Factory declarativo, que ingiere el
+TEXTO OFICIAL real desde portales del Estado). Este módulo queda por compatibilidad: los
+tests (`test_sat_graph.py`) todavía lo usan como semilla mínima y su corpus va marcado
+`[VERIFICAR]`. No añadir aquí normas nuevas de producción — el catálogo real crece editando
+`packs/{jur}/corpus_sources.json`.
+
 Precarga un corpus mínimo y representativo de Colombia (normas + jurisprudencia +
 relaciones) en el SAT-Graph compartido. Idempotente (todo es upsert): re-ejecutarlo no
 duplica.

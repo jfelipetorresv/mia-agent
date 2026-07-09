@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "_note": "Catálogo declarativo del Data Factory del corpus jurídico (rag/corpus_factory.py). Crecer el corpus = editar SOLO este archivo (añadir entradas a catalog.norms / catalog.jurisprudence). GATE ToS: una fuente con tos_ok!=true o verified!=true se SALTA entera. Los textos oficiales (leyes, decretos, providencias) son reproducibles fielmente sin restricción — Ley 23 de 1982, art. 41.",
+  "sources": [
+    {
+      "code": "funcionpublica",
+      "name": "Gestor Normativo — Función Pública",
+      "kind": "norms",
+      "base_url": "https://www.funcionpublica.gov.co/eva/gestornormativo/norma.php",
+      "tos_ok": true,
+      "tos_basis": "Ley 23 de 1982, art. 41 — los textos oficiales (leyes, decretos, decisiones judiciales) son reproducibles fielmente sin restricción",
+      "verified": true
+    },
+    {
+      "code": "corteconstitucional",
+      "name": "Relatoría — Corte Constitucional",
+      "kind": "jurisprudence",
+      "base_url": "https://www.corteconstitucional.gov.co/relatoria",
+      "tos_ok": true,
+      "tos_basis": "Ley 23 de 1982, art. 41",
+      "verified": true
+    },
+    {
+      "code": "suin",
+      "name": "SUIN-Juriscol — Ministerio de Justicia",
+      "kind": "norms",
+      "base_url": "https://www.suin-juriscol.gov.co/viewDocument.asp",
+      "tos_ok": true,
+      "tos_basis": "Ley 23 de 1982, art. 41",
+      "verified": true,
+      "ssl_verify": false,
+      "ssl_note": "la cadena de certificados del portal está incompleta (verificado 2026-07-08); se compensa con la validación de identidad fail-closed y el sha256 de trazabilidad"
+    }
+  ],
+  "catalog": {
+    "norms": [
+      {
+        "source": "funcionpublica",
+        "source_id": "48425",
+        "norm_type": "ley",
+        "norm_number": "Ley 1564 de 2012",
+        "issuing_body": "Congreso de la República",
+        "title": "Código General del Proceso",
+        "effective_date": "2012-07-12",
+        "practice_areas": ["litigio civil", "procesal"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "41102",
+        "norm_type": "decreto",
+        "norm_number": "Decreto 410 de 1971",
+        "issuing_body": "Presidencia de la República",
+        "title": "Código de Comercio",
+        "effective_date": "1971-03-27",
+        "practice_areas": ["comercial", "seguros"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "304",
+        "norm_type": "ley",
+        "norm_number": "Ley 80 de 1993",
+        "issuing_body": "Congreso de la República",
+        "title": "Estatuto General de Contratación de la Administración Pública",
+        "effective_date": "1993-10-28",
+        "practice_areas": ["contratación estatal", "litigio administrativo"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "184686",
+        "norm_type": "ley",
+        "norm_number": "Ley 1150 de 2007",
+        "issuing_body": "Congreso de la República",
+        "title": "Eficiencia y transparencia en la contratación con recursos públicos",
+        "effective_date": "2007-07-16",
+        "practice_areas": ["contratación estatal"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "41249",
+        "norm_type": "ley",
+        "norm_number": "Ley 1437 de 2011",
+        "issuing_body": "Congreso de la República",
+        "title": "Código de Procedimiento Administrativo y de lo Contencioso Administrativo (CPACA)",
+        "effective_date": "2011-01-18",
+        "practice_areas": ["litigio administrativo", "procesal"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "48366",
+        "norm_type": "ley",
+        "norm_number": "Ley 1563 de 2012",
+        "issuing_body": "Congreso de la República",
+        "title": "Estatuto de Arbitraje Nacional e Internacional",
+        "effective_date": "2012-07-12",
+        "practice_areas": ["arbitraje"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "43292",
+        "norm_type": "ley",
+        "norm_number": "Ley 1474 de 2011",
+        "issuing_body": "Congreso de la República",
+        "title": "Estatuto Anticorrupción",
+        "effective_date": "2011-07-12",
+        "practice_areas": ["contratación estatal", "sancionatorio"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "5725",
+        "norm_type": "ley",
+        "norm_number": "Ley 610 de 2000",
+        "issuing_body": "Congreso de la República",
+        "title": "Trámite de los procesos de responsabilidad fiscal",
+        "effective_date": "2000-08-15",
+        "practice_areas": ["responsabilidad fiscal"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "84899",
+        "norm_type": "ley",
+        "norm_number": "Ley 1882 de 2018",
+        "issuing_body": "Congreso de la República",
+        "title": "Fortalecimiento de la contratación pública",
+        "effective_date": "2018-01-15",
+        "practice_areas": ["contratación estatal"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "77540",
+        "norm_type": "ley",
+        "norm_number": "Ley 45 de 1990",
+        "issuing_body": "Congreso de la República",
+        "title": "Intermediación financiera y actividad aseguradora",
+        "effective_date": "1990-12-18",
+        "practice_areas": ["seguros"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "77594",
+        "norm_type": "ley",
+        "norm_number": "Ley 389 de 1997",
+        "issuing_body": "Congreso de la República",
+        "title": "Modificación arts. 1036 y 1046 del Código de Comercio (contrato de seguro)",
+        "effective_date": "1997-07-18",
+        "practice_areas": ["seguros"]
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "4125",
+        "norm_type": "ley",
+        "norm_number": "Constitución Política de 1991",
+        "issuing_body": "Asamblea Nacional Constituyente",
+        "title": "Constitución Política de Colombia",
+        "effective_date": "1991-07-04",
+        "practice_areas": ["constitucional"],
+        "metadata": {"clase": "constitucion"}
+      },
+      {
+        "source": "funcionpublica",
+        "source_id": "156590",
+        "norm_type": "ley",
+        "norm_number": "Ley 2080 de 2021",
+        "issuing_body": "Congreso de la República",
+        "title": "Reforma del CPACA",
+        "effective_date": "2021-01-25",
+        "practice_areas": ["litigio administrativo", "procesal"]
+      },
+      {
+        "source": "suin",
+        "source_id": "1827111",
+        "norm_type": "ley",
+        "norm_number": "Ley 84 de 1873",
+        "issuing_body": "Congreso de los Estados Unidos de Colombia",
+        "title": "Código Civil",
+        "effective_date": "1873-05-26",
+        "practice_areas": ["civil", "litigio civil"]
+      }
+    ],
+    "jurisprudence": [
+      {"source": "corteconstitucional", "tipo": "C", "numero": "590", "anio": 2005,
+       "magistrado_ponente": "Jaime Córdoba Triviño", "decision_date": "2005-06-08"},
+      {"source": "corteconstitucional", "tipo": "T", "numero": "406", "anio": 1992,
+       "magistrado_ponente": "Ciro Angarita Barón", "decision_date": "1992-06-05"},
+      {"source": "corteconstitucional", "tipo": "C", "numero": "836", "anio": 2001,
+       "magistrado_ponente": "Rodrigo Escobar Gil", "decision_date": "2001-08-09"},
+      {"source": "corteconstitucional", "tipo": "SU", "numero": "095", "anio": 2018,
+       "magistrado_ponente": "Cristina Pardo Schlesinger", "decision_date": "2018-10-11"},
+      {"source": "corteconstitucional", "tipo": "C", "numero": "1008", "anio": 2010,
+       "magistrado_ponente": "Luis Ernesto Vargas Silva", "decision_date": "2010-12-09"},
+      {"source": "corteconstitucional", "tipo": "T", "numero": "025", "anio": 2004,
+       "magistrado_ponente": "Manuel José Cepeda Espinosa", "decision_date": "2004-01-22"},
+      {"source": "corteconstitucional", "tipo": "C", "numero": "232", "anio": 1997,
+       "magistrado_ponente": "Jorge Arango Mejía", "decision_date": "1997-05-15"},
+      {"source": "corteconstitucional", "tipo": "SU", "numero": "072", "anio": 2018,
+       "magistrado_ponente": "José Fernando Reyes Cuartas", "decision_date": "2018-07-05"},
+      {"source": "corteconstitucional", "tipo": "C", "numero": "090", "anio": 2014,
+       "magistrado_ponente": "Mauricio González Cuervo", "decision_date": "2014-02-19"},
+      {"source": "corteconstitucional", "tipo": "T", "numero": "132", "anio": 2023,
+       "magistrado_ponente": "Natalia Ángel Cabo", "decision_date": "2023-05-03"}
+    ]
+  }
+}

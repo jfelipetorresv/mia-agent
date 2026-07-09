@@ -43,9 +43,19 @@ logger = logging.getLogger("mia.connectors.vault_writer")
 MIA_SUBDIR = "Mia"
 CONCEPTS_SUBDIR = "conceptos"
 REPORTS_SUBDIR = "reportes"
+# Fase 3 · frente C (bóveda visible): playbooks y fichas del corpus jurídico.
+PROCEDURES_SUBDIR = "procedimientos"
+CORPUS_NORMATIVA_SUBDIR = "corpus/normativa"
+CORPUS_JURISPRUDENCIA_SUBDIR = "corpus/jurisprudencia"
+
+# Subcarpetas permitidas para `_export_ficha` (allowlist cerrada — nunca una ruta
+# arbitraria, revisión CP-C2 aplicada también aquí).
+_ALLOWED_FICHA_SUBDIRS = frozenset(
+    {PROCEDURES_SUBDIR, CORPUS_NORMATIVA_SUBDIR, CORPUS_JURISPRUDENCIA_SUBDIR}
+)
 
 # claves de metadata que SÍ pueden ir al frontmatter público (nunca el tenant).
-_ALLOWED_META_KEYS = ("confidence", "case_count", "last_updated")
+_ALLOWED_META_KEYS = ("confidence", "case_count", "last_updated", "estado")
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9-]+")
 
@@ -107,6 +117,24 @@ class VaultWriter:
 
     def __init__(self, vault_path: str | Path) -> None:
         self.vault = self._validated_vault(vault_path)
+        # Anti-colisión de slug (revisión capa 2): dos títulos que difieren solo en
+        # acentos/mayúsculas (p. ej. "Prescripción Extintiva" y "PRESCRIPCION EXTINTIVA")
+        # normalizan al MISMO slug en _slugify — sin esto, el segundo sobreescribiría en
+        # silencio el archivo del primero. Vive por-instancia: se resetea en cada corrida
+        # de exportación (una VaultWriter nueva por backfill), así que el orden con que
+        # cada fuente entrega sus filas decide, de forma estable, quién se queda con el
+        # slug base y quién recibe el sufijo "-2", "-3"...
+        self._slug_owner: dict[str, dict[str, str]] = {}
+
+    def _dedupe_slug(self, subdir: str, base_slug: str, raw_key: str) -> str:
+        owners = self._slug_owner.setdefault(subdir, {})
+        candidate = base_slug
+        n = 2
+        while candidate in owners and owners[candidate] != raw_key:
+            candidate = f"{base_slug}-{n}"
+            n += 1
+        owners[candidate] = raw_key
+        return candidate
 
     # ── validación de rutas (allowlist + anti-escape) ────────────────────────
     @staticmethod
@@ -207,6 +235,56 @@ class VaultWriter:
         body = (content or "").strip()
         target.write_text(self._frontmatter(title) + body + "\n", encoding="utf-8")
         return target
+
+    # ── genérico: fichas bajo un subdir PERMITIDO (Fase 3 · frente C) ─────────
+    def _export_ficha(self, subdir: str, slug: str, content: str) -> Path:
+        """Escritura genérica bajo una subcarpeta PERMITIDA de `{vault}/Mia/`
+        (procedimientos / corpus/normativa / corpus/jurisprudencia). Cualquier otro
+        subdir se RECHAZA (ValueError) antes de tocar el filesystem — no abre la
+        puerta a rutas arbitrarias. Reutiliza las MISMAS validaciones fail-closed
+        (`_target` → `_mia_root` anti-junction/symlink, `_slugify` anti-escape)."""
+        if subdir not in _ALLOWED_FICHA_SUBDIRS:
+            raise ValueError(f"Subcarpeta de vault no permitida: {subdir!r}")
+        base_slug = _slugify(slug)
+        resolved_slug = self._dedupe_slug(subdir, base_slug, str(slug))
+        if resolved_slug != base_slug:
+            logger.warning(
+                "Colisión de slug en el vault (%s): %r comparte %r con una nota ya "
+                "exportada en esta corrida; se usa %r para no sobreescribirla.",
+                subdir, slug, base_slug, resolved_slug,
+            )
+        target = self._target(subdir, f"{resolved_slug}.md")
+        self.bootstrap_vault()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content.strip() + "\n", encoding="utf-8")
+        return target
+
+    def export_playbook(self, tenant_id: str, playbook: dict) -> Path:
+        """Escribe/actualiza `{vault}/Mia/procedimientos/{slug}.md`: espejo legible de
+        un playbook ACTIVO (`memory.playbook_manager` / tabla `playbooks`). La DB sigue
+        siendo la fuente de verdad — esto es solo el espejo que el abogado abre en
+        Obsidian. `tenant_id` es solo para trazabilidad interna: NUNCA se escribe en la
+        nota (mismo criterio que `export_concept`)."""
+        title = str(playbook.get("title") or "").strip()
+        if not title:
+            raise ValueError("El playbook necesita un título para exportarse al vault.")
+        summary = str(playbook.get("summary") or "").strip()
+        applies_when = str(playbook.get("applies_when") or "").strip()
+        body_content = str(playbook.get("content") or "").strip()
+
+        parts = [f"# {title}"]
+        if summary:
+            quote = "\n".join(f"> {ln}" if ln else ">" for ln in summary.splitlines())
+            parts.append(quote)
+        if applies_when:
+            parts.append(f"## Cuándo aplica\n{applies_when}")
+        if body_content:
+            parts.append(body_content)
+        body = "\n\n".join(parts) + "\n"
+
+        meta = {"estado": playbook.get("status") or "active"}
+        content = self._frontmatter(title, meta) + body
+        return self._export_ficha(PROCEDURES_SUBDIR, title, content)
 
 
 # ── vault por tenant (mismo mecanismo que el sync de lectura: tenant_settings) ──
