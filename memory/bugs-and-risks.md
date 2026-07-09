@@ -1054,3 +1054,40 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
    CORREGIDOS y re-verificados antes del commit: `resolve_server` ahora interpola y valida entorno +
    comando + args con un resolver único y aborta ante cualquier colgante; `forget_server` + endpoint
    borran las credenciales; `disable` pasó a jsonb_set atómico.
+
+## Riesgo #54 — Fuentes remotas del expediente (Gmail + OneDrive vía Graph API): residuales aceptados (2026-07-09)
+   **Contexto:** bloque 2 de la Fase 3 (`tenant_oauth_tokens` multi-proveedor, correos del caso →
+   expediente, OneDrive remoto selectivo de solo lectura, UI de las 4 fases). Capa 2 tuvo dos
+   revisores independientes: seguridad APROBÓ sin bloqueantes ni mayores; corrección encontró 3
+   mayores + 6 menores, TODOS corregidos en el commit `c9f2a32` antes de cerrar la sesión (renombrar
+   en OneDrive ya no borra el archivo del expediente; la UI espera a que la sync termine antes de
+   refrescar; botón para agregar permiso de archivos a una cuenta Microsoft ya conectada; fallo
+   por-correo no tumba el lote; `last_synced_at` por fuente; reset del diálogo al cerrar; uuid
+   malformado → 404 en llano; embeddings fuera de la conexión pooled; `quote(safe='')` en ids de
+   URLs; scopes base de Microsoft siempre incluidos — ver `progress.md` sesión 36 para el detalle
+   completo). Quedan 6 residuales aceptados, ninguno de confidencialidad:
+
+   1. 🟡 **Sin sincronización PROGRAMADA de OneDrive:** solo existe el botón manual "Sincronizar
+      ahora". Archivos diferidos por el tope de una corrida (>2000) o que fallaron individualmente
+      solo se retoman con un clic explícito del abogado. Deuda consciente — cierre futuro = job
+      periódico igual al de `local_folder_sources`.
+   2. 🟡 **`[VERIFICAR]` endpoints/scopes reales de Graph/Gmail:** los gates doblan el HTTP (nunca
+      llaman a Microsoft/Google de verdad). Falta confirmar contra el proveedor real la primera vez
+      que se conecte una cuenta — mismo criterio ya aplicado al mailbox de la Ola 2 (Riesgo
+      documentado ahí).
+   3. 🟢 **Colisión de ruta al renombrar (rarísimo, auto-sanable):** si un archivo se renombra a una
+      ruta que YA ocupa otro archivo distinto en `knowledge_chunks`, podría perderse hasta el
+      próximo cambio de contenido de ese archivo (que lo re-sincroniza). Caso extremo, se autocorrige
+      solo.
+   4. 🟢 **Avisos de correo/calendario podrían repetirse UNA vez tras el deploy:** el formato de las
+      claves de debounce de vigilancia cambió a `provider:external_id`; un aviso ya notificado con la
+      clave vieja podría notificarse otra vez con la clave nueva. Nunca en silencio, ocurre como
+      máximo una vez por aviso.
+   5. 🟡 **Candados/throttle de sync en memoria del proceso:** correcto para Modo B (un solo
+      worker). Si algún día Mia corre multi-worker, hay que mover el candado a la DB o a un lock
+      distribuido.
+   6. 🔵 **Nota de negocio para Pipe (no es un bug):** Microsoft no ofrece un scope de "solo
+      metadatos" — `Mail.Read` siempre permite leer el CUERPO del correo. Mia solo lee cuerpos
+      cuando el abogado busca/vincula un correo explícitamente, pero el permiso técnico de leer
+      cuerpos existe desde el momento en que se conecta la cuenta, no solo cuando se usa. Relevante
+      para lo que Pipe le explique al cliente sobre el alcance del permiso que otorga.

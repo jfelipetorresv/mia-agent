@@ -202,6 +202,24 @@ aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
       #5 pendiente de aprobación de Pipe (toca el gate de HITL/"resultado legal")
 - [x] Push a `origin/main` de los 6 commits de la sesión (`9f62b4e..c11fb71`)
 - [ ] Capa 3 visual (botón "Revisar ahora") — pendiente de Pipe en vivo
-- [ ] Gmail/OneDrive vía Graph API (bloque 2 de la Fase 3, ver `mia-decisiones-pipe-fase3` en memoria)
+- [x] Gmail/OneDrive vía Graph API (bloque 2 de la Fase 3, ver `mia-decisiones-pipe-fase3` en
+      memoria) — ✅ Sesión 36, 2026-07-09
 - [ ] Quick win #5: checklist de pre-entrega ejecutado en el gate de aprobación — requiere
       aprobación previa de Pipe antes de tocar `hitl_checkpoint`
+
+## Fase 3 · bloque 2 — Fuentes remotas del expediente: Gmail + OneDrive vía Graph API (Sesión 36, 2026-07-09)
+- [x] Fase 1 — cimientos OAuth multi-proveedor (`tenant_oauth_tokens` PK tenant+provider, migración
+      `027_remote_sources.sql`, `oauth.py` con features por proveedor) — gate `test_mailbox_multi.py` 21/21
+- [x] Fase 2 — correos del caso → expediente (`api/routes/matter_mail.py` buscar/vincular, cuerpo +
+      adjuntos como documentos `origin='mail'`, dedupe sha256) — gate `test_mail_to_matter.py` 24/24
+- [x] Fase 3 — OneDrive remoto SELECTIVO de solo lectura (`connectors/graph_drive.py`,
+      `api/routes/remote_drive.py` browse/CRUD/sync) — gate `test_remote_drive.py` 35/35
+- [x] Fase 4 — UI: `OneDriveFolderPicker`, `OneDriveSourcesSection`, `MatterDriveFolder`,
+      `MailSearchDialog`, `MailboxSection` con checkbox de OneDrive
+- [x] Capa 2: dos revisores adversariales (seguridad APROBADO sin bloqueantes; corrección 3 mayores +
+      6 menores, todos corregidos en `c9f2a32`) — ver `progress.md` sesión 36 y Riesgo #54
+- [x] Regresión 69/69 suites ×2 (`test_rls`/`check_env_pins` HALT intactos)
+- [ ] Capa 3 EN VIVO de Pipe/Cursor (conectar cuenta real, navegar carpetas, probar 503,
+      vincular correos, responsive) — pendiente
+- [ ] ACCIÓN DE PIPE: registrar apps OAuth (Azure AD + Google Cloud) y poner llaves en `.env`
+- [ ] Deuda: sincronización PROGRAMADA de fuentes OneDrive (hoy solo botón manual)

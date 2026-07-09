@@ -1798,3 +1798,104 @@ documentado; ahora se descarta si no es dict. (3) la nota `_nota` vivía dentro 
 
 Capa 1: regresión completa 66/66 verdes (antes y después de las correcciones). Commit `c11fb71`,
 pusheado a `origin/main`.
+
+
+## 2026-07-08/09 — Sesión 36 · Fuentes remotas del expediente: Gmail + OneDrive vía Graph API (bloque 2 de la Fase 3)
+
+**Qué se construyó:** bloque 2 de la Fase 3 (pendiente desde la sesión 35), COMPLETO en 4 fases +
+correcciones. 5 commits en `main` (sin push aún): `7ccab33`, `8c2c28a`, `a84088a`, `b989e39`, `c9f2a32`.
+
+**Fase 1 (`7ccab33`) — cimientos OAuth multi-proveedor:** `tenant_oauth_tokens` con PK
+`(tenant_id, provider)` — un despacho puede tener Microsoft Y Google conectados a la vez; migración
+`027_remote_sources.sql` (+ `remote_drive_sources`, `remote_file_hashes`, RLS FORCE; `documents.origin`
+gana los valores `'mail'`/`'drive'`). `oauth.py` con features por proveedor (mail / mail_content /
+drive vía `Files.Read`). `GET /api/mailbox/status` reporta por proveedor. El motor de vigilancia ya
+observa ambos proveedores (claves de debounce `provider:external_id`). `execution/init_remote_sources.py`
+corre la migración. Gate nuevo `test_mailbox_multi.py` **21/21**.
+
+**Fase 2 (`8c2c28a`) — correos del caso se traen al expediente:** `search_messages`/`fetch_meta`/
+`fetch_attachments` en ambos proveedores. Rutas nuevas `api/routes/matter_mail.py`:
+`GET /api/matters/{id}/mail/search?q=&provider=` y `POST /api/matters/{id}/mail/link` (máx 20 por
+lote, respuesta en llano `{added, skipped, already}`). El cuerpo del correo se convierte en documento
+`correo-AAAA-MM-DD-<asunto>.txt` con encabezado De/Fecha/Asunto; los adjuntos pdf/docx/txt/md se
+convierten en documentos `origin='mail'` con dedupe por sha256; lo no soportado o >20MB se reporta
+como `skipped` sin fingir que se trajo. El **consentimiento es la acción explícita del abogado** de
+buscar+vincular (no depende del opt-in de vigilancia del correo). Auditoría CP-E1 registra solo
+metadatos. Gate `test_mail_to_matter.py` **24/24**.
+
+**Fase 3 (`a84088a`) — OneDrive remoto SELECTIVO de solo lectura:** `connectors/graph_drive.py`
+(cliente Graph con cliente HTTP inyectable + `RemoteDriveSync`, calcado del patrón de
+`local_folder_sources`: sync incremental por eTag→sha256, tope de 20MB comprobado ANTES de descargar,
+fail-soft por archivo — un archivo roto no tumba la corrida). Rutas `api/routes/remote_drive.py`:
+navegar carpetas, CRUD de fuentes, sincronizar (con candado + throttle de 60s). El contenido va a
+`knowledge_chunks` o a `documents` con `origin='drive'` según corresponda. Tope de 20 fuentes por
+despacho. Gate `test_remote_drive.py` (31 → **35/35** tras las correcciones de capa 2).
+
+**Fase 4 (`b989e39`) — UI:** `OneDriveFolderPicker` (navegador modal de carpetas con breadcrumb, la
+raíz nunca es elegible directamente), `OneDriveSourcesSection` (Panel de control, sección "Carpetas
+en la nube (OneDrive)"), `MatterDriveFolder` (vincular una carpeta OneDrive al asunto en curso),
+`MailSearchDialog` ("Traer correos del caso": buscar, marcar con checkbox, añadir N, resumen
+added/skipped/already en llano), `MailboxSection` con una tarjeta por proveedor conectado +
+checkbox "Incluir mis archivos de OneDrive". Registrar una carpeta dispara su primera sincronización
+automáticamente.
+
+**Verificación 3 capas:**
+- **Capa 1:** regresión completa **69/69 suites ALL PASS** (dos corridas, antes y después de las
+  correcciones de capa 2) — `test_rls` 12/12 y `check_env_pins` 9/9 (HALT) intactos; `npm run build`
+  verde. La línea base sube de 66 a 69 suites. Nota de corrección de tally: `test_setup_wizard` es
+  **28/28** (el "30/30" que quedó anotado en el HANDOFF de sesiones previas correspondía a otra
+  versión del script, no a la actual).
+- **Capa 2 — dos revisores adversariales independientes (contexto fresco, Opus):**
+  - **Revisor de seguridad: APROBADO sin bloqueantes ni mayores.** RLS confirmado en las 3 tablas
+    nuevas, `state` de OAuth con nonce + cookie (anti-CSRF), ningún camino de fuga de tokens o
+    contenido entre despachos, SQL parametrizado en toda la superficie nueva, límites (20 correos por
+    lote, 20MB por archivo, 20 fuentes por despacho) todos verificados con evidencia de código.
+  - **Revisor de corrección: 3 MAYORES + 6 MENORES — TODOS aplicados en el commit `c9f2a32`, ninguno
+    descartado:**
+    - **M1** — renombrar un archivo en OneDrive lo BORRABA del expediente (la sync lo veía como
+      archivo nuevo + archivo desaparecido) → ahora se persiste `rel_path` y `_move_content` mueve el
+      contenido existente en vez de borrar+recrear; gate con caso de rename dedicado.
+    - **M2** — la UI no esperaba a que la sincronización terminara antes de refrescar → ahora sondea
+      hasta que termina y refresca la lista de documentos.
+    - **M3** — no existía forma de agregar el permiso de archivos a una cuenta Microsoft YA conectada
+      solo para correo → botón nuevo "Añadir permiso de archivos"; `status` expone `archivos: bool`
+      por proveedor.
+    - **m1** — un fallo al vincular UN correo tumbaba el lote completo → ahora ese correo se reporta
+      `skipped` y el resto del lote sigue.
+    - **m2** — `last_synced_at` no se actualizaba por fuente individual → el throttle y "Última
+      revisión" fallaban con una carpeta vacía; corregido por-fuente.
+    - **m4** — el botón "Cerrar" del diálogo de correos no reseteaba su estado interno.
+    - **m5** — un uuid malformado en la URL reventaba con 500 → ahora 404 en llano.
+    - **m6** — el cálculo de embeddings corría DENTRO de la conexión pooled del tenant (bloqueante) →
+      movido fuera de la conexión.
+    - **SEC-1** — los ids en URLs de Graph/Gmail no pasaban por `quote(safe='')` → ahora sí.
+    - **SEC-2** — los scopes base de Microsoft (`offline_access openid email`) no estaban garantizados
+      en toda solicitud OAuth → ahora siempre se incluyen.
+
+**Deudas/riesgos NUEVOS (detalle completo en `memory/bugs-and-risks.md`, Riesgo #54):**
+1. No existe sincronización PROGRAMADA de fuentes OneDrive (solo el botón manual); archivos diferidos
+   (>2000 por corrida) o con error solo se retoman con un clic. Deuda consciente.
+2. `[VERIFICAR]` endpoints/scopes reales de Graph/Gmail — los gates doblan el HTTP; confirmar al
+   conectar la primera cuenta real (mismo criterio que el mailbox de la Ola 2).
+3. Renombrar un archivo a una ruta ya ocupada por otro archivo (colisión en `knowledge_chunks`) podría
+   perder el archivo hasta el próximo cambio de contenido — caso rarísimo, auto-sanable.
+4. Tras el deploy de este bloque, avisos de correo/calendario ya notificados podrían repetirse UNA vez
+   (cambio de formato de las claves de debounce de vigilancia). Nunca en silencio.
+5. Los candados/throttle de sincronización viven en memoria del proceso (Modo B single-worker está
+   bien; revisar si algún día hay multi-worker).
+6. **Nota de negocio para Pipe:** Microsoft no tiene un scope de "solo metadatos" — `Mail.Read` siempre
+   permite leer cuerpos de correo; Mia solo los usa cuando el abogado lo pide explícitamente, pero el
+   permiso técnico existe desde el momento en que se conecta la cuenta.
+
+**Pendiente para la próxima sesión:**
+- **Capa 3 EN VIVO de Pipe/Cursor** (no hubo navegador conectado en esta sesión): (1) conectar
+  Microsoft con "Incluir mis archivos de OneDrive" y verificar el flujo real de consentimiento;
+  (2) navegar 2-3 niveles de carpetas y elegir una; (3) probar el 503 sin conexión configurada y el
+  botón "Añadir permiso de archivos"; (4) buscar y vincular 2-3 correos reales y verlos aparecer en
+  documentos del asunto; (5) responsive de los dos modales nuevos. También sigue pendiente la capa 3
+  del botón "Revisar ahora" (deuda de la sesión 35).
+- **ACCIÓN DE PIPE:** registrar las apps OAuth (Azure AD y Google Cloud) y poner las llaves en `.env`
+  (`MS_OAUTH_CLIENT_ID/SECRET`, `GOOGLE_OAUTH_CLIENT_ID/SECRET`) — hasta entonces todo responde 503 en
+  llano (activación diferida, por diseño; mismo patrón que Microsoft 365/Google de la Ola 2).
+- Quick win #5 (checklist de pre-entrega en el gate de aprobación) sigue esperando aprobación de Pipe.
+- Deuda #1 de arriba (sincronización programada de OneDrive).

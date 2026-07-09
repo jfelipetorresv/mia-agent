@@ -838,3 +838,31 @@ Qué sigue (TERMINAL NUEVA, contexto en 0):
 - Al arrancar: leer CLAUDE.md, TRASPASO-MODELO.md, esta entrada, HANDOFF.md, la memoria
   persistente del repo. OJO: Mia corre en 3100; Cursor trabaja en paralelo sobre main (verificar
   git antes de commitear).
+
+## 2026-07-09 — Sesión 36
+TL;DR: Fuentes remotas del expediente completas — el abogado ya puede traer correos (Gmail/Microsoft)
+y carpetas de OneDrive al asunto, con OAuth multi-proveedor de base.
+Qué construimos:
+- Fase 1: cimientos OAuth multi-proveedor (`tenant_oauth_tokens` con un despacho pudiendo tener
+  Microsoft Y Google a la vez; migración `027_remote_sources.sql`).
+- Fase 2: buscar y vincular correos del caso al expediente (`api/routes/matter_mail.py`), cuerpo y
+  adjuntos se vuelven documentos con dedupe por sha256.
+- Fase 3: OneDrive remoto SELECTIVO de solo lectura (`connectors/graph_drive.py` +
+  `api/routes/remote_drive.py`), sync incremental con tope de tamaño y fail-soft por archivo.
+- Fase 4: UI completa (navegador de carpetas, diálogo de búsqueda de correos, tarjetas del Panel).
+- 5 commits en `main` (`7ccab33`..`c9f2a32`), sin push.
+Qué decidimos:
+- Dos revisores adversariales independientes: seguridad APROBADO sin bloqueantes/mayores;
+  corrección con 3 mayores + 6 menores, TODOS corregidos antes del commit (renombrar en OneDrive ya
+  no borra el archivo del expediente; botón para agregar permiso de archivos a una cuenta ya
+  conectada; fallo por-correo no tumba el lote; entre otros — detalle en `progress.md` y
+  `bugs-and-risks.md` Riesgo #54).
+- Regresión 69/69 suites ALL PASS ×2 (`test_rls`/`check_env_pins` HALT intactos); línea base sube
+  de 66 a 69.
+Qué sigue:
+- Capa 3 EN VIVO de Pipe/Cursor (conectar cuenta real, navegar carpetas, vincular correos,
+  responsive) — sigue pendiente también la del botón "Revisar ahora" de la sesión 35.
+- ACCIÓN DE PIPE: registrar las apps OAuth (Azure AD + Google Cloud) y poner las llaves en `.env` —
+  hasta entonces todo responde 503 en llano (activación diferida, por diseño).
+- Quick win #5 (checklist de pre-entrega en el gate de aprobación) sigue esperando aprobación de Pipe.
+- Deuda consciente: sincronización PROGRAMADA de fuentes OneDrive (hoy solo botón manual).
