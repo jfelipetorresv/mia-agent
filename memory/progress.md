@@ -1958,3 +1958,39 @@ esta memoria + HANDOFF.
 **Pendiente para la próxima sesión:** sin cambios respecto a la sesión 36 (capa 3 en vivo de
 Pipe/Cursor; ACCIÓN DE PIPE: llaves OAuth en `.env`; quick win #5 esperando aprobación) + decidir
 si se hace push de los 4 commits de esta sesión (la sesión 36 ya está en `origin/main`).
+
+---
+
+## 2026-07-09 — Sesión 37 (continuación) — SPIKE Fase 4: distribución VIABLE
+
+Tras el cierre y push (`b010be2`, decidido por Pipe), Pipe pidió seguir avanzando el esqueleto.
+Se ejecutó el **spike aislado de la Fase 4 (distribución)** que ordenaba el plan — nada del repo
+`mia` se tocó (git limpio verificado); todo vive en `../spike-fase4/` y `../spike-fase4-shell/`.
+
+**Resultado: el camino del instalador ES VIABLE — ambas mitades probadas hoy:**
+1. **Motor empaquetado (PyInstaller, agente ejecutor Sonnet):** el backend COMPLETO (FastAPI +
+   LangGraph + psycopg/pgvector + litellm + onnxruntime/rapidocr + sherpa + av) corre como bundle
+   onedir **sin venv ni Python instalado** — `/health` respondió `{db:true, pgvector:0.8.2}` contra
+   la DB portable y el middleware JWT dio 401 correcto. Bundle 459,5 MB; build 15 min frío;
+   arranque ~14 s. Flags que hicieron falta (documentados con evidencia en `spike-fase4/`):
+   `--paths backend`, import explícito de `mia.api.main` en el entry (uvicorn recibe la app como
+   string → invisible al análisis estático), `--collect-data litellm`, `--collect-all
+   rapidocr_onnxruntime` (¡sin esto el OCR degrada a None EN SILENCIO!), `--hidden-import
+   tiktoken_ext(.openai_public)`. `check_env_pins` siguió 9/9 tras instalar pyinstaller.
+2. **Cáscara de escritorio (Tauri v2):** compiló a la primera en esta máquina (Rust 1.97 instalado
+   hoy con perfil mínimo; VS Build Tools 2022 y WebView2 ya estaban) y produjo instaladores reales
+   `setup.exe` (NSIS, 1,9 MB) y `.msi` (2,9 MB) en `spike-fase4-shell/`.
+
+**Riesgos/decisiones que el spike dejó para la Fase 4 real (detalle en el reporte del agente y en
+`C:\Users\USER\.claude\plans\CHECKPOINT-mia-transformacion.md`):**
+- **R1 (diseño pendiente):** `config.py` resuelve el `.env` relativo a `__file__` → congelado apunta
+  dentro del bundle. El sidecar debe recibir config por env vars desde Tauri o `config.py` debe
+  detectar `sys.frozen` y leer de la ruta de datos de la app (cirugía mínima futura, NO hecha).
+- **R2:** instalador ~200+ MB comprimido — decidir si OCR/voz van dentro o como descarga posterior
+  (la voz YA se descarga aparte hoy).
+- **R3:** el fail-soft de OCR/voz hace que un bundle incompleto "funcione" mudo → el instalador
+  necesita un self-check de arranque por módulo, no solo `/health`.
+- **R4:** exes PyInstaller sin firmar disparan antivirus/SmartScreen → la firma (cuenta Azure
+  Trusted Signing de Pipe) es requisito de LANZAMIENTO, no de construcción.
+- **R5:** Postgres portable y LiteLLM quedan FUERA del bundle — la cáscara debe orquestarlos como
+  procesos propios (hoy la DB ya es portable; patrón conocido).
