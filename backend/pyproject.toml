@@ -29,6 +29,7 @@ dependencies = [
   "sherpa-onnx~=1.13",                   # CP-Z1: dictado local (Silero VAD + Parakeet v3 ONNX). Pesos aparte: scripts/download_speech_models.ps1. Sin él, el endpoint de voz degrada a 503.
   "av~=13.1",                            # CP-Z2: códec OGG/Opus para las notas de voz de Telegram (wheel autocontenido, sin ffmpeg externo). Fuera de los pins críticos del Riesgo #32. Solo lo usa speech/opus.py.
   "beautifulsoup4~=4.12",                # Data Factory del corpus: parseo del HTML de portales oficiales (Función Pública, Corte Constitucional). ~= a propósito, fuera de los pins críticos del Riesgo #32. Solo lo usa rag/corpus_factory.py.
+  "rapidocr-onnxruntime~=1.4",           # Fase 3 bloque 3a: lectura óptica LOCAL de PDFs escaneados (PaddleOCR sobre ONNX, CPU, sin binarios externos). El doc nunca sale del servidor. ~= a propósito, fuera de los pins críticos del Riesgo #32. Solo lo usa ingest/ocr.py; fail-soft si falta (ingest/extract.py degrada con honestidad).
 ]
 
 # Proyecto "virtual": no se empaqueta; las deps se instalan en mia/.venv con uv.
