@@ -172,6 +172,60 @@ async def sync_local_folders_all_tenants() -> dict:
     return out
 
 
+def _enumerate_remote_drive_tenants() -> list[str]:
+    """Tenants con al menos una carpeta remota de OneDrive registrada y habilitada
+    (`remote_drive_sources`, bloque 3b). Hereda el Riesgo #15 (enumerar tenants es una
+    operación de SISTEMA, cross-tenant, invisible bajo RLS fail-closed desde `mia_app` —
+    se usa conexión admin `postgres` SOLO para leer qué tenants sincronizar; la escritura
+    por tenant sigue pasando por `pool.tenant_connection`), igual que Obsidian y las
+    carpetas locales."""
+    import psycopg
+
+    pw = os.getenv("PG_PASSWORD", "")
+    if not pw:
+        logger.warning("PG_PASSWORD vacío: el job de OneDrive remoto no puede enumerar tenants")
+        return []
+    kw = dict(host=os.getenv("PG_HOST", "127.0.0.1"), port=os.getenv("PG_PORT", "5432"),
+              dbname=os.getenv("PG_DB", "mia"), user="postgres", password=pw)
+    try:
+        with psycopg.connect(autocommit=True, **kw) as c:
+            rows = c.execute(
+                "SELECT DISTINCT tenant_id FROM remote_drive_sources WHERE enabled"
+            ).fetchall()
+    except psycopg.errors.UndefinedTable:
+        # migración 027 aún no aplicada en este entorno — no hay nada que sincronizar.
+        return []
+    return [str(r[0]) for r in rows]
+
+
+async def sync_remote_drive_all_tenants() -> dict:
+    """Sincroniza las carpetas remotas de OneDrive de cada tenant con fuentes habilitadas
+    (bloque 3b — cierra la deuda #1 de la sesión 36: hasta ahora `remote_drive_sources`
+    solo se sincronizaba con el botón manual).
+
+    Reutiliza EXACTAMENTE la misma lógica de sync y el mismo lock por-fuente que el botón
+    manual (`connectors.graph_drive.sync_tenant_sources` + `SYNCS_IN_FLIGHT`): un clic del
+    abogado y este cron nunca sincronizan la misma carpeta a la vez, ni la duplican.
+
+    Fail-soft en dos niveles: tenant sin cuenta Microsoft con permiso de archivos → silencio
+    (estado normal, no error); una fuente o un tenant que falle no tumba a los demás.
+    Devuelve {tenant_id: stats}."""
+    from ..connectors.graph_drive import GraphDriveService, sync_tenant_sources
+
+    service = GraphDriveService()
+    out: dict[str, dict] = {}
+    try:
+        for tenant_id in _enumerate_remote_drive_tenants():
+            try:
+                out[tenant_id] = await sync_tenant_sources(tenant_id, service)
+            except Exception as e:  # un tenant no debe tumbar a los demás
+                out[tenant_id] = {"error": str(e)}
+                logger.exception("sync de OneDrive remoto falló para tenant %s", tenant_id)
+    finally:
+        await service.aclose()
+    return out
+
+
 async def curator_run_all_tenants() -> dict:
     """Mantenimiento semántico de playbooks de todos los tenants (Módulo 3b).
     Domingos 2am — el scheduler NO tiene timezone awareness en v1; el intervalo es de 168h
@@ -354,6 +408,13 @@ def build_scheduler() -> Scheduler:
     # (carpetas grandes con PDF/Word; la incremental por hash hace barato el re-sync).
     sched.register_job("sync_local_folders_all_tenants", sync_local_folders_all_tenants,
                        interval_hours=24)
+    # OneDrive remoto (bloque 3b): cada 6h, misma cadencia que Obsidian — a diferencia de las
+    # carpetas locales (allowlist amplia de disco), aquí el abogado ya eligió subcarpetas
+    # ESPECÍFICAS (tope de 20 por despacho) y el incremental es por eTag (barato, sin
+    # descargar); cada fuente además respeta su propio throttle (1h, ver
+    # graph_drive.CRON_THROTTLE_HOURS) así que correr el job cada 6h no relanza nada de más.
+    sched.register_job("sync_remote_drive_all_tenants", sync_remote_drive_all_tenants,
+                       interval_hours=6)
     # domingos 2am — sin timezone en v1; intervalo semanal de 168h (decisión #18).
     sched.register_job("curator_weekly", curator_run_all_tenants, interval_hours=168)
     # domingos 4am — Dreams llama GEPA internamente; no hay job GEPA separado.

@@ -29,6 +29,14 @@ Verifica OFFLINE (Graph doblado, sin red) contra la DB REAL (documents/chunks/kn
     · RLS: las fuentes de un despacho son invisibles para otro
     · lock anti-duplicado + throttle de 60s
 
+  Cron de sincronización PROGRAMADA (bloque 3b — cierra la deuda #1 de la sesión 36):
+    · scheduler: sync_remote_drive_all_tenants registrado (6h)
+    · sync_tenant_sources: tenant sin cuenta Microsoft conectada → silencio total (no_account)
+    · sync_tenant_sources: fuente sincronizada hace poco (< throttle) → se salta
+    · sync_tenant_sources: una fuente rota (token vencido simulado) NO tumba las demás
+    · sync_tenant_sources: lock compartido con el sync manual (SYNCS_IN_FLIGHT) → no duplica
+    · sync_remote_drive_all_tenants: itera tenants reales (enumeración por DB) y sincroniza
+
 Salida: exit 0 = PASS · exit 1 = FAIL.
     .venv\\Scripts\\python.exe execution\\test_remote_drive.py
 """
@@ -67,6 +75,8 @@ from mia.connectors.graph_drive import (                 # noqa: E402
     register_source,
     source_last_sync,
 )
+from mia.cron import build_scheduler                      # noqa: E402
+from mia.cron import scheduler as cron_scheduler          # noqa: E402
 
 _results: list[tuple[str, bool]] = []
 
@@ -377,6 +387,144 @@ async def sync_checks(a: str, matter_a: str) -> None:
         await pool.close_pool()
 
 
+# ── dobles del servicio de OneDrive para el CRON (bloque 3b) ─────────────────────
+class FakeCronService:
+    """Doble de GraphDriveService para el cron: mapea tenant_id -> conector (o None si el
+    despacho no tiene cuenta Microsoft conectada). `aclose` no-op (sin red real)."""
+
+    def __init__(self, connectors: dict):
+        self._connectors = connectors
+
+    async def connector_for(self, tenant_id, provider="microsoft"):
+        return self._connectors.get(tenant_id)
+
+    async def aclose(self):
+        pass
+
+
+def set_last_synced(source_id: str, seconds_ago: float) -> None:
+    with psycopg.connect(autocommit=True, **PG) as c:
+        c.execute(
+            "UPDATE remote_drive_sources SET last_synced_at = now() - (%s || ' seconds')::interval "
+            "WHERE id=%s::uuid", (seconds_ago, source_id))
+
+
+# ── checks del cron de sincronización PROGRAMADA (bloque 3b) ────────────────────
+async def cron_checks(c_tenant: str, d_tenant: str) -> None:
+    """Ejercita connectors.graph_drive.sync_tenant_sources (motor del cron) y
+    cron.scheduler.sync_remote_drive_all_tenants (wiring: enumeración de tenants reales +
+    GraphDriveService), con Graph doblado y DB real. Sin red ni cuentas Microsoft reales."""
+    await pool.open_pool()
+    try:
+        txt_bytes = "Notas del cron para el conocimiento del despacho.".encode("utf-8")
+
+        # tenant C: cuenta Microsoft conectada, con 3 fuentes: una que sincroniza bien, una
+        # que se sincronizó hace un instante (throttle) y una cuyo token está "vencido"
+        # (simulado) para probar que una fuente rota no tumba a las demás.
+        src_ok = await register_source(c_tenant, "C-OK", label="ok", kind="knowledge")
+        src_recent = await register_source(c_tenant, "C-RECENT", label="reciente", kind="knowledge")
+        src_bad = await register_source(c_tenant, "C-BAD", label="rota", kind="knowledge")
+        set_last_synced(src_recent["id"], seconds_ago=60)   # hace 1 minuto: dentro del throttle de 1h
+
+        tree_c = {
+            "C-OK": [_f("CT1", "notas.txt", len(txt_bytes), "e-ct1")],
+            "C-RECENT": [_f("CT2", "notas2.txt", len(txt_bytes), "e-ct2")],
+            "C-BAD": [_f("CT3", "notas3.txt", len(txt_bytes), "e-ct3")],
+        }
+        drive_c = FakeDrive(tree_c, {"CT1": txt_bytes, "CT2": txt_bytes, "CT3": txt_bytes})
+        orig_extract = gd.extract_text
+        gd.extract_text = lambda name, data: "texto de prueba del cron"
+
+        # Simula "token vencido a mitad de corrida"/"carpeta borrada" para C-BAD: envuelve
+        # RemoteDriveSync para que ESA fuente lance, y deja las demás intactas.
+        OrigSync = gd.RemoteDriveSync
+
+        class RaisingSync:
+            def __init__(self, connector):
+                self._inner = OrigSync(connector)
+
+            async def sync_source(self, tenant_id, source):
+                if source["remote_item_id"] == "C-BAD":
+                    raise RuntimeError("token vencido (simulado)")
+                return await self._inner.sync_source(tenant_id, source)
+
+        gd.RemoteDriveSync = RaisingSync
+        try:
+            service_c = FakeCronService({c_tenant: drive_c})
+            stats_c = await gd.sync_tenant_sources(c_tenant, service_c, throttle_hours=1)
+        finally:
+            gd.RemoteDriveSync = OrigSync
+            gd.extract_text = orig_extract
+
+        check("cron: fuente sana se sincroniza (synced=1)", stats_c["synced"] == 1)
+        check("cron: fuente sincronizada hace poco se salta por throttle (skipped_throttle=1)",
+              stats_c["skipped_throttle"] == 1)
+        check("cron: fuente rota (token vencido simulado) falla SIN tumbar a las demás "
+              "(failed=1, synced sigue en 1)",
+              stats_c["failed"] == 1 and stats_c["synced"] == 1)
+        check("cron: tenant con cuenta conectada → no_account=False", stats_c["no_account"] is False)
+
+        # tenant D: sin cuenta Microsoft conectada (o sin permiso de archivos) → silencio total,
+        # cero fuentes tocadas, sin error ruidoso.
+        await register_source(d_tenant, "D-1", label="sin cuenta", kind="knowledge")
+        service_d = FakeCronService({})   # connector_for devuelve None para cualquier tenant
+        stats_d = await gd.sync_tenant_sources(d_tenant, service_d, throttle_hours=1)
+        check("cron: tenant SIN cuenta Microsoft conectada → silencio total (no_account=True, cero syncs)",
+              stats_d["no_account"] is True and stats_d["synced"] == 0 and stats_d["failed"] == 0)
+
+        # lock COMPARTIDO con el sync manual: si el endpoint manual ya está sincronizando esta
+        # MISMA fuente (SYNCS_IN_FLIGHT), el cron la ve en vuelo y se salta (no la duplica).
+        set_last_synced(src_ok["id"], seconds_ago=999999)   # fuera del throttle: forzaría re-sync
+        gd.SYNCS_IN_FLIGHT.add(str(src_ok["id"]))
+        try:
+            service_c2 = FakeCronService({c_tenant: drive_c})
+            stats_lock = await gd.sync_tenant_sources(c_tenant, service_c2, throttle_hours=1)
+        finally:
+            gd.SYNCS_IN_FLIGHT.discard(str(src_ok["id"]))
+        check("cron: lock compartido con el sync manual (SYNCS_IN_FLIGHT) → no duplica "
+              "una fuente ya en vuelo (skipped_lock>=1)",
+              stats_lock["skipped_lock"] >= 1)
+
+        # ── wiring del job completo: scheduler.build_scheduler + sync_remote_drive_all_tenants ──
+        jobs = {j["name"]: j for j in build_scheduler().list_jobs()}
+        check("scheduler: sync_remote_drive_all_tenants registrado cada 6h",
+              "sync_remote_drive_all_tenants" in jobs
+              and jobs["sync_remote_drive_all_tenants"]["interval_hours"] == 6)
+
+        # el job real enumera tenants por DB (admin) y sincroniza con GraphDriveService real —
+        # se dobla la CLASE (el cron la instancia sin argumentos) para no tocar red/tokens.
+        set_last_synced(src_ok["id"], seconds_ago=999999)
+        set_last_synced(src_recent["id"], seconds_ago=999999)
+
+        class FixedService:
+            async def connector_for(self, tenant_id, provider="microsoft"):
+                return {c_tenant: drive_c}.get(tenant_id)
+
+            async def aclose(self):
+                pass
+
+        orig_service_cls = gd.GraphDriveService
+        gd.RemoteDriveSync = RaisingSync  # C-BAD sigue rota: confirma fail-soft también aquí
+        gd.extract_text = lambda name, data: "texto de prueba del cron"
+        gd.GraphDriveService = FixedService
+        try:
+            out = await cron_scheduler.sync_remote_drive_all_tenants()
+        finally:
+            gd.GraphDriveService = orig_service_cls
+            gd.RemoteDriveSync = OrigSync
+            gd.extract_text = orig_extract
+
+        check("cron job: sync_remote_drive_all_tenants itera tenants reales (enumeración por "
+              "DB) y trae stats del tenant con fuentes habilitadas",
+              c_tenant in out and isinstance(out[c_tenant], dict)
+              and out[c_tenant].get("no_account") is False)
+        check("cron job: un tenant sin fuentes tocadas no aparece con error (fail-soft, no "
+              "tumba a los demás)",
+              not isinstance(out.get(c_tenant), dict) or "error" not in out[c_tenant])
+    finally:
+        await pool.close_pool()
+
+
 # ── dobles del servicio de OneDrive para la superficie HTTP ──────────────────────
 class FakeService:
     """Doble de GraphDriveService: devuelve un FakeDrive (o None si 'sin cuenta')."""
@@ -548,6 +696,12 @@ def main() -> int:
         api_checks(a, b, matter_a, matter_b)
     finally:
         drop_tenants(a, b)
+
+    c, d = make_tenants()   # tenants dedicados al cron (bloque 3b): C con cuenta, D sin cuenta
+    try:
+        asyncio.run(cron_checks(c, d))
+    finally:
+        drop_tenants(c, d)
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

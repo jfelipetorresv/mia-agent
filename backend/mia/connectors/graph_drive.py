@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote
 
@@ -52,6 +53,14 @@ SOURCE_PREFIX = "drive:"                 # knowledge_chunks.source = 'drive:<sou
 ALLOWED_SUFFIXES = {".pdf", ".docx", ".txt", ".md"}
 MAX_FOLDERS_PER_SCAN = 5000              # tope duro de carpetas visitadas por corrida (defensivo)
 MAX_SOURCES_PER_TENANT = 20             # tope de carpetas remotas registradas por despacho
+CRON_THROTTLE_HOURS = 1.0               # ventana del throttle del sync PROGRAMADO (bloque 3b)
+
+# Lock anti-duplicado por fuente, COMPARTIDO entre el sync manual (api/routes/remote_drive.py)
+# y el cron programado (cron/scheduler.py::sync_remote_drive_all_tenants). Vive aquí (no en la
+# ruta) precisamente para que el scheduler pueda importarlo sin depender del módulo de rutas.
+# Mismo comportamiento de antes: un clic manual y el cron nunca sincronizan la MISMA carpeta
+# a la vez; el que llega segundo ve la fuente ya en vuelo y se salta (sin tumbar nada).
+SYNCS_IN_FLIGHT: set[str] = set()
 
 
 # ── errores del dominio ──────────────────────────────────────────────────────────
@@ -570,3 +579,56 @@ class RemoteDriveSync:
                     "DELETE FROM remote_file_hashes WHERE tenant_id=%s::uuid "
                     "AND source_id=%s::uuid AND NOT (item_id = ANY(%s))",
                     (tenant_id, source_id, list(hashes.keys()) or [""]))
+
+
+# ── cron: sincronización PROGRAMADA de todas las fuentes de un tenant (bloque 3b) ────
+async def sync_tenant_sources(tenant_id: str, service: "GraphDriveService",
+                              *, throttle_hours: float = CRON_THROTTLE_HOURS) -> dict:
+    """Sincroniza TODAS las fuentes remotas HABILITADAS de un tenant — usado por el job
+    programado del scheduler (`cron/scheduler.py::sync_remote_drive_all_tenants`).
+
+    Fail-soft en dos niveles, igual criterio que LocalFolderSync/ObsidianSync:
+      · Tenant sin cuenta Microsoft conectada (o sin permiso Files.Read) → silencio total:
+        devuelve {"no_account": True} SIN tocar ninguna fuente. Es el estado normal de un
+        despacho que no conectó OneDrive, no un error.
+      · Una fuente que falle (token vencido a mitad de corrida, carpeta borrada en OneDrive,
+        error inesperado) se cuenta en 'failed' y NO detiene las demás fuentes del tenant.
+
+    Throttle programado: una fuente sincronizada hace menos de `throttle_hours` se salta
+    (columna `last_synced_at`, la MISMA que usa el throttle de 60s del botón manual).
+
+    Lock COMPARTIDO con el sync manual (`SYNCS_IN_FLIGHT`, arriba en este módulo): si el
+    abogado ya disparó un sync manual de esa carpeta (o el cron mismo la está sincronizando
+    en otra corrida), esta fuente se salta en vez de duplicar la sincronización.
+
+    Devuelve {"no_account": False, "synced", "skipped_throttle", "skipped_lock", "failed"}."""
+    conn = await service.connector_for(tenant_id)
+    if conn is None:
+        logger.debug("cron OneDrive: tenant %s sin cuenta Microsoft con permiso de archivos "
+                     "— silencio", tenant_id)
+        return {"no_account": True, "synced": 0, "skipped_throttle": 0,
+                "skipped_lock": 0, "failed": 0}
+
+    stats = {"no_account": False, "synced": 0, "skipped_throttle": 0,
+             "skipped_lock": 0, "failed": 0}
+    for source in await list_sources(tenant_id):
+        sid = str(source["id"])
+        last = await source_last_sync(tenant_id, sid)
+        if last is not None:
+            elapsed_hours = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+            if elapsed_hours < throttle_hours:
+                stats["skipped_throttle"] += 1
+                continue
+        if sid in SYNCS_IN_FLIGHT:
+            stats["skipped_lock"] += 1
+            continue
+        SYNCS_IN_FLIGHT.add(sid)
+        try:
+            await RemoteDriveSync(conn).sync_source(tenant_id, source)
+            stats["synced"] += 1
+        except Exception:  # noqa: BLE001 — una fuente rota no debe tumbar el ciclo ni las demás
+            stats["failed"] += 1
+            logger.exception("cron OneDrive: sync falló (tenant=%s fuente=%s)", tenant_id, sid)
+        finally:
+            SYNCS_IN_FLIGHT.discard(sid)
+    return stats

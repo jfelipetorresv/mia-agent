@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...connectors.graph_drive import (
+    SYNCS_IN_FLIGHT,
     DuplicateSourceError,
     GraphDriveError,
     GraphDriveService,
@@ -48,7 +49,10 @@ SYNC_THROTTLE_SECONDS = 60
 # Referencias vivas a las sincronizaciones en segundo plano + candado por fuente (dos syncs
 # simultáneas de la MISMA carpeta duplicarían el expediente). Mismo patrón que matter_folders.
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
-_SYNCS_IN_FLIGHT: set[str] = set()
+# El candado en sí vive en connectors/graph_drive.py (SYNCS_IN_FLIGHT): así el cron programado
+# (cron/scheduler.py::sync_remote_drive_all_tenants) lo comparte sin importar este módulo de
+# rutas. Este alias preserva el nombre/comportamiento usado en el resto del archivo y en tests.
+_SYNCS_IN_FLIGHT = SYNCS_IN_FLIGHT
 
 _NO_ACCOUNT = ("Conecta tu cuenta de Microsoft con permiso de archivos desde el "
                "Panel de control.")
