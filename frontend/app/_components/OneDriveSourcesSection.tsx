@@ -5,7 +5,7 @@
 // (kind="knowledge"), con sincronizar/quitar, y el botón que abre el navegador modal
 // para agregar una nueva.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Cloud, Loader2, Plus, RefreshCw } from "lucide-react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,7 @@ export default function OneDriveSourcesSection() {
   const [msg, setMsg] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -51,16 +52,62 @@ export default function OneDriveSourcesSection() {
     load();
   }, [load]);
 
-  async function syncNow(id: string) {
+  // Limpia el sondeo si el componente se desmonta a mitad de una sincronización.
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  // Tras pedir la sincronización, sondea cada ~5s (máx. ~30s) hasta que la última revisión de
+  // esa carpeta avance; entonces refresca la lista para reflejar que terminó.
+  function startSyncPolling(id: string, baseline: string | null | undefined) {
+    stopPolling();
+    let tries = 0;
+    pollRef.current = setInterval(async () => {
+      tries += 1;
+      try {
+        const res = await apiGet<{ sources: DriveSource[] }>("/api/drive/sources");
+        const found = (res.sources || []).find((s) => s.id === id);
+        if (found && found.last_sync && found.last_sync !== baseline) {
+          stopPolling();
+          setSources((res.sources || []).filter((s) => s.kind === "knowledge"));
+          setBusyId(null);
+          setMsg("Listo. Revisé la carpeta.");
+          return;
+        }
+      } catch {
+        /* reintenta en el siguiente tick */
+      }
+      if (tries >= 6) {
+        stopPolling();
+        setBusyId(null);
+      }
+    }, 5000);
+  }
+
+  async function syncNow(id: string, baseline: string | null | undefined) {
     setBusyId(id);
     setMsg("");
     try {
       const res = await apiSend<{ status: string; message: string }>("POST", `/api/drive/sources/${id}/sync`);
       setMsg(res.message);
-      await load();
+      if (res.status === "started" || res.status === "in_progress") {
+        startSyncPolling(id, baseline);
+      } else {
+        // "up_to_date" u otro: no hay corrida que esperar.
+        await load();
+        setBusyId(null);
+      }
     } catch (err) {
       setMsg(apiMessage(err, "No se pudo sincronizar la carpeta."));
-    } finally {
       setBusyId(null);
     }
   }
@@ -83,7 +130,7 @@ export default function OneDriveSourcesSection() {
   function onLinked(source: DriveSource) {
     setMsg(`Agregué «${source.label}». Sincronizando…`);
     setSources((prev) => [...(prev || []), source]);
-    syncNow(source.id);
+    syncNow(source.id, source.last_sync ?? null);
   }
 
   if (sources === null) {
@@ -121,7 +168,7 @@ export default function OneDriveSourcesSection() {
                 </div>
               </div>
               <div className="flex shrink-0 gap-2">
-                <Button size="sm" variant="outline" onClick={() => syncNow(s.id)} disabled={busyId === s.id}>
+                <Button size="sm" variant="outline" onClick={() => syncNow(s.id, s.last_sync)} disabled={busyId === s.id}>
                   {busyId === s.id ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (

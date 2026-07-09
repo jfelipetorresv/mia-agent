@@ -182,7 +182,13 @@ async def link_mail(matter_id: str, body: LinkBody, request: Request):
                 skipped.append({"name": "Un correo",
                                 "reason": "No tienes esa cuenta de correo conectada."})
                 continue
-            await _link_one(tid, matter_id, conn, item.message_id, added, already, skipped)
+            try:
+                await _link_one(tid, matter_id, conn, item.message_id, added, already, skipped)
+            except Exception:  # noqa: BLE001 — un fallo en un correo (embeddings/DB) no aborta el lote
+                logger.exception("mail/link: fallo inesperado vinculando un correo")
+                skipped.append({"name": "Un correo",
+                                "reason": "No pude agregar ese correo por un problema temporal. "
+                                          "Intenta de nuevo más tarde."})
     finally:
         await svc.aclose()
 

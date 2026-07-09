@@ -37,6 +37,7 @@ from ...connectors.graph_drive import (
     register_source,
     source_last_sync,
 )
+from ._common import _is_uuid
 
 router = APIRouter(prefix="/api/drive", tags=["remote_drive"])
 logger = logging.getLogger("mia.api.remote_drive")
@@ -136,6 +137,10 @@ async def add_source(body: SourceBody, request: Request):
     """Registra una carpeta de OneDrive elegida. kind='matters' exige un expediente del
     propio despacho. No dispara la sincronización inicial (usa POST /sources/{id}/sync)."""
     tid = _tenant(request)
+    # Un uuid de expediente mal formado se rechaza en llano (404) antes de tocar la DB, en vez
+    # de reventar en un 500/502 genérico al castear a ::uuid (m5, consistente con delete/sync).
+    if body.kind == "matters" and body.matter_id and not _is_uuid(body.matter_id):
+        raise HTTPException(status_code=404, detail="No encontré ese expediente.")
     try:
         source = await register_source(tid, body.remote_item_id, body.label, body.kind,
                                        body.matter_id)
@@ -174,6 +179,9 @@ async def sync_source(source_id: str, request: Request):
     """Sincroniza ahora la carpeta remota (en segundo plano). Throttle: si se revisó hace
     menos de 60s → 'ya está al día'. Lock: si ya hay una corrida en vuelo → 'ya estoy revisando'."""
     tid = _tenant(request)
+    # uuid mal formado → 404 en llano antes de castear a ::uuid (m5, evita el 500 técnico).
+    if not _is_uuid(source_id):
+        raise HTTPException(status_code=404, detail="No encontré esa carpeta.")
     source = await get_source(tid, source_id)
     if source is None:
         raise HTTPException(status_code=404, detail="No encontré esa carpeta.")

@@ -137,15 +137,16 @@ export default function MailSearchDialog({ matterId, open, onOpenChange, onLinke
     }
   }
 
+  // Única puerta de cierre: no cierra mientras vincula y SIEMPRE resetea al cerrar (así el
+  // botón "Cerrar" y la X/overlay comparten el mismo camino — antes "Cerrar" saltaba el reset).
+  function handleOpenChange(o: boolean) {
+    if (linking) return;
+    onOpenChange(o);
+    if (!o) reset();
+  }
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (linking) return;
-        onOpenChange(o);
-        if (!o) reset();
-      }}
-    >
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent aria-label="Traer correos del caso" className="max-w-xl">
         <DialogHeader>
           <DialogTitle>Traer correos del caso</DialogTitle>
@@ -226,7 +227,7 @@ export default function MailSearchDialog({ matterId, open, onOpenChange, onLinke
         ) : null}
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={linking}>
+          <Button variant="ghost" onClick={() => handleOpenChange(false)} disabled={linking}>
             Cerrar
           </Button>
           <Button onClick={linkSelected} disabled={selected.size === 0 || linking}>

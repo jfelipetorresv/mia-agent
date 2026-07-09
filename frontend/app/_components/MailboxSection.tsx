@@ -14,6 +14,8 @@ type Conexion = {
   proveedor_nombre: string;
   conectado: boolean;
   funciones: string[];
+  // ¿La cuenta ya otorgó permiso de archivos de OneDrive? (solo Microsoft lo usa)
+  archivos?: boolean;
 };
 
 // El backend ahora reporta conexiones POR PROVEEDOR (un despacho puede tener Microsoft
@@ -75,6 +77,24 @@ export default function MailboxSection() {
       if (provider === "microsoft" && incluirOneDrive) feats.push("drive");
       const q = `?features=${feats.join(",")}`;
       const res = await apiSend<{ url: string }>("POST", `/api/mailbox/connect/${provider}${q}`);
+      window.location.href = res.url;
+    } catch (err) {
+      setMsg(apiMessage(err, "No se pudo iniciar la conexión."));
+      setBusy(null);
+    }
+  }
+
+  // M3: agrega el permiso de archivos de OneDrive a una cuenta Microsoft YA conectada, sin
+  // desconectarla. Conserva las funciones ya otorgadas (en Microsoft, "mail" y su contenido
+  // comparten scopes) y añade "drive"; redirige al consentimiento.
+  async function addDrivePermission() {
+    setBusy("microsoft-drive");
+    setMsg("");
+    try {
+      const res = await apiSend<{ url: string }>(
+        "POST",
+        "/api/mailbox/connect/microsoft?features=mail,drive",
+      );
       window.location.href = res.url;
     } catch (err) {
       setMsg(apiMessage(err, "No se pudo iniciar la conexión."));
@@ -162,6 +182,12 @@ export default function MailboxSection() {
             Mia revisará su calendario y correo para avisarte. Los plazos siempre quedan pendientes de tu
             confirmación — tú validas cada fecha.
           </p>
+          {c.proveedor === "microsoft" && !c.archivos ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              ¿Quieres que Mia también pueda vincular carpetas de tu OneDrive (del despacho o de un caso)?
+              Puedes darle ese permiso sin desconectar tu cuenta.
+            </p>
+          ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
               size="sm"
@@ -171,6 +197,11 @@ export default function MailboxSection() {
             >
               Desconectar
             </Button>
+            {c.proveedor === "microsoft" && !c.archivos ? (
+              <Button size="sm" variant="outline" onClick={addDrivePermission} disabled={busy !== null}>
+                {busy === "microsoft-drive" ? "Abriendo…" : "Añadir permiso de archivos"}
+              </Button>
+            ) : null}
           </div>
         </div>
       ))}

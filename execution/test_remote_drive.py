@@ -19,6 +19,8 @@ Verifica OFFLINE (Graph doblado, sin red) contra la DB REAL (documents/chunks/kn
     · segunda sync sin cambios → todo 'unchanged' y CERO descargas
     · cambio de eTag con MISMO contenido → solo actualiza eTag (no re-ingiere)
     · cambio REAL de contenido → re-ingiere sin duplicar
+    · RENOMBRE/MOVIMIENTO remoto (mismo item_id/contenido, ruta nueva) → el documento/chunks se
+      MUEVEN a la ruta nueva, sin duplicar ni podar (knowledge y matters)
     · archivo borrado en remoto → poda simétrica (knowledge borra chunks; matters poda docs 'drive')
 
   Superficie HTTP (TestClient + JWT, servicio de OneDrive doblado):
@@ -244,6 +246,20 @@ def sql_chunks_with_embedding(matter_id: str) -> int:
             (matter_id,)).fetchone()[0]
 
 
+def sql_doc_has_path(matter_id: str, path: str) -> bool:
+    with psycopg.connect(autocommit=True, **PG) as c:
+        return c.execute(
+            "SELECT count(*) FROM documents WHERE matter_id=%s::uuid AND origin='drive' "
+            "AND source_path=%s", (matter_id, path)).fetchone()[0] > 0
+
+
+def sql_knowledge_has_path(tenant_id: str, source_id: str, path: str) -> bool:
+    with psycopg.connect(autocommit=True, **PG) as c:
+        return c.execute(
+            "SELECT count(*) FROM knowledge_chunks WHERE tenant_id=%s::uuid AND source=%s "
+            "AND source_path=%s", (tenant_id, "drive:" + source_id, path)).fetchone()[0] > 0
+
+
 # ── checks del motor de sync (DB real, Graph doblado) ────────────────────────────
 async def sync_checks(a: str, matter_a: str) -> None:
     await pool.open_pool()
@@ -306,6 +322,18 @@ async def sync_checks(a: str, matter_a: str) -> None:
         check("knowledge: contenido REAL cambiado → re-ingiere (ingested=1) sin duplicar (siguen 2)",
               s4["ingested"] == 1 and sql_count_knowledge(a, ksrc["id"]) == 2)
 
+        # RENOMBRE remoto (mismo item_id/contenido, nombre+eTag nuevos): T1 "notas.txt" →
+        # "notas-2026.txt". El archivo debe SOBREVIVIR bajo la ruta nueva, sin duplicar ni podar.
+        drive.downloads.clear()
+        tree["KA"][1]["name"] = "notas-2026.txt"   # T1 es el índice 1 en KA
+        tree["KA"][1]["etag"] = "e-t1-v2"
+        sren = await RemoteDriveSync(drive).sync_source(a, ksrc)
+        check("knowledge rename: mismo contenido, ruta nueva → sin re-ingesta ni duplicados (siguen 2)",
+              sql_count_knowledge(a, ksrc["id"]) == 2 and sren["deleted"] == 0 and sren["ingested"] == 0)
+        check("knowledge rename: los fragmentos viven bajo la ruta NUEVA (notas-2026.txt), no la vieja",
+              sql_knowledge_has_path(a, ksrc["id"], "notas-2026.txt")
+              and not sql_knowledge_has_path(a, ksrc["id"], "notas.txt"))
+
         # archivo borrado en remoto → poda sus chunks
         del tree["SUB"][0]           # se borra poliza.pdf del remoto
         s5 = await RemoteDriveSync(drive).sync_source(a, ksrc)
@@ -325,6 +353,18 @@ async def sync_checks(a: str, matter_a: str) -> None:
               sm1["ingested"] == 2 and sql_count_docs(matter_a) == 2)
         check("matters: los documentos tienen fragmentos con embedding",
               sql_chunks_with_embedding(matter_a) >= 2)
+
+        # RENOMBRE remoto en el expediente (mismo item_id/contenido, nombre+eTag nuevos):
+        # MT1 "contrato.txt" → "contrato-final.txt". El documento se MUEVE de ruta, no se
+        # re-ingiere ni se poda (hallazgo M1).
+        drive2.downloads.clear()
+        tree2["MA"][0]["name"] = "contrato-final.txt"   # MT1 es el índice 0 en MA
+        tree2["MA"][0]["etag"] = "e-mt1-v2"
+        smren = await RemoteDriveSync(drive2).sync_source(a, msrc)
+        check("matters rename: mismo contenido, ruta nueva → sin duplicar ni podar (siguen 2 docs)",
+              sql_count_docs(matter_a) == 2 and smren["deleted"] == 0 and smren["ingested"] == 0)
+        check("matters rename: el documento vive bajo la ruta NUEVA (contrato-final.txt), no la vieja",
+              sql_doc_has_path(matter_a, "contrato-final.txt") and not sql_doc_has_path(matter_a, "contrato.txt"))
 
         # archivo borrado en remoto → poda documentos origin='drive'
         del tree2["MA"][1]           # se borra anexo.pdf
@@ -452,18 +492,17 @@ def api_checks(a: str, b: str, matter_a: str, matter_b: str) -> None:
         r = client.post("/api/drive/sources/00000000-0000-0000-0000-000000000000/sync", headers=auth_b)
         check("sync: carpeta inexistente → 404", r.status_code == 404)
 
-        # throttle: forzar un hash reciente y re-sincronizar → 'up_to_date'
+        # throttle: forzar una revisión reciente (last_synced_at=now()) y re-sincronizar → 'up_to_date'
         with psycopg.connect(autocommit=True, **PG) as c:
-            c.execute("INSERT INTO remote_file_hashes (tenant_id, source_id, item_id, etag, sha256) "
-                      "VALUES (%s::uuid, %s::uuid, 'seed', 'e', 's')", (b, sid_b))
+            c.execute("UPDATE remote_drive_sources SET last_synced_at=now() WHERE id=%s::uuid", (sid_b,))
         r = client.post(f"/api/drive/sources/{sid_b}/sync", headers=auth_b)
         check("sync: recién sincronizada (<60s) → 'up_to_date' (throttle)",
               r.status_code == 200 and r.json().get("status") == "up_to_date")
         visible.append(r.text)
 
-        # lock: dos disparos con el hash borrado (sin throttle) → el segundo 'in_progress'
+        # lock: dos disparos sin throttle (last_synced_at borrado) → el segundo 'in_progress'
         with psycopg.connect(autocommit=True, **PG) as c:
-            c.execute("DELETE FROM remote_file_hashes WHERE source_id=%s::uuid", (sid_b,))
+            c.execute("UPDATE remote_drive_sources SET last_synced_at=NULL WHERE id=%s::uuid", (sid_b,))
         remote_drive._SYNCS_IN_FLIGHT.add(sid_b)   # simula una corrida en vuelo
         try:
             r = client.post(f"/api/drive/sources/{sid_b}/sync", headers=auth_b)

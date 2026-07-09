@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS remote_drive_sources (
   UNIQUE (tenant_id, provider, remote_item_id, kind)
 );
 
+-- last_synced_at: momento de la ÚLTIMA sincronización completada (haya o no archivos). Se
+-- actualiza al final de cada corrida. De aquí salen el "última revisión" que ve el abogado y
+-- el throttle de re-sync — así una carpeta VACÍA (sin filas en remote_file_hashes) también
+-- queda marcada como revisada (antes: last_sync NULL para siempre, throttle nunca aplicaba).
+ALTER TABLE remote_drive_sources ADD COLUMN IF NOT EXISTS last_synced_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS idx_remote_drive_sources_tenant ON remote_drive_sources(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_remote_drive_sources_matter ON remote_drive_sources(matter_id);
 
@@ -114,6 +120,12 @@ CREATE TABLE IF NOT EXISTS remote_file_hashes (
   synced_at   timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, source_id, item_id)
 );
+
+-- rel_path: ruta relativa (dentro de la carpeta registrada) BAJO LA QUE se ingirió el
+-- contenido de este archivo. Se guarda para detectar un RENOMBRE/MOVIMIENTO remoto (mismo
+-- item_id y mismo contenido, ruta distinta): en ese caso se MUEVE el documento/fragmentos a
+-- la ruta nueva en vez de dejarlos huérfanos bajo la vieja (que la poda por ruta borraría).
+ALTER TABLE remote_file_hashes ADD COLUMN IF NOT EXISTS rel_path text NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_remote_file_hashes_source ON remote_file_hashes(tenant_id, source_id);
 

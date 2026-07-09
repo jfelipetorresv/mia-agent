@@ -127,6 +127,9 @@ async def status(request: Request):
             "proveedor_nombre": _PROVIDER_LABELS[p],
             "conectado": p in by_provider,
             "funciones": _funciones_en_llano(by_provider[p]["scopes"]) if p in by_provider else [],
+            # ¿Esta conexión ya otorgó permiso de archivos de OneDrive? Lo consume la UI para
+            # ofrecer "Añadir permiso de archivos" en una cuenta Microsoft YA conectada (M3).
+            "archivos": ("Files.Read" in by_provider[p]["scopes"]) if p in by_provider else False,
         }
         for p in PROVIDERS
     ]

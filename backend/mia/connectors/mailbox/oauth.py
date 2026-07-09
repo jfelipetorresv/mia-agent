@@ -73,6 +73,12 @@ _DRIVE_SCOPES: dict[str, tuple[str, ...]] = {
     "microsoft": ("Files.Read",),
 }
 
+# Scopes base de IDENTIDAD/OFFLINE de Microsoft: `offline_access` es lo único que hace que
+# Microsoft entregue refresh_token (sin él, la cuenta muere al expirar el access token y hay
+# que reconectar a mano). Se garantizan en CUALQUIER conjunto de features —incluida la de
+# solo "drive"— para que ninguna conexión quede sin refresh_token (SEC-2).
+_MS_BASE_SCOPES: tuple[str, ...] = ("offline_access", "openid", "email")
+
 # Features de conexión reconocidas. Cada una exige su propio scope mínimo — ver
 # `scopes_for`. "mail" es la base (CP-P3, siempre presente salvo que se pida solo
 # "drive"); "mail_content" es el opt-in de leer el CUERPO del correo (CP-P4, lo que antes
@@ -127,6 +133,11 @@ def scopes_for(provider: str, features: Iterable[str] = ("mail",)) -> tuple[str,
         add(_DRIVE_SCOPES["microsoft"])
     if not scopes:   # ninguna feature reconocida aportó scopes → mínimo de siempre
         add(_cfg(provider)["scopes"])
+    # Microsoft: garantiza SIEMPRE identidad + offline_access (refresh_token), aunque se pida
+    # solo "drive". Van al final: en "mail"/"mail_content" ya están incluidos (dedupe → sin
+    # cambio de orden ni de contenido); solo aportan algo cuando la única feature es "drive".
+    if provider == "microsoft":
+        add(_MS_BASE_SCOPES)
     return tuple(scopes)
 
 

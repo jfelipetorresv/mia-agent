@@ -4,7 +4,7 @@
 // Mismo navegador modal que el Panel de control, pero atado a ESTE expediente. Vive junto
 // al bloque de la carpeta local en el aside del expediente.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Cloud, Link2, Loader2, MoreVertical, RefreshCw } from "lucide-react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -56,6 +56,7 @@ export default function MatterDriveFolder({ matterId, onSynced }: Props) {
   const [msg, setMsg] = useState("");
   const [unlinkOpen, setUnlinkOpen] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -71,16 +72,63 @@ export default function MatterDriveFolder({ matterId, onSynced }: Props) {
     load();
   }, [load]);
 
-  async function syncNow(id: string) {
+  // Limpia el sondeo si el componente se desmonta a mitad de una sincronización.
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  // Tras pedir la sincronización, sondea cada ~5s (máx. ~30s) hasta que la última revisión
+  // avance respecto a la de referencia; entonces refresca la lista de documentos del asunto.
+  function startSyncPolling(id: string, baseline: string | null | undefined) {
+    stopPolling();
+    let tries = 0;
+    pollRef.current = setInterval(async () => {
+      tries += 1;
+      try {
+        const res = await apiGet<{ sources: DriveSource[] }>("/api/drive/sources");
+        const found = (res.sources || []).find((s) => s.id === id);
+        if (found && found.last_sync && found.last_sync !== baseline) {
+          stopPolling();
+          setSource(found);
+          setSyncing(false);
+          setMsg("Listo. Revisé la carpeta y actualicé los documentos del expediente.");
+          onSynced?.();
+          return;
+        }
+      } catch {
+        /* reintenta en el siguiente tick */
+      }
+      if (tries >= 6) {
+        stopPolling();
+        setSyncing(false);
+      }
+    }, 5000);
+  }
+
+  async function syncNow(id: string, baseline: string | null | undefined) {
     setSyncing(true);
     setMsg("");
     try {
       const res = await apiSend<{ status: string; message: string }>("POST", `/api/drive/sources/${id}/sync`);
       setMsg(res.message);
-      onSynced?.();
+      if (res.status === "started" || res.status === "in_progress") {
+        startSyncPolling(id, baseline);
+      } else {
+        // "up_to_date" u otro: no hay corrida que esperar; refresca por si acaso.
+        setSyncing(false);
+        onSynced?.();
+      }
     } catch (err) {
       setMsg(apiMessage(err, "No se pudo sincronizar la carpeta."));
-    } finally {
       setSyncing(false);
     }
   }
@@ -88,7 +136,7 @@ export default function MatterDriveFolder({ matterId, onSynced }: Props) {
   function onLinked(s: DriveSource) {
     setSource(s);
     setMsg("Vinculé la carpeta. Estoy revisando sus documentos.");
-    syncNow(s.id);
+    syncNow(s.id, s.last_sync ?? null);
   }
 
   async function unlink() {
@@ -141,7 +189,7 @@ export default function MatterDriveFolder({ matterId, onSynced }: Props) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => syncNow(source.id)}
+            onClick={() => syncNow(source.id, source.last_sync)}
             disabled={syncing}
             className="mt-2 w-full gap-1.5"
           >

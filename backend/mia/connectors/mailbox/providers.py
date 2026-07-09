@@ -85,7 +85,7 @@ class MicrosoftMailbox:
         Graph devuelve body.content en HTML o text según contentType; si es HTML se
         despoja a texto. Es contenido NO confiable: quien lo consuma (analyze.py) lo
         SELLA antes de dárselo a un LLM."""
-        data = await _get(self._http, f"{self._base}/me/messages/{quote(external_id)}",
+        data = await _get(self._http, f"{self._base}/me/messages/{quote(str(external_id), safe='')}",
                           token=self._creds.access_token, params={"$select": "body"})
         body = data.get("body") or {}
         content = str(body.get("content") or "")
@@ -154,7 +154,7 @@ class MicrosoftMailbox:
     async def fetch_meta(self, external_id: str) -> dict:
         """Metadata de UN correo (asunto/remitente/fecha) para armar el encabezado legible
         del documento que se guarda en el expediente. SIN cuerpo (eso lo trae fetch_body)."""
-        data = await _get(self._http, f"{self._base}/me/messages/{quote(external_id)}",
+        data = await _get(self._http, f"{self._base}/me/messages/{quote(str(external_id), safe='')}",
                           token=self._creds.access_token,
                           params={"$select": "subject,from,receivedDateTime"})
         frm = ((data.get("from") or {}).get("emailAddress")) or {}
@@ -171,7 +171,7 @@ class MicrosoftMailbox:
         archivos descargables por esta vía. Los que superan el tope por adjunto se devuelven
         con data vacía y su tamaño real, para que la ruta los reporte como omitidos."""
         cap = _max_attachment_bytes()
-        data = await _get(self._http, f"{self._base}/me/messages/{quote(external_id)}/attachments",
+        data = await _get(self._http, f"{self._base}/me/messages/{quote(str(external_id), safe='')}/attachments",
                           token=self._creds.access_token)
         out: list[dict] = []
         for att in data.get("value", []) or []:
@@ -240,7 +240,7 @@ class GoogleMailbox:
         """Cuerpo de UN correo en texto plano (CP-P4). Gmail `format=full` trae el árbol
         MIME; se prefiere text/plain, con fallback a text/html despojado. Contenido NO
         confiable — analyze.py lo SELLA antes del LLM."""
-        data = await _get(self._http, f"{self._gmail_base}/users/me/messages/{quote(external_id)}",
+        data = await _get(self._http, f"{self._gmail_base}/users/me/messages/{quote(str(external_id), safe='')}",
                           token=self._creds.access_token, params={"format": "full"})
         return _extract_gmail_body(data.get("payload") or {})
 
@@ -258,7 +258,7 @@ class GoogleMailbox:
                 continue
             try:
                 msg = await _get(
-                    self._http, f"{self._gmail_base}/users/me/messages/{quote(mid)}",
+                    self._http, f"{self._gmail_base}/users/me/messages/{quote(str(mid), safe='')}",
                     token=self._creds.access_token,
                     params={"format": "metadata",
                             "metadataHeaders": ["From", "Subject", "Date"]},
@@ -283,7 +283,7 @@ class GoogleMailbox:
                 continue
             try:
                 msg = await _get(
-                    self._http, f"{self._gmail_base}/users/me/messages/{quote(mid)}",
+                    self._http, f"{self._gmail_base}/users/me/messages/{quote(str(mid), safe='')}",
                     token=self._creds.access_token,
                     params={"format": "metadata",
                             "metadataHeaders": ["From", "Subject", "Date"]},
@@ -309,7 +309,7 @@ class GoogleMailbox:
     async def fetch_meta(self, external_id: str) -> dict:
         """Metadata de UN correo (asunto/remitente/fecha) para el encabezado legible."""
         msg = await _get(
-            self._http, f"{self._gmail_base}/users/me/messages/{quote(external_id)}",
+            self._http, f"{self._gmail_base}/users/me/messages/{quote(str(external_id), safe='')}",
             token=self._creds.access_token,
             params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]},
         )
@@ -329,7 +329,7 @@ class GoogleMailbox:
         attachmentId (format=full) y descarga cada uno (attachments.get, base64url). Los que
         superan el tope se devuelven con data vacía y su tamaño, para reportarlos como omitidos."""
         cap = _max_attachment_bytes()
-        data = await _get(self._http, f"{self._gmail_base}/users/me/messages/{quote(external_id)}",
+        data = await _get(self._http, f"{self._gmail_base}/users/me/messages/{quote(str(external_id), safe='')}",
                           token=self._creds.access_token, params={"format": "full"})
         out: list[dict] = []
         for part in _gmail_attachment_parts(data.get("payload") or {}):
@@ -341,7 +341,7 @@ class GoogleMailbox:
             try:
                 adata = await _get(
                     self._http,
-                    f"{self._gmail_base}/users/me/messages/{quote(external_id)}/attachments/{quote(att_id)}",
+                    f"{self._gmail_base}/users/me/messages/{quote(str(external_id), safe='')}/attachments/{quote(str(att_id), safe='')}",
                     token=self._creds.access_token)
             except MailboxAPIError:
                 logger.warning("gmail: no se pudo descargar un adjunto; se omite")

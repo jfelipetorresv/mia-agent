@@ -16,11 +16,12 @@ Aislamiento: TODA operación de DB por-tenant pasa por `pool.tenant_connection(t
 (RLS activo, fail-closed). El motor de embeddings, el troceo y la extracción de texto se
 reutilizan de local_folders/ingest para no divergir.
 
+Renombrar/mover un archivo remoto (mismo item_id, mismo contenido, ruta nueva) NO lo pierde:
+la ruta relativa se persiste en `remote_file_hashes.rel_path`; cuando el rel guardado difiere
+del actual se MUEVE el documento/fragmentos a la ruta nueva (`_move_content`) en vez de dejarlo
+huérfano bajo la vieja. Cubre el renombre con y sin cambio de eTag.
+
 DEUDAS conocidas (anotadas, ver reporte):
-  · Renombrar/mover un archivo remoto cuyo eTag NO cambia deja sus fragmentos bajo la ruta
-    vieja hasta que su contenido cambie (los hashes se llevan por item_id estable, pero los
-    chunks/documents se guardan por ruta relativa). La poda por ruta corrige el caso común
-    (borrado) y el renombrado CON cambio de eTag/contenido.
   · Simetría con LocalFolderSync en el borrado: 'knowledge' borra sus chunks; 'matters' poda
     los documentos origin='drive' cuyo archivo remoto ya no existe (los origin='upload' y
     origin='folder' JAMÁS se tocan).
@@ -100,7 +101,7 @@ class GraphDrive:
         `@odata.nextLink` y devuelve la FORMA COMÚN neutral al proveedor:
         {id, name, is_folder, size, etag, modified}."""
         if item_id:
-            url = f"{self._base}/me/drive/items/{quote(str(item_id))}/children"
+            url = f"{self._base}/me/drive/items/{quote(str(item_id), safe='')}/children"
         else:
             url = f"{self._base}/me/drive/root/children"
         params = {
@@ -123,7 +124,7 @@ class GraphDrive:
         pre-firmada de descarga; se sigue el redirect con un GET sin cabecera de autorización
         (la URL ya viene firmada). El tope de 20 MB se controla ANTES en el motor de sync
         usando el tamaño del árbol, así un archivo grande nunca llega a descargarse."""
-        url = f"{self._base}/me/drive/items/{quote(str(item_id))}/content"
+        url = f"{self._base}/me/drive/items/{quote(str(item_id), safe='')}/content"
         headers = {"Authorization": f"Bearer {self._creds.access_token}"}
         resp = await self._http.get(url, headers=headers)
         status = getattr(resp, "status_code", 0)
@@ -245,7 +246,7 @@ async def list_sources(tenant_id: str) -> list[dict]:
     async with pool.tenant_connection(tenant_id) as conn:
         rows = await (await conn.execute(
             "SELECT s.id, s.label, s.kind, s.matter_id, s.enabled, s.remote_item_id, s.created_at, "
-            "  (SELECT max(synced_at) FROM remote_file_hashes h WHERE h.source_id = s.id) AS last_sync "
+            "  s.last_synced_at AS last_sync "
             "FROM remote_drive_sources s WHERE s.enabled ORDER BY s.created_at",
         )).fetchall()
     return [
@@ -271,10 +272,12 @@ async def get_source(tenant_id: str, source_id: str) -> dict | None:
 
 
 async def source_last_sync(tenant_id: str, source_id: str):
-    """Momento de la última sincronización (max synced_at de sus hashes), o None."""
+    """Momento de la última sincronización COMPLETADA (last_synced_at de la fuente), o None.
+    Se marca al final de cada corrida aunque la carpeta esté vacía, así el throttle también
+    aplica a carpetas sin archivos (m2)."""
     async with pool.tenant_connection(tenant_id) as conn:
         row = await (await conn.execute(
-            "SELECT max(synced_at) FROM remote_file_hashes WHERE source_id=%s::uuid",
+            "SELECT last_synced_at FROM remote_drive_sources WHERE id=%s::uuid AND enabled",
             (source_id,))).fetchone()
     return row[0] if row else None
 
@@ -334,14 +337,24 @@ class RemoteDriveSync:
         current_rels = {f["rel"] for f in files}
         stored = await self._get_stored_hashes(tenant_id, source_id)
 
-        new_hashes: dict[str, tuple[str, str]] = {}
+        new_hashes: dict[str, tuple[str, str, str]] = {}
         to_process: list[dict] = []
         for f in files:
             st = stored.get(f["item_id"])
             if st is not None and st[0] and st[0] == f["etag"]:
-                # eTag idéntico → sin cambios: no se descarga (pasada barata).
+                # eTag idéntico → sin cambios de contenido: no se descarga (pasada barata).
+                # Pero la RUTA pudo cambiar (renombre/movimiento sin cambio de eTag): si el rel
+                # guardado difiere del actual, se MUEVE el contenido a la ruta nueva (no se re-
+                # descarga) para que la poda por ruta no lo borre bajo la ruta vieja.
                 stats["unchanged"] += 1
-                new_hashes[f["item_id"]] = st
+                if st[2] and st[2] != f["rel"]:
+                    try:
+                        await self._move_content(tenant_id, kind, matter_id, db_source,
+                                                 st[2], f["rel"], f["name"])
+                    except Exception:  # noqa: BLE001 — un movimiento que falle no tumba la corrida
+                        logger.warning("fuente remota %s: no pude mover %s → %s",
+                                       source_id, st[2], f["rel"])
+                new_hashes[f["item_id"]] = (st[0], st[1], f["rel"])
             else:
                 to_process.append(f)
 
@@ -361,9 +374,14 @@ class RemoteDriveSync:
                 sha = hashlib.sha256(blob).hexdigest()
                 st = stored.get(f["item_id"])
                 if st is not None and st[1] and st[1] == sha:
-                    # Cambió el eTag pero el contenido es idéntico: solo se actualiza el eTag.
+                    # Cambió el eTag pero el contenido es idéntico. Si además cambió la RUTA
+                    # (renombre/movimiento), se MUEVE el contenido a la ruta nueva en vez de
+                    # dejarlo bajo la vieja (que la poda borraría); si no, solo se refresca el eTag.
                     stats["unchanged"] += 1
-                    new_hashes[f["item_id"]] = (f["etag"], sha)
+                    if st[2] and st[2] != f["rel"]:
+                        await self._move_content(tenant_id, kind, matter_id, db_source,
+                                                 st[2], f["rel"], f["name"])
+                    new_hashes[f["item_id"]] = (f["etag"], sha, f["rel"])
                     continue
                 text = self._text_from_bytes(f["name"], blob)
                 if kind == "matters":
@@ -373,7 +391,7 @@ class RemoteDriveSync:
                     chunks = self._local._chunk_file(text, f["rel"])
                     vectors = await self._local._embed_chunks([c["text"] for c in chunks])
                     await self._local._upsert_chunks(tenant_id, db_source, f["rel"], chunks, vectors)
-                new_hashes[f["item_id"]] = (f["etag"], sha)
+                new_hashes[f["item_id"]] = (f["etag"], sha, f["rel"])
                 stats["ingested"] += 1
             except Exception:  # noqa: BLE001 — un archivo malo no tumba la corrida
                 stats["errors"] += 1
@@ -389,6 +407,9 @@ class RemoteDriveSync:
             else:
                 stats["deleted"] = await self._local._delete_removed(tenant_id, db_source, current_rels)
             await self._save_hashes(tenant_id, source_id, new_hashes, prune=True)
+        # Marca la carpeta como revisada AHORA (haya o no archivos): de aquí salen el "última
+        # revisión" y el throttle, así una carpeta vacía también queda marcada (m2).
+        await self._touch_source(tenant_id, source_id)
         return stats
 
     # ── escaneo del árbol remoto (BFS, tope duro defensivo) ──────────────────────
@@ -456,13 +477,16 @@ class RemoteDriveSync:
         """Ingesta un archivo remoto al expediente: reemplaza SIEMPRE el documento previo de
         esa ruta (origin='drive'). Los origin='upload'/'folder' NUNCA se tocan aquí."""
         chunks = chunk_text(text)
+        # Los embeddings se calculan ANTES de abrir la conexión por-tenant (igual que la ruta
+        # de conocimiento): una llamada de red al servicio de embeddings no debe mantener
+        # abierta una conexión con RLS del pool (m6).
+        vectors = await self._local._embed_chunks(chunks) if chunks else []
         async with pool.tenant_connection(tenant_id) as conn:
             await conn.execute(
                 "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='drive' "
                 "AND source_path=%s", (matter_id, rel))
             if not chunks:
                 return
-            vectors = await self._local._embed_chunks(chunks)
             doc_id = (await (await conn.execute(
                 "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
                 "source_path, origin) VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'drive') "
@@ -490,28 +514,57 @@ class RemoteDriveSync:
                     "AND source_path = ANY(%s)", (matter_id, removed))
         return len(removed)
 
+    async def _move_content(self, tenant_id: str, kind: str, matter_id, db_source: str,
+                            old_rel: str, new_rel: str, name: str) -> None:
+        """Renombre/movimiento remoto (mismo item_id y mismo contenido, ruta distinta): en vez
+        de re-descargar y re-embeber, se MUEVE el contenido ya ingerido de `old_rel` a `new_rel`.
+        Sin esto, la poda por ruta borraría el archivo al no hallar la ruta vieja entre las
+        actuales, y el conocimiento/expediente lo perdería en silencio (hallazgo M1)."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            if kind == "matters":
+                await conn.execute(
+                    "UPDATE documents SET source_path=%s, filename=%s "
+                    "WHERE matter_id=%s::uuid AND origin='drive' AND source_path=%s",
+                    (new_rel, name, matter_id, old_rel))
+            else:
+                await conn.execute(
+                    "UPDATE knowledge_chunks SET source_path=%s "
+                    "WHERE tenant_id=%s::uuid AND source=%s AND source_path=%s",
+                    (new_rel, tenant_id, db_source, old_rel))
+
+    async def _touch_source(self, tenant_id: str, source_id: str) -> None:
+        """Marca la fuente como sincronizada AHORA (last_synced_at=now()). De aquí salen la
+        última revisión que ve el abogado y el throttle de re-sync, también para carpetas
+        vacías (que no dejan filas en remote_file_hashes) — hallazgo m2."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            await conn.execute(
+                "UPDATE remote_drive_sources SET last_synced_at=now() WHERE id=%s::uuid",
+                (source_id,))
+
     # ── hashes remotos (RLS por tenant) ──────────────────────────────────────────
-    async def _get_stored_hashes(self, tenant_id: str, source_id: str) -> dict[str, tuple[str, str]]:
+    async def _get_stored_hashes(self, tenant_id: str, source_id: str) -> dict[str, tuple[str, str, str]]:
         async with pool.tenant_connection(tenant_id) as conn:
             rows = await (await conn.execute(
-                "SELECT item_id, etag, sha256 FROM remote_file_hashes "
+                "SELECT item_id, etag, sha256, rel_path FROM remote_file_hashes "
                 "WHERE tenant_id=%s::uuid AND source_id=%s::uuid",
                 (tenant_id, source_id))).fetchall()
-        return {r[0]: (r[1] or "", r[2] or "") for r in rows}
+        return {r[0]: (r[1] or "", r[2] or "", r[3] or "") for r in rows}
 
     async def _save_hashes(self, tenant_id: str, source_id: str,
-                           hashes: dict[str, tuple[str, str]], prune: bool = True) -> None:
-        """Upsert de los hashes vigentes (por item_id) + (si prune) borra los de archivos que
-        ya no están. Con escaneo truncado se llama con prune=False (los no vistos podrían
-        existir; borrar su hash forzaría re-indexarlos o perder su rastro)."""
+                           hashes: dict[str, tuple[str, str, str]], prune: bool = True) -> None:
+        """Upsert de los hashes vigentes (por item_id, incluida la ruta relativa para detectar
+        renombres) + (si prune) borra los de archivos que ya no están. Con escaneo truncado se
+        llama con prune=False (los no vistos podrían existir; borrar su hash forzaría re-
+        indexarlos o perder su rastro)."""
         async with pool.tenant_connection(tenant_id) as conn:
-            for item_id, (etag, sha) in hashes.items():
+            for item_id, (etag, sha, rel) in hashes.items():
                 await conn.execute(
-                    "INSERT INTO remote_file_hashes (tenant_id, source_id, item_id, etag, sha256) "
-                    "VALUES (%s::uuid, %s::uuid, %s, %s, %s) "
+                    "INSERT INTO remote_file_hashes (tenant_id, source_id, item_id, etag, sha256, rel_path) "
+                    "VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s) "
                     "ON CONFLICT (tenant_id, source_id, item_id) DO UPDATE SET "
-                    "  etag=EXCLUDED.etag, sha256=EXCLUDED.sha256, synced_at=now()",
-                    (tenant_id, source_id, item_id, etag, sha))
+                    "  etag=EXCLUDED.etag, sha256=EXCLUDED.sha256, rel_path=EXCLUDED.rel_path, "
+                    "  synced_at=now()",
+                    (tenant_id, source_id, item_id, etag, sha, rel))
             if prune:
                 await conn.execute(
                     "DELETE FROM remote_file_hashes WHERE tenant_id=%s::uuid "
