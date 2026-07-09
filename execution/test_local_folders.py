@@ -331,21 +331,22 @@ async def db_checks(a: str, b: str, work: Path) -> None:
               s4["deleted"] == 1 and await count_chunks(a, "nota.md") == 0)
         check("hashes en espejo: queda 1 hash tras el borrado", await count_hashes(a) == 1)
 
-        # --- PDF y Word pasan por extract_text (mockeado) ---
+        # --- PDF y Word pasan por extract_text_detailed (mockeado) ---
         (docs / "escrito.pdf").write_bytes(b"%PDF-fake bytes de prueba")
         (docs / "memo.docx").write_bytes(b"PK-fake docx de prueba")
         seen: list[str] = []
-        orig_extract = lf.extract_text
+        orig_extract = lf.extract_text_detailed
 
-        def fake_extract(filename: str, data: bytes) -> str:
+        def fake_extract(filename: str, data: bytes):
             seen.append(filename)
-            return f"Texto extraído de {filename} para el gate."
+            return (f"Texto extraído de {filename} para el gate.",
+                    {"has_body": True, "ocr_unavailable": False})
 
-        lf.extract_text = fake_extract
+        lf.extract_text_detailed = fake_extract
         try:
             s5 = await sync.sync_tenant(a)
         finally:
-            lf.extract_text = orig_extract
+            lf.extract_text_detailed = orig_extract
         async with pool.tenant_connection(a) as conn:
             pdf_txt = await (await conn.execute(
                 "SELECT content FROM knowledge_chunks WHERE source=%s AND source_path='escrito.pdf'",
@@ -354,6 +355,26 @@ async def db_checks(a: str, b: str, work: Path) -> None:
         check("PDF/Word: ambos pasan por extract_text y quedan indexados",
               s5["indexed"] == 2 and sorted(seen) == ["escrito.pdf", "memo.docx"]
               and pdf_txt is not None and "escrito.pdf" in pdf_txt[0])
+
+        # --- M3: escaneo sin cuerpo legible (sin motor de OCR) NO entra al conocimiento ---
+        from mia.ingest.extract import OCR_UNAVAILABLE_NOTE as lf_extract_note
+        (docs / "escaneo_ciego.pdf").write_bytes(b"%PDF-fake escaneo sin capa de texto")
+
+        def fake_extract_blind(filename: str, data: bytes):
+            if filename == "escaneo_ciego.pdf":
+                return (lf_extract_note, {"has_body": False, "ocr_unavailable": True})
+            return (f"Texto extraído de {filename}.",
+                    {"has_body": True, "ocr_unavailable": False})
+
+        lf.extract_text_detailed = fake_extract_blind
+        try:
+            s5b = await sync.sync_tenant(a)
+        finally:
+            lf.extract_text_detailed = orig_extract
+        check("M3 knowledge: escaneo sin cuerpo → omitido con motivo (omitted>=1), NO indexado",
+              s5b["omitted"] >= 1 and s5b["errors"] == 0
+              and await count_chunks(a, "escaneo_ciego.pdf") == 0)
+        (docs / "escaneo_ciego.pdf").unlink()
 
         # --- allowlist capa 2 en vivo: symlink que escapa se omite (si el SO lo permite) ---
         fuera = work / "secreto_fuera.txt"

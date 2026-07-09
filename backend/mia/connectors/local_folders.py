@@ -42,7 +42,7 @@ from pathlib import Path
 
 from .. import embeddings
 from ..db import pool
-from ..ingest.extract import extract_text
+from ..ingest.extract import extract_text_detailed
 from ..ingest.ingest import chunk_text
 from .obsidian_sync import ObsidianSync
 
@@ -422,7 +422,17 @@ class LocalFolderSync:
             try:
                 # M1: leer del disco + extraer (OCR incluido) es IO/CPU-pesado — va a un hilo
                 # para no congelar el event loop mientras se indexa una carpeta escaneada.
-                text = await asyncio.to_thread(self._read_text, f)
+                text, meta = await asyncio.to_thread(self._read_text, f)
+                # M3: un escaneo sin cuerpo legible (o sin motor de OCR) NO se ingesta como
+                # documento válido — vale para AMBOS destinos (expediente y conocimiento).
+                # Sin hash guardado → se reintenta si más adelante se instala la lectura óptica.
+                if not meta.get("has_body", True):
+                    stats["omitted"] += 1
+                    reason = ("escaneado y este servidor no tiene lectura óptica"
+                              if meta.get("ocr_unavailable") else "sin texto legible")
+                    logger.info("fuente %s: omito %s (%s)", source_id, rel, reason)
+                    new_hashes.pop(rel, None)
+                    continue
                 if kind == "matters":
                     await self._ingest_matter_file(tenant_id, matter_id, rel, text,
                                                    new_hashes[rel], f)
@@ -539,11 +549,13 @@ class LocalFolderSync:
         return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
     @staticmethod
-    def _read_text(p: Path) -> str:
-        """Texto plano del archivo: PDF/Word vía extract_text; .md/.txt lectura directa."""
+    def _read_text(p: Path) -> tuple[str, dict]:
+        """Texto plano + metadata de OCR. PDF/Word vía extract_text_detailed (SÍNCRONA y
+        CPU-pesada — el llamador la corre en un hilo, M1); .md/.txt lectura directa."""
         if p.suffix.lower() in (".pdf", ".docx"):
-            return extract_text(p.name, p.read_bytes())
-        return p.read_text(encoding="utf-8", errors="replace")
+            return extract_text_detailed(p.name, p.read_bytes())
+        return (p.read_text(encoding="utf-8", errors="replace"),
+                {"has_body": True, "ocr_unavailable": False})
 
     def _chunk_file(self, text: str, rel: str) -> list[dict]:
         """.md → troceo por encabezados de ObsidianSync; el resto → chunk_text (ingest)."""

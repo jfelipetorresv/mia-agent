@@ -145,13 +145,14 @@ async def connector_checks(a: str, b: str, matter_a: str, matter_b: str, work: P
             encoding="utf-8")
         (folder / "poliza.pdf").write_bytes(b"%PDF-fake bytes de la poliza")
 
-        # extract_text mockeado (solo PDF/Word pasan por ahí; md/txt se leen directo)
-        orig_extract = lf.extract_text
+        # extract_text_detailed mockeado (solo PDF/Word pasan por ahí; md/txt se leen directo)
+        orig_extract = lf.extract_text_detailed
 
-        def fake_extract(filename: str, data: bytes) -> str:
-            return f"Texto extraído de {filename}: clausulas y coberturas del expediente."
+        def fake_extract(filename: str, data: bytes):
+            return (f"Texto extraído de {filename}: clausulas y coberturas del expediente.",
+                    {"has_body": True, "ocr_unavailable": False})
 
-        lf.extract_text = fake_extract
+        lf.extract_text_detailed = fake_extract
 
         # --- 1) registro rechaza asunto AJENO (RLS/ownership) y exige matter_id ---
         rechazo_ajeno = False
@@ -222,7 +223,23 @@ async def connector_checks(a: str, b: str, matter_a: str, matter_b: str, work: P
         check("poda: el documento subido a mano (origin='upload') NO se toca",
               await count_docs(matter_a, origin="upload") == 1)
 
-        lf.extract_text = orig_extract
+        # --- 5b) M3: escaneo sin cuerpo legible NO entra al expediente (omitido con motivo) ---
+        (folder / "escaneo_ciego.pdf").write_bytes(b"%PDF-fake escaneo sin capa de texto")
+
+        def fake_extract_blind(filename: str, data: bytes):
+            if filename == "escaneo_ciego.pdf":
+                return ("[Documento escaneado: este servidor no tiene lectura óptica instalada]",
+                        {"has_body": False, "ocr_unavailable": True})
+            return fake_extract(filename, data)
+
+        lf.extract_text_detailed = fake_extract_blind
+        s4b = await sync.sync_source(a, src)
+        check("M3 expediente: escaneo sin cuerpo → omitido (omitted>=1), SIN documento placeholder",
+              s4b["omitted"] >= 1 and s4b["errors"] == 0
+              and await count_docs(matter_a, "folder", "escaneo_ciego.pdf") == 0)
+        (folder / "escaneo_ciego.pdf").unlink()
+
+        lf.extract_text_detailed = orig_extract
 
         # --- 6) archivo bloqueado (Word abierto) → pendiente, no rompe, conserva lo previo ---
         (folder / "bloqueado.txt").write_text("Documento en uso por Word.", encoding="utf-8")
