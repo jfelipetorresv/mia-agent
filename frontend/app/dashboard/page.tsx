@@ -5,6 +5,7 @@ import {
   BellRing,
   BookOpen,
   CalendarClock,
+  Cloud,
   FileText,
   FolderOpen,
   FolderSearch,
@@ -28,6 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import AutomationsSection from "@/app/_components/AutomationsSection";
 import MailboxSectionLoader from "@/app/_components/MailboxSectionLoader";
+import OneDriveSourcesSection from "@/app/_components/OneDriveSourcesSection";
 
 type Stats = {
   matters_active?: number;
@@ -1026,6 +1028,19 @@ export default function DashboardPage() {
             </form>
           </div>
         )}
+      </section>
+
+      {/* ── Carpetas en la nube (OneDrive) ──────────────────────────
+          Fase 4 "fuentes remotas": distinto de "Carpetas de trabajo" de arriba (que
+          lee carpetas YA sincronizadas en este equipo) — estas se leen directamente
+          de OneDrive, sin instalar el programa de escritorio. */}
+      <section id="onedrive" className="mt-12 scroll-mt-6">
+        <SectionTitle
+          icon={Cloud}
+          title="Carpetas en la nube (OneDrive)"
+          hint="Para carpetas de OneDrive que no tienes sincronizadas en este equipo. Necesitas tu cuenta de Microsoft conectada con permiso de archivos (arriba, en Conexiones)."
+        />
+        <OneDriveSourcesSection />
       </section>
 
       {/* ── Automatizaciones ──────────────────────────────────────── */}

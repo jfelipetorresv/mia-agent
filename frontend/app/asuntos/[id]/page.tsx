@@ -9,6 +9,7 @@ import {
   FolderCheck,
   Link2,
   Loader2,
+  Mail,
   MoreVertical,
   Paperclip,
   RefreshCw,
@@ -21,6 +22,8 @@ import { useDictation } from "@/lib/useDictation";
 import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
 import CitationReview, { type Verification } from "../../_components/CitationReview";
+import MatterDriveFolder from "../../_components/MatterDriveFolder";
+import MailSearchDialog from "../../_components/MailSearchDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -124,6 +127,9 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const [unlinking, setUnlinking] = useState(false);
   const folderPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const folderPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fase 4 "fuentes remotas" · correos del caso → expediente.
+  const [mailDialogOpen, setMailDialogOpen] = useState(false);
 
   // Fase 3.1(B) · Plan de trabajo (aside): contador liviano para el header de la card.
   const [missionsSummary, setMissionsSummary] = useState<MissionsSummary | null>(null);
@@ -490,6 +496,19 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
             </Button>
           )}
 
+          {/* Fase 4 "fuentes remotas": carpeta de OneDrive de ESTE expediente. */}
+          <MatterDriveFolder matterId={matterId} onSynced={loadDocs} />
+
+          {/* Fase 4 "fuentes remotas": traer correos del caso desde el correo conectado. */}
+          <Button
+            variant="outline"
+            onClick={() => setMailDialogOpen(true)}
+            className="mb-3 w-full justify-start gap-2"
+          >
+            <Mail className="h-4 w-4" />
+            Traer correos del caso
+          </Button>
+
           <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" multiple onChange={onUpload} className="hidden" />
           <Button
             variant="outline"
@@ -770,6 +789,14 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Traer correos del caso (Fase 4 "fuentes remotas") */}
+      <MailSearchDialog
+        matterId={matterId}
+        open={mailDialogOpen}
+        onOpenChange={setMailDialogOpen}
+        onLinked={loadDocs}
+      />
     </div>
   );
 }

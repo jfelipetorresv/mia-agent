@@ -37,6 +37,9 @@ export default function MailboxSection() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [incluirContenido, setIncluirContenido] = useState(false);
+  // Fase 3 "fuentes remotas": al conectar Microsoft, ofrece incluir permiso de archivos
+  // (para poder vincular carpetas de OneDrive más adelante). Solo aplica a Microsoft.
+  const [incluirOneDrive, setIncluirOneDrive] = useState(false);
 
   const load = useCallback(async () => {
     setMsg("");
@@ -68,7 +71,9 @@ export default function MailboxSection() {
     setBusy(provider);
     setMsg("");
     try {
-      const q = incluirContenido ? "?features=mail_content" : "";
+      const feats = [incluirContenido ? "mail_content" : "mail"];
+      if (provider === "microsoft" && incluirOneDrive) feats.push("drive");
+      const q = `?features=${feats.join(",")}`;
       const res = await apiSend<{ url: string }>("POST", `/api/mailbox/connect/${provider}${q}`);
       window.location.href = res.url;
     } catch (err) {
@@ -185,9 +190,21 @@ export default function MailboxSection() {
               className="mt-0.5 h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
             />
             <span>
-              Incluir contenido de correos (para que Mia pueda resumir correos urgentes — apagado por defecto)
+              Incluir el contenido de mis correos (para que Mia pueda resumir correos urgentes y para poder traer
+              correos completos a un expediente cuando tú lo pidas — apagado por defecto)
             </span>
           </label>
+          {todasLasConexiones.some((c) => c.proveedor === "microsoft" && !c.conectado) ? (
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={incluirOneDrive}
+                onChange={(e) => setIncluirOneDrive(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
+              />
+              <span>Incluir mis archivos de OneDrive (solo Microsoft — para poder vincular carpetas del despacho o de un caso)</span>
+            </label>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             {disponibles.map((c) => (
               <Button key={c.proveedor} onClick={() => connect(c.proveedor)} disabled={busy !== null}>
