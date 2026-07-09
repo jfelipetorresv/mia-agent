@@ -124,6 +124,76 @@ class MicrosoftMailbox:
             ))
         return out
 
+    # ── Fase 2 "correos del caso → expediente": BUSCAR y VINCULAR (acción explícita
+    # del abogado; su consentimiento es la propia acción). ────────────────────────
+    async def search_messages(self, query: str, max_results: int = 25) -> list[dict]:
+        """Busca correos por texto libre (asunto/remitente/cuerpo indexado por el
+        proveedor) y devuelve la FORMA COMÚN neutral al proveedor. $search no se combina
+        con $orderby en Graph; se piden campos mínimos + una vista previa corta."""
+        params = {
+            "$search": f'"{query}"',
+            "$top": str(max_results),
+            "$select": "id,subject,from,receivedDateTime,hasAttachments,bodyPreview",
+        }
+        data = await _get(self._http, f"{self._base}/me/messages",
+                          token=self._creds.access_token, params=params)
+        out: list[dict] = []
+        for m in data.get("value", []) or []:
+            frm = ((m.get("from") or {}).get("emailAddress")) or {}
+            out.append({
+                "id": str(m.get("id") or ""),
+                "subject": str(m.get("subject") or "(sin asunto)"),
+                "sender": str(frm.get("address") or ""),
+                "sender_name": str(frm.get("name") or ""),
+                "date": _iso(parse_dt(m.get("receivedDateTime"))),
+                "snippet": str(m.get("bodyPreview") or "")[:200],
+                "has_attachments": bool(m.get("hasAttachments")),
+            })
+        return out
+
+    async def fetch_meta(self, external_id: str) -> dict:
+        """Metadata de UN correo (asunto/remitente/fecha) para armar el encabezado legible
+        del documento que se guarda en el expediente. SIN cuerpo (eso lo trae fetch_body)."""
+        data = await _get(self._http, f"{self._base}/me/messages/{quote(external_id)}",
+                          token=self._creds.access_token,
+                          params={"$select": "subject,from,receivedDateTime"})
+        frm = ((data.get("from") or {}).get("emailAddress")) or {}
+        return {
+            "subject": str(data.get("subject") or ""),
+            "sender": str(frm.get("address") or ""),
+            "sender_name": str(frm.get("name") or ""),
+            "date": _iso(parse_dt(data.get("receivedDateTime"))),
+        }
+
+    async def fetch_attachments(self, external_id: str) -> list[dict]:
+        """Adjuntos de UN correo: solo fileAttachment (contentBytes base64). itemAttachment
+        (correo adjunto) y referenceAttachment (enlace a nube) se IGNORAN con aviso: no son
+        archivos descargables por esta vía. Los que superan el tope por adjunto se devuelven
+        con data vacía y su tamaño real, para que la ruta los reporte como omitidos."""
+        cap = _max_attachment_bytes()
+        data = await _get(self._http, f"{self._base}/me/messages/{quote(external_id)}/attachments",
+                          token=self._creds.access_token)
+        out: list[dict] = []
+        for att in data.get("value", []) or []:
+            odata = str(att.get("@odata.type") or "")
+            if "fileAttachment" not in odata:
+                logger.warning("mailbox: adjunto no descargable ignorado (%s)", odata or "?")
+                continue
+            name = str(att.get("name") or "adjunto")
+            ctype = str(att.get("contentType") or "")
+            size = int(att.get("size") or 0)
+            if size > cap:
+                out.append({"filename": name, "content_type": ctype, "data": b"", "size": size})
+                continue
+            raw = att.get("contentBytes") or ""
+            try:
+                blob = base64.b64decode(raw) if raw else b""
+            except Exception:  # noqa: BLE001 — adjunto ilegible: mejor vacío que reventar
+                blob = b""
+            out.append({"filename": name, "content_type": ctype,
+                        "data": blob, "size": size or len(blob)})
+        return out
+
 
 class GoogleMailbox:
     """Calendario y correo vía Google Calendar / Gmail (Google Workspace)."""
@@ -199,6 +269,88 @@ class GoogleMailbox:
             out.append(_gmail_header(mid, msg))
         return out
 
+    # ── Fase 2 "correos del caso → expediente" ────────────────────────────────────
+    async def search_messages(self, query: str, max_results: int = 25) -> list[dict]:
+        """Busca correos con la query de Gmail y devuelve la FORMA COMÚN. Dos pasos: listar
+        ids que casan la query → traer metadata (From/Subject/Date + snippet) de cada uno."""
+        listing = await _get(self._http, f"{self._gmail_base}/users/me/messages",
+                             token=self._creds.access_token,
+                             params={"q": query, "maxResults": str(max_results)})
+        out: list[dict] = []
+        for ref in listing.get("messages", []) or []:
+            mid = str(ref.get("id") or "")
+            if not mid:
+                continue
+            try:
+                msg = await _get(
+                    self._http, f"{self._gmail_base}/users/me/messages/{quote(mid)}",
+                    token=self._creds.access_token,
+                    params={"format": "metadata",
+                            "metadataHeaders": ["From", "Subject", "Date"]},
+                )
+            except MailboxAPIError:
+                logger.warning("gmail: no se pudo leer un resultado de búsqueda; se omite")
+                continue
+            headers = {h.get("name", "").lower(): h.get("value", "")
+                       for h in ((msg.get("payload") or {}).get("headers") or [])}
+            sender_name, sender = _split_from(headers.get("from", ""))
+            date_iso = _epoch_ms_to_iso(msg.get("internalDate"))
+            out.append({
+                "id": mid,
+                "subject": headers.get("subject", "(sin asunto)"),
+                "sender": sender,
+                "sender_name": sender_name,
+                "date": _iso(parse_dt(date_iso or headers.get("date"))),
+                "snippet": str(msg.get("snippet") or "")[:200],
+                "has_attachments": _gmail_has_attachments(msg.get("payload") or {}),
+            })
+        return out
+
+    async def fetch_meta(self, external_id: str) -> dict:
+        """Metadata de UN correo (asunto/remitente/fecha) para el encabezado legible."""
+        msg = await _get(
+            self._http, f"{self._gmail_base}/users/me/messages/{quote(external_id)}",
+            token=self._creds.access_token,
+            params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]},
+        )
+        headers = {h.get("name", "").lower(): h.get("value", "")
+                   for h in ((msg.get("payload") or {}).get("headers") or [])}
+        sender_name, sender = _split_from(headers.get("from", ""))
+        date_iso = _epoch_ms_to_iso(msg.get("internalDate"))
+        return {
+            "subject": headers.get("subject", ""),
+            "sender": sender,
+            "sender_name": sender_name,
+            "date": _iso(parse_dt(date_iso or headers.get("date"))),
+        }
+
+    async def fetch_attachments(self, external_id: str) -> list[dict]:
+        """Adjuntos de UN correo (Gmail): recorre el árbol MIME por los parts con filename +
+        attachmentId (format=full) y descarga cada uno (attachments.get, base64url). Los que
+        superan el tope se devuelven con data vacía y su tamaño, para reportarlos como omitidos."""
+        cap = _max_attachment_bytes()
+        data = await _get(self._http, f"{self._gmail_base}/users/me/messages/{quote(external_id)}",
+                          token=self._creds.access_token, params={"format": "full"})
+        out: list[dict] = []
+        for part in _gmail_attachment_parts(data.get("payload") or {}):
+            name, ctype, size, att_id = (part["filename"], part["mimeType"],
+                                         part["size"], part["attachmentId"])
+            if size > cap:
+                out.append({"filename": name, "content_type": ctype, "data": b"", "size": size})
+                continue
+            try:
+                adata = await _get(
+                    self._http,
+                    f"{self._gmail_base}/users/me/messages/{quote(external_id)}/attachments/{quote(att_id)}",
+                    token=self._creds.access_token)
+            except MailboxAPIError:
+                logger.warning("gmail: no se pudo descargar un adjunto; se omite")
+                continue
+            blob = _b64url_to_bytes(adata.get("data") or "")
+            out.append({"filename": name, "content_type": ctype,
+                        "data": blob, "size": size or len(blob)})
+        return out
+
 
 def _gmail_header(mid: str, msg: dict) -> MailHeader:
     """Normaliza un mensaje de Gmail (format=metadata) a MailHeader."""
@@ -258,6 +410,57 @@ def _b64url_decode(data: str) -> str:
         return base64.urlsafe_b64decode(data + pad).decode("utf-8", "replace")
     except Exception:  # noqa: BLE001 — cuerpo ilegible: mejor vacío que reventar
         return ""
+
+
+def _b64url_to_bytes(data: str) -> bytes:
+    """base64url → bytes crudos (adjuntos de Gmail; a diferencia de _b64url_decode, no
+    decodifica a texto: un PDF/Word no es utf-8)."""
+    try:
+        pad = "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(data + pad)
+    except Exception:  # noqa: BLE001 — adjunto ilegible: mejor vacío que reventar
+        return b""
+
+
+def _iso(dt: Optional[datetime]) -> Optional[str]:
+    """datetime → ISO-8601 (o None). La forma común de búsqueda viaja como texto listo
+    para JSON; la UI no interpreta la fecha como término procesal (Mia nunca calcula plazos)."""
+    return dt.isoformat() if dt else None
+
+
+def _max_attachment_bytes() -> int:
+    """Tope por adjunto (20 MB), COMPARTIDO con el indexador de carpetas para no divergir.
+    Import perezoso para no arrastrar las dependencias de ingesta al importar providers."""
+    try:
+        from ..local_folders import MAX_FILE_BYTES
+        return MAX_FILE_BYTES
+    except Exception:  # noqa: BLE001 — si el módulo no está, cae al mismo valor por defecto
+        return 20 * 1024 * 1024
+
+
+def _gmail_attachment_parts(payload: dict, out: Optional[list] = None) -> list[dict]:
+    """Recorre (recursivo) el árbol MIME y junta los parts que son ADJUNTOS: tienen filename
+    y un attachmentId (el contenido se descarga aparte con attachments.get)."""
+    if out is None:
+        out = []
+    body = payload.get("body") or {}
+    filename = str(payload.get("filename") or "")
+    att_id = body.get("attachmentId")
+    if filename and att_id:
+        out.append({
+            "filename": filename,
+            "mimeType": str(payload.get("mimeType") or ""),
+            "size": int(body.get("size") or 0),
+            "attachmentId": str(att_id),
+        })
+    for part in payload.get("parts") or []:
+        _gmail_attachment_parts(part, out)
+    return out
+
+
+def _gmail_has_attachments(payload: dict) -> bool:
+    """True si el árbol MIME trae al menos un adjunto (part con filename)."""
+    return bool(_gmail_attachment_parts(payload))
 
 
 def _find_part(payload: dict, mime: str) -> Optional[str]:
