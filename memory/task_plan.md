@@ -222,4 +222,16 @@ aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
 - [ ] Capa 3 EN VIVO de Pipe/Cursor (conectar cuenta real, navegar carpetas, probar 503,
       vincular correos, responsive) — pendiente
 - [ ] ACCIÓN DE PIPE: registrar apps OAuth (Azure AD + Google Cloud) y poner llaves en `.env`
-- [ ] Deuda: sincronización PROGRAMADA de fuentes OneDrive (hoy solo botón manual)
+- [x] Deuda: sincronización PROGRAMADA de fuentes OneDrive — ✅ cerrada en Sesión 37 (bloque 3b)
+
+## Fase 3 · bloque 3 — OCR local + sincronización programada de OneDrive (Sesión 37, 2026-07-09)
+- [x] Bloque 3a — OCR local para PDFs escaneados (`ingest/ocr.py` rapidocr-onnxruntime CPU local,
+      fallback página a página en `ingest/extract.py`, honestidad por segmento, fail-soft
+      150 págs/10 min) — gate `test_ocr_ingest.py` 26/26
+- [x] Bloque 3b — cron de OneDrive remoto cada 6h (`sync_tenant_sources` con throttle 1h,
+      fail-soft por fuente, lock compartido con el sync manual) — `test_remote_drive.py` 44/44
+- [x] Capa 2 adversarial: 3 mayores + 4 menores TODOS corregidos (`ea28423`) + guarda has_body
+      en carpetas locales (`315dbd1`) — ver Riesgo #55
+- [x] Regresión completa 70/70 suites ALL PASS (corrida en la retoma post-apagón;
+      `test_rls`/`check_env_pins` HALT intactos; línea base 69 → 70)
+- [ ] Decidir push a `origin/main` de los 4 commits (`ad16a64`..`315dbd1`)

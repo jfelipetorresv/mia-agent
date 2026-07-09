@@ -1091,3 +1091,23 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
       cuando el abogado busca/vincula un correo explícitamente, pero el permiso técnico de leer
       cuerpos existe desde el momento en que se conecta la cuenta, no solo cuando se usa. Relevante
       para lo que Pipe le explique al cliente sobre el alcance del permiso que otorga.
+
+## Riesgo #55 — OCR local + cron OneDrive (bloques 3a/3b): residuales aceptados (2026-07-09)
+
+1. **Tope de OCR por documento:** 150 páginas / 10 minutos con corte ANOTADO — un expediente
+   monstruo entra parcial pero con aviso honesto en el texto. Si en la práctica los expedientes
+   de litigio superan esto con frecuencia, subir el tope (es un parámetro).
+2. **Calidad dependiente del escaneo:** el OCR lee verbatim a calidad de escaneo normal (probado
+   con texto jurídico en español); escaneos torcidos/manuscritos pueden salir con ruido — el
+   marcador de lectura óptica por segmento le avisa al abogado qué partes vienen del OCR.
+3. **Pin fuera de la vigilancia:** `rapidocr-onnxruntime~=1.4` está en el grupo `~=`, NO lo
+   vigila `check_env_pins.py` (decisión consistente con el Riesgo #32 — solo pins críticos ahí).
+4. **Reintento por diseño:** archivo sin cuerpo legible queda `omitted` SIN hash guardado → se
+   re-procesa solo en la siguiente pasada cuando haya motor OCR; si un tenant tiene miles de
+   escaneos y nunca instala el motor, cada sync los re-toca (costo menor, solo lectura local).
+5. **Rasterización acotada:** páginas con MediaBox descomunal (>25 Mpx a 220 dpi, piso 72 dpi)
+   se SALTAN con anotación — contenido de esas páginas no entra (caso rarísimo, honesto).
+6. **Cron cada 6h + throttle 1h por fuente; locks en memoria del proceso** — igual que #54.5:
+   correcto en Modo B single-worker; revisar si algún día hay multi-worker.
+7. **Nota de tally:** `test_speech_tts` es 24/24 en el script actual (el 26/26 histórico era de
+   otra versión); PASS con exit 0 — no es regresión.

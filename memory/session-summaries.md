@@ -866,3 +866,22 @@ Qué sigue:
   hasta entonces todo responde 503 en llano (activación diferida, por diseño).
 - Quick win #5 (checklist de pre-entrega en el gate de aprobación) sigue esperando aprobación de Pipe.
 - Deuda consciente: sincronización PROGRAMADA de fuentes OneDrive (hoy solo botón manual).
+
+## 2026-07-09 — Sesión 37
+TL;DR: OCR local para PDFs escaneados (bloque 3a) + sincronización programada de OneDrive (bloque
+3b); sesión interrumpida por corte de luz tras el último commit y cerrada en la retoma del mismo día.
+Qué construimos:
+- `ingest/ocr.py` + fallback página a página en `ingest/extract.py`: Mia ya lee PDFs escaneados
+  100% en local, con honestidad por segmento y fail-soft (tope 150 págs / 10 min anotado).
+- Job del scheduler cada 6h que sincroniza solo las carpetas de OneDrive remoto (cierra la deuda
+  #1 del Riesgo #54); lock compartido con el botón manual, throttle 1h, fail-soft por fuente.
+- Capa 2 adversarial: 3 mayores + 4 menores, TODOS corregidos (`ea28423`) + guarda `has_body`
+  replicada en carpetas locales (`315dbd1`).
+- 4 commits en `main` (`ad16a64`..`315dbd1`), sin push.
+Qué decidimos:
+- Regresión completa 70/70 ALL PASS (corrida en la retoma post-apagón); línea base sube de 69 a 70.
+- `rapidocr-onnxruntime~=1.4` va en el grupo `~=` (fuera de los pins críticos del Riesgo #32).
+Qué sigue:
+- Capa 3 EN VIVO de Pipe/Cursor (fuentes remotas + botón "Revisar ahora") — sin cambios.
+- ACCIÓN DE PIPE: llaves OAuth (Azure AD + Google Cloud) en `.env`.
+- Decidir push de los 4 commits de esta sesión.

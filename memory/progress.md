@@ -1899,3 +1899,62 @@ automáticamente.
   llano (activación diferida, por diseño; mismo patrón que Microsoft 365/Google de la Ola 2).
 - Quick win #5 (checklist de pre-entrega en el gate de aprobación) sigue esperando aprobación de Pipe.
 - Deuda #1 de arriba (sincronización programada de OneDrive).
+
+---
+
+## 2026-07-09 — Sesión 37 — OCR local para PDFs escaneados (bloque 3a) + sincronización programada de OneDrive (bloque 3b)
+
+**Nota de continuidad:** la sesión se interrumpió por un corte de luz justo después del último
+commit (`315dbd1`, 10:25). No se perdió código (working tree limpio). Este cierre se completó en
+la sesión de retoma del mismo día: se corrió la regresión completa que faltaba y se escribió
+esta memoria + HANDOFF.
+
+**Qué se construyó (4 commits en `main`: `ad16a64` → `315dbd1`):**
+
+1. **Bloque 3a — OCR local para PDFs escaneados (`ad16a64`).** En litigio la mayoría de
+   expedientes son PDF escaneados sin capa de texto; antes Mia quedaba ciega SIN AVISAR.
+   - `ingest/ocr.py`: motor rapidocr-onnxruntime (PaddleOCR sobre ONNX, CPU, 100% local — el
+     documento nunca sale del servidor). Singleton perezoso; degrada a None si falta la librería.
+   - `ingest/extract.py`: fallback página a página (detecta escaneadas: <40 alfanuméricos +
+     imágenes; rasteriza a 220 dpi gris); PDFs mixtos EN ORDEN; aviso de lectura óptica; tope
+     150 páginas / 10 min con corte anotado; página corrupta no tumba el documento. Nueva
+     `extract_text_detailed(...)` → `(str, meta)` con `{ocr_pages, total_pages, truncated}`.
+   - Pin `rapidocr-onnxruntime~=1.4` (grupo `~=`, fuera de los pins críticos del Riesgo #32).
+   - OCR real verificado en español jurídico: lee verbatim a calidad de escaneo normal.
+2. **Bloque 3b — sincronización programada de OneDrive remoto (`10788c2`).** Cierra la deuda #1
+   del Riesgo #54: job del scheduler cada 6h (misma cadencia que Obsidian) que recorre los
+   tenants con fuentes habilitadas; `sync_tenant_sources()` con throttle propio (1h) y fail-soft
+   por fuente; lock `SYNCS_IN_FLIGHT` compartido entre el cron y el botón manual.
+3. **Capa 2 — revisión adversarial del bloque, TODOS los hallazgos corregidos (`ea28423`):**
+   - **M1** — el OCR congelaba el event loop → variantes async con `asyncio.to_thread` en los 5
+     call sites (ux, matter_mail, graph_drive, local_folders); el lock sigue SOLO en el event loop.
+   - **M2** — rasterización acotada por dimensiones: si el área a 220 dpi supera 25 Mpx se baja
+     el dpi (piso 72); si ni así cabe, la página se salta con anotación honesta (evita pixmaps
+     de gigabytes por MediaBox descomunal).
+   - **M3** — "solo nota, sin cuerpo" ya no entra como documento válido: `has_body` +
+     `ocr_unavailable` en el meta; upload → 422 en llano; adjunto de correo / graph_drive → skipped.
+   - **MEN1** — marcador de honestidad POR SEGMENTO (el troceo arrastra la nota cerca del
+     contenido óptico); **MEN2** — el OCR CONCATENA con la capa de texto legítima, no la pisa;
+     **MEN3** — gate de no-egress (parchea socket: el OCR real no hace NINGUNA llamada de red);
+     **MEN4** — sin round-trip redundante a la DB por fuente en el cron.
+4. **Cierre de deuda (`315dbd1`):** la guarda M3 replicada en `connectors/local_folders.py`
+   (ambos destinos: expediente `origin='folder'` y `knowledge_chunks`); el archivo ciego queda
+   `omitted` SIN hash → se reintenta solo cuando se instale la lectura óptica.
+
+**Verificación 3 capas:**
+- **Capa 1 (corrida en la retoma, post-apagón): regresión completa 70/70 suites ALL PASS** —
+  `test_rls` 12/12 y `check_env_pins` 9/9 (HALT) intactos. La línea base sube de 69 a 70 suites
+  (se suma `test_ocr_ingest` 26/26). Sin frontend tocado → sin `npm run build` (los 4 commits son
+  backend + tests puros). Nota de tally: `test_speech_tts` reporta **24/24** en el script actual
+  (el 26/26 de líneas base anteriores era de otra versión del script; exit 0, PASS).
+- **Capa 2:** corrida DURANTE la sesión interrumpida (revisor adversarial con contexto fresco);
+  3 mayores + 4 menores, TODOS corregidos y re-verificados en `ea28423`/`315dbd1` — ninguno
+  descartado.
+- **Capa 3: NO APLICA** — sin UI nueva (el abogado no ve pantallas nuevas; ve que Mia ya no queda
+  ciega ante PDFs escaneados y que sus carpetas de OneDrive se mantienen al día solas).
+
+**Deudas/riesgos nuevos:** ver `bugs-and-risks.md` Riesgo #55.
+
+**Pendiente para la próxima sesión:** sin cambios respecto a la sesión 36 (capa 3 en vivo de
+Pipe/Cursor; ACCIÓN DE PIPE: llaves OAuth en `.env`; quick win #5 esperando aprobación) + decidir
+si se hace push de los 4 commits de esta sesión (la sesión 36 ya está en `origin/main`).
