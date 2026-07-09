@@ -1,0 +1,9 @@
+# Dependencias
+node_modules/
+
+# Logs de orquestación y salida de procesos hijos
+logs/
+
+# Artefactos de build de Tauri/Cargo (además de src-tauri/.gitignore)
+src-tauri/target/
+src-tauri/gen/schemas/

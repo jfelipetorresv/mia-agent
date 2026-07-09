@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mia</title>
+    <style>
+      :root {
+        --bg: #060606;
+        --teal: #008080;
+        --teal-soft: #2ea9a9;
+        --ink: #e9efef;
+        --muted: #8a9a9a;
+        --danger: #e8b4a0;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background:
+          radial-gradient(1100px 600px at 50% -10%, rgba(0, 128, 128, 0.16), transparent 60%),
+          radial-gradient(700px 500px at 50% 120%, rgba(0, 128, 128, 0.10), transparent 60%),
+          var(--bg);
+        color: var(--ink);
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .stage {
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 28px;
+        padding: 40px;
+        animation: rise 0.8s ease both;
+      }
+      @keyframes rise {
+        from { opacity: 0; transform: translateY(14px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      .brand {
+        font-size: 72px;
+        font-weight: 300;
+        letter-spacing: 0.14em;
+        color: var(--ink);
+        text-shadow: 0 0 34px rgba(0, 128, 128, 0.45);
+      }
+      .brand b { font-weight: 600; color: var(--teal-soft); }
+      .dots { display: flex; gap: 12px; }
+      .dot {
+        width: 9px; height: 9px; border-radius: 50%;
+        background: var(--teal);
+        opacity: 0.35;
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      .dot:nth-child(2) { animation-delay: 0.2s; }
+      .dot:nth-child(3) { animation-delay: 0.4s; }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.25; transform: scale(0.85); }
+        50%      { opacity: 1;    transform: scale(1.15); box-shadow: 0 0 14px var(--teal); }
+      }
+      .status {
+        font-size: 19px;
+        color: var(--muted);
+        min-height: 26px;
+        max-width: 520px;
+        line-height: 1.5;
+        transition: color 0.3s ease;
+      }
+      .status.active { color: var(--ink); }
+      .status.error {
+        color: var(--danger);
+        font-size: 17px;
+      }
+      .error .dots { display: none; }
+    </style>
+  </head>
+  <body>
+    <main class="stage" id="stage">
+      <div class="brand">M<b>I</b>A</div>
+      <div class="dots" id="dots">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+      </div>
+      <div class="status active" id="status">Encendiendo la base de datos del despacho…</div>
+    </main>
+
+    <script>
+      (function () {
+        const statusEl = document.getElementById("status");
+        const stageEl = document.getElementById("stage");
+
+        function paint(stage, text) {
+          statusEl.textContent = text;
+          if (stage === "error") {
+            statusEl.classList.remove("active");
+            statusEl.classList.add("error");
+            stageEl.classList.add("error");
+          } else {
+            statusEl.classList.add("active");
+          }
+        }
+
+        function attach() {
+          if (window.__TAURI__ && window.__TAURI__.event) {
+            window.__TAURI__.event.listen("mia://progress", (e) => {
+              const p = e.payload || {};
+              paint(p.stage, p.text);
+            });
+          } else {
+            // Reintentar hasta que el puente de Tauri esté disponible.
+            setTimeout(attach, 120);
+          }
+        }
+        attach();
+      })();
+    </script>
+  </body>
+</html>

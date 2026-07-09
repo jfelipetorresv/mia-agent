@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permisos de la ventana principal de Mia",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}

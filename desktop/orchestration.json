@@ -1,0 +1,25 @@
+{
+  "_nota": "Config de DESARROLLO con rutas de esta máquina. El instalador (Fase 4) escribirá la suya junto al ejecutable con app_dir no-nulo.",
+  "app_dir": null,
+  "db": {
+    "pg_bin": "D:/Inteligencia Artificial/Mia-Super Agent/tools/postgres16-portable-full/pgsql/bin",
+    "data_dir": "D:/Inteligencia Artificial/Mia-Super Agent/tools/pgdata-portable",
+    "port": 55432
+  },
+  "backend": {
+    "cmd": ["D:/Inteligencia Artificial/Mia-Super Agent/mia/.venv/Scripts/python.exe", "-m", "mia.api.run"],
+    "cwd": "D:/Inteligencia Artificial/Mia-Super Agent/mia",
+    "env": {
+      "PYTHONPATH": "D:/Inteligencia Artificial/Mia-Super Agent/mia/backend",
+      "LITELLM_LOCAL_MODEL_COST_MAP": "True"
+    },
+    "health_url": "http://localhost:8000/health",
+    "port": 8000
+  },
+  "frontend": {
+    "cmd": ["npm.cmd", "run", "start", "--", "-p", "3100"],
+    "cwd": "D:/Inteligencia Artificial/Mia-Super Agent/mia/frontend",
+    "url": "http://localhost:3100",
+    "port": 3100
+  }
+}

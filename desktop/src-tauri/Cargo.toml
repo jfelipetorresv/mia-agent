@@ -1,0 +1,25 @@
+[package]
+name = "mia-desktop"
+version = "0.1.0"
+description = "Mia — cáscara orquestadora de escritorio"
+authors = ["Lexia Intelligence"]
+edition = "2021"
+
+[lib]
+# El sufijo `_lib` evita el choque de nombres con el binario en Windows.
+name = "mia_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Job Object KILL_ON_JOB_CLOSE: si la cáscara muere por cualquier camino,
+# el SO mata los procesos que ella lanzó (red de seguridad anti-huérfanos).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
