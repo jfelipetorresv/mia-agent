@@ -10,6 +10,7 @@ y modelos se traducen a etiquetas amigables; nunca pgvector/tenant_id/embedding/
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -143,7 +144,8 @@ async def list_documents(matter_id: str, request: Request):
 
 
 @router.post("/matters/{matter_id}/documents", status_code=201)
-async def upload_document(matter_id: str, request: Request, file: UploadFile = File(...)):
+async def upload_document(matter_id: str, request: Request, response: Response,
+                          file: UploadFile = File(...)):
     tid = _tenant(request)
     await assert_owns_matter(tid, matter_id)
     # Lectura ACOTADA (auditoría 2026-07): leer solo hasta el límite + 1 byte evita
@@ -151,6 +153,18 @@ async def upload_document(matter_id: str, request: Request, file: UploadFile = F
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="El archivo supera el límite de 50 MB.")
+    # Dedupe: si este MISMO archivo (huella sha256) ya está en el expediente, no se vuelve
+    # a procesar ni a embeber — se avisa en llano y se conserva lo que ya había.
+    sha256 = hashlib.sha256(data).hexdigest()
+    async with pool.tenant_connection(tid) as conn:
+        dup = await (await conn.execute(
+            "SELECT id, filename FROM documents WHERE matter_id=%s::uuid AND sha256=%s LIMIT 1",
+            (matter_id, sha256))).fetchone()
+    if dup:
+        # La ruta declara 201 por defecto; un duplicado NO crea nada → se responde 200.
+        response.status_code = 200
+        return {"status": "duplicado", "id": str(dup[0]), "name": file.filename,
+                "message": "Ese documento ya estaba en el expediente — no lo dupliqué."}
     try:
         text = extract_text(file.filename, data)
     except ValueError as e:
@@ -161,9 +175,9 @@ async def upload_document(matter_id: str, request: Request, file: UploadFile = F
     vectors = embeddings.embed_texts(chunks)
     async with pool.tenant_connection(tid) as conn:
         doc_id = (await (await conn.execute(
-            "INSERT INTO documents (tenant_id, matter_id, filename, mime) "
-            "VALUES (%s::uuid, %s::uuid, %s, %s) RETURNING id",
-            (tid, matter_id, file.filename, file.content_type))).fetchone())[0]
+            "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, origin) "
+            "VALUES (%s::uuid, %s::uuid, %s, %s, %s, 'upload') RETURNING id",
+            (tid, matter_id, file.filename, file.content_type, sha256))).fetchone())[0]
         for i, (content, vec) in enumerate(zip(chunks, vectors)):
             await conn.execute(
                 "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "

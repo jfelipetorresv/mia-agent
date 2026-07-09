@@ -19,8 +19,8 @@ from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
 from .routes import (assistant, auth, automations, curator, folders, hitl, mailbox,
-                     mcp, missions, personas, policy, settings, setup, sources, speech,
-                     stream, traces, ux, value)
+                     matter_folders, mcp, missions, personas, policy, settings, setup,
+                     sources, speech, stream, traces, ux, value)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -155,6 +155,9 @@ app.include_router(traces.router)
 app.include_router(assistant.router, prefix="/api")
 # CARPETAS DE TRABAJO (CP-C1, Pilar C): allowlist de carpetas locales/nubes → /api/folders/*.
 app.include_router(folders.router, prefix="/api")
+# EXPEDIENTE VINCULADO (Pilar C): carpeta del asunto → /api/matters/{id}/folder*. El router
+# ya trae su propio prefijo /api (rutas /matters/{id}/...), así que se monta sin prefijo extra.
+app.include_router(matter_folders.router)
 # OBSIDIAN (CP-C2, Pilar C · decisión #32): estado/instalación/bootstrap → /api/obsidian/*.
 app.include_router(folders.obsidian_router, prefix="/api")
 # CP-C4 · asistente de configuración guiado (estado del recorrido "Configura a Mia")

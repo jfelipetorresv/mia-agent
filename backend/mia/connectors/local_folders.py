@@ -63,6 +63,28 @@ _FORBIDDEN_PARTS = {
 }
 
 
+def _is_locked(exc: BaseException) -> bool:
+    """True si el error es 'archivo en uso' (p. ej. abierto en Word): PermissionError o
+    WinError 32. Un archivo bloqueado NO se descarta: se reintenta en el próximo ciclo."""
+    return isinstance(exc, PermissionError) or (
+        isinstance(exc, OSError) and getattr(exc, "winerror", None) == 32
+    )
+
+
+def _guess_mime(name: str) -> str | None:
+    """Tipo MIME aproximado a partir de la extensión (solo para mostrarlo al abogado)."""
+    n = (name or "").lower()
+    if n.endswith(".pdf"):
+        return "application/pdf"
+    if n.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if n.endswith(".md"):
+        return "text/markdown"
+    if n.endswith(".txt"):
+        return "text/plain"
+    return None
+
+
 # ── allowlist · capa 1: validación al registrar ──────────────────────────────
 def validate_source_path(raw: str) -> Path:
     """Valida una ruta ANTES de registrarla como fuente. Devuelve la ruta resuelta
@@ -140,61 +162,135 @@ def detect_cloud_folders(home: Path | str | None = None,
 
 # ── registro / listado / baja de fuentes (RLS por tenant) ────────────────────
 async def register_source(tenant_id: str, path: str, label: str | None = None,
-                          kind: str = "knowledge") -> dict:
+                          kind: str = "knowledge", matter_id: str | None = None) -> dict:
     """Registra una carpeta en la allowlist del tenant (tras validarla). Si la misma
     ruta ya estaba registrada, la re-habilita y actualiza la etiqueta (idempotente).
-    Lanza ValueError con mensaje en lenguaje llano si la ruta no es segura."""
-    if kind != "knowledge":
-        raise ValueError(
-            "Por ahora solo puedo usar carpetas de conocimiento del despacho. "
-            "Las carpetas de expedientes llegarán en una fase posterior."
-        )
+    Lanza ValueError con mensaje en lenguaje llano si la ruta no es segura.
+
+    kind='knowledge' (default): carpeta de conocimiento del despacho (matter_id NULL).
+    kind='matters': carpeta vinculada a UN expediente — exige matter_id válido y del
+    tenant (se valida bajo RLS: un asunto de otro despacho es invisible → se rechaza)."""
+    if kind not in ("knowledge", "matters"):
+        raise ValueError("No reconozco ese tipo de carpeta.")
+    if kind == "matters":
+        if not matter_id:
+            raise ValueError("Necesito el expediente al que quieres vincular la carpeta.")
+        # Pertenencia por RLS: si el asunto no es del despacho, no existe para esta conexión.
+        async with pool.tenant_connection(tenant_id) as conn:
+            row = await (await conn.execute(
+                "SELECT 1 FROM matters WHERE id=%s::uuid", (matter_id,))).fetchone()
+        if row is None:
+            raise ValueError("No encontré ese expediente en tu despacho.")
+    else:
+        matter_id = None   # las carpetas de conocimiento nunca llevan expediente
     resolved = validate_source_path(path)
     label = (label or resolved.name or "Carpeta de trabajo")[:200]
     async with pool.tenant_connection(tenant_id) as conn:
+        if kind == "matters":
+            # Una misma ruta NO puede servir a dos expedientes: el UNIQUE (tenant,path,kind)
+            # haría que el UPDATE de abajo le "robara" la fuente al primero (y el segundo
+            # heredaría los hashes → ingesta 0, silencioso). Activa → rechazo en llano;
+            # desvinculada de OTRO expediente → se reasigna limpiando la memoria de
+            # archivos vistos para que el expediente nuevo ingiera desde cero.
+            prev = await (await conn.execute(
+                "SELECT id, matter_id, enabled FROM local_folder_sources "
+                "WHERE tenant_id=%s::uuid AND path=%s AND kind='matters'",
+                (tenant_id, str(resolved)))).fetchone()
+            if prev is not None and str(prev[1]) != str(matter_id):
+                if prev[2]:
+                    raise ValueError(
+                        "Esa carpeta ya está vinculada a otro expediente. "
+                        "Desvincúlala allá primero si quieres usarla en este.")
+                await conn.execute(
+                    "DELETE FROM local_file_hashes WHERE source_id=%s::uuid",
+                    (str(prev[0]),))
         # UNIQUE (tenant_id, path, kind) en DB (migración 016): el insert es atómico y
         # sin carreras; si la fila ya existe, se re-habilita y refresca la etiqueta.
         row = await (await conn.execute(
-            "INSERT INTO local_folder_sources (tenant_id, path, label, kind) "
-            "VALUES (%s::uuid, %s, %s, %s) "
+            "INSERT INTO local_folder_sources (tenant_id, path, label, kind, matter_id) "
+            "VALUES (%s::uuid, %s, %s, %s, %s) "
             "ON CONFLICT (tenant_id, path, kind) DO NOTHING RETURNING id",
-            (tenant_id, str(resolved), label, kind),
+            (tenant_id, str(resolved), label, kind, matter_id),
         )).fetchone()
         if row is None:
             row = await (await conn.execute(
-                "UPDATE local_folder_sources SET enabled=true, label=%s "
+                "UPDATE local_folder_sources SET enabled=true, label=%s, matter_id=%s "
                 "WHERE tenant_id=%s::uuid AND path=%s AND kind=%s RETURNING id",
-                (label, tenant_id, str(resolved), kind),
+                (label, matter_id, tenant_id, str(resolved), kind),
             )).fetchone()
         source_id = str(row[0])
-    return {"id": source_id, "path": str(resolved), "label": label, "kind": kind, "enabled": True}
+    return {"id": source_id, "path": str(resolved), "label": label, "kind": kind,
+            "enabled": True, "matter_id": matter_id}
 
 
 async def list_sources(tenant_id: str, include_disabled: bool = False) -> list[dict]:
     """Fuentes registradas del tenant (por defecto solo las habilitadas)."""
-    sql = ("SELECT id, path, label, kind, enabled, created_at FROM local_folder_sources "
+    sql = ("SELECT id, path, label, kind, enabled, created_at, matter_id "
+           "FROM local_folder_sources "
            + ("" if include_disabled else "WHERE enabled ")
            + "ORDER BY created_at")
     async with pool.tenant_connection(tenant_id) as conn:
         rows = await (await conn.execute(sql)).fetchall()
     return [
         {"id": str(r[0]), "path": r[1], "label": r[2], "kind": r[3],
-         "enabled": r[4], "created_at": r[5].isoformat()}
+         "enabled": r[4], "created_at": r[5].isoformat(),
+         "matter_id": str(r[6]) if r[6] else None}
         for r in rows
     ]
 
 
-async def disable_source(tenant_id: str, source_id: str) -> bool:
-    """Deshabilita una fuente y BORRA sus chunks y hashes (privacidad primero: al
-    quitar una carpeta, su contenido deja de estar en el conocimiento de Mia de
-    inmediato; re-habilitarla la re-indexa). Devuelve False si no existe (o es ajena)."""
+async def get_matter_source(tenant_id: str, matter_id: str) -> dict | None:
+    """Carpeta vinculada ACTIVA de un expediente (kind='matters'), o None. Un asunto tiene
+    a lo sumo una activa (lo garantiza el endpoint que la registra)."""
     async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT id, path, label, kind, enabled FROM local_folder_sources "
+            "WHERE matter_id=%s::uuid AND kind='matters' AND enabled "
+            "ORDER BY created_at DESC LIMIT 1",
+            (matter_id,),
+        )).fetchone()
+    if row is None:
+        return None
+    return {"id": str(row[0]), "path": row[1], "label": row[2], "kind": row[3],
+            "enabled": row[4], "matter_id": str(matter_id)}
+
+
+async def source_last_sync(tenant_id: str, source_id: str):
+    """Momento de la última sincronización de una fuente (max updated_at de sus hashes),
+    o None si nunca corrió. Sirve para el estado del expediente y el throttle de re-sync."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT max(updated_at) FROM local_file_hashes WHERE source_id=%s::uuid",
+            (source_id,),
+        )).fetchone()
+    return row[0] if row else None
+
+
+async def disable_source(tenant_id: str, source_id: str) -> bool:
+    """Deshabilita una fuente. Devuelve False si no existe (o es ajena).
+
+    kind='knowledge' (conocimiento del despacho): BORRA sus chunks y hashes (privacidad
+    primero — quitar una carpeta saca su contenido del conocimiento de Mia de inmediato;
+    re-habilitarla la re-indexa).
+
+    kind='matters' (expediente vinculado): solo DESVINCULA — los documentos que ya trajo
+    al expediente SE CONSERVAN (el abogado los sigue viendo). Los hashes también se
+    conservan, así re-vincular la misma carpeta no re-ingiere lo que no cambió."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT kind FROM local_folder_sources WHERE id=%s::uuid", (source_id,))).fetchone()
+        if row is None:
+            return False
+        kind = row[0]
         res = await conn.execute(
             "UPDATE local_folder_sources SET enabled=false WHERE id=%s::uuid",
             (source_id,),
         )
         if res.rowcount == 0:
             return False
+        if kind == "matters":
+            # Expediente vinculado: se conservan documents y hashes; solo se desvincula.
+            return True
         await conn.execute(
             "DELETE FROM knowledge_chunks WHERE tenant_id=%s::uuid AND source=%s",
             (tenant_id, SOURCE_PREFIX + str(source_id)),
@@ -216,14 +312,15 @@ class LocalFolderSync:
 
     # ── entry points ─────────────────────────────────────────────────────────
     async def sync_tenant(self, tenant_id: str) -> dict:
-        """Sincroniza TODAS las fuentes habilitadas del tenant. Devuelve stats agregadas
-        {sources, indexed, skipped, deleted, errors, omitted, deferred}."""
+        """Sincroniza TODAS las fuentes habilitadas del tenant (conocimiento Y expedientes
+        vinculados). Devuelve stats agregadas
+        {sources, indexed, skipped, deleted, errors, omitted, deferred, pending}."""
         totals = {"sources": 0, "indexed": 0, "skipped": 0, "deleted": 0,
-                  "errors": 0, "omitted": 0, "deferred": 0}
+                  "errors": 0, "omitted": 0, "deferred": 0, "pending": 0}
         for source in await list_sources(tenant_id):
             totals["sources"] += 1
             stats = await self.sync_source(tenant_id, source)
-            for k in ("indexed", "skipped", "deleted", "errors", "omitted", "deferred"):
+            for k in ("indexed", "skipped", "deleted", "errors", "omitted", "deferred", "pending"):
                 totals[k] += stats.get(k, 0)
         return totals
 
@@ -241,7 +338,9 @@ class LocalFolderSync:
              MAX_SCAN_FILES, no se borra nada en esa corrida (los archivos no vistos
              podrían seguir existiendo)."""
         stats = {"indexed": 0, "skipped": 0, "deleted": 0, "errors": 0,
-                 "omitted": 0, "deferred": 0}
+                 "omitted": 0, "deferred": 0, "pending": 0}
+        kind = source.get("kind") or "knowledge"
+        matter_id = source.get("matter_id")
         source_id = str(source["id"])
         registered = Path(source["path"])
 
@@ -283,7 +382,15 @@ class LocalFolderSync:
             rel = self._rel(root, f)
             try:
                 h = self._hash_file(f)
-            except OSError:
+            except Exception as exc:  # noqa: BLE001 — clasificamos bloqueo vs. error real
+                if _is_locked(exc):
+                    # Archivo en uso (p. ej. abierto en Word, WinError 32): NO se descarta.
+                    # Se conserva su hash previo — así no se re-indexa ni se poda su documento —
+                    # y se cuenta como pendiente para reintentarlo en el próximo ciclo.
+                    stats["pending"] += 1
+                    if rel in stored:
+                        new_hashes[rel] = stored[rel]
+                    continue
                 stats["errors"] += 1
                 logger.exception("fuente %s: no pude leer %s", source_id, rel)
                 continue
@@ -308,14 +415,29 @@ class LocalFolderSync:
             )
 
         # Pasada 2 (cara): extracción + embeddings + upsert, solo de lo que cambió.
+        # Según el tipo de fuente el destino cambia: 'knowledge' → knowledge_chunks (RAG del
+        # despacho); 'matters' → documents + chunks del expediente (origin='folder').
         for f, rel in to_process:
             try:
                 text = self._read_text(f)
-                chunks = self._chunk_file(text, rel)
-                vectors = await self._embed_chunks([c["text"] for c in chunks])
-                await self._upsert_chunks(tenant_id, db_source, rel, chunks, vectors)
+                if kind == "matters":
+                    await self._ingest_matter_file(tenant_id, matter_id, rel, text,
+                                                   new_hashes[rel], f)
+                else:
+                    chunks = self._chunk_file(text, rel)
+                    vectors = await self._embed_chunks([c["text"] for c in chunks])
+                    await self._upsert_chunks(tenant_id, db_source, rel, chunks, vectors)
                 stats["indexed"] += 1
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 — clasificamos bloqueo vs. error real
+                if _is_locked(exc):
+                    # Se bloqueó entre la pasada 1 y la 2: se reintenta el próximo ciclo
+                    # conservando el hash previo (no se poda su documento).
+                    stats["pending"] += 1
+                    if rel in stored:
+                        new_hashes[rel] = stored[rel]
+                    else:
+                        new_hashes.pop(rel, None)
+                    continue
                 stats["errors"] += 1
                 logger.exception("fuente %s: no pude indexar %s", source_id, rel)
                 # sin hash guardado → se reintenta en la próxima sincronización
@@ -331,7 +453,10 @@ class LocalFolderSync:
             )
             await self._save_hashes(tenant_id, source_id, new_hashes, prune=False)
         else:
-            stats["deleted"] = await self._delete_removed(tenant_id, db_source, current)
+            if kind == "matters":
+                stats["deleted"] = await self._prune_matter_docs(tenant_id, matter_id, current)
+            else:
+                stats["deleted"] = await self._delete_removed(tenant_id, db_source, current)
             await self._save_hashes(tenant_id, source_id, new_hashes)
         return stats
 
@@ -474,6 +599,56 @@ class LocalFolderSync:
                     "DELETE FROM knowledge_chunks WHERE tenant_id = %s::uuid AND source = %s "
                     "AND source_path = ANY(%s)",
                     (tenant_id, db_source, removed),
+                )
+        return len(removed)
+
+    # ── persistencia del EXPEDIENTE VINCULADO (documents + chunks · RLS por tenant) ──
+    async def _ingest_matter_file(self, tenant_id: str, matter_id, rel: str, text: str,
+                                  sha256: str, path: Path) -> None:
+        """Ingesta un archivo de la carpeta vinculada al expediente: extrae texto, trocea,
+        embebe e inserta un documento (origin='folder', source_path=ruta relativa, sha256) y
+        sus chunks. Reemplaza SIEMPRE el documento previo de esa ruta (sus chunks caen por
+        cascade) — así un archivo CAMBIADO no deja el documento viejo detrás. Los documentos
+        subidos a mano (origin='upload') NUNCA se tocan aquí."""
+        chunks = chunk_text(text)
+        async with pool.tenant_connection(tenant_id) as conn:
+            # Borrar la versión previa de ESTA ruta traída por la carpeta (idempotente).
+            await conn.execute(
+                "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='folder' "
+                "AND source_path=%s", (matter_id, rel))
+            if not chunks:
+                # Archivo sin texto útil: no se crea documento (quedó podado el anterior).
+                return
+            vectors = await self._embed_chunks(chunks)
+            doc_id = (await (await conn.execute(
+                "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
+                "source_path, origin) VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'folder') "
+                "RETURNING id",
+                (tenant_id, matter_id, path.name, _guess_mime(path.name), sha256, rel),
+            )).fetchone())[0]
+            for i, (content, vec) in enumerate(zip(chunks, vectors)):
+                await conn.execute(
+                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s)",
+                    (tenant_id, doc_id, i, content, vec))
+
+    async def _prune_matter_docs(self, tenant_id: str, matter_id, current) -> int:
+        """Borra los documentos origin='folder' del expediente cuyos archivos ya no están en
+        la carpeta. Los origin='upload' (subidos a mano) JAMÁS se tocan. Sus chunks caen por
+        cascade. Devuelve el número de ARCHIVOS eliminados."""
+        current = set(current)
+        async with pool.tenant_connection(tenant_id) as conn:
+            rows = await (await conn.execute(
+                "SELECT DISTINCT source_path FROM documents "
+                "WHERE matter_id=%s::uuid AND origin='folder'",
+                (matter_id,),
+            )).fetchall()
+            removed = sorted({r[0] for r in rows if r[0] is not None} - current)
+            if removed:
+                await conn.execute(
+                    "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='folder' "
+                    "AND source_path = ANY(%s)",
+                    (matter_id, removed),
                 )
         return len(removed)
 
