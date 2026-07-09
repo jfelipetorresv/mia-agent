@@ -38,7 +38,7 @@ from ...connectors.mailbox.base import PROVIDERS
 from ...connectors.mailbox.providers import _max_attachment_bytes
 from ...connectors.mailbox.service import MailboxService
 from ...db import pool
-from ...ingest.extract import extract_text
+from ...ingest.extract import extract_text_detailed_async
 from ...ingest.ingest import chunk_text
 from ...observability import audit
 from ._common import _is_uuid
@@ -254,10 +254,20 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
                                       "(uso PDF, Word, texto)."})
             continue
         try:
-            text = extract_text(name, data)
+            # M1: la extracción (OCR incluido) corre en un hilo — no congela el event loop.
+            text, meta = await extract_text_detailed_async(name, data)
         except Exception:  # noqa: BLE001 — adjunto ilegible: se omite en llano
             skipped.append({"name": name,
                             "reason": "No pude leer ese archivo adjunto; puede estar dañado."})
+            continue
+        # M3: un adjunto escaneado sin cuerpo legible va a `skipped` con motivo — NO se ingesta
+        # un placeholder (solo la nota de honestidad) como si fuera un documento válido.
+        if not meta.get("has_body", True):
+            reason = ("Ese adjunto parece escaneado y este servidor no tiene lectura óptica "
+                      "instalada; no pude leer su contenido."
+                      if meta.get("ocr_unavailable")
+                      else "No pude leer texto en ese archivo adjunto.")
+            skipped.append({"name": name, "reason": reason})
             continue
         await _ingest_document(
             tenant_id, matter_id, name, att.get("content_type") or None, data, text,

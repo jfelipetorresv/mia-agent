@@ -194,6 +194,117 @@ def run_gate() -> None:
         raised = True
     check("3a-16 · tipo no soportado sigue lanzando ValueError (contrato intacto)", raised)
 
+    # ── (h) M2 · página descomunal → salto anotado, sin RAM sin límite ───────────
+    def _giant_scanned_page(doc, fitz, lines: list[str]) -> None:
+        """Página con MediaBox de 200×200 pulgadas (a 220 dpi rasterizaría a ~1.9 GB)."""
+        tmp = fitz.open()
+        tp = tmp.new_page(width=595, height=842)
+        y = 100
+        for ln in lines:
+            tp.insert_text((60, y), ln, fontsize=15)
+            y += 30
+        img_bytes = tp.get_pixmap(dpi=120).tobytes("png")
+        tmp.close()
+        side = 200 * 72  # 200 pulgadas en puntos PDF
+        page = doc.new_page(width=side, height=side)
+        page.insert_image(fitz.Rect(0, 0, side, side), stream=img_bytes)
+
+    def _text_plus_giant(d, f):
+        _text_page(d, f, ["PRIMERO. Nota con capa de texto real folio_control_nueve."])
+        _giant_scanned_page(d, f, SCAN_A)
+    pdf_giant = _build_pdf(_text_plus_giant)
+    txt_g, meta_g = extract.extract_text_detailed("giant.pdf", pdf_giant)
+    check("3a-17 · M2: la página descomunal se SALTA con anotación honesta (no revienta la RAM)",
+          extract._ocr_too_large_note(2) in txt_g and meta_g["ocr_pages"] == 0)
+    check("3a-18 · M2: la página de texto sobrevive y el documento tiene cuerpo (has_body)",
+          "folio_control_nueve" in txt_g and meta_g["has_body"] is True
+          and meta_g["total_pages"] == 2)
+
+    # ── (i) M3 · solo-nota (OCR presente pero no leyó nada) → has_body False ──────
+    real_ocr_fn2 = ocr.ocr_image_png
+    ocr.ocr_image_png = lambda engine, png: ""   # el motor corre pero no reconoce texto
+    try:
+        txt_i, meta_i = extract.extract_text_detailed("escaneado.pdf", pdf_scan)
+    finally:
+        ocr.ocr_image_png = real_ocr_fn2
+    check("3a-19 · M3: OCR sin texto → has_body False y SIN nota de honestidad (no 'usó OCR')",
+          meta_i["has_body"] is False and extract.OCR_HONESTY_NOTE not in txt_i)
+
+    # ── (i') M3 · motor ausente sobre escaneo puro → has_body False + ocr_unavailable ─
+    real_get2 = ocr.get_ocr_engine
+    ocr.get_ocr_engine = lambda: None
+    try:
+        txt_u, meta_u = extract.extract_text_detailed("escaneado.pdf", pdf_scan)
+    finally:
+        ocr.get_ocr_engine = real_get2
+    check("3a-20 · M3: sin motor sobre escaneo puro → has_body False y ocr_unavailable True",
+          meta_u["has_body"] is False and meta_u["ocr_unavailable"] is True)
+
+    # ── (j) MEN1 · marcador POR SEGMENTO cerca del contenido OCR de una página lejana ─
+    def _far_scan(d, f):
+        _text_page(d, f, ["Pagina uno con bastante texto de relleno juridico de prueba uno."])
+        _text_page(d, f, ["Pagina dos con bastante texto de relleno juridico de prueba dos."])
+        _text_page(d, f, ["Pagina tres con bastante texto de relleno juridico de prueba tres."])
+        _scanned_page(d, f, SCAN_A)
+    pdf_far = _build_pdf(_far_scan)
+    txt_j, meta_j = extract.extract_text_detailed("far.pdf", pdf_far)
+    low_j = txt_j.lower()
+    idx_seg = txt_j.find(extract.OCR_SEGMENT_NOTE)
+    idx_cont = low_j.find("1077") if "1077" in low_j else low_j.find("contrato")
+    check("3a-21 · MEN1: el marcador por segmento está PRESENTE (además de la nota global)",
+          idx_seg != -1 and txt_j.startswith(extract.OCR_HONESTY_NOTE) and meta_j["ocr_pages"] == 1)
+    check("3a-22 · MEN1: el marcador precede INMEDIATAMENTE al contenido OCR lejano (<300 chars)",
+          idx_cont != -1 and 0 < (idx_cont - idx_seg) < 300)
+
+    # ── (k) MEN2 · página con capa escueta + escaneo → se CONSERVA la capa (no se pisa) ─
+    def _layer_plus_ocr_page(d, f):
+        tmp = f.open()
+        tp = tmp.new_page(width=595, height=842)
+        y = 100
+        for ln in SCAN_A:
+            tp.insert_text((60, y), ln, fontsize=15)
+            y += 30
+        img_bytes = tp.get_pixmap(dpi=160).tobytes("png")
+        tmp.close()
+        page = d.new_page(width=595, height=842)
+        page.insert_image(f.Rect(0, 0, 595, 842), stream=img_bytes)
+        page.insert_text((60, 800), "folio_capa_nativa_siete", fontsize=11)  # capa escueta real
+    pdf_k = _build_pdf(_layer_plus_ocr_page)
+    txt_k, meta_k = extract.extract_text_detailed("portada.pdf", pdf_k)
+    low_k = txt_k.lower()
+    idx_layer = low_k.find("folio_capa_nativa_siete")
+    idx_ocr_k = low_k.find("1077") if "1077" in low_k else low_k.find("contrato")
+    check("3a-23 · MEN2: la capa nativa escueta se CONSERVA junto al texto OCR (no se descarta)",
+          idx_layer != -1 and idx_ocr_k != -1 and meta_k["ocr_pages"] == 1)
+    check("3a-24 · MEN2: la capa original va ANTES del texto OCR (orden capa→OCR)",
+          idx_layer != -1 and idx_ocr_k != -1 and idx_layer < idx_ocr_k)
+
+    # ── (l) MEN3 · no-egress: el OCR real no abre NINGÚN socket de red (confidencialidad) ─
+    import socket
+    _orig_socket, _orig_conn = socket.socket, socket.create_connection
+
+    def _block_net(*a, **k):
+        raise AssertionError("el OCR intentó abrir un socket de red")
+
+    socket.socket = _block_net
+    socket.create_connection = _block_net
+    try:
+        txt_l, meta_l = extract.extract_text_detailed("escaneado.pdf", pdf_scan)
+        net_ok = (meta_l["ocr_pages"] == 1
+                  and any(w in txt_l.lower() for w in ("contrato", "1077", "codigo")))
+    except AssertionError:
+        net_ok = False
+    finally:
+        socket.socket = _orig_socket
+        socket.create_connection = _orig_conn
+    check("3a-25 · MEN3: no-egress — el OCR real corrió sin abrir ningún socket de red", net_ok)
+
+    # ── (m) M1 · la variante async delega en to_thread y da el MISMO resultado ───
+    import asyncio
+    txt_as, meta_as = asyncio.run(extract.extract_text_detailed_async("escaneado.pdf", pdf_scan))
+    check("3a-26 · M1: extract_text_detailed_async devuelve el mismo resultado (delega a hilo)",
+          meta_as["ocr_pages"] == 1 and extract.OCR_HONESTY_NOTE in txt_as)
+
 
 if __name__ == "__main__":
     run_gate()

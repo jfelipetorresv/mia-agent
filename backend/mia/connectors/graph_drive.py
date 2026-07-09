@@ -35,7 +35,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from ..db import pool
-from ..ingest.extract import extract_text
+from ..ingest.extract import extract_text_detailed_async
 from ..ingest.ingest import chunk_text
 from .local_folders import (
     MAX_FILE_BYTES,
@@ -60,6 +60,9 @@ CRON_THROTTLE_HOURS = 1.0               # ventana del throttle del sync PROGRAMA
 # ruta) precisamente para que el scheduler pueda importarlo sin depender del módulo de rutas.
 # Mismo comportamiento de antes: un clic manual y el cron nunca sincronizan la MISMA carpeta
 # a la vez; el que llega segundo ve la fuente ya en vuelo y se salta (sin tumbar nada).
+# INVARIANTE (M1): este set NO es thread-safe. Su `add`/`discard` DEBEN ejecutarse siempre
+# en el event loop (nunca dentro de un `asyncio.to_thread`). Solo la extracción/OCR —que es
+# CPU-pesada— se delega a un hilo; el candado se manipula antes y después, en el loop.
 SYNCS_IN_FLIGHT: set[str] = set()
 
 
@@ -392,7 +395,16 @@ class RemoteDriveSync:
                                                  st[2], f["rel"], f["name"])
                     new_hashes[f["item_id"]] = (f["etag"], sha, f["rel"])
                     continue
-                text = self._text_from_bytes(f["name"], blob)
+                text, meta = await self._text_from_bytes(f["name"], blob)
+                # M3: un escaneo sin cuerpo legible (o sin motor de OCR) se cuenta como
+                # OMITIDO con motivo — NO se ingesta un placeholder como si fuera válido. Sin
+                # hash guardado → se reintenta si más adelante se instala la lectura óptica.
+                if not meta.get("has_body", True):
+                    stats["skipped"] += 1
+                    reason = ("escaneado y este servidor no tiene lectura óptica"
+                              if meta.get("ocr_unavailable") else "sin texto legible")
+                    logger.info("fuente remota %s: omito %s (%s)", source_id, f.get("rel"), reason)
+                    continue
                 if kind == "matters":
                     await self._ingest_matter_file(tenant_id, matter_id, f["rel"], f["name"],
                                                    text, sha)
@@ -474,11 +486,12 @@ class RemoteDriveSync:
         return files, oversize, truncated
 
     @staticmethod
-    def _text_from_bytes(name: str, blob: bytes) -> str:
-        """Texto plano del archivo: PDF/Word vía extract_text; .md/.txt decodificados."""
+    async def _text_from_bytes(name: str, blob: bytes) -> tuple[str, dict]:
+        """Texto plano + metadata de OCR. PDF/Word vía extract_text (en hilo — M1: el OCR es
+        CPU-pesado y no debe congelar el cron ni los demás jobs); .md/.txt decodificados."""
         if name.lower().endswith((".pdf", ".docx")):
-            return extract_text(name, blob)
-        return blob.decode("utf-8", errors="replace")
+            return await extract_text_detailed_async(name, blob)
+        return blob.decode("utf-8", errors="replace"), {"has_body": True, "ocr_unavailable": False}
 
     # ── persistencia del EXPEDIENTE VINCULADO (documents origin='drive' + chunks) ──
     async def _ingest_matter_file(self, tenant_id: str, matter_id, rel: str, name: str,
@@ -613,8 +626,11 @@ async def sync_tenant_sources(tenant_id: str, service: "GraphDriveService",
              "skipped_lock": 0, "failed": 0}
     for source in await list_sources(tenant_id):
         sid = str(source["id"])
-        last = await source_last_sync(tenant_id, sid)
-        if last is not None:
+        # MEN4: `list_sources` YA trae `last_sync` (mismo `last_synced_at`) → sin round-trip
+        # redundante por fuente a la DB.
+        last_iso = source.get("last_sync")
+        if last_iso is not None:
+            last = datetime.fromisoformat(last_iso)
             elapsed_hours = (datetime.now(timezone.utc) - last).total_seconds() / 3600
             if elapsed_hours < throttle_hours:
                 stats["skipped_throttle"] += 1

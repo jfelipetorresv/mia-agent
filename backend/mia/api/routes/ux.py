@@ -33,7 +33,7 @@ from ...connectors import ObsidianSync, PineconeConnector
 from ...security import assert_no_stray_secret
 from ...cron import build_scheduler
 from ...db import pool
-from ...ingest.extract import extract_text
+from ...ingest.extract import extract_text_async, extract_text_detailed_async
 from ...ingest.ingest import chunk_text
 from ...jurisdiction.pack import GENERIC_CODE, list_packs, load_pack
 from ...memory.gepa import GEPALoop
@@ -182,9 +182,18 @@ async def upload_document(matter_id: str, request: Request, response: Response,
         return {"status": "duplicado", "id": str(dup[0]), "name": file.filename,
                 "message": "Ese documento ya estaba en el expediente — no lo dupliqué."}
     try:
-        text = extract_text(file.filename, data)
+        # M1: la extracción (OCR incluido) es CPU-pesada y va a un hilo — NO al event loop.
+        text, meta = await extract_text_detailed_async(file.filename, data)
     except ValueError as e:
         raise HTTPException(status_code=415, detail=str(e))
+    # M3: un escaneo del que no se pudo leer NADA no es un documento válido — solo la nota
+    # de honestidad pasaría la guarda `if not chunks` de abajo y entraría como éxito falso.
+    if not meta.get("has_body", True):
+        if meta.get("ocr_unavailable"):
+            raise HTTPException(status_code=422, detail=(
+                "El documento parece escaneado y este servidor no tiene lectura óptica "
+                "instalada — no pude leer su contenido."))
+        raise HTTPException(status_code=422, detail="No pude leer texto en este documento.")
     chunks = chunk_text(text)
     if not chunks:
         raise HTTPException(status_code=400, detail="El documento está vacío o no tiene texto.")
@@ -425,7 +434,8 @@ async def import_playbooks(request: Request,
             errores.append(f"{fname}: el archivo supera el límite de 50 MB.")
             continue
         try:
-            text = extract_text(fname, data)
+            # M1: extracción en hilo (no bloquea el event loop en imports grandes de guías).
+            text = await extract_text_async(fname, data)
         except ValueError as e:
             errores.append(f"{fname}: {e}")
             continue

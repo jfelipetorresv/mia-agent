@@ -289,13 +289,16 @@ async def sync_checks(a: str, matter_a: str) -> None:
         blobs = {"T1": txt_bytes, "P1": pdf_bytes, "G1": big_bytes}
         drive = FakeDrive(tree, blobs)
 
-        # extract_text doblado para el PDF (evita depender de PyMuPDF con bytes falsos)
-        orig_extract = gd.extract_text
+        # extract_text doblado para el PDF (evita depender de PyMuPDF con bytes falsos).
+        # M1: el connector ahora extrae vía extract_text_detailed_async (en hilo) → el doble
+        # es async y devuelve (texto, meta) con has_body True.
+        orig_extract = gd.extract_text_detailed_async
 
-        def fake_extract(filename, data):
-            return f"Texto extraído de {filename}: coberturas y clausulas remotas."
+        async def fake_extract(filename, data):
+            return (f"Texto extraído de {filename}: coberturas y clausulas remotas.",
+                    {"has_body": True, "ocr_unavailable": False})
 
-        gd.extract_text = fake_extract
+        gd.extract_text_detailed_async = fake_extract
 
         # ── KNOWLEDGE ────────────────────────────────────────────────────────────
         ksrc = await register_source(a, "KA", label="Conocimiento OneDrive", kind="knowledge")
@@ -382,7 +385,7 @@ async def sync_checks(a: str, matter_a: str) -> None:
         check("matters: archivo borrado en remoto → poda documento 'drive' (deleted=1, queda 1)",
               sm2["deleted"] == 1 and sql_count_docs(matter_a) == 1)
 
-        gd.extract_text = orig_extract
+        gd.extract_text_detailed_async = orig_extract
     finally:
         await pool.close_pool()
 
@@ -432,8 +435,12 @@ async def cron_checks(c_tenant: str, d_tenant: str) -> None:
             "C-BAD": [_f("CT3", "notas3.txt", len(txt_bytes), "e-ct3")],
         }
         drive_c = FakeDrive(tree_c, {"CT1": txt_bytes, "CT2": txt_bytes, "CT3": txt_bytes})
-        orig_extract = gd.extract_text
-        gd.extract_text = lambda name, data: "texto de prueba del cron"
+        orig_extract = gd.extract_text_detailed_async
+
+        async def _cron_extract(name, data):
+            return ("texto de prueba del cron", {"has_body": True, "ocr_unavailable": False})
+
+        gd.extract_text_detailed_async = _cron_extract
 
         # Simula "token vencido a mitad de corrida"/"carpeta borrada" para C-BAD: envuelve
         # RemoteDriveSync para que ESA fuente lance, y deja las demás intactas.
@@ -454,7 +461,7 @@ async def cron_checks(c_tenant: str, d_tenant: str) -> None:
             stats_c = await gd.sync_tenant_sources(c_tenant, service_c, throttle_hours=1)
         finally:
             gd.RemoteDriveSync = OrigSync
-            gd.extract_text = orig_extract
+            gd.extract_text_detailed_async = orig_extract
 
         check("cron: fuente sana se sincroniza (synced=1)", stats_c["synced"] == 1)
         check("cron: fuente sincronizada hace poco se salta por throttle (skipped_throttle=1)",
@@ -505,14 +512,14 @@ async def cron_checks(c_tenant: str, d_tenant: str) -> None:
 
         orig_service_cls = gd.GraphDriveService
         gd.RemoteDriveSync = RaisingSync  # C-BAD sigue rota: confirma fail-soft también aquí
-        gd.extract_text = lambda name, data: "texto de prueba del cron"
+        gd.extract_text_detailed_async = _cron_extract
         gd.GraphDriveService = FixedService
         try:
             out = await cron_scheduler.sync_remote_drive_all_tenants()
         finally:
             gd.GraphDriveService = orig_service_cls
             gd.RemoteDriveSync = OrigSync
-            gd.extract_text = orig_extract
+            gd.extract_text_detailed_async = orig_extract
 
         check("cron job: sync_remote_drive_all_tenants itera tenants reales (enumeración por "
               "DB) y trae stats del tenant con fuentes habilitadas",

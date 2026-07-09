@@ -34,6 +34,7 @@ Aislamiento: TODA operación de DB por-tenant pasa por `pool.tenant_connection(t
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -419,7 +420,9 @@ class LocalFolderSync:
         # despacho); 'matters' → documents + chunks del expediente (origin='folder').
         for f, rel in to_process:
             try:
-                text = self._read_text(f)
+                # M1: leer del disco + extraer (OCR incluido) es IO/CPU-pesado — va a un hilo
+                # para no congelar el event loop mientras se indexa una carpeta escaneada.
+                text = await asyncio.to_thread(self._read_text, f)
                 if kind == "matters":
                     await self._ingest_matter_file(tenant_id, matter_id, rel, text,
                                                    new_hashes[rel], f)
