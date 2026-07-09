@@ -196,7 +196,12 @@ aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
 - [x] Data Factory del corpus (`rag/corpus_factory.py` + `jurisdiction/packs/co/corpus_sources.json`),
       reemplaza la semilla hardcodeada de `ingest_corpus.py` (deprecado)
 - [x] Regresión 66/66 + revisor capa 2 (5 hallazgos corregidos) — ver `progress.md` sesión 35
+- [x] 3 de 5 quick wins de `docs/analisis-claude-for-legal.md` (commit `c11fb71`, ver progress.md):
+      #1 3er valor en el borrador · #4 menú de próximos pasos + pregunta de segundo orden en el
+      análisis · #3 freshness declarativo del pack. #2 ya estaba implementado (CitationReview.tsx);
+      #5 pendiente de aprobación de Pipe (toca el gate de HITL/"resultado legal")
+- [x] Push a `origin/main` de los 6 commits de la sesión (`9f62b4e..c11fb71`)
 - [ ] Capa 3 visual (botón "Revisar ahora") — pendiente de Pipe en vivo
 - [ ] Gmail/OneDrive vía Graph API (bloque 2 de la Fase 3, ver `mia-decisiones-pipe-fase3` en memoria)
-- [ ] Aplicar los 5 quick wins de `docs/analisis-claude-for-legal.md`
-- [ ] Decisión de Pipe: push a `origin/main` de los 4 commits de esta sesión
+- [ ] Quick win #5: checklist de pre-entrega ejecutado en el gate de aprobación — requiere
+      aprobación previa de Pipe antes de tocar `hitl_checkpoint`

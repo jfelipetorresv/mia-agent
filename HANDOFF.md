@@ -49,7 +49,24 @@ Detalle completo, con los 5 hallazgos de capa 2 y sus correcciones, en `memory/p
   disco; lógica de identidad duplicada entre adaptadores del corpus; fetches secuenciales evitables).
 - Capa 3: **PENDIENTE** — sin navegador conectado en esta sesión para el recorrido en vivo del botón.
 
-**4 commits en `main` (sin push):** `9f62b4e`, `4ea4126`, `cb32ebb`, `00728c8`.
+**6 commits en `main`, YA PUSHEADOS a `origin/main`:** `9f62b4e`, `4ea4126`, `cb32ebb`, `00728c8`,
+`8376726`, `c11fb71` (el último añade 3 de los 5 quick wins de
+`docs/analisis-claude-for-legal.md` — detalle en `memory/progress.md`, regresión 66/66 y capa 2
+con 3 hallazgos corregidos antes del commit).
+
+**Pendiente real para la próxima sesión (ya no queda nada "chico" en la cola):**
+1. Capa 3 visual en vivo (botón "Revisar ahora" en Conocimiento + los quick wins de prompt no
+   tienen UI que revisar, son solo texto de sistema).
+2. **Gmail/OneDrive vía Graph API** (bloque 2 de la Fase 3, `mia-decisiones-pipe-fase3` en
+   memoria) — es la siguiente pieza grande. Antes de construirla a ciegas, vale la pena que Pipe
+   confirme alcance: ¿Gmail primero (correos+adjuntos del caso como parte del expediente) o
+   OneDrive vía Graph API primero (la sincronización LOCAL de OneDrive/Google Drive Desktop ya la
+   cubre `local_folder_sources`/F3.1 para quien tenga el cliente de escritorio instalado — el
+   Graph API solo aporta valor si el abogado NO usa el cliente de escritorio)? Necesita también
+   que Pipe registre la app OAuth (mismo patrón "activación diferida" que Microsoft 365/Google ya
+   tienen: backend/UI listos, 503 hasta que lleguen las llaves).
+3. Quick win #5 (checklist de pre-entrega ejecutado en el gate de aprobación) — requiere
+   aprobación previa de Pipe por tocar `hitl_checkpoint`.
 
 ---
 

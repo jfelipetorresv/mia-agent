@@ -1768,3 +1768,33 @@ Data Factory), `00728c8` (docs análisis Claude for Legal).
 **Pendiente para la próxima sesión:** capa 3 en vivo del botón "Revisar ahora"; Gmail/OneDrive vía
 Graph API (bloque 2 de [[mia-decisiones-pipe-fase3]], aún no arrancado); aplicar los 5 quick wins de
 `docs/analisis-claude-for-legal.md`; decidir si se hace push a origin/main.
+
+
+## 2026-07-08 — Sesión 35 (cont.) · 3 quick wins de docs/analisis-claude-for-legal.md
+
+Tras el push de los 4 commits anteriores, se aplicaron 3 de los 5 quick wins identificados en
+`docs/analisis-claude-for-legal.md` (los otros 2: #2 resultó YA IMPLEMENTADO en
+`CitationReview.tsx`; #5 queda pendiente de aprobación de Pipe por tocar el gate de HITL).
+
+- **#1 (3er valor, flag-but-don't-use):** `GRAPH_NODE_INSTRUCTIONS["draft"]` — el especialista de
+  borrador avisa expresamente en el escrito si sospecha una norma derogada/modulada sin poder
+  confirmarlo, sin bloquear el borrador.
+- **#4 (decision tree + pregunta de segundo orden):** `GRAPH_NODE_INSTRUCTIONS["analysis"]` — cierra
+  cada diagnóstico con un menú de 2-5 caminos + una pregunta de segundo orden. Documentado en
+  `architecture/hitl_flow.md` §7.
+- **#3 (freshness declarativo por archivo del pack):** `JurisdictionPack.freshness` + `is_stale()`
+  en `jurisdiction/pack.py`, alimentado desde `packs/co/meta.json → "freshness"`. Aditivo, sin
+  conectar a ningún resolver/consumidor todavía.
+
+**Capa 2 (revisor adversarial independiente):** 3 hallazgos, los 3 corregidos antes del commit:
+(1) el menú de próximos pasos se había puesto DESPUÉS del bloque de cierre estructurado — bajo
+`context_recovery.shrink_text(..., protect_tail=True)` eso arriesgaba proteger el menú y cortar el
+riesgo/recomendación real; se movió ANTES del bloque (el cierre estructurado vuelve a ser lo último
+que emite el especialista). (2) `load_pack()` no validaba que el "freshness" de nivel superior en
+meta.json fuera un dict → `is_stale()` podía tumbarse con `AttributeError` pese al fail-soft
+documentado; ahora se descarta si no es dict. (3) la nota `_nota` vivía dentro del objeto
+`freshness` (mismo namespace que las entradas reales) → movida a `_freshness_note` a nivel de
+`meta.json`, mismo patrón que el `_note` del resto de archivos del pack.
+
+Capa 1: regresión completa 66/66 verdes (antes y después de las correcciones). Commit `c11fb71`,
+pusheado a `origin/main`.
