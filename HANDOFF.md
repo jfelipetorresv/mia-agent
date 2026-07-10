@@ -30,6 +30,14 @@ quede trazabilidad de ambas revisiones.
 
 ### PRÓXIMA SESIÓN: ejecutar el plan de evolución de producto (APROBADO por Pipe)
 
+> **AUTORIZACIÓN EXPRESA DE PIPE (2026-07-09, en sus palabras):** ejecutar el plan
+> **usando workflows de orquestación multi-agente desde el arranque, a velocidad
+> máxima**. Es decir: al retomar con /arranque, usar el tool Workflow (fan-out de
+> ejecutores en paralelo sobre partes disjuntas del Bloque A + verificación
+> adversarial multi-agente) sin volver a pedirle permiso. Los límites NO cambian:
+> verificación de 3 capas antes del cierre, gate HITL innegociable, HALT si
+> test_rls falla, y capa 3 visual sigue siendo de Pipe.
+
 **El plan completo vive en `memory/plan-evolucion-producto.md`** (misma copia en
 `C:\Users\USER\.claude\plans\chad-me-gusta-lo-memoized-token.md`). Resumen:
 - **Bloque A (EMPEZAR AQUÍ):** pestaña "Proyectos" estilo Claude Cowork (reusa `matters`
