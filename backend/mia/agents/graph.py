@@ -139,6 +139,26 @@ def _last_user_message(state: MatterState) -> str:
     return ""
 
 
+def _render_project_history(history: Optional[list]) -> str:
+    """H6 (Bloque A): transcripción compacta de los turnos previos de un PROYECTO.
+
+    `history` ya llega recortado a presupuesto por stream.py (últimos ~6 turnos /
+    ~8000 caracteres) — aquí solo se formatea en texto plano 'Abogado: ...' /
+    'Mia: ...', sin jerga técnica (§G): es justo lo que el abogado ya vio en pantalla
+    en turnos anteriores. Sin historial devuelve '' → el prompt de work_node queda
+    byte a byte igual que antes de H6 (primer turno de un proyecto, o asunto)."""
+    lines: list[str] = []
+    for turn in history or []:
+        if not isinstance(turn, dict):
+            continue
+        text = str(turn.get("text") or "").strip()
+        if not text:
+            continue
+        quien = "Abogado" if turn.get("role") == "abogado" else "Mia"
+        lines.append(f"{quien}: {text}")
+    return "\n".join(lines)
+
+
 def _persona_voice(state: MatterState) -> str:
     """CP-E3: bloque de voz de la persona invocada en el turno (o "" si no hay). Se
     pasa a build_graph_system para enmarcar la instrucción de cada nodo."""
@@ -767,6 +787,71 @@ class MatterGraphBuilder:
         md["stage"] = "verification"
         return {"draft": annotated, "metadata": md}
 
+    # ── work (Bloque A · PROYECTO: espacio de trabajo libre, sin HITL) ───────
+    async def work_node(self, state: MatterState) -> dict:
+        """Único especialista del grafo de PROYECTO (build_project_graph): usa las
+        fuentes conectadas al proyecto (documents recuperados por intake_node, mismo
+        RRF que el asunto) y el conocimiento del despacho para lo que el abogado pida
+        en el turno. Sin diagnóstico/borrador formal ni verification/hitl_checkpoint/
+        finalize — la respuesta se entrega COMPLETA en un solo turno.
+
+        Escribe la respuesta en su propio campo `reply` del estado (MatterState) — un
+        canal separado de `draft`, que es del flujo de asunto con revisión (HITL). Así
+        un proyecto nunca deja un "borrador" fantasma que GET /matters/{id}/draft
+        pudiera confundir con uno pendiente de aprobar. La capa SSE (stream.py) expone
+        este texto al abogado bajo el evento 'reply'.
+
+        H6 (Bloque A): `state['history']` trae los turnos previos del proyecto (ya
+        recortados por stream.py). Se antepone al mensaje del abogado como bloque
+        propio ("Conversación reciente de este proyecto") — CLARAMENTE separado del
+        mensaje actual y de las fuentes, para que el modelo no confunda charla pasada
+        con evidencia del expediente. NO toca `retrieval_query`/intake_node: ese sigue
+        usando el mensaje limpio (ver _last_user_message arriba en intake_node).
+        """
+        msg = _last_user_message(state)
+        docs = state.get("documents") or []
+        history = state.get("history") or []
+        history_txt = _render_project_history(history)
+        md = dict(state.get("metadata") or {})
+
+        def _messages(doc_list: list) -> list[dict]:
+            # CP-S1: documentos sellados (<<<DOC n>>>) igual que en facts_node/analysis_node.
+            # render_documents ya trae su propio marcador "sin documentos" cuando doc_list
+            # está vacía (byte a byte igual que facts/analysis en ese caso).
+            ctx = untrusted.render_documents(doc_list)
+            parts = []
+            if history_txt:
+                parts.append(f"Conversación reciente de este proyecto:\n{history_txt}")
+            parts.append(f"Mensaje del abogado:\n{msg}")
+            parts.append(f"Fuentes conectadas al proyecto:\n{ctx}")
+            return [
+                {"role": "system", "content": prompt_builder.build_graph_system(
+                    state, "work", matter_context=_matter_context_for(
+                        {"documents": doc_list, "knowledge": state.get("knowledge") or []}),
+                    persona_voice=_persona_voice(state))},
+                {"role": "user", "content": "\n\n".join(parts)},
+            ]
+
+        def _shrink() -> list[dict]:
+            budget = context_recovery.budget_for("work", config.MIA_CONTEXT_WINDOW)
+            return _messages(context_recovery.shrink_documents(docs, budget))
+
+        reply, usage = await self._llm(
+            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="work",
+            model=_persona_alias(state))
+        md.update(stage="work", final_status="done")
+        _accum_usage(md, usage)
+        # H6: el turno de este proyecto (mensaje del abogado + reply nueva) se AÑADE al
+        # historial recibido — así el checkpoint que queda en END trae la conversación
+        # completa hasta aquí, y el próximo turno la encuentra vía graph.aget_state en
+        # stream.py (ANTES de que prepare_new_turn borre el checkpoint). El recorte a
+        # presupuesto sensato lo hace stream.py al leerlo de vuelta, no aquí.
+        new_history = list(history)
+        new_history.append({"role": "abogado", "text": msg})
+        new_history.append({"role": "mia", "text": reply})
+        return {"reply": reply, "metadata": md, "history": new_history,
+                "messages": [{"role": "assistant", "content": reply}]}
+
     # ── 7 · hitl_checkpoint (interrupt PRIMERO, decisión #10) ────────────────
     async def hitl_checkpoint_node(self, state: MatterState) -> dict:
         # interrupt() ES LA PRIMERA LÍNEA: el grafo se pausa al ENTRAR al nodo,
@@ -907,8 +992,31 @@ class MatterGraphBuilder:
 
         return g.compile(checkpointer=checkpointer)
 
+    def build_project(self, checkpointer: Any):
+        """Compila el grafo de un PROYECTO (Bloque A): START → intake → work → END.
+
+        Reusa intake_node LITERAL (mismo retrieval RRF de documents del proyecto +
+        knowledge del despacho) — un proyecto recupera sus fuentes exactamente igual
+        que un asunto. Sin draft/verification/hitl_checkpoint/finalize: el turno
+        siempre corre completo en una sola pasada, sin pausa de revisión."""
+        g = StateGraph(MatterState)
+        g.add_node("intake", self.intake_node)
+        g.add_node("work", self.work_node)
+
+        g.add_edge(START, "intake")
+        g.add_edge("intake", "work")
+        g.add_edge("work", END)
+
+        return g.compile(checkpointer=checkpointer)
+
 
 def build_matter_graph(checkpointer: Any, *, trace_capture: Optional[TraceCapture] = None,
                        agent_hub: Optional[AgentHub] = None):
     """Atajo: construye el grafo del asunto con el checkpointer dado."""
     return MatterGraphBuilder(trace_capture, agent_hub).build(checkpointer)
+
+
+def build_project_graph(checkpointer: Any, *, trace_capture: Optional[TraceCapture] = None,
+                        agent_hub: Optional[AgentHub] = None):
+    """Atajo: construye el grafo del proyecto (Bloque A) con el checkpointer dado."""
+    return MatterGraphBuilder(trace_capture, agent_hub).build_project(checkpointer)

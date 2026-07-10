@@ -31,6 +31,13 @@ para que registrar p. ej. C:\\Users\\<usuario> nunca indexe configuraciones o cr
 
 Aislamiento: TODA operación de DB por-tenant pasa por `pool.tenant_connection(tenant_id)`
 (RLS activo, fail-closed).
+
+Navegador (`safe_browse_roots`/`browse_folder`, Bloque A · A1): deja al abogado ELEGIR una
+carpeta navegando en vez de escribir la ruta a mano. Mismas reglas fail-closed que registrar
+(`_FORBIDDEN_PARTS`, `Path.resolve()`), pero SOLO devuelve nombres de subcarpetas — nunca
+archivos ni su contenido — y no exige que la ruta esté ya registrada (se navega ANTES de
+registrar, no al revés). Deshabilitable con `MIA_DISABLE_FOLDER_BROWSE` en despliegue
+compartido (ver `api/routes/folders.py`).
 """
 from __future__ import annotations
 
@@ -161,6 +168,79 @@ def detect_cloud_folders(home: Path | str | None = None,
     return out
 
 
+# ── navegador seguro de carpetas (A1: elegir qué registrar, no al revés) ─────
+def safe_browse_roots() -> list[dict]:
+    """Puntos de partida para NAVEGAR el árbol de carpetas del equipo: las carpetas
+    típicas del abogado (Documentos/Escritorio/Descargas, solo las que existan), las
+    nubes espejo detectadas (OneDrive/Google Drive) y las unidades fijas montadas
+    (D:\\, E:\\...). Cada raíz trae `registrable`: las carpetas de usuario y las nubes SÍ
+    se pueden vincular tal cual; una unidad completa NO (`validate_source_path` la
+    rechaza) — se navega para entrar y elegir una subcarpeta de adentro."""
+    home = Path.home()
+    out: list[dict] = []
+    for label, sub in (("Documentos", "Documents"), ("Escritorio", "Desktop"),
+                       ("Descargas", "Downloads")):
+        cand = home / sub
+        if cand.is_dir():
+            out.append({"label": label, "path": str(cand), "registrable": True})
+    for cloud in detect_cloud_folders():
+        out.append({"label": cloud["label"], "path": cloud["path"], "registrable": True})
+    if os.name == "nt":
+        for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            root = Path(f"{d}:/")
+            if root.exists():
+                out.append({"label": f"Disco ({d}:)", "path": str(root), "registrable": False})
+    return out
+
+
+async def browse_folder(path: str) -> dict:
+    """Un nivel de SUBCARPETAS bajo `path` (solo lectura, nunca archivos ni su contenido)
+    — para que el abogado ELIJA qué registrar navegando, en vez de escribir la ruta a
+    mano. Fail-closed, mismas reglas que registrar una fuente (`_check_safe_root`): un
+    segmento de sistema (_FORBIDDEN_PARTS), una ruta inexistente o que no sea carpeta se
+    RECHAZAN con `ValueError` en lenguaje llano. NO exige que `path` esté ya registrado.
+    Enumera hasta 500 subcarpetas (orden alfabético, sin distinguir mayúsculas); si hay
+    más, `truncated=True`."""
+    if not path or not str(path).strip():
+        raise ValueError("Necesito la ruta de la carpeta que quieres abrir.")
+    resolved = Path(str(path).strip()).expanduser().resolve()
+    if any(part.lower().rstrip("\\/") in _FORBIDDEN_PARTS for part in resolved.parts):
+        raise ValueError(
+            "Esa carpeta pertenece al sistema del computador y por seguridad no la abro.")
+    if not resolved.exists():
+        raise ValueError("Esa carpeta no existe en este equipo.")
+    if not resolved.is_dir():
+        raise ValueError("Esa ruta es un archivo, no una carpeta.")
+
+    def _scan() -> tuple[list[dict], bool]:
+        with os.scandir(resolved) as it:
+            entries_sorted = sorted(it, key=lambda e: e.name.lower())
+        items: list[dict] = []
+        truncated = False
+        for entry in entries_sorted:
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            items.append({"name": entry.name, "path": str(Path(entry.path))})
+            if len(items) >= 500:
+                truncated = True
+                break
+        return items, truncated
+
+    try:
+        items, truncated = await asyncio.to_thread(_scan)
+    except PermissionError:
+        raise ValueError("No puedo abrir esa carpeta.")
+    except OSError:
+        raise ValueError("No puedo abrir esa carpeta.")
+
+    is_drive_root = resolved == Path(resolved.anchor) or resolved.parent == resolved
+    parent = None if is_drive_root else str(resolved.parent)
+    return {"path": str(resolved), "parent": parent, "items": items, "truncated": truncated}
+
+
 # ── registro / listado / baja de fuentes (RLS por tenant) ────────────────────
 async def register_source(tenant_id: str, path: str, label: str | None = None,
                           kind: str = "knowledge", matter_id: str | None = None) -> dict:
@@ -240,20 +320,35 @@ async def list_sources(tenant_id: str, include_disabled: bool = False) -> list[d
     ]
 
 
-async def get_matter_source(tenant_id: str, matter_id: str) -> dict | None:
-    """Carpeta vinculada ACTIVA de un expediente (kind='matters'), o None. Un asunto tiene
-    a lo sumo una activa (lo garantiza el endpoint que la registra)."""
+async def get_matter_sources(tenant_id: str, matter_id: str) -> list[dict]:
+    """Todas las carpetas ACTIVAS vinculadas a un expediente (kind='matters'), de la más
+    antigua a la más nueva (Bloque A · evolución de producto: un expediente ahora admite
+    VARIAS carpetas — cada una se sincroniza y poda de forma independiente por su propio
+    `source_id`, ver `_ingest_matter_file`/`_prune_matter_docs`)."""
     async with pool.tenant_connection(tenant_id) as conn:
-        row = await (await conn.execute(
-            "SELECT id, path, label, kind, enabled FROM local_folder_sources "
+        rows = await (await conn.execute(
+            "SELECT id, path, label, kind, enabled, created_at FROM local_folder_sources "
             "WHERE matter_id=%s::uuid AND kind='matters' AND enabled "
-            "ORDER BY created_at DESC LIMIT 1",
+            "ORDER BY created_at ASC",
             (matter_id,),
-        )).fetchone()
-    if row is None:
+        )).fetchall()
+    return [
+        {"id": str(r[0]), "path": r[1], "label": r[2], "kind": r[3],
+         "enabled": r[4], "created_at": r[5].isoformat(), "matter_id": str(matter_id)}
+        for r in rows
+    ]
+
+
+async def get_matter_source(tenant_id: str, matter_id: str) -> dict | None:
+    """DEPRECADO — usar `get_matter_sources()` (un expediente ahora admite varias
+    carpetas). Se conserva para llamadores viejos que solo conocen "la" carpeta del
+    expediente: devuelve la vinculada más recientemente, o None si no hay ninguna."""
+    sources = await get_matter_sources(tenant_id, matter_id)
+    if not sources:
         return None
-    return {"id": str(row[0]), "path": row[1], "label": row[2], "kind": row[3],
-            "enabled": row[4], "matter_id": str(matter_id)}
+    latest = sources[-1]   # get_matter_sources ya viene ordenado ASC por created_at
+    return {"id": latest["id"], "path": latest["path"], "label": latest["label"],
+            "kind": latest["kind"], "enabled": latest["enabled"], "matter_id": str(matter_id)}
 
 
 async def source_last_sync(tenant_id: str, source_id: str):
@@ -303,6 +398,31 @@ async def disable_source(tenant_id: str, source_id: str) -> bool:
     return True
 
 
+# ── exclusión mutua real por fuente (H1 · corrige carrera de sincronización) ──
+# Dos sync de la MISMA fuente pueden dispararse por vías distintas al mismo tiempo
+# (el cron sync_tenant, POST /api/folders/sync y los endpoints de expediente que
+# lanzan sync en segundo plano) — sin candado, ambos hacen el borra-y-reinserta de
+# _ingest_matter_file en paralelo y pueden dejar el mismo archivo duplicado en el
+# expediente. Este dict vive a nivel de módulo (una sola vez por proceso, NO por
+# instancia de LocalFolderSync) para que CUALQUIER llamador comparta el mismo
+# candado de una fuente, sin importar por dónde entró. Crece como máximo un Lock
+# por fuente registrada (docenas, no miles, en un despacho real) — no se limpia
+# nunca, pero el costo es insignificante frente al riesgo de duplicar documentos;
+# no hay anidamiento (sync_tenant sincroniza sus fuentes una tras otra, y cada una
+# toma y suelta su propio candado antes de pasar a la siguiente), así que no hay
+# riesgo de deadlock entre fuentes distintas.
+_SOURCE_SYNC_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(source_id: str) -> asyncio.Lock:
+    """Devuelve el candado de esta fuente (lo crea la primera vez que se pide)."""
+    lock = _SOURCE_SYNC_LOCKS.get(source_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SOURCE_SYNC_LOCKS[source_id] = lock
+    return lock
+
+
 # ── sincronizador ─────────────────────────────────────────────────────────────
 class LocalFolderSync:
     """Sincroniza las carpetas registradas de un tenant con `knowledge_chunks`
@@ -343,135 +463,137 @@ class LocalFolderSync:
         kind = source.get("kind") or "knowledge"
         matter_id = source.get("matter_id")
         source_id = str(source["id"])
-        registered = Path(source["path"])
+        async with _lock_for(source_id):
+            registered = Path(source["path"])
 
-        try:
-            root = registered.resolve(strict=True)
-        except OSError:
-            logger.warning("fuente %s: la carpeta %s ya no existe — se omite",
-                           source_id, registered)
-            stats["errors"] += 1
-            return stats
-        # La ruta REAL debe seguir siendo (o estar dentro de) la registrada: si alguien
-        # reemplazó la carpeta por un symlink hacia otro lugar, NO se escanea.
-        if not (root == registered or root.is_relative_to(registered)):
-            logger.warning("fuente %s: la ruta real (%s) ya no coincide con la registrada "
-                           "(%s) — se omite por seguridad", source_id, root, registered)
-            stats["errors"] += 1
-            return stats
-        try:
-            _check_safe_root(root)
-        except ValueError:
-            logger.warning("fuente %s: la carpeta %s dejó de ser segura — se omite",
-                           source_id, root)
-            stats["errors"] += 1
-            return stats
-        if not root.is_dir():
-            stats["errors"] += 1
-            return stats
-
-        files, omitted, truncated = self._scan_folder(root)
-        stats["omitted"] = omitted
-        current = {self._rel(root, f) for f in files}
-        stored = await self._get_stored_hashes(tenant_id, source_id)
-        db_source = SOURCE_PREFIX + source_id
-
-        # Pasada 1 (barata): solo hashes — decide qué necesita reproceso realmente.
-        new_hashes: dict[str, str] = {}
-        to_process: list[tuple[Path, str]] = []
-        for f in files:
-            rel = self._rel(root, f)
             try:
-                h = self._hash_file(f)
-            except Exception as exc:  # noqa: BLE001 — clasificamos bloqueo vs. error real
-                if _is_locked(exc):
-                    # Archivo en uso (p. ej. abierto en Word, WinError 32): NO se descarta.
-                    # Se conserva su hash previo — así no se re-indexa ni se poda su documento —
-                    # y se cuenta como pendiente para reintentarlo en el próximo ciclo.
-                    stats["pending"] += 1
-                    if rel in stored:
-                        new_hashes[rel] = stored[rel]
-                    continue
+                root = registered.resolve(strict=True)
+            except OSError:
+                logger.warning("fuente %s: la carpeta %s ya no existe — se omite",
+                               source_id, registered)
                 stats["errors"] += 1
-                logger.exception("fuente %s: no pude leer %s", source_id, rel)
-                continue
-            new_hashes[rel] = h
-            if stored.get(rel) == h:
-                stats["skipped"] += 1
-            else:
-                to_process.append((f, rel))
-
-        # Ventana por corrida SOLO sobre nuevos/cambiados: lo diferido queda sin hash
-        # guardado → la corrida siguiente lo retoma (nada se pierde en silencio).
-        if len(to_process) > MAX_FILES_PER_SYNC:
-            deferred = to_process[MAX_FILES_PER_SYNC:]
-            to_process = to_process[:MAX_FILES_PER_SYNC]
-            stats["deferred"] = len(deferred)
-            for _, rel in deferred:
-                new_hashes.pop(rel, None)
-            logger.warning(
-                "fuente %s: %d archivos nuevos/cambiados superan el límite de %d por "
-                "sincronización; %d quedan pendientes y se indexarán en la corrida siguiente",
-                source_id, len(to_process) + len(deferred), MAX_FILES_PER_SYNC, len(deferred),
-            )
-
-        # Pasada 2 (cara): extracción + embeddings + upsert, solo de lo que cambió.
-        # Según el tipo de fuente el destino cambia: 'knowledge' → knowledge_chunks (RAG del
-        # despacho); 'matters' → documents + chunks del expediente (origin='folder').
-        for f, rel in to_process:
+                return stats
+            # La ruta REAL debe seguir siendo (o estar dentro de) la registrada: si alguien
+            # reemplazó la carpeta por un symlink hacia otro lugar, NO se escanea.
+            if not (root == registered or root.is_relative_to(registered)):
+                logger.warning("fuente %s: la ruta real (%s) ya no coincide con la registrada "
+                               "(%s) — se omite por seguridad", source_id, root, registered)
+                stats["errors"] += 1
+                return stats
             try:
-                # M1: leer del disco + extraer (OCR incluido) es IO/CPU-pesado — va a un hilo
-                # para no congelar el event loop mientras se indexa una carpeta escaneada.
-                text, meta = await asyncio.to_thread(self._read_text, f)
-                # M3: un escaneo sin cuerpo legible (o sin motor de OCR) NO se ingesta como
-                # documento válido — vale para AMBOS destinos (expediente y conocimiento).
-                # Sin hash guardado → se reintenta si más adelante se instala la lectura óptica.
-                if not meta.get("has_body", True):
-                    stats["omitted"] += 1
-                    reason = ("escaneado y este servidor no tiene lectura óptica"
-                              if meta.get("ocr_unavailable") else "sin texto legible")
-                    logger.info("fuente %s: omito %s (%s)", source_id, rel, reason)
-                    new_hashes.pop(rel, None)
+                _check_safe_root(root)
+            except ValueError:
+                logger.warning("fuente %s: la carpeta %s dejó de ser segura — se omite",
+                               source_id, root)
+                stats["errors"] += 1
+                return stats
+            if not root.is_dir():
+                stats["errors"] += 1
+                return stats
+
+            files, omitted, truncated = self._scan_folder(root)
+            stats["omitted"] = omitted
+            current = {self._rel(root, f) for f in files}
+            stored = await self._get_stored_hashes(tenant_id, source_id)
+            db_source = SOURCE_PREFIX + source_id
+
+            # Pasada 1 (barata): solo hashes — decide qué necesita reproceso realmente.
+            new_hashes: dict[str, str] = {}
+            to_process: list[tuple[Path, str]] = []
+            for f in files:
+                rel = self._rel(root, f)
+                try:
+                    h = self._hash_file(f)
+                except Exception as exc:  # noqa: BLE001 — clasificamos bloqueo vs. error real
+                    if _is_locked(exc):
+                        # Archivo en uso (p. ej. abierto en Word, WinError 32): NO se descarta.
+                        # Se conserva su hash previo — así no se re-indexa ni se poda su documento —
+                        # y se cuenta como pendiente para reintentarlo en el próximo ciclo.
+                        stats["pending"] += 1
+                        if rel in stored:
+                            new_hashes[rel] = stored[rel]
+                        continue
+                    stats["errors"] += 1
+                    logger.exception("fuente %s: no pude leer %s", source_id, rel)
                     continue
-                if kind == "matters":
-                    await self._ingest_matter_file(tenant_id, matter_id, rel, text,
-                                                   new_hashes[rel], f)
+                new_hashes[rel] = h
+                if stored.get(rel) == h:
+                    stats["skipped"] += 1
                 else:
-                    chunks = self._chunk_file(text, rel)
-                    vectors = await self._embed_chunks([c["text"] for c in chunks])
-                    await self._upsert_chunks(tenant_id, db_source, rel, chunks, vectors)
-                stats["indexed"] += 1
-            except Exception as exc:  # noqa: BLE001 — clasificamos bloqueo vs. error real
-                if _is_locked(exc):
-                    # Se bloqueó entre la pasada 1 y la 2: se reintenta el próximo ciclo
-                    # conservando el hash previo (no se poda su documento).
-                    stats["pending"] += 1
-                    if rel in stored:
-                        new_hashes[rel] = stored[rel]
-                    else:
-                        new_hashes.pop(rel, None)
-                    continue
-                stats["errors"] += 1
-                logger.exception("fuente %s: no pude indexar %s", source_id, rel)
-                # sin hash guardado → se reintenta en la próxima sincronización
-                new_hashes.pop(rel, None)
+                    to_process.append((f, rel))
 
-        if truncated:
-            # El escaneo NO vio la carpeta completa: los archivos no vistos podrían
-            # existir. No se borra NADA (ni chunks ni hashes) en esta corrida.
-            logger.warning(
-                "fuente %s: el escaneo se truncó en %d archivos — en esta corrida se "
-                "omite la poda de archivos eliminados para no borrar conocimiento de "
-                "archivos que sí existen", source_id, MAX_SCAN_FILES,
-            )
-            await self._save_hashes(tenant_id, source_id, new_hashes, prune=False)
-        else:
-            if kind == "matters":
-                stats["deleted"] = await self._prune_matter_docs(tenant_id, matter_id, current)
+            # Ventana por corrida SOLO sobre nuevos/cambiados: lo diferido queda sin hash
+            # guardado → la corrida siguiente lo retoma (nada se pierde en silencio).
+            if len(to_process) > MAX_FILES_PER_SYNC:
+                deferred = to_process[MAX_FILES_PER_SYNC:]
+                to_process = to_process[:MAX_FILES_PER_SYNC]
+                stats["deferred"] = len(deferred)
+                for _, rel in deferred:
+                    new_hashes.pop(rel, None)
+                logger.warning(
+                    "fuente %s: %d archivos nuevos/cambiados superan el límite de %d por "
+                    "sincronización; %d quedan pendientes y se indexarán en la corrida siguiente",
+                    source_id, len(to_process) + len(deferred), MAX_FILES_PER_SYNC, len(deferred),
+                )
+
+            # Pasada 2 (cara): extracción + embeddings + upsert, solo de lo que cambió.
+            # Según el tipo de fuente el destino cambia: 'knowledge' → knowledge_chunks (RAG del
+            # despacho); 'matters' → documents + chunks del expediente (origin='folder').
+            for f, rel in to_process:
+                try:
+                    # M1: leer del disco + extraer (OCR incluido) es IO/CPU-pesado — va a un hilo
+                    # para no congelar el event loop mientras se indexa una carpeta escaneada.
+                    text, meta = await asyncio.to_thread(self._read_text, f)
+                    # M3: un escaneo sin cuerpo legible (o sin motor de OCR) NO se ingesta como
+                    # documento válido — vale para AMBOS destinos (expediente y conocimiento).
+                    # Sin hash guardado → se reintenta si más adelante se instala la lectura óptica.
+                    if not meta.get("has_body", True):
+                        stats["omitted"] += 1
+                        reason = ("escaneado y este servidor no tiene lectura óptica"
+                                  if meta.get("ocr_unavailable") else "sin texto legible")
+                        logger.info("fuente %s: omito %s (%s)", source_id, rel, reason)
+                        new_hashes.pop(rel, None)
+                        continue
+                    if kind == "matters":
+                        await self._ingest_matter_file(tenant_id, matter_id, source_id, rel,
+                                                       text, new_hashes[rel], f)
+                    else:
+                        chunks = self._chunk_file(text, rel)
+                        vectors = await self._embed_chunks([c["text"] for c in chunks])
+                        await self._upsert_chunks(tenant_id, db_source, rel, chunks, vectors)
+                    stats["indexed"] += 1
+                except Exception as exc:  # noqa: BLE001 — clasificamos bloqueo vs. error real
+                    if _is_locked(exc):
+                        # Se bloqueó entre la pasada 1 y la 2: se reintenta el próximo ciclo
+                        # conservando el hash previo (no se poda su documento).
+                        stats["pending"] += 1
+                        if rel in stored:
+                            new_hashes[rel] = stored[rel]
+                        else:
+                            new_hashes.pop(rel, None)
+                        continue
+                    stats["errors"] += 1
+                    logger.exception("fuente %s: no pude indexar %s", source_id, rel)
+                    # sin hash guardado → se reintenta en la próxima sincronización
+                    new_hashes.pop(rel, None)
+
+            if truncated:
+                # El escaneo NO vio la carpeta completa: los archivos no vistos podrían
+                # existir. No se borra NADA (ni chunks ni hashes) en esta corrida.
+                logger.warning(
+                    "fuente %s: el escaneo se truncó en %d archivos — en esta corrida se "
+                    "omite la poda de archivos eliminados para no borrar conocimiento de "
+                    "archivos que sí existen", source_id, MAX_SCAN_FILES,
+                )
+                await self._save_hashes(tenant_id, source_id, new_hashes, prune=False)
             else:
-                stats["deleted"] = await self._delete_removed(tenant_id, db_source, current)
-            await self._save_hashes(tenant_id, source_id, new_hashes)
-        return stats
+                if kind == "matters":
+                    stats["deleted"] = await self._prune_matter_docs(tenant_id, matter_id,
+                                                                       source_id, current)
+                else:
+                    stats["deleted"] = await self._delete_removed(tenant_id, db_source, current)
+                await self._save_hashes(tenant_id, source_id, new_hashes)
+            return stats
 
     # ── escaneo (allowlist · capa 2 por archivo) ─────────────────────────────
     def _scan_folder(self, root: Path) -> tuple[list[Path], int, bool]:
@@ -618,28 +740,36 @@ class LocalFolderSync:
         return len(removed)
 
     # ── persistencia del EXPEDIENTE VINCULADO (documents + chunks · RLS por tenant) ──
-    async def _ingest_matter_file(self, tenant_id: str, matter_id, rel: str, text: str,
-                                  sha256: str, path: Path) -> None:
+    async def _ingest_matter_file(self, tenant_id: str, matter_id, source_id: str, rel: str,
+                                  text: str, sha256: str, path: Path) -> None:
         """Ingesta un archivo de la carpeta vinculada al expediente: extrae texto, trocea,
-        embebe e inserta un documento (origin='folder', source_path=ruta relativa, sha256) y
-        sus chunks. Reemplaza SIEMPRE el documento previo de esa ruta (sus chunks caen por
-        cascade) — así un archivo CAMBIADO no deja el documento viejo detrás. Los documentos
-        subidos a mano (origin='upload') NUNCA se tocan aquí."""
+        embebe e inserta un documento (origin='folder', source_path=ruta relativa, sha256,
+        source_id=ESTA fuente) y sus chunks. Reemplaza SIEMPRE el documento previo de esa
+        ruta (sus chunks caen por cascade) — así un archivo CAMBIADO no deja el documento
+        viejo detrás. El DELETE previo está ACOTADO a `source_id`: solo pisa la versión
+        anterior de ESTA MISMA carpeta y los huérfanos sin fuente trazada (documentos
+        `origin='folder'` de antes de la migración 028, `source_id IS NULL`) — NUNCA los
+        de OTRA carpeta vinculada al mismo expediente (bug de poda cruzada, ver
+        memory/bugs-and-risks.md). Los documentos subidos a mano (origin='upload') NUNCA
+        se tocan aquí."""
         chunks = chunk_text(text)
         async with pool.tenant_connection(tenant_id) as conn:
-            # Borrar la versión previa de ESTA ruta traída por la carpeta (idempotente).
+            # Borrar la versión previa de ESTA ruta traída por ESTA fuente (idempotente) —
+            # o el huérfano pre-028 del mismo path, nunca la de una carpeta hermana.
             await conn.execute(
                 "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='folder' "
-                "AND source_path=%s", (matter_id, rel))
+                "AND source_path=%s AND (source_id=%s::uuid OR source_id IS NULL)",
+                (matter_id, rel, source_id))
             if not chunks:
                 # Archivo sin texto útil: no se crea documento (quedó podado el anterior).
                 return
             vectors = await self._embed_chunks(chunks)
             doc_id = (await (await conn.execute(
                 "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
-                "source_path, origin) VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'folder') "
-                "RETURNING id",
-                (tenant_id, matter_id, path.name, _guess_mime(path.name), sha256, rel),
+                "source_path, origin, source_id) VALUES "
+                "(%s::uuid, %s::uuid, %s, %s, %s, %s, 'folder', %s::uuid) RETURNING id",
+                (tenant_id, matter_id, path.name, _guess_mime(path.name), sha256, rel,
+                 source_id),
             )).fetchone())[0]
             for i, (content, vec) in enumerate(zip(chunks, vectors)):
                 await conn.execute(
@@ -647,23 +777,30 @@ class LocalFolderSync:
                     "VALUES (%s::uuid, %s, %s, %s, %s)",
                     (tenant_id, doc_id, i, content, vec))
 
-    async def _prune_matter_docs(self, tenant_id: str, matter_id, current) -> int:
-        """Borra los documentos origin='folder' del expediente cuyos archivos ya no están en
-        la carpeta. Los origin='upload' (subidos a mano) JAMÁS se tocan. Sus chunks caen por
-        cascade. Devuelve el número de ARCHIVOS eliminados."""
+    async def _prune_matter_docs(self, tenant_id: str, matter_id, source_id: str,
+                                 current) -> int:
+        """Borra los documentos origin='folder' DE ESTA FUENTE cuyos archivos ya no están
+        en la carpeta. Acotado por `source_id`: el sync de UNA carpeta jamás poda los
+        documentos que trajo OTRA carpeta hermana del mismo expediente (bug de poda
+        cruzada corregido — antes el filtro era solo por matter_id). Los documentos con
+        `source_id IS NULL` (huérfanos de antes de la migración 028, sin fuente trazada)
+        NUNCA se podan por sync — conservador: mejor conservarlos que borrar algo que no
+        se puede atribuir con certeza a esta carpeta. Los origin='upload' (subidos a mano)
+        JAMÁS se tocan. Sus chunks caen por cascade. Devuelve el número de ARCHIVOS
+        eliminados."""
         current = set(current)
         async with pool.tenant_connection(tenant_id) as conn:
             rows = await (await conn.execute(
                 "SELECT DISTINCT source_path FROM documents "
-                "WHERE matter_id=%s::uuid AND origin='folder'",
-                (matter_id,),
+                "WHERE matter_id=%s::uuid AND origin='folder' AND source_id=%s::uuid",
+                (matter_id, source_id),
             )).fetchall()
             removed = sorted({r[0] for r in rows if r[0] is not None} - current)
             if removed:
                 await conn.execute(
                     "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='folder' "
-                    "AND source_path = ANY(%s)",
-                    (matter_id, removed),
+                    "AND source_id=%s::uuid AND source_path = ANY(%s)",
+                    (matter_id, source_id, removed),
                 )
         return len(removed)
 

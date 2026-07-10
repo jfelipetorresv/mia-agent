@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConnectorCard, fmt } from "@/app/_components/PanelUI";
 import MailboxSectionLoader from "@/app/_components/MailboxSectionLoader";
+import FolderPicker from "@/app/_components/FolderPicker";
 
 type MotorPolicy = { politica: string; nombre: string; opciones: { id: string; nombre: string }[] };
 
@@ -50,6 +51,7 @@ export default function ConexionesSection({
   const [policy, setPolicy] = useState<MotorPolicy | null>(null);
   const [policyMsg, setPolicyMsg] = useState("");
   const [obsidian, setObsidian] = useState<ObsidianStatus | null>(null);
+  const [vaultPickerOpen, setVaultPickerOpen] = useState(false);
   const [installConfirm, setInstallConfirm] = useState(false);
   const [installBusy, setInstallBusy] = useState(false);
   const [speech, setSpeech] = useState<SpeechStatus | null>(null);
@@ -210,13 +212,26 @@ export default function ConexionesSection({
         <Label htmlFor="vault-path" className="mb-1.5 block text-sm text-muted-foreground">
           Ubicación de tu espacio de notas
         </Label>
-        <Input
-          id="vault-path"
-          value={vaultPath}
-          onChange={(e) => setVaultPath(e.target.value)}
-          placeholder="Ej.: D:\Notas del despacho"
-        />
+        <div className="flex items-center gap-2">
+          <Input
+            id="vault-path"
+            value={vaultPath}
+            onChange={(e) => setVaultPath(e.target.value)}
+            placeholder="Ej.: D:\Notas del despacho"
+          />
+          <Button type="button" variant="outline" size="sm" onClick={() => setVaultPickerOpen(true)} className="shrink-0">
+            Elegir carpeta…
+          </Button>
+        </div>
       </ConnectorCard>
+
+      <FolderPicker
+        open={vaultPickerOpen}
+        onOpenChange={setVaultPickerOpen}
+        onPicked={(path) => setVaultPath(path)}
+        title="Elegir carpeta de tu espacio de notas"
+        description="Navega hasta la carpeta donde guardas tus notas de Obsidian."
+      />
 
       {/* Dictado por voz */}
       <ConnectorCard

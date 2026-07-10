@@ -701,7 +701,7 @@ class AssistantService:
             async with pool.tenant_connection(tenant_id) as conn:
                 rows = await (await conn.execute(
                     "SELECT id, title, status, pending_review FROM matters "
-                    "ORDER BY created_at DESC LIMIT 50"
+                    "WHERE kind='asunto' ORDER BY created_at DESC LIMIT 50"
                 )).fetchall()
         except Exception:  # noqa: BLE001 — la herramienta v1 no debe tumbar el turno
             logger.exception("asistente: no se pudo leer el estado de los asuntos")

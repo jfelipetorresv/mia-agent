@@ -45,6 +45,10 @@ class MatterState(TypedDict, total=False):
                                       # total=False → checkpoints viejos sin el campo siguen
                                       # válidos; los nodos leen state.get("knowledge") or [].
     draft: Optional[str]              # borrador actual (None si aún no hay)
+    reply: Optional[str]              # respuesta del PROYECTO (build_project_graph · work_node,
+                                      # sin HITL). Canal propio, separado de `draft` (que es del
+                                      # flujo de asunto con revisión) — un proyecto nunca "tiene
+                                      # borrador" fantasma en GET /matters/{id}/draft.
     hitl_status: HitlStatus           # pending | approved | rejected | editing
     trace_id: Optional[str]           # id de la traza JSONL activa (finalize_node)
     metadata: dict                    # datos adicionales (diagnóstico, decisión HITL, usage…)
@@ -54,6 +58,16 @@ class MatterState(TypedDict, total=False):
     # ya acotado por la política — None = sin override)}. total=False → checkpoints viejos
     # sin el campo siguen válidos; los nodos leen state.get("persona") or {}.
     persona: Optional[dict]
+
+    # H6 (Bloque A · memoria conversacional CORTA del PROYECTO): turnos previos del chat
+    # de un proyecto, cada uno {"role": "abogado"|"mia", "text": str}. SOLO la usa
+    # build_project_graph/work_node — el flujo de asunto (HITL) no la toca ni la necesita
+    # (ahí la memoria son los documentos, no la charla). El grafo arranca cada turno con
+    # estado fresco (prepare_new_turn borra el checkpoint anterior), así que stream.py
+    # rescata este campo del checkpoint previo ANTES de borrarlo y lo recorta a un
+    # presupuesto sensato antes de pasarlo aquí. total=False → checkpoints viejos sin el
+    # campo siguen válidos; los nodos leen state.get("history") or [].
+    history: list[dict]
 
 
 def thread_id_for(tenant_id: str, matter_id: str) -> str:
@@ -75,6 +89,7 @@ def initial_state(
     soul_snapshot: Optional[dict] = None,
     retrieval_query: Optional[str] = None,
     persona: Optional[dict] = None,
+    history: Optional[list[dict]] = None,
 ) -> MatterState:
     """Estado inicial de un turno a partir del mensaje del abogado.
 
@@ -87,6 +102,10 @@ def initial_state(
 
     `persona` (CP-E3): persona jurídica invocada en el turno (dict turn_context) o None
     (turno sin persona = comportamiento idéntico a hoy).
+
+    `history` (H6, Bloque A): turnos previos del chat de un PROYECTO, ya recortados por
+    el caller (stream.py) a un presupuesto sensato. Si es None, queda lista vacía — es
+    el caso de siempre en el flujo de asunto, que nunca la pasa.
     """
     if soul_snapshot is None:
         from ..onboarding.soul_interview import load_soul_snapshot  # diferido (sin ciclo)
@@ -102,8 +121,10 @@ def initial_state(
         documents=[],
         knowledge=[],
         draft=None,
+        reply=None,
         hitl_status="pending",
         trace_id=None,
         metadata={},
         persona=persona,
+        history=list(history) if history else [],
     )

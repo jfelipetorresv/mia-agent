@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EmptyHint, SectionTitle } from "@/app/_components/PanelUI";
 import OneDriveSourcesSection from "@/app/_components/OneDriveSourcesSection";
+import FolderPicker from "@/app/_components/FolderPicker";
 
 type DetectedCloud = { label: string; path: string; registered: boolean };
 type FolderSource = { id: string; path: string; label: string; kind: string; enabled: boolean };
@@ -23,6 +24,7 @@ export default function CarpetasSection() {
   const [folderLabel, setFolderLabel] = useState("");
   const [folderMsg, setFolderMsg] = useState("");
   const [folderBusy, setFolderBusy] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   async function loadFolders() {
     try {
@@ -149,25 +151,40 @@ export default function CarpetasSection() {
               className="rounded-xl border border-dashed border-border bg-card/50 p-4"
             >
               <h3 className="mb-3 text-sm font-medium text-muted-foreground">Registrar otra carpeta</h3>
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                <Input
-                  value={folderPath}
-                  onChange={(e) => setFolderPath(e.target.value)}
-                  aria-label="Ubicación de la carpeta"
-                  placeholder="Ej.: D:\Guías del despacho"
-                />
-                <Input
-                  value={folderLabel}
-                  onChange={(e) => setFolderLabel(e.target.value)}
-                  aria-label="Nombre para identificarla (opcional)"
-                  placeholder="Nombre (opcional)"
-                  className="sm:w-44"
-                />
-                <Button type="submit" disabled={folderBusy || !folderPath.trim()}>
-                  Registrar
-                </Button>
+              <div className="space-y-3">
+                {folderPath ? (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
+                    <span className="truncate text-sm" title={folderPath}>{folderPath}</span>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setPickerOpen(true)} className="shrink-0">
+                      Cambiar
+                    </Button>
+                  </div>
+                ) : (
+                  <Button type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+                    Elegir carpeta…
+                  </Button>
+                )}
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                  <Input
+                    value={folderLabel}
+                    onChange={(e) => setFolderLabel(e.target.value)}
+                    aria-label="Nombre para identificarla (opcional)"
+                    placeholder="Nombre (opcional)"
+                  />
+                  <Button type="submit" disabled={folderBusy || !folderPath.trim()}>
+                    Registrar
+                  </Button>
+                </div>
               </div>
             </form>
+
+            <FolderPicker
+              open={pickerOpen}
+              onOpenChange={setPickerOpen}
+              onPicked={(path) => setFolderPath(path)}
+              title="Elegir carpeta de trabajo"
+              description="Navega hasta la carpeta que quieres que Mia revise."
+            />
           </div>
         )}
       </div>

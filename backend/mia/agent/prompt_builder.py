@@ -318,6 +318,24 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "Incorpora al borrador las indicaciones del abogado, conservando lo que no se "
         "pidió cambiar. Devuelve el borrador corregido completo."
     ),
+    # Bloque A (evolución de producto): "Proyecto" = espacio de trabajo libre estilo
+    # Cowork, sin diagnóstico formal ni borrador con aprobación HITL — eso es de los
+    # Asuntos. El grafo de proyecto (build_project_graph) es START → intake → work → END.
+    "work": (
+        "## Tarea de este turno — PROYECTO\n"
+        "Estás trabajando dentro de un PROYECTO del despacho: un espacio de trabajo "
+        "libre, no el expediente formal de un asunto. Aquí no hay diagnóstico "
+        "estructurado ni borrador que el abogado deba aprobar — tu respuesta de este "
+        "turno ES la entrega. Apóyate en las fuentes conectadas al proyecto (el "
+        "expediente recuperado) y en el conocimiento del despacho para hacer lo que el "
+        "abogado te pida: analizar, comparar, redactar, resumir o responder una duda "
+        "puntual. Tono conversacional y directo, como quien trabaja codo a codo con el "
+        "abogado. Si te pide un documento (un escrito, una tabla comparativa, un "
+        "resumen), entrégalo COMPLETO dentro de tu respuesta — el abogado lo guardará "
+        "tal cual se lo entregues. Toda afirmación jurídica que no tenga respaldo en las "
+        "fuentes o en el conocimiento del despacho se marca [VERIFICAR]. Nunca inventes "
+        "citas, normas ni providencias."
+    ),
 }
 
 

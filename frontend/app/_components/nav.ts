@@ -1,4 +1,13 @@
-import { MessagesSquare, LayoutGrid, BookOpen, Gauge, Users, Settings2, type LucideIcon } from "lucide-react";
+import {
+  MessagesSquare,
+  LayoutGrid,
+  FolderKanban,
+  BookOpen,
+  Gauge,
+  Users,
+  Settings2,
+  type LucideIcon,
+} from "lucide-react";
 
 export type NavItem = {
   href: string;
@@ -11,6 +20,7 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/chat", label: "Conversar", icon: MessagesSquare, match: (p) => p.startsWith("/chat") },
   { href: "/", label: "Asuntos", icon: LayoutGrid, match: (p) => p === "/" || p.startsWith("/asuntos") },
+  { href: "/proyectos", label: "Proyectos", icon: FolderKanban, match: (p) => p.startsWith("/proyectos") },
   { href: "/memoria", label: "Conocimiento", icon: BookOpen, match: (p) => p.startsWith("/memoria") },
   { href: "/dashboard", label: "Panel", icon: Gauge, match: (p) => p.startsWith("/dashboard") },
   { href: "/personas", label: "Personas jurídicas", icon: Users, match: (p) => p.startsWith("/personas") },

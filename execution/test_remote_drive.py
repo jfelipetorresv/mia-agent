@@ -385,6 +385,44 @@ async def sync_checks(a: str, matter_a: str) -> None:
         check("matters: archivo borrado en remoto → poda documento 'drive' (deleted=1, queda 1)",
               sm2["deleted"] == 1 and sql_count_docs(matter_a) == 1)
 
+        # ── ANTI-PODA-CRUZADA (H11): DOS carpetas de OneDrive del MISMO expediente ──────
+        # Espejo del fix de LocalFolderSync: cada fuente drive poda SOLO lo que ella misma
+        # trajo (documents.source_id), nunca lo que trajo una carpeta hermana del mismo
+        # expediente. Sin el fix, _prune_matter_docs filtraba solo por matter_id y el sync
+        # de UNA carpeta borraba en silencio los documentos de la OTRA.
+        baseline_docs = sql_count_docs(matter_a)   # 1 doc de la fuente MA de arriba
+        txt_cruce = "Contrato de la carpeta A del expediente.".encode("utf-8")
+        pdf_cruce = b"%PDF-1.4 contrato de la carpeta B del expediente"
+        tree_cross = {
+            "CA": [_f("CA1", "contrato_a.txt", len(txt_cruce), "e-ca1")],
+            "CB": [_f("CB1", "contrato_b.pdf", len(pdf_cruce), "e-cb1")],
+        }
+        drive_cross = FakeDrive(tree_cross, {"CA1": txt_cruce, "CB1": pdf_cruce})
+        src_ca = await register_source(a, "CA", label="Carpeta A del expediente", kind="matters",
+                                       matter_id=matter_a)
+        src_cb = await register_source(a, "CB", label="Carpeta B del expediente", kind="matters",
+                                       matter_id=matter_a)
+
+        sca1 = await RemoteDriveSync(drive_cross).sync_source(a, src_ca)
+        scb1 = await RemoteDriveSync(drive_cross).sync_source(a, src_cb)
+        check("anti-poda-cruzada: ambas carpetas ingieren su propio archivo (1 cada una)",
+              sca1["ingested"] == 1 and scb1["ingested"] == 1)
+        check("anti-poda-cruzada: los DOS documentos conviven en el expediente",
+              sql_count_docs(matter_a) == baseline_docs + 2
+              and sql_doc_has_path(matter_a, "contrato_a.txt")
+              and sql_doc_has_path(matter_a, "contrato_b.pdf"))
+
+        # Un archivo desaparece de la carpeta A (se borra en OneDrive) y se re-sincroniza
+        # SOLO A → el documento de B debe seguir intacto (antes del fix, se habría borrado).
+        del tree_cross["CA"][0]
+        sca2 = await RemoteDriveSync(drive_cross).sync_source(a, src_ca)
+        check("anti-poda-cruzada: re-sync de A poda SU PROPIO archivo borrado (deleted=1)",
+              sca2["deleted"] == 1 and not sql_doc_has_path(matter_a, "contrato_a.txt"))
+        check("anti-poda-cruzada: el documento de la carpeta HERMANA B sigue intacto "
+              "(la poda de A no lo tocó)",
+              sql_doc_has_path(matter_a, "contrato_b.pdf")
+              and sql_count_docs(matter_a) == baseline_docs + 1)
+
         gd.extract_text_detailed_async = orig_extract
     finally:
         await pool.close_pool()

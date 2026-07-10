@@ -19,8 +19,9 @@ from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
 from .routes import (assistant, auth, automations, curator, folders, hitl, learning,
-                     mailbox, matter_folders, matter_mail, mcp, missions, personas, policy,
-                     remote_drive, settings, setup, sources, speech, stream, traces, ux, value)
+                     mailbox, matter_folders, matter_mail, matter_sources, mcp, missions,
+                     personas, policy, remote_drive, settings, setup, sources, speech,
+                     stream, traces, ux, value)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -163,6 +164,10 @@ app.include_router(matter_folders.router)
 # Fase 2 · CORREOS DEL CASO → EXPEDIENTE: buscar y vincular correos → /api/matters/{id}/mail/*.
 # El router ya trae su propio prefijo /api, se monta sin prefijo extra (igual que matter_folders).
 app.include_router(matter_mail.router)
+# Bloque A (limpieza) · FUENTES UNIFICADAS del expediente (carpetas + OneDrive + correo)
+# en una sola vista → GET /api/matters/{id}/sources. El router ya trae su propio prefijo
+# /api, se monta sin prefijo extra (igual que matter_folders/matter_mail).
+app.include_router(matter_sources.router)
 # Fase 3 · ONEDRIVE REMOTO SELECTIVO: navegar/registrar/sincronizar carpetas → /api/drive/*.
 # El router ya trae su propio prefijo /api/drive, se monta sin prefijo extra.
 app.include_router(remote_drive.router)
@@ -221,6 +226,6 @@ async def list_matters(request: Request):
         raise HTTPException(status_code=401, detail="Sin contexto de tenant")
     async with pool.tenant_connection(tenant_id) as conn:
         rows = await (await conn.execute(
-            "SELECT id, title, created_at FROM matters ORDER BY created_at DESC"
+            "SELECT id, title, created_at FROM matters WHERE kind = 'asunto' ORDER BY created_at DESC"
         )).fetchall()
     return [{"id": str(r[0]), "title": r[1], "created_at": r[2].isoformat()} for r in rows]

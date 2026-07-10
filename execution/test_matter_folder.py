@@ -322,10 +322,29 @@ def api_checks(tid: str, matter_id: str, folder: Path) -> None:
         check("POST /folder -> 200 vinculada", r.status_code == 200 and r.json().get("status") == "linked")
         visible.append(r.text)
 
-        # una carpeta por expediente: segundo POST -> 409
-        r = client.post(f"/api/matters/{matter_id}/folder", headers=auth, json={"path": str(folder)})
-        check("POST /folder de nuevo -> 409 (una carpeta por expediente)", r.status_code == 409)
+        # Bloque A (multi-carpeta): la SEGUNDA vinculación de una ruta DISTINTA al mismo
+        # expediente YA NO se rechaza (antes esto daba 409 "una carpeta por expediente").
+        folder2 = folder.parent / "expediente_http_2"
+        folder2.mkdir(parents=True, exist_ok=True)
+        r = client.post(f"/api/matters/{matter_id}/folder", headers=auth, json={"path": str(folder2)})
+        check("POST /folder con ruta DISTINTA -> 200 (ya no rechaza la segunda carpeta)",
+              r.status_code == 200 and r.json().get("status") == "linked")
         visible.append(r.text)
+
+        rl = client.get(f"/api/matters/{matter_id}/folders", headers=auth)
+        check("GET /folders (plural) -> 2 carpetas vinculadas",
+              rl.status_code == 200 and len(rl.json().get("folders", [])) == 2)
+        visible.append(rl.text)
+
+        # se desvincula la segunda por la superficie plural: el resto del gate (heredado)
+        # sigue probando UNA sola carpeta activa por el endpoint singular deprecado.
+        source2_id = next((f["id"] for f in rl.json().get("folders", [])
+                           if f["path"] == str(folder2.resolve())), None)
+        check("GET /folders: la segunda carpeta trae su id", source2_id is not None)
+        rd = client.delete(f"/api/matters/{matter_id}/folders/{source2_id}", headers=auth)
+        check("DELETE /folders/{id} (plural) -> 200 desvincula la segunda carpeta",
+              rd.status_code == 200 and rd.json().get("status") == "unlinked")
+        visible.append(rd.text)
 
         # el estado refleja la ingesta (la sync corre en segundo plano; se drena con GETs)
         files_indexed = 0

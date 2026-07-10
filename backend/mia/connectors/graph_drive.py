@@ -23,8 +23,10 @@ huérfano bajo la vieja. Cubre el renombre con y sin cambio de eTag.
 
 DEUDAS conocidas (anotadas, ver reporte):
   · Simetría con LocalFolderSync en el borrado: 'knowledge' borra sus chunks; 'matters' poda
-    los documentos origin='drive' cuyo archivo remoto ya no existe (los origin='upload' y
-    origin='folder' JAMÁS se tocan).
+    los documentos origin='drive' cuyo archivo remoto ya no existe, ACOTADA por `source_id`
+    (mismo espejo del fix de poda cruzada de LocalFolderSync — ver memory/bugs-and-risks.md):
+    el sync de UNA carpeta de OneDrive nunca poda los documentos que trajo OTRA carpeta
+    hermana del mismo expediente (los origin='upload' y origin='folder' JAMÁS se tocan).
 """
 from __future__ import annotations
 
@@ -361,8 +363,8 @@ class RemoteDriveSync:
                 stats["unchanged"] += 1
                 if st[2] and st[2] != f["rel"]:
                     try:
-                        await self._move_content(tenant_id, kind, matter_id, db_source,
-                                                 st[2], f["rel"], f["name"])
+                        await self._move_content(tenant_id, kind, matter_id, source_id,
+                                                 db_source, st[2], f["rel"], f["name"])
                     except Exception:  # noqa: BLE001 — un movimiento que falle no tumba la corrida
                         logger.warning("fuente remota %s: no pude mover %s → %s",
                                        source_id, st[2], f["rel"])
@@ -391,8 +393,8 @@ class RemoteDriveSync:
                     # dejarlo bajo la vieja (que la poda borraría); si no, solo se refresca el eTag.
                     stats["unchanged"] += 1
                     if st[2] and st[2] != f["rel"]:
-                        await self._move_content(tenant_id, kind, matter_id, db_source,
-                                                 st[2], f["rel"], f["name"])
+                        await self._move_content(tenant_id, kind, matter_id, source_id,
+                                                 db_source, st[2], f["rel"], f["name"])
                     new_hashes[f["item_id"]] = (f["etag"], sha, f["rel"])
                     continue
                 text, meta = await self._text_from_bytes(f["name"], blob)
@@ -406,8 +408,8 @@ class RemoteDriveSync:
                     logger.info("fuente remota %s: omito %s (%s)", source_id, f.get("rel"), reason)
                     continue
                 if kind == "matters":
-                    await self._ingest_matter_file(tenant_id, matter_id, f["rel"], f["name"],
-                                                   text, sha)
+                    await self._ingest_matter_file(tenant_id, matter_id, source_id, f["rel"],
+                                                   f["name"], text, sha)
                 else:
                     chunks = self._local._chunk_file(text, f["rel"])
                     vectors = await self._local._embed_chunks([c["text"] for c in chunks])
@@ -424,7 +426,8 @@ class RemoteDriveSync:
             await self._save_hashes(tenant_id, source_id, new_hashes, prune=False)
         else:
             if kind == "matters":
-                stats["deleted"] = await self._prune_matter_docs(tenant_id, matter_id, current_rels)
+                stats["deleted"] = await self._prune_matter_docs(tenant_id, matter_id, source_id,
+                                                                   current_rels)
             else:
                 stats["deleted"] = await self._local._delete_removed(tenant_id, db_source, current_rels)
             await self._save_hashes(tenant_id, source_id, new_hashes, prune=True)
@@ -494,26 +497,36 @@ class RemoteDriveSync:
         return blob.decode("utf-8", errors="replace"), {"has_body": True, "ocr_unavailable": False}
 
     # ── persistencia del EXPEDIENTE VINCULADO (documents origin='drive' + chunks) ──
-    async def _ingest_matter_file(self, tenant_id: str, matter_id, rel: str, name: str,
-                                  text: str, sha256: str) -> None:
-        """Ingesta un archivo remoto al expediente: reemplaza SIEMPRE el documento previo de
-        esa ruta (origin='drive'). Los origin='upload'/'folder' NUNCA se tocan aquí."""
+    async def _ingest_matter_file(self, tenant_id: str, matter_id, source_id: str, rel: str,
+                                  name: str, text: str, sha256: str) -> None:
+        """Ingesta un archivo remoto al expediente: extrae texto, trocea, embebe e inserta un
+        documento (origin='drive', source_path=ruta relativa, sha256, source_id=ESTA fuente)
+        y sus chunks. Reemplaza SIEMPRE el documento previo de esa ruta (sus chunks caen por
+        cascade) — así un archivo CAMBIADO no deja el documento viejo detrás. El DELETE previo
+        está ACOTADO a `source_id`: solo pisa la versión anterior de ESTA MISMA carpeta remota
+        y los huérfanos sin fuente trazada (`source_id IS NULL`, de antes del backfill de la
+        migración 028) — NUNCA los de OTRA carpeta de OneDrive vinculada al mismo expediente
+        (bug de poda cruzada, ver memory/bugs-and-risks.md). Los documentos subidos a mano
+        (origin='upload') y los de carpetas locales (origin='folder') NUNCA se tocan aquí."""
         chunks = chunk_text(text)
         # Los embeddings se calculan ANTES de abrir la conexión por-tenant (igual que la ruta
         # de conocimiento): una llamada de red al servicio de embeddings no debe mantener
         # abierta una conexión con RLS del pool (m6).
         vectors = await self._local._embed_chunks(chunks) if chunks else []
         async with pool.tenant_connection(tenant_id) as conn:
+            # Borrar la versión previa de ESTA ruta traída por ESTA fuente (idempotente) —
+            # o el huérfano pre-028 del mismo path, nunca la de una carpeta remota hermana.
             await conn.execute(
                 "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='drive' "
-                "AND source_path=%s", (matter_id, rel))
+                "AND source_path=%s AND (source_id=%s::uuid OR source_id IS NULL)",
+                (matter_id, rel, source_id))
             if not chunks:
                 return
             doc_id = (await (await conn.execute(
                 "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
-                "source_path, origin) VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'drive') "
-                "RETURNING id",
-                (tenant_id, matter_id, name, _guess_mime(name), sha256, rel),
+                "source_path, origin, source_id) VALUES "
+                "(%s::uuid, %s::uuid, %s, %s, %s, %s, 'drive', %s::uuid) RETURNING id",
+                (tenant_id, matter_id, name, _guess_mime(name), sha256, rel, source_id),
             )).fetchone())[0]
             for i, (content, vec) in enumerate(zip(chunks, vectors)):
                 await conn.execute(
@@ -521,33 +534,46 @@ class RemoteDriveSync:
                     "VALUES (%s::uuid, %s, %s, %s, %s)",
                     (tenant_id, doc_id, i, content, vec))
 
-    async def _prune_matter_docs(self, tenant_id: str, matter_id, current_rels) -> int:
-        """Poda los documentos origin='drive' del expediente cuyo archivo remoto ya no existe.
-        Los origin='upload'/'folder' JAMÁS se tocan. Devuelve el número de ARCHIVOS podados."""
+    async def _prune_matter_docs(self, tenant_id: str, matter_id, source_id: str,
+                                 current_rels) -> int:
+        """Borra los documentos origin='drive' DE ESTA FUENTE cuyos archivos ya no están en la
+        carpeta remota. Acotado por `source_id`: el sync de UNA carpeta de OneDrive jamás poda
+        los documentos que trajo OTRA carpeta hermana del mismo expediente (bug de poda cruzada
+        corregido — antes el filtro era solo por matter_id, mismo patrón que LocalFolderSync).
+        Los documentos con `source_id IS NULL` (huérfanos de antes del backfill de la migración
+        028, sin fuente trazada) NUNCA se podan por sync — conservador: mejor conservarlos que
+        borrar algo que no se puede atribuir con certeza a esta carpeta. Los origin='upload'/
+        'folder' JAMÁS se tocan. Devuelve el número de ARCHIVOS podados."""
         current = set(current_rels)
         async with pool.tenant_connection(tenant_id) as conn:
             rows = await (await conn.execute(
                 "SELECT DISTINCT source_path FROM documents "
-                "WHERE matter_id=%s::uuid AND origin='drive'", (matter_id,))).fetchall()
+                "WHERE matter_id=%s::uuid AND origin='drive' AND source_id=%s::uuid",
+                (matter_id, source_id))).fetchall()
             removed = sorted({r[0] for r in rows if r[0] is not None} - current)
             if removed:
                 await conn.execute(
                     "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='drive' "
-                    "AND source_path = ANY(%s)", (matter_id, removed))
+                    "AND source_id=%s::uuid AND source_path = ANY(%s)",
+                    (matter_id, source_id, removed))
         return len(removed)
 
-    async def _move_content(self, tenant_id: str, kind: str, matter_id, db_source: str,
-                            old_rel: str, new_rel: str, name: str) -> None:
+    async def _move_content(self, tenant_id: str, kind: str, matter_id, source_id: str,
+                            db_source: str, old_rel: str, new_rel: str, name: str) -> None:
         """Renombre/movimiento remoto (mismo item_id y mismo contenido, ruta distinta): en vez
         de re-descargar y re-embeber, se MUEVE el contenido ya ingerido de `old_rel` a `new_rel`.
         Sin esto, la poda por ruta borraría el archivo al no hallar la ruta vieja entre las
-        actuales, y el conocimiento/expediente lo perdería en silencio (hallazgo M1)."""
+        actuales, y el conocimiento/expediente lo perdería en silencio (hallazgo M1). Para
+        kind='matters' el UPDATE está ACOTADO por `source_id` (o huérfano sin fuente trazada,
+        source_id IS NULL) — mismo criterio anti-poda-cruzada de `_ingest_matter_file`/
+        `_prune_matter_docs`: mover nunca debe tocar el documento de OTRA carpeta hermana."""
         async with pool.tenant_connection(tenant_id) as conn:
             if kind == "matters":
                 await conn.execute(
                     "UPDATE documents SET source_path=%s, filename=%s "
-                    "WHERE matter_id=%s::uuid AND origin='drive' AND source_path=%s",
-                    (new_rel, name, matter_id, old_rel))
+                    "WHERE matter_id=%s::uuid AND origin='drive' AND source_path=%s "
+                    "AND (source_id=%s::uuid OR source_id IS NULL)",
+                    (new_rel, name, matter_id, old_rel, source_id))
             else:
                 await conn.execute(
                     "UPDATE knowledge_chunks SET source_path=%s "

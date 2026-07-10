@@ -6,42 +6,18 @@ import {
   ArrowLeft,
   ChevronRight,
   FileText,
-  FolderCheck,
-  Link2,
-  Loader2,
-  Mail,
-  MoreVertical,
   Paperclip,
-  RefreshCw,
   Scale,
   Send,
   Sparkles,
 } from "lucide-react";
-import { ApiError, apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
+import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
 import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
 import CitationReview, { type Verification } from "../../_components/CitationReview";
-import MatterDriveFolder from "../../_components/MatterDriveFolder";
-import MailSearchDialog from "../../_components/MailSearchDialog";
+import FuentesPanel from "../../_components/FuentesPanel";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 type Doc = { id: string; name: string; type?: string; created_at?: string };
@@ -49,15 +25,6 @@ type Msg = { role: "user" | "mia"; text: string };
 type UploadItem = { name: string; status: "waiting" | "uploading" | "done" | "error" };
 type UploadResponse = { id?: string; name?: string; status?: string; message?: string; fragments?: number };
 
-// Carpeta vinculada del expediente (Fase 3.1(B)): GET/POST/DELETE /api/matters/{id}/folder.
-type FolderStatus = {
-  linked: boolean;
-  path: string | null;
-  last_sync: string | null;
-  files_indexed: number;
-  pending_retry: number;
-};
-type DetectedFolder = { label: string; path: string; registered?: boolean };
 type MissionsSummary = { count: number; milestonesDone: number; milestonesTotal: number };
 
 function fmtDate(s?: string): string {
@@ -67,25 +34,6 @@ function fmtDate(s?: string): string {
   } catch {
     return "";
   }
-}
-
-// Tiempo relativo en español ("hace 3 minutos") para la última revisión de la carpeta.
-function fmtRelative(iso?: string | null): string {
-  if (!iso) return "";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (diffSec < 60) return "hace un momento";
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `hace ${diffMin} ${diffMin === 1 ? "minuto" : "minutos"}`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `hace ${diffHr} ${diffHr === 1 ? "hora" : "horas"}`;
-  const diffDay = Math.floor(diffHr / 24);
-  return `hace ${diffDay} ${diffDay === 1 ? "día" : "días"}`;
-}
-
-function apiErrorMessage(err: unknown, fallback: string): string {
-  return err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : fallback;
 }
 
 export default function WorkspacePage({ params }: { params: { id: string } }) {
@@ -114,23 +62,6 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   // lo ya escrito; los avisos ("no se escuchó voz") van en ámbar bajo el input.
   const [dictationNotice, setDictationNotice] = useState("");
 
-  // Fase 3.1(B) · carpeta vinculada del expediente.
-  const [folder, setFolder] = useState<FolderStatus | null>(null);
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
-  const [detectedFolders, setDetectedFolders] = useState<DetectedFolder[]>([]);
-  const [folderPathInput, setFolderPathInput] = useState("");
-  const [linking, setLinking] = useState(false);
-  const [linkMsg, setLinkMsg] = useState("");
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState("");
-  const [unlinkOpen, setUnlinkOpen] = useState(false);
-  const [unlinking, setUnlinking] = useState(false);
-  const folderPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const folderPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Fase 4 "fuentes remotas" · correos del caso → expediente.
-  const [mailDialogOpen, setMailDialogOpen] = useState(false);
-
   // Fase 3.1(B) · Plan de trabajo (aside): contador liviano para el header de la card.
   const [missionsSummary, setMissionsSummary] = useState<MissionsSummary | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
@@ -151,48 +82,9 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     }
   }
 
-  async function loadFolder() {
-    try {
-      setFolder(await apiGet<FolderStatus>(`/api/matters/${matterId}/folder`));
-    } catch {
-      /* no se pudo cargar el estado de la carpeta */
-    }
-  }
-
-  function stopFolderPolling() {
-    if (folderPollRef.current) {
-      clearInterval(folderPollRef.current);
-      folderPollRef.current = null;
-    }
-    if (folderPollTimeoutRef.current) {
-      clearTimeout(folderPollTimeoutRef.current);
-      folderPollTimeoutRef.current = null;
-    }
-  }
-
-  // Tras vincular o pedir una revisión, refresca el estado cada ~5s hasta que
-  // files_indexed se mueva (o hasta 30s máx.) — así el abogado ve avance sin recargar.
-  function startFolderPolling(baselineFilesIndexed: number) {
-    stopFolderPolling();
-    folderPollRef.current = setInterval(async () => {
-      try {
-        const status = await apiGet<FolderStatus>(`/api/matters/${matterId}/folder`);
-        setFolder(status);
-        if (status.files_indexed !== baselineFilesIndexed) {
-          stopFolderPolling();
-          loadDocs();
-        }
-      } catch {
-        /* reintenta en el siguiente tick */
-      }
-    }, 5000);
-    folderPollTimeoutRef.current = setTimeout(stopFolderPolling, 30000);
-  }
-
   useEffect(() => {
     apiGet<{ name?: string }>(`/api/matters/${matterId}`).then(setMatter).catch(() => {});
     loadDocs();
-    loadFolder();
     // Contador liviano del plan de trabajo: decide si la card empieza expandida.
     apiGet<{ missions: Array<{ progress?: { done?: number; total?: number } }> }>(
       `/api/missions?matter_id=${encodeURIComponent(matterId)}`,
@@ -226,7 +118,6 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       });
     return () => {
       streamAbortRef.current?.abort();
-      stopFolderPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matterId]);
@@ -326,72 +217,6 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     }
   }
 
-  async function openFolderDialog() {
-    setFolderDialogOpen(true);
-    setLinkMsg("");
-    try {
-      const res = await apiGet<{ detected: DetectedFolder[] }>("/api/folders/detected");
-      setDetectedFolders(res.detected || []);
-    } catch {
-      setDetectedFolders([]);
-    }
-  }
-
-  async function linkFolder() {
-    const path = folderPathInput.trim();
-    if (!path || linking) return;
-    setLinking(true);
-    setLinkMsg("");
-    try {
-      await apiSend("POST", `/api/matters/${matterId}/folder`, { path });
-      setFolderDialogOpen(false);
-      setFolderPathInput("");
-      const status = await apiGet<FolderStatus>(`/api/matters/${matterId}/folder`);
-      setFolder(status);
-      startFolderPolling(status.files_indexed);
-    } catch (err) {
-      setLinkMsg(apiErrorMessage(err, "No se pudo vincular la carpeta. Revisa la ruta e intenta de nuevo."));
-    } finally {
-      setLinking(false);
-    }
-  }
-
-  async function syncFolderNow() {
-    if (syncing) return;
-    setSyncing(true);
-    setSyncMsg("");
-    try {
-      const res = await apiSend<{ status: string; message: string }>(
-        "POST",
-        `/api/matters/${matterId}/folder/sync`,
-      );
-      setSyncMsg(res.message || "Estoy revisando la carpeta del expediente.");
-      const status = await apiGet<FolderStatus>(`/api/matters/${matterId}/folder`);
-      setFolder(status);
-      if (res.status === "started") startFolderPolling(status.files_indexed);
-    } catch (err) {
-      setSyncMsg(apiErrorMessage(err, "No se pudo revisar la carpeta. Intenta de nuevo."));
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  async function unlinkFolder() {
-    if (unlinking) return;
-    setUnlinking(true);
-    try {
-      const res = await apiSend<{ message: string }>("DELETE", `/api/matters/${matterId}/folder`);
-      stopFolderPolling();
-      setFolder({ linked: false, path: null, last_sync: null, files_indexed: 0, pending_retry: 0 });
-      setUnlinkOpen(false);
-      setSyncMsg(res.message || "Desvinculé la carpeta. Los documentos que ya había traído siguen en tu expediente.");
-    } catch (err) {
-      setSyncMsg(apiErrorMessage(err, "No se pudo desvincular la carpeta. Intenta de nuevo."));
-    } finally {
-      setUnlinking(false);
-    }
-  }
-
   const lastIdx = messages.length - 1;
 
   return (
@@ -434,80 +259,10 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           )}
         </div>
         <div className="border-t border-border p-3">
-          {/* Carpeta del expediente (Fase 3.1(B)): vínculo real contra el backend,
-              con revisión incremental — reemplaza la vieja subida webkitdirectory. */}
-          {folder?.linked ? (
-            <div className="mb-3 rounded-lg border border-border bg-card px-3 py-2.5 text-xs">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 font-medium text-foreground">
-                    <FolderCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
-                    Carpeta del expediente
-                  </div>
-                  <div className="mt-0.5 truncate text-muted-foreground" title={folder.path ?? undefined}>
-                    {folder.path}
-                  </div>
-                </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" aria-label="Más acciones">
-                      <MoreVertical className="h-3.5 w-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => setUnlinkOpen(true)} className="text-destructive">
-                      Desvincular
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-              <div className="mt-2 text-muted-foreground">
-                {folder.files_indexed} {folder.files_indexed === 1 ? "documento leído" : "documentos leídos"}
-                {folder.last_sync ? ` · última revisión ${fmtRelative(folder.last_sync)}` : " · aún sin revisar"}
-              </div>
-              {folder.pending_retry > 0 ? (
-                <Badge variant="warning" className="mt-2 bg-warning/15 text-warning">
-                  {folder.pending_retry}{" "}
-                  {folder.pending_retry === 1
-                    ? "archivo abierto quedó para la próxima revisión"
-                    : "archivos abiertos quedaron para la próxima revisión"}
-                </Badge>
-              ) : null}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={syncFolderNow}
-                disabled={syncing}
-                className="mt-2 w-full gap-1.5"
-              >
-                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {syncing ? "Revisando…" : "Revisar ahora"}
-              </Button>
-              {syncMsg ? <p className="mt-1.5 text-muted-foreground">{syncMsg}</p> : null}
-            </div>
-          ) : (
-            <Button
-              variant="outline"
-              onClick={openFolderDialog}
-              className="mb-3 w-full justify-start gap-2"
-            >
-              <Link2 className="h-4 w-4" />
-              Vincular carpeta del expediente
-            </Button>
-          )}
-
-          {/* Fase 4 "fuentes remotas": carpeta de OneDrive de ESTE expediente. */}
-          <MatterDriveFolder matterId={matterId} onSynced={loadDocs} />
-
-          {/* Fase 4 "fuentes remotas": traer correos del caso desde el correo conectado. */}
-          <Button
-            variant="outline"
-            onClick={() => setMailDialogOpen(true)}
-            className="mb-3 w-full justify-start gap-2"
-          >
-            <Mail className="h-4 w-4" />
-            Traer correos del caso
-          </Button>
+          {/* Panel "Fuentes" unificado (Bloque A · Ola A3): carpetas del equipo, OneDrive
+              y correos del caso — antes tres bloques sueltos, ahora un único componente
+              autocontenido que carga y refresca su propia lista. */}
+          <FuentesPanel matterId={matterId} kind="asunto" onChanged={loadDocs} />
 
           <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" multiple onChange={onUpload} className="hidden" />
           <Button
@@ -697,106 +452,6 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           </div>
         </details>
       </aside>
-
-      {/* Vincular carpeta del expediente */}
-      <Dialog
-        open={folderDialogOpen}
-        onOpenChange={(open) => {
-          if (linking) return;
-          setFolderDialogOpen(open);
-          if (!open) {
-            setFolderPathInput("");
-            setLinkMsg("");
-          }
-        }}
-      >
-        <DialogContent aria-label="Vincular carpeta del expediente" className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Vincular carpeta del expediente</DialogTitle>
-            <DialogDescription>
-              Mia revisará esta carpeta y mantendrá el expediente al día: lo nuevo, lo cambiado y lo
-              borrado. Nada sale de tu equipo.
-            </DialogDescription>
-          </DialogHeader>
-          {detectedFolders.length > 0 ? (
-            <div>
-              <p className="mb-2 text-xs font-medium text-muted-foreground">
-                Sugerencias detectadas en este equipo
-              </p>
-              <ul className="space-y-1.5">
-                {detectedFolders.map((d) => (
-                  <li key={d.path}>
-                    <button
-                      type="button"
-                      onClick={() => setFolderPathInput(d.path)}
-                      className="w-full rounded-lg border border-border px-3 py-2 text-left text-sm transition-colors hover:border-primary/40 hover:bg-accent/50"
-                    >
-                      <div className="font-medium">{d.label}</div>
-                      <div className="truncate text-xs text-muted-foreground">{d.path}</div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                También puedes pegar la ruta de una subcarpeta específica de este caso abajo.
-              </p>
-            </div>
-          ) : null}
-          <div>
-            <Label htmlFor="folder-path" className="mb-1.5 block text-sm">
-              Ruta de la carpeta
-            </Label>
-            <Input
-              id="folder-path"
-              value={folderPathInput}
-              onChange={(e) => setFolderPathInput(e.target.value)}
-              placeholder="Ej.: C:\Users\TuUsuario\OneDrive\Casos\Asunto 123"
-            />
-          </div>
-          {linkMsg ? (
-            <p role="alert" className="text-sm text-warning">
-              {linkMsg}
-            </p>
-          ) : null}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setFolderDialogOpen(false)} disabled={linking}>
-              Cancelar
-            </Button>
-            <Button onClick={linkFolder} disabled={linking || !folderPathInput.trim()}>
-              {linking ? "Vinculando…" : "Vincular carpeta"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Desvincular carpeta del expediente */}
-      <Dialog open={unlinkOpen} onOpenChange={(open) => !unlinking && setUnlinkOpen(open)}>
-        <DialogContent aria-label="Desvincular carpeta del expediente">
-          <DialogHeader>
-            <DialogTitle>¿Desvincular la carpeta del expediente?</DialogTitle>
-            <DialogDescription>
-              Mia dejará de revisar esta carpeta. Los documentos que ya leyó se conservan en el
-              expediente.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setUnlinkOpen(false)} disabled={unlinking}>
-              Cancelar
-            </Button>
-            <Button variant="destructive" onClick={unlinkFolder} disabled={unlinking}>
-              {unlinking ? "Desvinculando…" : "Desvincular"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Traer correos del caso (Fase 4 "fuentes remotas") */}
-      <MailSearchDialog
-        matterId={matterId}
-        open={mailDialogOpen}
-        onOpenChange={setMailDialogOpen}
-        onLinked={loadDocs}
-      />
     </div>
   );
 }

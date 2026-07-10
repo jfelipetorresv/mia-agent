@@ -2,6 +2,8 @@
 
 Superficie HTTP de la allowlist de carpetas locales/nubes espejo (connectors/local_folders):
   GET    /api/folders/detected  → nubes detectadas (OneDrive/Google Drive) + fuentes registradas
+  GET    /api/folders/browse    → navegar el árbol de carpetas del equipo (A1: elegir qué
+                                  registrar); sin `path` devuelve los puntos de partida
   POST   /api/folders           → registrar una carpeta (validación de seguridad fail-closed)
   DELETE /api/folders/{id}      → deshabilitar una fuente (borra su conocimiento indexado)
   POST   /api/folders/sync      → dispara la sincronización del tenant en segundo plano
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -27,10 +30,12 @@ from ...connectors import obsidian_install
 from ...connectors import vault_writer as vault_writer_mod
 from ...connectors.local_folders import (
     LocalFolderSync,
+    browse_folder,
     detect_cloud_folders,
     disable_source,
     list_sources,
     register_source,
+    safe_browse_roots,
 )
 from ...connectors.vault_writer import VaultWriter
 
@@ -62,6 +67,33 @@ async def detected_folders(request: Request):
         for c in detect_cloud_folders()
     ]
     return {"detected": detected, "sources": sources}
+
+
+@router.get("/browse")
+async def browse_folders(request: Request, path: str | None = None):
+    """Navega el árbol de carpetas del equipo, un nivel a la vez (A1: el abogado ELIGE
+    la carpeta señalando, en vez de escribir la ruta a mano). Sin `path` devuelve los
+    puntos de partida (Documentos/Escritorio/Descargas, nubes detectadas, discos).
+
+    Deshabilitable en despliegue compartido (Modo A, Docker multi-despacho) con
+    `MIA_DISABLE_FOLDER_BROWSE`: exponer el árbol local del SERVIDOR a varios despachos
+    no tiene sentido ahí — mismo espíritu que la guarda de POST /obsidian/install."""
+    _tenant(request)
+    if os.getenv("MIA_DISABLE_FOLDER_BROWSE"):
+        raise HTTPException(status_code=503,
+                            detail="Explorar carpetas no está disponible en este entorno.")
+    if not path:
+        return {"roots": safe_browse_roots()}
+    try:
+        return await browse_folder(path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:  # noqa: BLE001 — §G: nunca exponer el error técnico al abogado
+        logger.exception("browse_folders falló (path=%s)", path)
+        raise HTTPException(
+            status_code=502,
+            detail="No pude abrir esa carpeta en este momento. Intenta de nuevo en unos minutos.",
+        )
 
 
 @router.post("")

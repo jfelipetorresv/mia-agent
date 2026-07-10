@@ -21,7 +21,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from psycopg.types.json import Json
 from psycopg.rows import dict_row
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ... import embeddings
 from ...agent.prompt_builder import strip_diagnosis_closing
@@ -43,7 +43,7 @@ from ...memory.trace_capture import TraceCapture
 from ...memory.wiki_manager import WikiManager
 from ...onboarding.soul_interview import SoulInterview, load_responses, soul_status
 from ...output.docx_export import draft_to_docx
-from ._common import assert_owns_matter, MAX_UPLOAD_BYTES
+from ._common import assert_owns_matter, MAX_UPLOAD_BYTES, _is_uuid
 from .hitl import _resume
 from .stream import stream_matter
 
@@ -108,32 +108,60 @@ def _tenant(request: Request) -> str:
     return tid
 
 
+# Tipos de espacio válidos (migración 028 · Bloque A): 'asunto' = expediente jurídico
+# formal (diagnóstico + borrador + HITL); 'proyecto' = espacio de trabajo libre
+# conectado a carpetas, sin diagnóstico ni aprobación.
+_MATTER_KINDS = ("asunto", "proyecto")
+
+
+async def _matter_kind(tid: str, matter_id: str) -> str:
+    """Tipo del espacio ('asunto'|'proyecto'). Asume ya validada la propiedad
+    (assert_owns_matter) — un matter_id inexistente cae al valor por defecto."""
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT kind FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
+    return row[0] if row else "asunto"
+
+
 # ── Pantalla 1 / 2 · asuntos ─────────────────────────────────────────────────
 class MatterCreate(BaseModel):
     name: str
     description: str = ""
+    kind: str = "asunto"
 
 
 @router.get("/matters")
-async def list_matters(request: Request):
+async def list_matters(request: Request, kind: str = Query("asunto")):
+    """Sin `kind` (compat): solo 'asunto' — la lista de Asuntos actual no debe mostrar
+    proyectos. `kind=proyecto`: solo proyectos. `kind=todos`: todo. Cualquier otro valor
+    se trata como 'asunto' (mismo criterio conservador que el filtro por defecto)."""
     tid = _tenant(request)
+    where, params = "", ()
+    if kind == "todos":
+        where = ""
+    else:
+        k = "proyecto" if kind == "proyecto" else "asunto"
+        where, params = "WHERE kind = %s", (k,)
     async with pool.tenant_connection(tid) as conn:
         rows = await (await conn.execute(
-            "SELECT id, title, description, status, created_at, pending_review FROM matters "
-            "ORDER BY created_at DESC")).fetchall()
+            "SELECT id, title, description, status, created_at, pending_review, kind FROM matters "
+            f"{where} ORDER BY created_at DESC", params)).fetchall()
     return [{"id": str(r[0]), "name": r[1], "description": r[2], "status": r[3],
-             "created_at": r[4], "pending_review": bool(r[5])} for r in rows]
+             "created_at": r[4], "pending_review": bool(r[5]), "kind": r[6]} for r in rows]
 
 
 @router.post("/matters", status_code=201)
 async def create_matter(request: Request, body: MatterCreate):
     tid = _tenant(request)
+    if body.kind not in _MATTER_KINDS:
+        raise HTTPException(status_code=422, detail="Ese tipo de espacio no existe")
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
-            "INSERT INTO matters (tenant_id, title, description) VALUES (%s::uuid, %s, %s) "
-            "RETURNING id, status, created_at", (tid, body.name, body.description))).fetchone()
+            "INSERT INTO matters (tenant_id, title, description, kind) VALUES (%s::uuid, %s, %s, %s) "
+            "RETURNING id, status, created_at",
+            (tid, body.name, body.description, body.kind))).fetchone()
     return {"id": str(row[0]), "name": body.name, "description": body.description,
-            "status": row[1], "created_at": row[2]}
+            "status": row[1], "created_at": row[2], "kind": body.kind}
 
 
 @router.get("/matters/{matter_id}")
@@ -142,12 +170,12 @@ async def get_matter(matter_id: str, request: Request):
     await assert_owns_matter(tid, matter_id)
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
-            "SELECT id, title, description, status, created_at FROM matters "
+            "SELECT id, title, description, status, created_at, kind FROM matters "
             "WHERE id = %s::uuid", (matter_id,))).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Asunto no encontrado")
     return {"id": str(row[0]), "name": row[1], "description": row[2], "status": row[3],
-            "created_at": row[4]}
+            "created_at": row[4], "kind": row[5]}
 
 
 # ── Pantalla 2 · documentos ──────────────────────────────────────────────────
@@ -211,6 +239,108 @@ async def upload_document(matter_id: str, request: Request, response: Response,
                 "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
                 "VALUES (%s::uuid, %s, %s, %s, %s)", (tid, doc_id, i, content, vec))
     return {"id": str(doc_id), "name": file.filename, "fragments": len(chunks)}
+
+
+# ── Proyectos (Bloque A) · archivos producidos por Mia ───────────────────────
+# Solo existen dentro de un PROYECTO (kind='proyecto'): un Asunto no tiene "archivos
+# producidos" — su único documento formal es el borrador del grafo (draft.docx arriba).
+class OutputCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=500_000)
+
+
+@router.post("/matters/{matter_id}/outputs", status_code=201)
+async def create_output(matter_id: str, request: Request, response: Response, body: OutputCreate):
+    """Guarda un archivo que Mia produjo en el proyecto (el abogado lo pidió y decidió
+    conservarlo). Mismo pipeline EXACTO de upload_document (chunk_text + embed_texts +
+    INSERT documents/chunks) para que lo producido quede consultable después por Mia."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    if await _matter_kind(tid, matter_id) != "proyecto":
+        raise HTTPException(status_code=422,
+                            detail="Los archivos guardados solo existen dentro de un proyecto.")
+    # Dedupe por huella del CONTENIDO (igual criterio que upload_document con el archivo):
+    # guardar dos veces lo mismo no lo duplica ni lo vuelve a embeber.
+    sha256 = hashlib.sha256(body.content.encode("utf-8")).hexdigest()
+    async with pool.tenant_connection(tid) as conn:
+        dup = await (await conn.execute(
+            "SELECT id, filename FROM documents WHERE matter_id=%s::uuid AND origin='mia' "
+            "AND sha256=%s LIMIT 1", (matter_id, sha256))).fetchone()
+    if dup:
+        response.status_code = 200
+        return {"status": "duplicado", "id": str(dup[0]), "title": dup[1],
+                "message": "Ese archivo ya estaba guardado en el proyecto — no lo dupliqué."}
+    chunks = chunk_text(body.content)
+    try:
+        vectors = embeddings.embed_texts(chunks) if chunks else []
+    except Exception:
+        # M1 (mismo criterio que upload_document): si falla el embebido no se deja NADA
+        # a medias — aquí todavía no se insertó nada en documents/chunks.
+        logger.exception("no se pudo guardar el archivo del proyecto (tenant=%s matter=%s)",
+                         tid, matter_id)
+        raise HTTPException(status_code=502, detail=(
+            "No pude guardar este archivo en el proyecto — inténtalo de nuevo en un momento."))
+    async with pool.tenant_connection(tid) as conn:
+        doc_id = (await (await conn.execute(
+            "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, origin, body) "
+            "VALUES (%s::uuid, %s::uuid, %s, %s, %s, 'mia', %s) RETURNING id",
+            (tid, matter_id, body.title, "text/markdown", sha256, body.content))).fetchone())[0]
+        for i, (content, vec) in enumerate(zip(chunks, vectors)):
+            await conn.execute(
+                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
+                "VALUES (%s::uuid, %s, %s, %s, %s)", (tid, doc_id, i, content, vec))
+    return {"id": str(doc_id), "title": body.title, "status": "guardado"}
+
+
+@router.get("/matters/{matter_id}/outputs")
+async def list_outputs(matter_id: str, request: Request):
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    if await _matter_kind(tid, matter_id) != "proyecto":
+        raise HTTPException(status_code=422,
+                            detail="Los archivos guardados solo existen dentro de un proyecto.")
+    async with pool.tenant_connection(tid) as conn:
+        rows = await (await conn.execute(
+            "SELECT id, filename, created_at FROM documents "
+            "WHERE matter_id=%s::uuid AND origin='mia' ORDER BY created_at DESC",
+            (matter_id,))).fetchall()
+    return {"outputs": [{"id": str(r[0]), "title": r[1], "created_at": r[2]} for r in rows]}
+
+
+@router.get("/matters/{matter_id}/outputs/{doc_id}.docx")
+async def download_output_docx(matter_id: str, doc_id: str, request: Request):
+    """El archivo guardado del proyecto como .docx (calca GET /matters/{id}/draft.docx)."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    if await _matter_kind(tid, matter_id) != "proyecto":
+        raise HTTPException(status_code=422,
+                            detail="Los archivos guardados solo existen dentro de un proyecto.")
+    if not _is_uuid(doc_id):
+        raise HTTPException(status_code=404, detail="Ese archivo no existe.")
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT filename, body FROM documents "
+            "WHERE id=%s::uuid AND matter_id=%s::uuid AND origin='mia'",
+            (doc_id, matter_id))).fetchone()
+    if not row or not row[1]:
+        raise HTTPException(status_code=404, detail="Ese archivo no existe.")
+    title, body_text = row[0], row[1]
+    data = draft_to_docx(body_text, title=title, author="Mia")
+    # filename ASCII-safe + variante UTF-8 (RFC 5987) para títulos con tildes.
+    # ASCII-only a propósito (mismo bugfix que download_draft_docx): el header
+    # filename= (sin *) no tolera un carácter no-ASCII crudo.
+    safe = "".join(c if c.isascii() and (c.isalnum() or c in "-_ ") else ""
+                   for c in title).strip() or "documento"
+    headers = {
+        "Content-Disposition":
+            f'attachment; filename="{safe[:60]}.docx"; '
+            f"filename*=UTF-8''{quote(title[:60], safe='')}.docx"
+    }
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=headers,
+    )
 
 
 # ── Pantalla 2 · chat + stream ───────────────────────────────────────────────
@@ -282,7 +412,11 @@ async def download_draft_docx(matter_id: str, request: Request):
     title = (row[0] if row and row[0] else "Borrador")
     data = draft_to_docx(draft, title=title, author="Mia")
     # filename ASCII-safe + variante UTF-8 (RFC 5987) para títulos con tildes.
-    safe = "".join(c if c.isalnum() or c in "-_ " else "" for c in title).strip() or "borrador"
+    # ASCII-only a propósito (bugfix): el header HTTP filename= (sin *) no tolera un
+    # carácter no-ASCII crudo (p. ej. 'á' de un título en español pasa isalnum() pero
+    # rompe la codificación del header) — la variante con tildes va SOLO en filename*.
+    safe = "".join(c if c.isascii() and (c.isalnum() or c in "-_ ") else ""
+                   for c in title).strip() or "borrador"
     headers = {
         "Content-Disposition":
             f'attachment; filename="{safe[:60]}.docx"; '
@@ -919,7 +1053,7 @@ async def dashboard_stats(request: Request):
     async with pool.tenant_connection(tid) as conn:
         async def scalar(sql):
             return (await (await conn.execute(sql)).fetchone())[0]
-        matters_active = await scalar("SELECT count(*) FROM matters")
+        matters_active = await scalar("SELECT count(*) FROM matters WHERE kind='asunto'")
         documents_indexed = await scalar("SELECT count(*) FROM documents")
         playbooks_active = await scalar("SELECT count(*) FROM playbooks WHERE status='active'")
         playbooks_archived = await scalar("SELECT count(*) FROM playbooks WHERE status='archived'")

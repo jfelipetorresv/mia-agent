@@ -18,9 +18,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from ...agents.checkpointer import open_checkpointer
 from ...agents.context_references import expand_context_references
-from ...agents.graph import build_matter_graph
+from ...agents.graph import build_matter_graph, build_project_graph
 from ...agents.personas import persona_service
-from ...agents.state import initial_state
+from ...agents.state import initial_state, thread_id_for
 from ...config import MIA_CONTEXT_WINDOW
 from ...db import pool
 from ...observability import audit
@@ -113,6 +113,99 @@ async def _stream_turn_events(
                 yield sse("draft_ready", "Borrador listo.")
 
 
+# ── Bloque A (Proyectos) · turno SIN HITL ─────────────────────────────────────
+# Avance del único especialista del grafo de proyecto (build_project_graph) → frases
+# del oficio (§G). Sin interrupt, sin pending_review: el turno siempre corre completo
+# en una sola pasada (intake → work) y termina con el evento 'reply'.
+_PROJECT_NODE_PROGRESS = {
+    "intake": "Mia está revisando las fuentes del proyecto…",
+    "work": "Mia está trabajando…",
+}
+
+
+async def _stream_project_events(
+    graph: Any,
+    turn_input: dict,
+    cfg: dict,
+    tenant_id: str,
+    matter_id: str,
+    is_disconnected: Callable[[], Awaitable[bool]],
+    checkpointer: Any = None,
+) -> AsyncIterator[dict]:
+    """Consume el grafo de un PROYECTO y traduce su avance a eventos SSE (§G).
+
+    Mismo kill-on-disconnect que _stream_turn_events (CP-S3): sin consumidor no tiene
+    sentido seguir gastando minutos de razonamiento. NUNCA marca pending_review (eso es
+    exclusivo del flujo de asunto con HITL) ni emite 'awaiting_review'."""
+    async for chunk in graph.astream(turn_input, cfg, stream_mode="updates"):
+        if await is_disconnected():
+            logger.info("stream (proyecto): navegador desconectado; se corta el turno "
+                        "(tenant=%s matter=%s)", tenant_id, matter_id)
+            if checkpointer is not None:
+                try:
+                    await checkpointer.adelete_thread(cfg["configurable"]["thread_id"])
+                except Exception:  # noqa: BLE001 — la limpieza no debe tumbar el corte
+                    logger.exception("stream (proyecto): no se pudo limpiar el checkpoint "
+                                     "a medias (tenant=%s matter=%s)", tenant_id, matter_id)
+            break
+        for node, update in chunk.items():
+            if node == "work":
+                # work_node lleva su texto en su propio campo 'reply' del estado (ver
+                # graph.py) — aquí se traduce al contrato visible del cliente: el
+                # evento SSE 'reply'.
+                reply = (update or {}).get("reply") or ""
+                yield sse("reply", "Mia terminó.", reply=reply)
+            elif node in _PROJECT_NODE_PROGRESS:
+                yield sse("thinking", _PROJECT_NODE_PROGRESS[node])
+
+
+# ── H6 (Bloque A) · memoria conversacional CORTA del proyecto ─────────────────
+# Sin helper de presupuesto por lista-de-mensajes en context_recovery (pensado para
+# prompts monolíticos de un solo turno de asunto) — tope simple aquí: últimos N turnos
+# Y un tope de caracteres, recortando por el lado VIEJO (se conservan los más recientes).
+_PROJECT_HISTORY_MAX_TURNS = 6
+_PROJECT_HISTORY_MAX_CHARS = 8000
+
+
+def _budget_project_history(history: list) -> list[dict]:
+    """Recorta el historial de un proyecto a un presupuesto sensato antes de pasarlo
+    al turno nuevo. Se queda con los últimos `_PROJECT_HISTORY_MAX_TURNS` turnos y,
+    dentro de esos, recorta por el lado VIEJO hasta caber en `_PROJECT_HISTORY_MAX_CHARS`
+    (siempre conserva al menos el turno más reciente, aunque él solo exceda el tope)."""
+    items = [h for h in (history or [])
+             if isinstance(h, dict) and str(h.get("text") or "").strip()]
+    items = items[-_PROJECT_HISTORY_MAX_TURNS:]
+    kept: list[dict] = []
+    total_chars = 0
+    for item in reversed(items):  # del más reciente hacia atrás
+        chars = len(str(item.get("text") or ""))
+        if kept and total_chars + chars > _PROJECT_HISTORY_MAX_CHARS:
+            break
+        kept.append(item)
+        total_chars += chars
+    kept.reverse()
+    return kept
+
+
+async def _recover_project_history(graph: Any, tenant_id: str, matter_id: str) -> list[dict]:
+    """Rescata la conversación previa de un PROYECTO antes de que `prepare_new_turn`
+    borre el checkpoint del turno anterior (el grafo arranca cada turno con estado
+    fresco por diseño — si no se lee AQUÍ, la memoria del turno anterior se pierde).
+
+    Fail-open (§G): un fallo de lectura deja el turno sin memoria previa, igual que
+    el comportamiento de hoy (turno fresco) — nunca tumba el turno nuevo."""
+    cfg = {"configurable": {"thread_id": thread_id_for(tenant_id, matter_id)}}
+    try:
+        st = await graph.aget_state(cfg)
+    except Exception:  # noqa: BLE001 — §G: recuperar memoria nunca tumba el turno
+        logger.exception("stream (proyecto): no se pudo leer el checkpoint previo "
+                         "(tenant=%s matter=%s)", tenant_id, matter_id)
+        return []
+    if not st or not st.values:
+        return []
+    return _budget_project_history(st.values.get("history") or [])
+
+
 @router.get("/matters/{matter_id}/stream")
 async def stream_matter(
     matter_id: str,
@@ -123,6 +216,14 @@ async def stream_matter(
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Sin contexto de tenant")
     await assert_owns_matter(tenant_id, matter_id)
+
+    # Bloque A: 'asunto' (comportamiento actual, INTACTO) vs 'proyecto' (sin HITL).
+    # matter_id ya está validado por assert_owns_matter — la lectura va bajo RLS igual.
+    async with pool.tenant_connection(tenant_id) as conn:
+        krow = await (await conn.execute(
+            "SELECT kind FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
+    kind = krow[0] if krow else "asunto"
+    graph_builder = build_project_graph if kind == "proyecto" else build_matter_graph
 
     # CP-E1: tope de gasto de IA del despacho (política activa). El turno es GET/SSE,
     # así que el bloqueo debe ser HTTP ANTES de abrir el stream (como el 409 de ciclo
@@ -143,8 +244,13 @@ async def stream_matter(
     profile_snapshot = await load_profile_snapshot(tenant_id)
 
     # Validación de ciclo de vida ANTES de abrir el SSE (409 debe ser HTTP, no evento).
+    prior_history: list[dict] = []
     async with open_checkpointer() as cp:
-        graph = build_matter_graph(cp)
+        graph = graph_builder(cp)
+        if kind == "proyecto":
+            # H6: leer el checkpoint del turno anterior ANTES de que prepare_new_turn
+            # lo borre — es la única ventana en la que la conversación previa existe.
+            prior_history = await _recover_project_history(graph, tenant_id, matter_id)
         cfg = await prepare_new_turn(cp, graph, tenant_id, matter_id)
 
     # CP-E2: expandir referencias @expediente/@carpeta a evidencia sellada (RLS,
@@ -179,19 +285,29 @@ async def stream_matter(
 
     turn_input = initial_state(
         tenant_id, matter_id, expanded_message, profile_snapshot=profile_snapshot,
-        retrieval_query=retrieval_query, persona=persona_state,
+        retrieval_query=retrieval_query, persona=persona_state, history=prior_history,
     )
 
     async def gen():
-        yield sse("thinking", "Mia está revisando el expediente…")
+        if kind == "proyecto":
+            yield sse("thinking", "Mia está revisando las fuentes del proyecto…")
+        else:
+            yield sse("thinking", "Mia está revisando el expediente…")
         try:
             async with open_checkpointer() as cp:
-                graph = build_matter_graph(cp)
-                async for ev in _stream_turn_events(
-                    graph, turn_input, cfg, tenant_id, matter_id,
-                    request.is_disconnected, checkpointer=cp,
-                ):
-                    yield ev
+                graph = graph_builder(cp)
+                if kind == "proyecto":
+                    async for ev in _stream_project_events(
+                        graph, turn_input, cfg, tenant_id, matter_id,
+                        request.is_disconnected, checkpointer=cp,
+                    ):
+                        yield ev
+                else:
+                    async for ev in _stream_turn_events(
+                        graph, turn_input, cfg, tenant_id, matter_id,
+                        request.is_disconnected, checkpointer=cp,
+                    ):
+                        yield ev
         except Exception:
             logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)
             yield sse("error", "Mia no pudo completar el turno. Intenta de nuevo.")
