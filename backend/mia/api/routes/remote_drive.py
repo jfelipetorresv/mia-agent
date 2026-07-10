@@ -55,7 +55,7 @@ _BACKGROUND_TASKS: set[asyncio.Task] = set()
 _SYNCS_IN_FLIGHT = SYNCS_IN_FLIGHT
 
 _NO_ACCOUNT = ("Conecta tu cuenta de Microsoft con permiso de archivos desde el "
-               "Panel de control.")
+               "menú Configuración.")
 _GRAPH_DOWN = "No pude leer tu OneDrive en este momento. Intenta de nuevo en unos minutos."
 
 

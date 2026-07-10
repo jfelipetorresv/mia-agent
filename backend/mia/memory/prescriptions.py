@@ -264,9 +264,9 @@ def bucket_cost(usage_rows: list[dict]) -> list[dict]:
         category="costo",
         headline=f"La IA por uso le costó {total_cost:.0f} USD este mes",
         prescription=(
-            "Mia está usando un motor que cobra por cada uso. En el Panel de "
-            "control, sección 'Motor de IA', hay opciones sin costo por uso: la "
-            "suscripción del asistente de IA o 'Todo en mi equipo'. Si usted ya "
+            "Mia está usando un motor que cobra por cada uso. En Configuración, "
+            "sección 'Conexiones' → 'Motor de IA', hay opciones sin costo por uso: "
+            "la suscripción del asistente de IA o 'Todo en mi equipo'. Si usted ya "
             "eligió una de esas y aun así ve este gasto, el trabajo está cayendo "
             "al modo pagado — vale la pena revisarlo."
         ),
@@ -274,7 +274,7 @@ def bucket_cost(usage_rows: list[dict]) -> list[dict]:
             f"{calls} llamadas pagadas costaron {total_cost:.2f} USD "
             f"en los últimos {SIGNAL_DAYS} días",
             f"El mayor componente fue {top_label} ({float(top['cost_usd']):.2f} USD)",
-            "El motor se cambia en el Panel de control, sección 'Motor de IA'",
+            "El motor se cambia en Configuración, sección 'Conexiones' → 'Motor de IA'",
         ],
         severity=min(10, 3 + round(total_cost / 50.0)),
         certainty=0.9,

@@ -159,10 +159,13 @@ async def connect(provider: str, request: Request, response: Response):
     client_id, client_secret = config.mailbox_oauth_client(provider)
     if not client_id or not client_secret:
         # La app OAuth de la instalación no está registrada aún (falta configurar .env).
+        # Mensaje en llano (§G): el abogado no puede resolver esto él mismo — es un
+        # paso único de instalación que hace su administrador, con guía en Configuración.
         raise HTTPException(
             status_code=503,
-            detail=f"La conexión con {_PROVIDER_LABELS[provider]} no está habilitada en "
-                   f"este servidor todavía.")
+            detail=f"La conexión con {_PROVIDER_LABELS[provider]} aún no está habilitada "
+                   f"en este equipo. Es un paso único del administrador — pídele que "
+                   f"registre la conexión (guía en Configuración).")
     # ?features=mail,mail_content,drive compone los scopes pedidos (default "mail"). En
     # Google, "mail_content" exige reconsentir (gmail.readonly); en Microsoft Mail.Read ya
     # lo cubre. "drive" (cimiento de OneDrive remoto, solo Microsoft) valida en scopes_for.

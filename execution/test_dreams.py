@@ -355,9 +355,9 @@ async def run_checks() -> None:
                  "completion_tokens": 50_000, "cost_usd": 0.0, "calls": 20},
             ]
             cost_out = rx.bucket_cost(rows_cost)
-            check("Costo: reporta el gasto real pagado y apunta al Panel de control",
+            check("Costo: reporta el gasto real pagado y apunta a Configuración",
                   len(cost_out) == 1 and abs((cost_out[0]["dollar_impact"] or 0) - 9.0) < 0.01
-                  and any("Panel de control" in e for e in cost_out[0]["evidence"]))
+                  and any("Configuración" in e for e in cost_out[0]["evidence"]))
             check("Costo: suscripción/local (costo 0) no genera hallazgo",
                   rx.bucket_cost([rows_cost[1]]) == [])
             check("Costo: con menos de 5 llamadas pagadas se salta",

@@ -101,18 +101,26 @@ def run_frontend_checks() -> None:
     dashboard = (ROOT / "frontend" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
     onboarding = (ROOT / "frontend" / "app" / "onboarding" / "page.tsx").read_text(encoding="utf-8")
     asunto = (ROOT / "frontend" / "app" / "asuntos" / "[id]" / "page.tsx").read_text(encoding="utf-8")
+    # Reestructuración 2026-07-09 (feedback de Pipe: el Panel tenía demasiada
+    # información que en realidad es configuración): Conexiones (Obsidian, Pinecone,
+    # Motor de IA) y "La salud de Mia" se mudaron del Panel a Configuración —
+    # Conexiones vive en el componente compartido ConexionesSection.tsx.
+    configurar = (ROOT / "frontend" / "app" / "configurar" / "page.tsx").read_text(encoding="utf-8")
+    conexiones_src = configurar + (
+        ROOT / "frontend" / "app" / "_components" / "ConexionesSection.tsx"
+    ).read_text(encoding="utf-8")
     # Pase wow 2026-07-08: el tab de la wiki se llama "Criterios aprendidos" (§G, sin jerga).
     check("frontend: tab Wiki del despacho", "Criterios aprendidos" in memoria)
     check("frontend: sugerir corrección", "Sugerir corrección" in memoria)
     check("frontend: reporte semanal destacado", "Resumen semanal" in memoria)
     # Pase wow 2026-07-08: "Conectores" → "Conexiones" y "Salud del second brain" →
     # "La salud de Mia" (lenguaje llano §G); Obsidian y Pinecone siguen presentes.
-    check("frontend: sección Conectores", "Conexiones" in dashboard and "Obsidian" in dashboard and "Pinecone" in dashboard)
-    check("frontend: salud second brain", "La salud de Mia" in dashboard)
+    check("frontend: sección Conectores", "Conexiones" in conexiones_src and "Obsidian" in conexiones_src and "Pinecone" in conexiones_src)
+    check("frontend: salud second brain", "La salud de Mia" in configurar)
     # CP7 · el selector de motor consume la política CP2 (sin nombres de modelos, §G)
     check("frontend CP7: selector 'Motor de IA' consume /settings/model-policy (PUT al cambiar)",
-          "Motor de IA" in dashboard and "/settings/model-policy" in dashboard
-          and "Modelo preferido" not in dashboard)
+          "Motor de IA" in conexiones_src and "/settings/model-policy" in conexiones_src
+          and "Modelo preferido" not in conexiones_src)
     check("frontend CP7: tab Habilidades consume /api/skills/ranked",
           "Habilidades" in memoria and "/api/skills/ranked" in memoria)
     check("frontend CP7: botón Importar guías → /api/playbooks/import (multipart)",

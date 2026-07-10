@@ -3,7 +3,7 @@
 // Mia · navegador modal de carpetas de OneDrive (Fase 4 "fuentes remotas" — Ola 5).
 // Empieza en la raíz, deja entrar a subcarpetas (breadcrumb) y registra la carpeta
 // elegida vía POST /api/drive/sources. Solo lectura — nunca cambia nada en el OneDrive
-// del abogado. Se reutiliza en el Panel de control (kind="knowledge") y en la pantalla
+// del abogado. Se reutiliza en Configuración (kind="knowledge") y en la pantalla
 // del asunto (kind="matters" + matterId).
 
 import { useCallback, useEffect, useState } from "react";
@@ -56,7 +56,7 @@ export default function OneDriveFolderPicker({
   kind,
   matterId,
   onLinked,
-  connectHref = "/dashboard#conexiones",
+  connectHref = "/configurar#conexiones",
 }: Props) {
   const [crumbs, setCrumbs] = useState<Crumb[]>([ROOT]);
   const [items, setItems] = useState<DriveItem[]>([]);

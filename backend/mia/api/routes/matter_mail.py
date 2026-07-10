@@ -135,7 +135,7 @@ async def search_mail(matter_id: str, request: Request, q: str = "", provider: s
         if not conns:
             raise HTTPException(
                 status_code=503,
-                detail="Conecta tu correo primero desde el Panel de control.")
+                detail="Conecta tu correo primero desde el menú Configuración.")
         resultados: list[dict] = []
         for prov, conn in conns.items():
             try:
@@ -175,7 +175,7 @@ async def link_mail(matter_id: str, body: LinkBody, request: Request):
         if not conns:
             raise HTTPException(
                 status_code=503,
-                detail="Conecta tu correo primero desde el Panel de control.")
+                detail="Conecta tu correo primero desde el menú Configuración.")
         for item in body.items:
             conn = conns.get(item.provider)
             if conn is None:

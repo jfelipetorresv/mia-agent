@@ -76,7 +76,7 @@ class TtsEngine:
         if not all((tdir / f).is_file() for f in _TTS_FILES):
             return False, (
                 "El modelo de voz de Mia no está descargado en este servidor. "
-                "Instálalo desde el Panel de control con el botón "
+                "Instálalo desde Configuración con el botón "
                 "«Instalar dictado por voz»."
             )
         if self._load_error:

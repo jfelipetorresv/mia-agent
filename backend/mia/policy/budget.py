@@ -35,7 +35,7 @@ class BudgetExceeded(Exception):
 
 _OVER_BUDGET_MESSAGE = (
     "Este despacho alcanzó su tope de gasto de IA de este mes. "
-    "Súbelo en el Panel de control o espera al próximo mes para seguir."
+    "Súbelo en Configuración o espera al próximo mes para seguir."
 )
 
 

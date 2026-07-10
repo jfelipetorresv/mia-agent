@@ -39,7 +39,7 @@ logger = logging.getLogger("mia.api.setup")
 # "voz" va al final: es una capacidad opcional (CP-Z1b) — el "siguiente paso"
 # no debe anteponerla a carpetas o guías, que dan más valor al arrancar.
 # Obsidian pospuesto por decisión de Pipe (2026-07-06): fuera del recorrido por ahora
-# (su instalación/sync sigue disponible en el Panel de control). Su guía se conserva
+# (su instalación/sync sigue disponible en el menú Configuración). Su guía se conserva
 # en STEP_GUIDES por si se reactiva.
 STEP_IDS = ("perfil", "motor", "carpetas", "guias", "telegram", "voz")
 
@@ -76,8 +76,8 @@ STEP_GUIDES: dict[str, dict] = {
             "ningún dato del despacho sale de tu computador (a cambio es más "
             "lento y menos preciso)."),
         "como": [
-            "Abre el Panel de control con «Ir al paso».",
-            "Busca la sección «Motor de IA» y elige la opción que prefieras.",
+            "Abre Configuración con «Ir al paso».",
+            "En la sección «Conexiones», busca la tarjeta «Motor de IA» y elige la opción que prefieras.",
             "Con solo elegirla queda aplicada al instante; puedes cambiarla cuando quieras.",
             "Si no detecto ningún motor en tu equipo, la opción de nube funciona sin instalar nada.",
         ],
@@ -93,7 +93,7 @@ STEP_GUIDES: dict[str, dict] = {
             "su propia carpeta y jamás toca tus notas."),
         "como": [
             "Si aún no tienes Obsidian, su instalación es gratuita desde el sitio obsidian.md (o pídeme que lo instale por ti por Telegram, con tu confirmación).",
-            "Abre el Panel de control con «Ir al paso» y ubica la tarjeta «Obsidian».",
+            "Abre Configuración y ubica la tarjeta «Tu espacio de notas», en la sección «Conexiones».",
             "Escribe ahí la ruta de tu espacio de notas de Obsidian y pulsa «Sincronizar».",
             "Desde ese momento, las notas de Mia aparecerán bajo la carpeta «Mia/» dentro de tu espacio.",
         ],
@@ -108,7 +108,7 @@ STEP_GUIDES: dict[str, dict] = {
             "nunca entra a carpetas del sistema ni a nada fuera de tu lista."),
         "como": [
             "Ten a la mano la ruta de la carpeta donde guardas tu trabajo (por ejemplo, tu carpeta de OneDrive o de Google Drive en el equipo).",
-            "Registra la carpeta desde el Panel de control (la administración de carpetas se está incorporando a esa pantalla).",
+            "Registra la carpeta desde Configuración, sección «Carpetas».",
             "Mia lee y organiza su contenido para tenerlo presente al trabajar, solo de las carpetas que autorices.",
             "Puedes quitar una carpeta cuando quieras y Mia deja de verla al instante.",
         ],
@@ -152,7 +152,7 @@ STEP_GUIDES: dict[str, dict] = {
             "del despacho: la transcripción ocurre completa ahí, sin enviar el "
             "audio a ningún servicio externo."),
         "como": [
-            "Abre el Panel de control con «Ir al paso» y ubica la tarjeta «Dictado por voz».",
+            "Abre Configuración con «Ir al paso» y ubica la tarjeta «Dictado por voz», en la sección «Conexiones».",
             "Pulsa «Instalar dictado por voz» y confirma: la descarga (~700 MB) tarda unos minutos y puedes seguir el avance ahí mismo.",
             "Cuando termine, verás el botón de micrófono junto al campo de texto de tus asuntos.",
             "Toca el micrófono, dicta, y vuelve a tocarlo para que Mia escriba lo que dijiste.",
@@ -175,12 +175,15 @@ MIA_SECTIONS: list[dict] = [
                 "que Mia va aprendiendo."),
      "para_que": ("Aquí importas guías, apruebas las sugerencias de mejora de Mia "
                   "y ves qué tan bien le va con cada procedimiento.")},
-    {"titulo": "Panel de control",
-     "que_es": ("El tablero general: motor de IA, conexiones (Obsidian, carpetas, "
-                "Telegram), recordatorios, actividad y costo del mes."),
-     "para_que": "Es donde se hacen casi todos los pasos de esta configuración."},
-    {"titulo": "Configura a Mia",
-     "que_es": "Este recorrido.",
+    {"titulo": "Panel",
+     "que_es": ("Lo accionable del día: sugerencias y borradores esperando tu "
+                "decisión, recordatorios, recomendaciones de Mia y un resumen "
+                "del mes."),
+     "para_que": "Es lo primero que ves al entrar: qué necesita tu atención hoy."},
+    {"titulo": "Configuración",
+     "que_es": ("Este recorrido, y también el hogar de conexiones (Obsidian, "
+                "correo, motor de IA), carpetas, automatizaciones y el cálculo "
+                "de valor y gasto."),
      "para_que": ("Detecta qué está listo y qué falta, te explica cada pieza y te "
                   "lleva al lugar exacto donde se hace. Todo es opcional y "
                   "retomable.")},
@@ -325,10 +328,10 @@ async def collect_setup_status(tid: str) -> dict:
               if claude_ok else
               "Detecté un motor local en este equipo."
               if ollama_ok else
-              "No detecté un motor en este equipo. Puedes elegir la opción de nube en el Panel de control."),
-             "automatica", "/dashboard"),
+              "No detecté un motor en este equipo. Puedes elegir la opción de nube en el menú Configuración."),
+             "automatica", "/configurar#conexiones"),
         # Obsidian pospuesto (decisión de Pipe 2026-07-06): fuera del recorrido; su
-        # instalación/sync sigue en el Panel de control.
+        # instalación/sync sigue en Configuración.
         step("carpetas", "Tus carpetas de trabajo",
              len(sources) > 0,
              (f"Mia conoce {len(sources)} carpeta{'s' if len(sources) != 1 else ''} de trabajo."
@@ -337,7 +340,7 @@ async def collect_setup_status(tid: str) -> dict:
                "(OneDrive/Google Drive) lista(s) para conectar."
                if detected else
                "Registra las carpetas donde guardas tu trabajo para que Mia las conozca.")),
-             "automatica", "/dashboard"),
+             "automatica", "/configurar#carpetas"),
         step("guias", "Las guías de trabajo del despacho",
              playbooks_n > 0,
              (f"Hay {playbooks_n} guía{'s' if playbooks_n != 1 else ''} cargada{'s' if playbooks_n != 1 else ''}."
@@ -354,8 +357,8 @@ async def collect_setup_status(tid: str) -> dict:
              voz_ok,
              ("El dictado por voz está instalado: busca el micrófono junto al chat de tus asuntos."
               if voz_ok else
-              "Instala el dictado por voz desde el Panel de control para dictar en vez de teclear."),
-             "automatica", "/dashboard"),
+              "Instala el dictado por voz desde el menú Configuración para dictar en vez de teclear."),
+             "automatica", "/configurar#conexiones"),
     ]
 
     hechos = sum(1 for s in steps if s["estado"] == "listo")

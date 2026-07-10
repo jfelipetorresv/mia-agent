@@ -315,10 +315,11 @@ def run_frontend_checks() -> None:
           and "telegram-setup.md" not in page)
     # El pase wow (2026-07) extrajo los items de navegación a nav.ts; el Sidebar
     # los consume desde ahí. El check exige el MISMO comportamiento (el menú
-    # lateral enlaza 'Configura a Mia'), mirando ambos archivos.
+    # lateral enlaza 'Configuración' — reestructuración 2026-07-09), mirando
+    # ambos archivos.
     nav_src = (ROOT / "frontend" / "app" / "_components" / "nav.ts").read_text(encoding="utf-8")
-    check("f3 · el Sidebar enlaza 'Configura a Mia'",
-          "/configurar" in (sidebar + nav_src) and "Configura a Mia" in (sidebar + nav_src))
+    check("f3 · el Sidebar enlaza 'Configuración'",
+          "/configurar" in (sidebar + nav_src) and "Configuración" in (sidebar + nav_src))
     check("f4 · accesibilidad: barra de progreso con role y valores (hallazgo capa 3 diferido)",
           'role="progressbar"' in page and "aria-valuenow" in page
           and "aria-expanded" in page)

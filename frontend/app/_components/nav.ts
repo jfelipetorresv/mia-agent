@@ -14,5 +14,5 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/memoria", label: "Conocimiento", icon: BookOpen, match: (p) => p.startsWith("/memoria") },
   { href: "/dashboard", label: "Panel", icon: Gauge, match: (p) => p.startsWith("/dashboard") },
   { href: "/personas", label: "Personas jurídicas", icon: Users, match: (p) => p.startsWith("/personas") },
-  { href: "/configurar", label: "Configura a Mia", icon: Settings2, match: (p) => p.startsWith("/configurar") },
+  { href: "/configurar", label: "Configuración", icon: Settings2, match: (p) => p.startsWith("/configurar") },
 ];

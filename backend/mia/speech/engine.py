@@ -84,7 +84,7 @@ class SpeechEngine:
         if not all((pdir / f).is_file() for f in needed):
             return False, (
                 "El modelo de dictado no está descargado en este servidor. "
-                "Instálalo desde el Panel de control con el botón "
+                "Instálalo desde Configuración con el botón "
                 "«Instalar dictado por voz»."
             )
         if self._load_error:

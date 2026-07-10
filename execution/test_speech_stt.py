@@ -629,11 +629,11 @@ def install_checks() -> None:
               and not (dest.parent / "evil.txt").is_file()
               and not (dest / "evil.txt").is_file())
 
-        # g-11 · el 503 del motor ya manda al Panel, no a un script
+        # g-11 · el 503 del motor ya manda a Configuración, no a un script
         eng = se.SpeechEngine()
         ok, reason = eng.available()
-        check("g-11 · sin pesos, available() apunta al Panel de control (sin 'ps1')",
-              ok is False and "Panel de control" in reason
+        check("g-11 · sin pesos, available() apunta a Configuración (sin 'ps1')",
+              ok is False and "Configuración" in reason
               and "ps1" not in reason and "script" not in reason.lower())
     finally:
         # ORDEN (hallazgo capa 2 #8): primero esperar cualquier worker vivo y
