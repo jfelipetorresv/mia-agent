@@ -134,9 +134,12 @@ def run_checks(client, auth_a, tid_a, auth_b, tid_b) -> None:
     check("kind inválido -> 422", r.status_code == 422)
     visible.append(r.text)
 
+    # Bloque C: kind='agente' YA es un flujo válido (diseñar un agente jurídico). Con el
+    # transcript vacío y <3 preguntas, se fuerza una pregunta (done=False) — no 422.
     r = _ask(client, auth_a, kind="agente")
-    check("kind='agente' -> 422 en llano (Bloque C)",
-          r.status_code == 422 and "próximamente" in r.json().get("detail", ""))
+    check("kind='agente' -> 200 (agente ya es un flujo válido en el Bloque C)",
+          r.status_code == 200 and r.json().get("done") is False
+          and isinstance(r.json().get("question"), str))
     visible.append(r.text)
 
     r = client.post("/api/guides/interview", headers=auth_a,

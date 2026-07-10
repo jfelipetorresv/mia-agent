@@ -23,6 +23,6 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/proyectos", label: "Proyectos", icon: FolderKanban, match: (p) => p.startsWith("/proyectos") },
   { href: "/memoria", label: "Conocimiento", icon: BookOpen, match: (p) => p.startsWith("/memoria") },
   { href: "/dashboard", label: "Panel", icon: Gauge, match: (p) => p.startsWith("/dashboard") },
-  { href: "/personas", label: "Personas jurídicas", icon: Users, match: (p) => p.startsWith("/personas") },
+  { href: "/personas", label: "Agentes jurídicos", icon: Users, match: (p) => p.startsWith("/personas") },
   { href: "/configurar", label: "Configuración", icon: Settings2, match: (p) => p.startsWith("/configurar") },
 ];

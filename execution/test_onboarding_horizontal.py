@@ -24,6 +24,12 @@ def check(name: str, ok: bool) -> None:
 def main() -> int:
     print("== Onboarding horizontal ==")
     onboarding = (ROOT / "frontend" / "app" / "onboarding" / "page.tsx").read_text(encoding="utf-8")
+    # C2 (Bloque C, perfil del despacho editable y unificado): COUNTRY_OPTIONS y el
+    # checklist de países se extrajeron a CountrySelector.tsx (compartido con "Mi
+    # despacho") — mismo criterio que ya usa este gate para Conexiones (configurar +
+    # ConexionesSection.tsx). `onboarding_surface` es lo que antes vivía todo inline.
+    country_selector = (ROOT / "frontend" / "app" / "_components" / "CountrySelector.tsx").read_text(encoding="utf-8")
+    onboarding_surface = onboarding + country_selector
     sidebar = (ROOT / "frontend" / "app" / "_components" / "Sidebar.tsx").read_text(encoding="utf-8")
     workspace = (ROOT / "frontend" / "app" / "asuntos" / "[id]" / "page.tsx").read_text(encoding="utf-8")
     globals_css = (ROOT / "frontend" / "app" / "globals.css").read_text(encoding="utf-8")
@@ -42,9 +48,9 @@ def main() -> int:
     check("onboarding sin opciones jurídicas hardcodeadas (fuera de la lista de países)",
           not any(x in onboarding for x in forbidden))
     check("pregunta ÚNICA de país: multi-select de 21 países, Colombia primero, con insignia de paquete",
-          "COUNTRY_OPTIONS" in onboarding and '"p5"' not in onboarding
-          and onboarding.index('name: "Colombia"') < onboarding.index('name: "Argentina"')
-          and "Conocimiento jurídico profundo" in onboarding
+          "COUNTRY_OPTIONS" in onboarding_surface and '"p5"' not in onboarding
+          and onboarding_surface.index('name: "Colombia"') < onboarding_surface.index('name: "Argentina"')
+          and "Conocimiento jurídico profundo" in onboarding_surface
           and onboarding.count("¿Con las reglas jurídicas de qué país trabaja tu despacho?") == 1)
     check("la selección de país auto-llena jurisdiction.base (nombres) además de jurisdictions (códigos)",
           'soulResponses["jurisdiction.base"]' in onboarding and "COUNTRY_NAME_BY_CODE" in onboarding)

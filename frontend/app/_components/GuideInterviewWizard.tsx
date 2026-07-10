@@ -33,7 +33,12 @@ type Draft = { title: string; summary: string; applies_when: string; content: st
 
 type InterviewResponse =
   | { done: false; question: string }
-  | { done: true; draft: Draft; explanation: string };
+  | {
+      done: true;
+      draft: Record<string, unknown>;
+      explanation: string;
+      suggested_playbook_ids?: string[];
+    };
 
 type Screen = "entrevista" | "revision" | "guardando";
 
@@ -43,12 +48,20 @@ export default function GuideInterviewWizard({
   kind,
   matterId,
   onSaved,
+  onDraftReady,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   kind: "guia" | "agente";
   matterId?: string;
   onSaved?: () => void;
+  // Bloque C: cuando kind='agente' y la entrevista termina, el wizard NO guarda ni muestra la
+  // revisión de guía — entrega el borrador del agente para precargar el formulario (gate HITL).
+  onDraftReady?: (
+    draft: Record<string, unknown>,
+    explanation: string,
+    suggestedPlaybookIds: string[],
+  ) => void;
 }) {
   const [screen, setScreen] = useState<Screen>("entrevista");
   const [transcript, setTranscript] = useState<Msg[]>([]);
@@ -85,7 +98,14 @@ export default function GuideInterviewWizard({
         matter_id: matterId,
       });
       if (res.done) {
-        setDraft(res.draft);
+        if (kind === "agente") {
+          // El agente NO se guarda aquí: se entrega el borrador para precargar el formulario
+          // de creación, donde el abogado revisa y pulsa Guardar (gate HITL por construcción).
+          onDraftReady?.(res.draft, res.explanation, res.suggested_playbook_ids ?? []);
+          onOpenChange(false);
+          return;
+        }
+        setDraft(res.draft as unknown as Draft);
         setExplanation(res.explanation);
         setScreen("revision");
       } else {
@@ -142,11 +162,12 @@ export default function GuideInterviewWizard({
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-primary" />
-                Crear guía con Mia
+                {kind === "agente" ? "Diseñar agente con Mia" : "Crear guía con Mia"}
               </DialogTitle>
               <DialogDescription>
-                Mia te hace unas preguntas cortas para entender cómo trabajas y arma un
-                primer borrador de la guía. Tú decides si se guarda.
+                {kind === "agente"
+                  ? "Estás diseñando un agente jurídico. Nada se guarda hasta que pulses Guardar en el formulario."
+                  : "Mia te hace unas preguntas cortas para entender cómo trabajas y arma un primer borrador de la guía. Tú decides si se guarda."}
               </DialogDescription>
             </DialogHeader>
 

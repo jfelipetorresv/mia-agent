@@ -8,9 +8,17 @@
 // paso enlaza a la sección donde se hace. Debajo del recorrido viven las
 // secciones: Conexiones, Carpetas, Automatizaciones, Valor y gasto, y —
 // plegado— Procesos de fondo (información secundaria de "la salud de Mia").
+//
+// CP-C3 · reorganizada en subtabs de shadcn con deep-link por hash: cada
+// sección vivía como <section id> + scroll nativo; ahora vive como TabsContent
+// (el contenido inactivo no está en el DOM, así que el deep-link se resuelve
+// seleccionando el tab, no haciendo scroll). Los anclas externas (setup.py,
+// dashboard/page.tsx, FuentesPanel.tsx, OneDriveFolderPicker.tsx) siguen
+// apuntando a /configurar#conexiones, #carpetas, #valor — por eso el mapa
+// hash→tab conserva esos mismos ids.
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -30,6 +38,7 @@ import {
 import { apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import AutomationsSection from "@/app/_components/AutomationsSection";
 import ConexionesSection from "@/app/_components/ConexionesSection";
@@ -101,19 +110,62 @@ const ESTADO_TEXTO: Record<Paso["estado"], string> = {
   omitido: "Para después",
 };
 
-// Navegación interna de la página: chips que saltan a cada sección de configuración.
-const SECCIONES_NAV = [
-  { id: "conexiones", label: "Conexiones" },
-  { id: "carpetas", label: "Carpetas" },
-  { id: "automatizaciones", label: "Automatizaciones" },
-  { id: "valor", label: "Valor y gasto" },
-];
+// Los 5 subtabs de la página. Los ids coinciden con los anclas históricos
+// (#conexiones, #carpetas, #automatizaciones, #valor) para que ningún enlace
+// externo (setup.py, dashboard, FuentesPanel, OneDriveFolderPicker) se rompa.
+type TabId = "primeros-pasos" | "conexiones" | "carpetas" | "automatizaciones" | "valor";
+
+const HASH_TO_TAB: Record<string, TabId> = {
+  "#primeros-pasos": "primeros-pasos",
+  "#conexiones": "conexiones",
+  "#carpetas": "carpetas",
+  "#automatizaciones": "automatizaciones",
+  "#valor": "valor",
+};
+
+function tabFromHash(): TabId | null {
+  if (typeof window === "undefined") return null;
+  return HASH_TO_TAB[window.location.hash] ?? null;
+}
 
 export default function ConfigurarPage() {
   const [s, setS] = useState<Status | null>(null);
   const [error, setError] = useState("");
   const [abierta, setAbierta] = useState<string | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
+
+  // Lazy initializer: si se llega con un hash reconocido, ese tab manda desde
+  // el primer render (evita el "flash" del tab por defecto). Si no hay hash,
+  // arrancamos en "primeros-pasos" y, cuando cargue `s`, ajustamos el default
+  // a "conexiones" si el recorrido ya estaba completo — pero solo si el
+  // abogado no llegó con hash y no cambió de tab por su cuenta mientras tanto.
+  const [tab, setTab] = useState<TabId>(() => tabFromHash() ?? "primeros-pasos");
+  const hashOnMount = useRef(tabFromHash() !== null);
+  const tabChangedByUser = useRef(false);
+
+  function handleTabChange(v: string) {
+    const id = v as TabId;
+    setTab(id);
+    tabChangedByUser.current = true;
+    // replaceState (no pushState): cambiar de tab no debe ensuciar el historial.
+    window.history.replaceState(null, "", `#${id}`);
+  }
+
+  // Cubre navegación con next/link hacia /configurar#valor estando YA en
+  // /configurar (el <a>/<Link> solo cambia el hash, no remonta la página).
+  useEffect(() => {
+    function onHashChange() {
+      const id = tabFromHash();
+      if (id) setTab(id);
+    }
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (!s || hashOnMount.current || tabChangedByUser.current) return;
+    setTab(s.completados >= s.total ? "conexiones" : "primeros-pasos");
+  }, [s]);
 
   async function load() {
     try {
@@ -285,156 +337,177 @@ export default function ConfigurarPage() {
 
       {skipMsg ? <p className="mt-4 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{skipMsg}</p> : null}
 
-      {completo ? (
-        <details className="mt-6 group rounded-xl border border-success/25 bg-success/10 shadow-sm animate-fade-in">
-          <summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm font-medium text-success [&::-webkit-details-marker]:hidden">
-            <PartyPopper className="h-4 w-4" />
-            Primeros pasos (completado)
-            <ChevronDown className="ml-auto h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="border-t border-success/25 px-4 py-3">
-            {pasosList}
-          </div>
-        </details>
-      ) : (
-        <>
-          {/* Progreso: el abogado ve de un vistazo cuánto falta. */}
-          <div className="mt-6 animate-slide-up" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
-            <div className="flex items-center gap-3">
-              <div
-                role="progressbar"
-                aria-valuenow={s.completados}
-                aria-valuemin={0}
-                aria-valuemax={s.total}
-                aria-label={`Progreso de configuración: ${s.completados} de ${s.total} pasos listos`}
-                className="h-2.5 flex-1 overflow-hidden rounded-full bg-muted"
-              >
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-primary to-primary/80 transition-all duration-500"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              <span className="shrink-0 text-sm font-medium tabular-nums text-muted-foreground">
-                {s.completados} de {s.total}
-              </span>
+      <Tabs value={tab} onValueChange={handleTabChange} className="mt-8">
+        <TabsList className="h-auto flex-wrap justify-start gap-1">
+          <TabsTrigger value="primeros-pasos" className="gap-1.5">
+            {completo ? (
+              <>
+                <Check className="h-3.5 w-3.5" aria-hidden />
+                Primeros pasos
+              </>
+            ) : (
+              <>
+                Primeros pasos · {s.completados} de {s.total}
+              </>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="conexiones" className="gap-1.5">
+            <Settings2 className="h-4 w-4" />
+            Conexiones
+          </TabsTrigger>
+          <TabsTrigger value="carpetas" className="gap-1.5">
+            Carpetas
+          </TabsTrigger>
+          <TabsTrigger value="automatizaciones" className="gap-1.5">
+            <Repeat className="h-4 w-4" />
+            Automatizaciones
+          </TabsTrigger>
+          <TabsTrigger value="valor" className="gap-1.5">
+            <PiggyBank className="h-4 w-4" />
+            Valor y gasto
+          </TabsTrigger>
+        </TabsList>
+
+        {/* ── Primeros pasos ────────────────────────────────────────── */}
+        <TabsContent value="primeros-pasos" className="animate-fade-in">
+          {completo ? (
+            <div className="mt-6 flex items-center gap-2 rounded-xl border border-success/25 bg-success/10 px-4 py-3 text-sm font-medium text-success">
+              <PartyPopper className="h-4 w-4" />
+              Ya completaste los primeros pasos
             </div>
-          </div>
+          ) : (
+            <div className="mt-6">
+              <div className="flex items-center gap-3">
+                <div
+                  role="progressbar"
+                  aria-valuenow={s.completados}
+                  aria-valuemin={0}
+                  aria-valuemax={s.total}
+                  aria-label={`Progreso de configuración: ${s.completados} de ${s.total} pasos listos`}
+                  className="h-2.5 flex-1 overflow-hidden rounded-full bg-muted"
+                >
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-primary to-primary/80 transition-all duration-500"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="shrink-0 text-sm font-medium tabular-nums text-muted-foreground">
+                  {s.completados} de {s.total}
+                </span>
+              </div>
+            </div>
+          )}
           {pasosList}
-        </>
-      )}
 
-      {/* ── Navegación de secciones ───────────────────────────────── */}
-      <nav aria-label="Secciones de configuración" className="mt-10 flex flex-wrap gap-1.5">
-        {SECCIONES_NAV.map((sec) => (
-          <a
-            key={sec.id}
-            href={`#${sec.id}`}
-            className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            {sec.label}
-          </a>
-        ))}
-      </nav>
-
-      {/* ── Conexiones ────────────────────────────────────────────── */}
-      <section id="conexiones" className="mt-8 scroll-mt-6">
-        <SectionTitle
-          icon={Settings2}
-          title="Conexiones"
-          hint="Lo que Mia puede usar para ayudarte. Todo se activa solo si tú lo decides."
-        />
-        <ConexionesSection connectors={c} onChanged={loadStats} />
-      </section>
-
-      {/* ── Carpetas ──────────────────────────────────────────────── */}
-      <section id="carpetas" className="mt-12 scroll-mt-6">
-        <CarpetasSection />
-      </section>
-
-      {/* ── Automatizaciones ──────────────────────────────────────── */}
-      <section id="automatizaciones" className="mt-12 scroll-mt-6">
-        <SectionTitle icon={Repeat} title="Automatizaciones" />
-        <AutomationsSection />
-      </section>
-
-      {/* ── Valor y gasto ─────────────────────────────────────────── */}
-      <section id="valor" className="mt-12 scroll-mt-6">
-        <SectionTitle icon={PiggyBank} title="Valor y gasto del mes" />
-        <ValorGastoSection value={stats?.value} onChanged={loadStats} />
-      </section>
-
-      {/* ── Procesos de fondo (información secundaria, plegada) ──── */}
-      <details className="mt-12 group rounded-xl border border-border bg-card shadow-sm">
-        <summary className="flex cursor-pointer items-center gap-3 px-5 py-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <HeartPulse className="h-4 w-4" />
-          </span>
-          <span className="flex-1">
-            Procesos de fondo
-            <span className="ml-2 text-xs font-normal text-muted-foreground">(La salud de Mia)</span>
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="border-t border-border px-5 py-4">
-          <p className="mb-4 text-sm text-muted-foreground">
-            Cómo va el conocimiento que Mia construye de tu despacho y sus procesos de fondo.
-          </p>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <StatCard icon={HeartPulse} label="Aprobación semanal" value={Math.round((brain.weekly_approval_rate || 0) * 100)} suffix="%" delay={0} />
-            <StatCard icon={BookOpen} label="Conceptos" value={brain.concepts_count} delay={1} />
-            <StatCard icon={Lightbulb} label="Habilidades activas" value={brain.skills_active} delay={2} />
-            <StatCard icon={FileText} label="Habilidades archivadas" value={brain.skills_archived} delay={3} />
-          </div>
-          <p className="mt-3 text-sm text-muted-foreground">Próxima consolidación: {fmt(brain.next_consolidation)}</p>
-
-          {jobs.length > 0 ? (
-            <ul className="mt-5 space-y-2">
-              {jobs.map((j, i) => (
-                <li key={i} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-sm">
-                  <span className="flex items-center gap-2.5">
-                    <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    {j.label}
-                  </span>
-                  <span className="shrink-0 text-muted-foreground">Próxima actualización: {fmt(j.next_run)}</span>
-                </li>
-              ))}
-            </ul>
+          {s.secciones && s.secciones.length ? (
+            <section className="mt-10">
+              <h2 className="mb-1 flex items-center gap-2 text-base font-semibold tracking-tight">
+                <Map className="h-4 w-4 text-primary" />
+                ¿Qué hace cada sección de Mia?
+              </h2>
+              <p className="mb-4 text-sm text-muted-foreground">
+                El mapa de la casa: para qué sirve cada pantalla que ves en el menú.
+              </p>
+              <ul className="space-y-2">
+                {s.secciones.map((sec) => (
+                  <li key={sec.titulo}>
+                    <details className="group rounded-xl border border-border bg-card shadow-sm transition-colors hover:border-primary/25">
+                      <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 font-medium [&::-webkit-details-marker]:hidden">
+                        {sec.titulo}
+                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                      </summary>
+                      <div className="space-y-1.5 border-t border-border px-4 py-3 text-sm text-muted-foreground">
+                        <p>{sec.que_es}</p>
+                        <p>{sec.para_que}</p>
+                      </div>
+                    </details>
+                  </li>
+                ))}
+              </ul>
+            </section>
           ) : null}
-        </div>
-      </details>
 
-      {s.secciones && s.secciones.length ? (
-        <section className="mt-10">
-          <h2 className="mb-1 flex items-center gap-2 text-base font-semibold tracking-tight">
-            <Map className="h-4 w-4 text-primary" />
-            ¿Qué hace cada sección de Mia?
-          </h2>
-          <p className="mb-4 text-sm text-muted-foreground">
-            El mapa de la casa: para qué sirve cada pantalla que ves en el menú.
+          <p className="mt-8 text-sm text-muted-foreground">
+            Cada paso te lleva a la pantalla donde se hace. Cuando actives Telegram,
+            también podrás pedirle ayuda a Mia desde el celular.
           </p>
-          <ul className="space-y-2">
-            {s.secciones.map((sec) => (
-              <li key={sec.titulo}>
-                <details className="group rounded-xl border border-border bg-card shadow-sm transition-colors hover:border-primary/25">
-                  <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 font-medium [&::-webkit-details-marker]:hidden">
-                    {sec.titulo}
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-                  </summary>
-                  <div className="space-y-1.5 border-t border-border px-4 py-3 text-sm text-muted-foreground">
-                    <p>{sec.que_es}</p>
-                    <p>{sec.para_que}</p>
-                  </div>
-                </details>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+        </TabsContent>
 
-      <p className="mt-8 text-sm text-muted-foreground">
-        Cada paso te lleva a la pantalla donde se hace. Cuando actives Telegram,
-        también podrás pedirle ayuda a Mia desde el celular.
-      </p>
+        {/* ── Conexiones ────────────────────────────────────────────── */}
+        <TabsContent value="conexiones" className="animate-fade-in">
+          <section id="conexiones" className="mt-6 scroll-mt-6">
+            <SectionTitle
+              icon={Settings2}
+              title="Conexiones"
+              hint="Lo que Mia puede usar para ayudarte. Todo se activa solo si tú lo decides."
+            />
+            <ConexionesSection connectors={c} onChanged={loadStats} />
+          </section>
+        </TabsContent>
+
+        {/* ── Carpetas ──────────────────────────────────────────────── */}
+        <TabsContent value="carpetas" className="animate-fade-in">
+          <section id="carpetas" className="mt-6 scroll-mt-6">
+            <CarpetasSection />
+          </section>
+        </TabsContent>
+
+        {/* ── Automatizaciones ──────────────────────────────────────── */}
+        <TabsContent value="automatizaciones" className="animate-fade-in">
+          <section id="automatizaciones" className="mt-6 scroll-mt-6">
+            <SectionTitle icon={Repeat} title="Automatizaciones" />
+            <AutomationsSection />
+          </section>
+        </TabsContent>
+
+        {/* ── Valor y gasto ─────────────────────────────────────────── */}
+        <TabsContent value="valor" className="animate-fade-in">
+          <section id="valor" className="mt-6 scroll-mt-6">
+            <SectionTitle icon={PiggyBank} title="Valor y gasto del mes" />
+            <ValorGastoSection value={stats?.value} onChanged={loadStats} />
+          </section>
+
+          {/* ── Procesos de fondo (información secundaria, plegada) ──── */}
+          <details className="mt-12 group rounded-xl border border-border bg-card shadow-sm">
+            <summary className="flex cursor-pointer items-center gap-3 px-5 py-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <HeartPulse className="h-4 w-4" />
+              </span>
+              <span className="flex-1">
+                Procesos de fondo
+                <span className="ml-2 text-xs font-normal text-muted-foreground">(La salud de Mia)</span>
+              </span>
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="border-t border-border px-5 py-4">
+              <p className="mb-4 text-sm text-muted-foreground">
+                Cómo va el conocimiento que Mia construye de tu despacho y sus procesos de fondo.
+              </p>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <StatCard icon={HeartPulse} label="Aprobación semanal" value={Math.round((brain.weekly_approval_rate || 0) * 100)} suffix="%" delay={0} />
+                <StatCard icon={BookOpen} label="Conceptos" value={brain.concepts_count} delay={1} />
+                <StatCard icon={Lightbulb} label="Habilidades activas" value={brain.skills_active} delay={2} />
+                <StatCard icon={FileText} label="Habilidades archivadas" value={brain.skills_archived} delay={3} />
+              </div>
+              <p className="mt-3 text-sm text-muted-foreground">Próxima consolidación: {fmt(brain.next_consolidation)}</p>
+
+              {jobs.length > 0 ? (
+                <ul className="mt-5 space-y-2">
+                  {jobs.map((j, i) => (
+                    <li key={i} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-sm">
+                      <span className="flex items-center gap-2.5">
+                        <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        {j.label}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground">Próxima actualización: {fmt(j.next_run)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </details>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

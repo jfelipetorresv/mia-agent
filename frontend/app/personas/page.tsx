@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Drama, Lock, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Drama, Lock, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import GuideInterviewWizard from "@/app/_components/GuideInterviewWizard";
+
+// Tope de guías que un agente puede priorizar (debe coincidir con MAX_LINKED_PLAYBOOKS del backend).
+const MAX_LINKED_GUIDES = 8;
+
+type Guide = { id: string; title: string; status: string };
 
 type Persona = {
   id: string;
@@ -21,6 +27,7 @@ type Persona = {
   summon_phrases: string[];
   description: string;
   enabled: boolean;
+  playbook_ids: string[];
 };
 
 type PersonaForm = {
@@ -33,6 +40,7 @@ type PersonaForm = {
   summon_phrases: string[];
   description: string;
   enabled: boolean;
+  playbook_ids: string[];
 };
 
 const EMPTY_FORM: PersonaForm = {
@@ -45,6 +53,7 @@ const EMPTY_FORM: PersonaForm = {
   summon_phrases: [],
   description: "",
   enabled: true,
+  playbook_ids: [],
 };
 
 function motorLabel(tier: string): string {
@@ -57,6 +66,7 @@ function apiMessage(err: unknown, fallback: string): string {
 
 export default function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
+  const [guides, setGuides] = useState<Guide[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [editing, setEditing] = useState<Persona | null>(null);
@@ -64,6 +74,8 @@ export default function PersonasPage() {
   const [form, setForm] = useState<PersonaForm>(EMPTY_FORM);
   const [formMsg, setFormMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [miaNotice, setMiaNotice] = useState("");
 
   async function load() {
     setLoadErr("");
@@ -72,14 +84,27 @@ export default function PersonasPage() {
       setPersonas(res.personas || []);
     } catch (err) {
       setPersonas([]);
-      setLoadErr(apiMessage(err, "No se pudieron cargar las personas. Recarga la página."));
+      setLoadErr(apiMessage(err, "No se pudieron cargar los agentes. Recarga la página."));
     } finally {
       setLoaded(true);
     }
   }
 
+  async function loadGuides() {
+    try {
+      // Se piden TODAS (no solo activas): una guía archivada que siga vinculada a un
+      // agente debe verse en el formulario (con su etiqueta) para que el cupo "N de 8"
+      // nunca lo ocupen guías invisibles que el abogado no puede desmarcar.
+      const res = await apiGet<Guide[]>("/api/playbooks?status=todos");
+      setGuides((res || []).map((g) => ({ id: g.id, title: g.title, status: g.status || "active" })));
+    } catch {
+      setGuides([]);
+    }
+  }
+
   useEffect(() => {
     load();
+    loadGuides();
   }, []);
 
   function openCreate() {
@@ -87,6 +112,7 @@ export default function PersonasPage() {
     setCreating(true);
     setForm(EMPTY_FORM);
     setFormMsg("");
+    setMiaNotice("");
   }
 
   function openEdit(p: Persona) {
@@ -102,8 +128,41 @@ export default function PersonasPage() {
       summon_phrases: [...(p.summon_phrases || [])],
       description: p.description || "",
       enabled: p.enabled,
+      playbook_ids: [...(p.playbook_ids || [])],
     });
     setFormMsg("");
+    setMiaNotice("");
+  }
+
+  // Bloque C: Mia terminó de diseñar un agente → se abre el formulario de CREACIÓN
+  // precargado con el borrador. Nada se guarda hasta que el abogado pulse Guardar (gate HITL).
+  function onMiaDraftReady(
+    draft: Record<string, unknown>,
+    _explanation: string,
+    suggestedPlaybookIds: string[],
+  ) {
+    const existing = new Set(guides.map((g) => g.id));
+    const linked = (suggestedPlaybookIds || []).filter((id) => existing.has(id)).slice(0, MAX_LINKED_GUIDES);
+    const asStr = (v: unknown) => (typeof v === "string" ? v : "");
+    const asList = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+    setEditing(null);
+    setCreating(true);
+    setForm({
+      name: asStr(draft.name),
+      title: asStr(draft.title),
+      role_prompt: asStr(draft.role_prompt),
+      tone: asStr(draft.tone),
+      focus_areas: asList(draft.focus_areas),
+      model_tier: "estandar",
+      summon_phrases: asList(draft.summon_phrases),
+      description: asStr(draft.description),
+      enabled: true,
+      playbook_ids: linked,
+    });
+    setFormMsg("");
+    setMiaNotice(
+      "Mia preparó este borrador. Revísalo y ajústalo — solo se guardará cuando pulses Guardar.",
+    );
   }
 
   function closeForm() {
@@ -111,6 +170,7 @@ export default function PersonasPage() {
     setCreating(false);
     setForm(EMPTY_FORM);
     setFormMsg("");
+    setMiaNotice("");
   }
 
   async function saveForm() {
@@ -131,6 +191,7 @@ export default function PersonasPage() {
         summon_phrases: form.summon_phrases,
         description: form.description.trim(),
         enabled: form.enabled,
+        playbook_ids: form.playbook_ids,
       };
       if (creating) {
         await apiSend("POST", "/api/personas", body);
@@ -140,21 +201,21 @@ export default function PersonasPage() {
       closeForm();
       await load();
     } catch (err) {
-      setFormMsg(apiMessage(err, "No se pudo guardar la persona. Intenta de nuevo."));
+      setFormMsg(apiMessage(err, "No se pudo guardar el agente. Intenta de nuevo."));
     } finally {
       setBusy(false);
     }
   }
 
   async function removePersona(p: Persona) {
-    if (!window.confirm(`¿Eliminar a "${p.name}"? Ya no podrás invocarla en el chat.`)) return;
+    if (!window.confirm(`¿Eliminar a "${p.name}"? Ya no podrás invocarlo en el chat.`)) return;
     setFormMsg("");
     try {
       await apiSend("DELETE", `/api/personas/${p.id}`);
       if (editing?.id === p.id) closeForm();
       await load();
     } catch (err) {
-      setFormMsg(apiMessage(err, "No se pudo eliminar la persona. Intenta de nuevo."));
+      setFormMsg(apiMessage(err, "No se pudo eliminar el agente. Intenta de nuevo."));
     }
   }
 
@@ -173,19 +234,32 @@ export default function PersonasPage() {
     <div className="mx-auto max-w-3xl space-y-8 px-6 py-10 md:px-8">
       <div className="flex flex-wrap items-start justify-between gap-4 animate-slide-up">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Personas jurídicas</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Agentes jurídicos</h1>
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             Roles especializados que invocas en el chat — por ejemplo «actúa como litigante» o «revisa las citas».
-            Cada persona colorea el tono de Mia en ese turno; nada se activa solo.
+            Cada agente colorea el tono de Mia en ese turno y puede priorizar tus guías; nada se activa solo.
           </p>
         </div>
         {!creating && !editing ? (
-          <Button onClick={openCreate} className="shrink-0 gap-2">
-            <Plus className="h-4 w-4" />
-            Crear persona
-          </Button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setWizardOpen(true)} className="gap-2">
+              <Sparkles className="h-4 w-4" />
+              Crear con Mia
+            </Button>
+            <Button onClick={openCreate} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Nuevo agente
+            </Button>
+          </div>
         ) : null}
       </div>
+
+      <GuideInterviewWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        kind="agente"
+        onDraftReady={onMiaDraftReady}
+      />
 
       {loadErr ? <p role="alert" className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{loadErr}</p> : null}
       {formMsg && !creating && !editing ? (
@@ -194,13 +268,15 @@ export default function PersonasPage() {
 
       {creating || editing ? (
         <PersonaFormPanel
-          title={creating ? "Nueva persona" : `Editar: ${editing?.name}`}
+          title={creating ? "Nuevo agente" : `Editar: ${editing?.name}`}
           form={form}
           setForm={setForm}
           onSave={saveForm}
           onCancel={closeForm}
           busy={busy}
           msg={formMsg}
+          guides={guides}
+          notice={miaNotice}
         />
       ) : null}
 
@@ -209,15 +285,15 @@ export default function PersonasPage() {
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
             <Drama className="h-6 w-6" />
           </div>
-          <h2 className="text-lg font-medium">Aún no hay personas configuradas</h2>
+          <h2 className="text-lg font-medium">Aún no hay agentes configurados</h2>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            Una persona es un rol que Mia adopta cuando se lo pides en el chat:
+            Un agente es un rol que Mia adopta cuando se lo pides en el chat:
             un litigante agresivo, un revisor de citas escéptico, un conciliador.
-            Crea la primera o recarga para ver las de fábrica.
+            Crea el primero o recarga para ver los de fábrica.
           </p>
           <Button onClick={openCreate} className="mt-6 gap-2">
             <Plus className="h-4 w-4" />
-            Crear persona
+            Nuevo agente
           </Button>
         </div>
       ) : (
@@ -241,7 +317,7 @@ export default function PersonasPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{p.name}</span>
                       {p.title ? <span className="text-sm text-muted-foreground">· {p.title}</span> : null}
-                      {!p.enabled ? <Badge variant="secondary">Deshabilitada</Badge> : null}
+                      {!p.enabled ? <Badge variant="secondary">Deshabilitado</Badge> : null}
                       {p.model_tier === "local" ? (
                         <Badge variant="secondary" className="gap-1 bg-success/15 text-success">
                           <Lock className="h-3 w-3" />
@@ -254,7 +330,7 @@ export default function PersonasPage() {
                     </p>
                     {p.summon_phrases?.length ? (
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        <span className="text-xs text-muted-foreground">Invócala con:</span>
+                        <span className="text-xs text-muted-foreground">Invócalo con:</span>
                         {p.summon_phrases.map((f) => (
                           <span
                             key={f}
@@ -299,6 +375,8 @@ function PersonaFormPanel({
   onCancel,
   busy,
   msg,
+  guides,
+  notice,
 }: {
   title: string;
   form: PersonaForm;
@@ -307,15 +385,23 @@ function PersonaFormPanel({
   onCancel: () => void;
   busy: boolean;
   msg: string;
+  guides: Guide[];
+  notice: string;
 }) {
   return (
     <div className="animate-slide-up rounded-xl border border-primary/25 bg-card p-6 shadow-md">
       <h2 className="mb-5 text-lg font-semibold tracking-tight">{title}</h2>
+      {notice ? (
+        <p className="mb-5 flex items-start gap-2 rounded-md bg-primary/10 px-3 py-2 text-sm text-primary">
+          <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+          {notice}
+        </p>
+      ) : null}
       <div className="space-y-4">
         <TextField label="Nombre" value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
         <TextField label="Título (opcional)" value={form.title} onChange={(v) => setForm({ ...form, title: v })} />
         <div className="space-y-1.5">
-          <Label htmlFor="role-prompt">Cómo debe razonar y hablar esta persona</Label>
+          <Label htmlFor="role-prompt">Cómo debe razonar y hablar este agente</Label>
           <Textarea
             id="role-prompt"
             value={form.role_prompt}
@@ -349,6 +435,11 @@ function PersonaFormPanel({
           </select>
           <p className="text-xs text-muted-foreground">{motorLabel(form.model_tier)}</p>
         </div>
+        <GuidesLinkField
+          guides={guides}
+          selected={form.playbook_ids}
+          onChange={(ids) => setForm({ ...form, playbook_ids: ids })}
+        />
         <div className="space-y-1.5">
           <Label htmlFor="persona-desc">Descripción breve (opcional)</Label>
           <Textarea
@@ -366,7 +457,7 @@ function PersonaFormPanel({
             onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
             className="h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
           />
-          Persona habilitada (se puede invocar en el chat)
+          Agente habilitado (se puede invocar en el chat)
         </label>
       </div>
       {msg ? (
@@ -380,6 +471,80 @@ function PersonaFormPanel({
           Cancelar
         </Button>
       </div>
+    </div>
+  );
+}
+
+function GuidesLinkField({
+  guides,
+  selected,
+  onChange,
+}: {
+  guides: Guide[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const atMax = selected.length >= MAX_LINKED_GUIDES;
+  // Visibles: todas las activas + las archivadas que sigan vinculadas (para que el cupo
+  // "N de 8" nunca lo ocupen guías que el abogado no puede ver ni desmarcar).
+  const visibles = guides.filter((g) => g.status === "active" || selected.includes(g.id));
+  function toggle(id: string, on: boolean) {
+    if (on) {
+      if (selected.includes(id) || atMax) return;
+      onChange([...selected, id]);
+    } else {
+      onChange(selected.filter((x) => x !== id));
+    }
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <Label>Guías vinculadas</Label>
+        <span className="text-xs text-muted-foreground">
+          {selected.length} de {MAX_LINKED_GUIDES}
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground">Este agente prioriza estas guías cuando trabaja.</p>
+      {visibles.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+          Todavía no tienes guías activas en el despacho. Crea guías en Conocimiento y podrás vincularlas aquí.
+        </p>
+      ) : (
+        <div className="max-h-52 space-y-1 overflow-auto rounded-lg border border-input bg-card p-2">
+          {visibles.map((g) => {
+            const checked = selected.includes(g.id);
+            const disabled = !checked && atMax;
+            const archivada = g.status !== "active";
+            return (
+              <label
+                key={g.id}
+                className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent ${
+                  disabled ? "cursor-not-allowed opacity-50" : ""
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={(e) => toggle(g.id, e.target.checked)}
+                  className="h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
+                />
+                <span className="min-w-0 truncate">{g.title}</span>
+                {archivada && (
+                  <Badge variant="outline" className="ml-auto shrink-0 text-[10px]">
+                    Archivada — ya no se usa
+                  </Badge>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      )}
+      {atMax ? (
+        <p className="text-xs text-muted-foreground">
+          Llegaste al máximo de {MAX_LINKED_GUIDES} guías. Quita alguna para vincular otra.
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -363,6 +363,48 @@ def build_summary(responses: dict) -> str:
     return "\n".join(lines)
 
 
+def derive_firm_profile(responses: dict) -> dict:
+    """Deriva el subconjunto de `firm_profiles` (Fase 3, tabla estructurada) A PARTIR de las
+    respuestas de la entrevista — la fuente canónica sigue siendo el archivo de respuestas
+    en disco (C2, decisión de Pipe: `firm_profiles` pasa a ser DERIVADO, no fuente).
+
+    Pura y determinista (misma entrada → misma salida). Mapea SOLO los campos derivables:
+    `name`/`lawyer_name` (identity.name), `jurisdiction` (jurisdiction.base),
+    `practice_areas` (jurisdiction.practice_areas) y `tools` (memory.tools_that_survived).
+    Omite toda clave sin valor — NUNCA pisa con '' o [] (el llamador hace merge encima de
+    lo que ya había en `firm_profiles`). NO deriva ni toca `tp_number`, `preferred_sources`,
+    `voice_adjectives`, `banned_words`, `hard_nos` ni `rhythm` (extras/legacy, fuera del
+    cuestionario actual — los edita el abogado aparte, como "extras")."""
+    r = responses or {}
+    out: dict = {}
+
+    firm, lawyer = _firm_lawyer(r.get("identity.name"))
+    if firm:
+        out["name"] = firm
+    if lawyer:
+        out["lawyer_name"] = lawyer
+
+    base = _text(r.get("jurisdiction.base"))
+    if base:
+        out["jurisdiction"] = base
+
+    # practice_areas: si viene string (respuesta legacy en texto libre), se separa por
+    # comas ("Civil, comercial, laboral" -> 3 áreas); si viene lista, tal cual.
+    raw_areas = r.get("jurisdiction.practice_areas")
+    if isinstance(raw_areas, list):
+        areas = [str(a).strip() for a in raw_areas if str(a).strip()]
+    else:
+        areas = [a.strip() for a in _text(raw_areas).split(",") if a.strip()]
+    if areas:
+        out["practice_areas"] = areas
+
+    tools = _items(r.get("memory.tools_that_survived"))
+    if tools:
+        out["tools"] = tools
+
+    return out
+
+
 def validate_soul(content: str) -> list[str]:
     """Defectos del SOUL.md generado. En el diseño DETERMINISTA los placeholders de
     plantilla son imposibles por construcción (build_soul omite lo vacío, jamás

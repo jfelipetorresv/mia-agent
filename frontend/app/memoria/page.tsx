@@ -20,10 +20,10 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
-  X,
 } from "lucide-react";
 import { apiGet, apiSend, apiUploadMany, ApiError } from "@/lib/api";
 import GuideInterviewWizard from "../_components/GuideInterviewWizard";
+import MiDespachoSection from "../_components/MiDespachoSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -74,7 +74,7 @@ export default function MemoriaPage() {
         </TabsList>
 
         <TabsContent value="despacho">
-          <Despacho />
+          <MiDespachoSection />
         </TabsContent>
         <TabsContent value="wiki">
           <Wiki />
@@ -86,66 +86,6 @@ export default function MemoriaPage() {
           <Sugerencias />
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-type Profile = {
-  name?: string;
-  lawyer_name?: string;
-  jurisdiction?: string;
-  practice_areas?: string[];
-  voice_adjectives?: string[];
-};
-
-function Despacho() {
-  const [p, setP] = useState<Profile>({ jurisdiction: "", practice_areas: [], voice_adjectives: [] });
-  const [loading, setLoading] = useState(true);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    apiGet<Profile>("/api/profile")
-      .then((d) => setP({ jurisdiction: "", practice_areas: [], voice_adjectives: [], ...d }))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  async function save() {
-    await apiSend("PUT", "/api/profile", p);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
-
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-14 w-full rounded-xl" />
-        <Skeleton className="h-14 w-full rounded-xl" />
-        <Skeleton className="h-14 w-full rounded-xl" />
-        <Skeleton className="h-14 w-full rounded-xl" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="animate-slide-up space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Estos datos le dan contexto a Mia en cada asunto: quién eres, dónde ejerces y cómo te gusta escribir.
-      </p>
-      <TextField label="Nombre del despacho" value={p.name || ""} onChange={(v) => setP({ ...p, name: v })} />
-      <TextField label="Abogado responsable" value={p.lawyer_name || ""} onChange={(v) => setP({ ...p, lawyer_name: v })} />
-      <TextField label="País y sistema jurídico principal" value={p.jurisdiction || ""} onChange={(v) => setP({ ...p, jurisdiction: v })} />
-      <ChipsField label="Áreas de práctica" value={p.practice_areas || []} onChange={(v) => setP({ ...p, practice_areas: v })} />
-      <ChipsField label="Estilo" value={p.voice_adjectives || []} onChange={(v) => setP({ ...p, voice_adjectives: v })} />
-      <div className="flex items-center gap-3 pt-2">
-        <Button onClick={save}>Guardar</Button>
-        {saved ? (
-          <span className="flex items-center gap-1.5 text-sm text-success animate-fade-in">
-            <Check className="h-4 w-4" />
-            Guardado
-          </span>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -1087,43 +1027,3 @@ function TextField({ label, value, onChange }: { label: string; value: string; o
   );
 }
 
-function ChipsField({ label, value, onChange }: { label: string; value: string[]; onChange: (v: string[]) => void }) {
-  const [draft, setDraft] = useState("");
-  function add() {
-    const v = draft.trim();
-    if (v && !value.includes(v)) onChange([...value, v]);
-    setDraft("");
-  }
-  return (
-    <div className="space-y-1.5">
-      <Label>{label}</Label>
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-input bg-card px-2 py-2 transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
-        {value.map((chip) => (
-          <Badge key={chip} variant="secondary" className="gap-1 pr-1">
-            {chip}
-            <button
-              type="button"
-              onClick={() => onChange(value.filter((c) => c !== chip))}
-              aria-label={`Quitar ${chip}`}
-              className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
-        ))}
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-          placeholder="Escribe y presiona Enter"
-          className="min-w-[120px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
-        />
-      </div>
-    </div>
-  );
-}

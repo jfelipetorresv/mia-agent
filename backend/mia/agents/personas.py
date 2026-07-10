@@ -40,7 +40,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from ..db import pool
@@ -69,6 +69,9 @@ MAX_FOCUS_AREAS = 12
 MAX_FOCUS_LEN = 80
 MAX_SUMMON_PHRASES = 12
 MAX_SUMMON_LEN = 80
+# Cuántas guías del despacho puede priorizar UN agente (tope defensivo; el prompt del
+# turno no debe ahogarse en material de referencia). En la UI se llama "guía", no playbook.
+MAX_LINKED_PLAYBOOKS = 8
 # Una frase de invocación demasiado corta ("de", "el") casaría con casi todo mensaje:
 # se exige un mínimo para no secuestrar turnos por accidente.
 MIN_SUMMON_LEN = 3
@@ -96,6 +99,9 @@ class Persona:
     summon_phrases: tuple[str, ...]
     description: str
     enabled: bool
+    # Guías del despacho que este agente prioriza (ids de `playbooks`), en el orden elegido
+    # por el abogado. Se cargan aparte (tabla persona_playbooks) — fail-open: vacío si falla.
+    playbook_ids: tuple[str, ...] = ()
 
     def to_public(self) -> dict:
         """Vista para la API/UI (sin jerga técnica de motor: el nivel se traduce)."""
@@ -110,16 +116,18 @@ class Persona:
             "summon_phrases": list(self.summon_phrases),
             "description": self.description,
             "enabled": self.enabled,
+            "playbook_ids": list(self.playbook_ids),
         }
 
     def turn_context(self) -> dict:
-        """Lo que viaja al turno (grafo/asistente): nombre, voz pre-renderizada y el
-        alias de motor YA acotado por la política activa. JSON-serializable (viaja en
-        el checkpoint del asunto)."""
+        """Lo que viaja al turno (grafo/asistente): nombre, voz pre-renderizada, el
+        alias de motor YA acotado por la política activa y las guías priorizadas.
+        JSON-serializable (viaja en el checkpoint del asunto)."""
         return {
             "name": self.name,
             "voice": render_persona_voice(self),
             "alias": resolve_persona_alias(self.model_tier),
+            "playbook_ids": list(self.playbook_ids),
         }
 
 
@@ -416,6 +424,96 @@ class PersonaService:
                 (tenant_id, _SEEDED_FLAG, _SEEDED_FLAG),
             )
 
+    # ── vínculos persona → guías (fail-open) ──────────────────────────────────
+    async def _load_links(self, tenant_id: str, persona_ids: list[str]) -> dict:
+        """Mapa persona_id → tupla de ids de guías vinculadas (por position, created_at),
+        en UNA query agregada. FAIL-OPEN: ante cualquier error devuelve {} (las personas
+        quedan sin vínculos) y el flujo sigue — vincular guías es una ayuda, no un candado.
+        Corre en su PROPIA conexión: un fallo aquí no aborta la transacción de la lectura."""
+        if not persona_ids:
+            return {}
+        try:
+            async with pool.tenant_connection(tenant_id) as conn:
+                rows = await (await conn.execute(
+                    "SELECT persona_id, array_agg(playbook_id ORDER BY position, created_at) "
+                    "FROM persona_playbooks WHERE persona_id = ANY(%s::uuid[]) "
+                    "GROUP BY persona_id",
+                    (persona_ids,),
+                )).fetchall()
+            return {str(r[0]): tuple(str(x) for x in (r[1] or ())) for r in rows}
+        except Exception:  # noqa: BLE001 — CP-E3: los vínculos jamás tumban el turno
+            logger.warning("personas: no se pudieron cargar los vínculos de guías (tenant=%s)",
+                           tenant_id, exc_info=True)
+            return {}
+
+    async def _attach_links(self, tenant_id: str, personas: list[Persona]) -> list[Persona]:
+        """Adjunta los ids de guías vinculadas a cada persona (fail-open: sin vínculos si
+        la query falla). Persona es frozen → se reconstruye con dataclasses.replace."""
+        if not personas:
+            return personas
+        try:
+            links = await self._load_links(tenant_id, [p.id for p in personas])
+        except Exception:  # noqa: BLE001 — doble red CP-E3: adjuntar vínculos jamás tumba el turno
+            logger.warning("personas: no se pudieron adjuntar los vínculos (tenant=%s)",
+                           tenant_id, exc_info=True)
+            return personas
+        if not links:
+            return personas
+        return [replace(p, playbook_ids=links[p.id]) if links.get(p.id) else p
+                for p in personas]
+
+    async def get_linked_playbook_ids(self, tenant_id: str, persona_id: str) -> list[str]:
+        """Ids de las guías vinculadas a un agente, en su orden (position, created_at)."""
+        persona_id = _require_uuid(persona_id)
+        links = await self._load_links(tenant_id, [persona_id])
+        return list(links.get(persona_id, ()))
+
+    async def set_linked_playbooks(
+        self, tenant_id: str, persona_id: str, playbook_ids: list[str]
+    ) -> None:
+        """Reemplaza las guías vinculadas de un agente (DELETE + INSERTs en una transacción).
+
+        Valida: el agente existe; tope MAX_LINKED_PLAYBOOKS; dedupe preservando orden; cada
+        id apunta a una guía del despacho (cualquier estado). Un id malformado o inexistente
+        → PersonaError en llano (NUNCA un 500 técnico)."""
+        persona_id = _require_uuid(persona_id)
+        # Dedupe preservando orden + validación de UUID (un id malformado se trata como una
+        # guía que "ya no existe", nunca como un error crudo que llegue al ::uuid de la DB).
+        clean: list[str] = []
+        seen: set[str] = set()
+        for pid in (playbook_ids or []):
+            try:
+                u = str(uuid.UUID(str(pid)))
+            except (ValueError, AttributeError, TypeError):
+                raise PersonaError("Una de las guías seleccionadas ya no existe.")
+            if u in seen:
+                continue
+            seen.add(u)
+            clean.append(u)
+        if len(clean) > MAX_LINKED_PLAYBOOKS:
+            raise PersonaError(
+                f"Un agente puede tener máximo {MAX_LINKED_PLAYBOOKS} guías vinculadas.")
+        async with pool.tenant_connection(tenant_id) as conn:
+            exists = await (await conn.execute(
+                "SELECT 1 FROM personas WHERE id = %s::uuid", (persona_id,),
+            )).fetchone()
+            if not exists:
+                raise PersonaError("Ese agente no existe en este despacho.")
+            if clean:
+                found = await (await conn.execute(
+                    "SELECT id FROM playbooks WHERE id = ANY(%s::uuid[])", (clean,),
+                )).fetchall()
+                found_ids = {str(r[0]) for r in found}
+                if any(pid not in found_ids for pid in clean):
+                    raise PersonaError("Una de las guías seleccionadas ya no existe.")
+            await conn.execute(
+                "DELETE FROM persona_playbooks WHERE persona_id = %s::uuid", (persona_id,))
+            for pos, pid in enumerate(clean):
+                await conn.execute(
+                    "INSERT INTO persona_playbooks (tenant_id, persona_id, playbook_id, position) "
+                    "VALUES (%s::uuid, %s::uuid, %s::uuid, %s)",
+                    (tenant_id, persona_id, pid, pos))
+
     # ── lecturas ──────────────────────────────────────────────────────────────
     async def list_personas(self, tenant_id: str) -> list[Persona]:
         """Personas del despacho (habilitadas y no), orden estable por nombre. Siembra
@@ -425,7 +523,7 @@ class PersonaService:
             rows = await (await conn.execute(
                 f"SELECT {_SELECT_COLS} FROM personas ORDER BY lower(name)"
             )).fetchall()
-        return [_row_to_persona(r) for r in rows]
+        return await self._attach_links(tenant_id, [_row_to_persona(r) for r in rows])
 
     async def get_persona(self, tenant_id: str, persona_id: str) -> Optional[Persona]:
         """Una persona del despacho por id, o None si no existe/es de otro despacho (RLS)."""
@@ -434,7 +532,10 @@ class PersonaService:
             row = await (await conn.execute(
                 f"SELECT {_SELECT_COLS} FROM personas WHERE id = %s::uuid", (persona_id,),
             )).fetchone()
-        return _row_to_persona(row) if row else None
+        if not row:
+            return None
+        attached = await self._attach_links(tenant_id, [_row_to_persona(row)])
+        return attached[0]
 
     async def _enabled_personas(self, tenant_id: str) -> list[Persona]:
         """Solo las habilitadas — para la detección por frases (sin sembrar en el turno
@@ -444,7 +545,7 @@ class PersonaService:
             rows = await (await conn.execute(
                 f"SELECT {_SELECT_COLS} FROM personas WHERE enabled = true"
             )).fetchall()
-        return [_row_to_persona(r) for r in rows]
+        return await self._attach_links(tenant_id, [_row_to_persona(r) for r in rows])
 
     # ── escrituras ─────────────────────────────────────────────────────────────
     async def create_persona(self, tenant_id: str, data: dict) -> Persona:

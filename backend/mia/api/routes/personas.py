@@ -39,6 +39,8 @@ class PersonaBody(BaseModel):
     summon_phrases: list[str] | None = None
     description: str | None = ""
     enabled: bool = True
+    # Guías del despacho que este agente prioriza (ids). None = no tocar los vínculos.
+    playbook_ids: list[str] | None = None
 
 
 @router.get("")
@@ -62,6 +64,12 @@ async def create_persona(body: PersonaBody, request: Request):
     tid = _tenant(request)
     try:
         persona = await persona_service.create_persona(tid, body.model_dump())
+        # Los vínculos a guías se fijan tras crear el agente. Si esto falla (tope, guía
+        # inexistente), el agente ya quedó creado SIN vínculos y se responde 422 en llano:
+        # el abogado corrige las guías y guarda de nuevo (no se pierde el agente).
+        if body.playbook_ids is not None:
+            await persona_service.set_linked_playbooks(tid, persona.id, body.playbook_ids)
+            persona = await persona_service.get_persona(tid, persona.id) or persona
         return persona.to_public()
     except PersonaError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -79,6 +87,9 @@ async def update_persona(persona_id: str, body: PersonaBody, request: Request):
     tid = _tenant(request)
     try:
         persona = await persona_service.update_persona(tid, persona_id, body.model_dump())
+        if body.playbook_ids is not None:
+            await persona_service.set_linked_playbooks(tid, persona_id, body.playbook_ids)
+            persona = await persona_service.get_persona(tid, persona_id) or persona
         return persona.to_public()
     except PersonaError as e:
         # Inexistente/ajena o dato inválido → 422 con el mensaje en llano.

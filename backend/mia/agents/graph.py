@@ -196,6 +196,45 @@ def _select_playbook_ids(rows: list[dict], query: str, *, max_n: int = _MAX_ACTI
     return [pid for pid, score in scored[:max_n] if score >= 1]
 
 
+def _persona_linked_ids(state: MatterState) -> list[str]:
+    """CP-E3 (Bloque C): ids de las guías que el agente del turno prioriza (o [] si no hay
+    agente ni vínculos). Puramente lectura del estado — no toca la DB."""
+    persona = state.get("persona") or {}
+    if not isinstance(persona, dict):
+        return []
+    ids = persona.get("playbook_ids") or []
+    if not isinstance(ids, (list, tuple)):
+        return []
+    return [str(x) for x in ids]
+
+
+def _select_with_persona(state: MatterState, rows: list[dict], query: str,
+                         *, max_n: int = _MAX_ACTIVE_PLAYBOOKS) -> list[str]:
+    """Selección de guías a activar, priorizando las VINCULADAS al agente del turno.
+
+    Las guías vinculadas que estén ACTIVAS (presentes en `rows`) van PRIMERO, en su orden,
+    hasta `max_n`; los cupos restantes se llenan con la selección por score (excluyendo las
+    ya elegidas). Sin agente o sin vínculos → idéntico a `_select_playbook_ids(rows, query)`
+    (byte a byte igual que antes del Bloque C). Las archivadas nunca entran: `rows` ya viene
+    filtrado a status='active'."""
+    active_ids = {str(r["id"]) for r in rows}
+    chosen: list[str] = []
+    seen: set[str] = set()
+    for pid in _persona_linked_ids(state):
+        if pid in active_ids and pid not in seen:
+            seen.add(pid)
+            chosen.append(pid)
+            if len(chosen) >= max_n:
+                return chosen
+    for pid in _select_playbook_ids(rows, query, max_n=max_n):
+        if pid not in seen:
+            seen.add(pid)
+            chosen.append(pid)
+            if len(chosen) >= max_n:
+                break
+    return chosen
+
+
 async def _prepare_playbooks(state: MatterState, diagnosis: str) -> tuple[str, str, list[str]]:
     """Carga índice + activa playbooks relevantes. Devuelve (índice, activos, ids)."""
     tenant_id = state["tenant_id"]
@@ -215,7 +254,12 @@ async def _prepare_playbooks(state: MatterState, diagnosis: str) -> tuple[str, s
         ))
 
     query = f"{_last_user_message(state)}\n{diagnosis}"
-    activated = _select_playbook_ids(rows, query)
+    try:
+        activated = _select_with_persona(state, rows, query)
+    except Exception:  # noqa: BLE001 — CP-E3: priorizar guías del agente jamás tumba el turno
+        logger.warning("_prepare_playbooks: fallo priorizando guías del agente; solo score",
+                       exc_info=True)
+        activated = _select_playbook_ids(rows, query)
     for pid in activated:
         mgr.activate(pid)
         await mgr.mark_used(pid, tenant_id)

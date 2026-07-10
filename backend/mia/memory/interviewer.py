@@ -70,6 +70,113 @@ _FALLBACK_QUESTIONS = [
 ]
 
 
+# ── Bloque C · entrevista para DISEÑAR un agente jurídico (kind='agente') ─────
+# Mismo motor stateless, otro objetivo: en vez de una guía de trabajo, se extrae un ROL
+# experto del despacho (cómo razona, con qué tono, cuándo interviene, con qué frases se
+# le llama, qué evita). El draft resultante tiene la forma de una persona (name, title,
+# role_prompt, tone, focus_areas, summon_phrases, description). Este módulo SIGUE sin
+# tocar la DB: el agente solo se guarda cuando el abogado pulsa Guardar en el formulario.
+
+# Topes server-side del draft de agente (eco de agents/personas.py — la misma validación
+# fina se repite allá al guardar; aquí solo se recorta para no entregar campos gigantes).
+_AGENTE_NAME_MAX = 64
+_AGENTE_TITLE_MAX = 120
+_AGENTE_TONE_MAX = 160
+_AGENTE_ROLE_PROMPT_MAX = 6000
+_AGENTE_DESCRIPTION_MAX = 2000
+_AGENTE_FOCUS_MAX_ITEMS = 8
+_AGENTE_FOCUS_MAX_LEN = 80
+_AGENTE_SUMMON_MAX_ITEMS = 6
+_AGENTE_SUMMON_MAX_LEN = 80
+
+_AGENTE_FALLBACK_QUESTIONS = [
+    "¿Qué nombre y qué rol tendría este agente? Descríbemelo como si me presentaras a un "
+    "colega experto del despacho.",
+    "¿En qué tipo de asuntos o situaciones quieres que intervenga?",
+    "¿Cómo debe razonar y con qué tono? ¿Más agresivo, más prudente, más didáctico?",
+    "¿Con qué frases te gustaría llamarlo en el chat? Por ejemplo «actúa como litigante» o "
+    "«revisa las citas».",
+    "¿Qué debe evitar este agente? ¿Hay errores o excesos que nunca quieres que cometa?",
+    "¿Qué métodos o guías del despacho debería priorizar cuando trabaja?",
+]
+
+_AGENTE_SYSTEM_PROMPT = (
+    "Eres Mia. Estás entrevistando a un abogado del despacho para DISEÑAR un agente "
+    "jurídico: un rol experto que el despacho podrá invocar en el chat. Tu meta es entender "
+    "cómo debe razonar ese rol, con qué tono, en qué asuntos interviene, con qué frases lo "
+    "llamarían y qué debe evitar. Haz UNA pregunta concreta a la vez, en español llano "
+    "(nunca en jerga técnica de software), que construya sobre las respuestas anteriores del "
+    "abogado — no repitas preguntas ya respondidas. Cuando tengas material suficiente, "
+    "propones un borrador del agente.\n\n"
+    "Responde SIEMPRE con un JSON, sin texto adicional antes ni después, en una de estas dos "
+    "formas:\n"
+    '  {"action": "ask", "question": "..."}\n'
+    '  {"action": "draft", "name": "...", "title": "...", "role_prompt": "...", '
+    '"tone": "...", "focus_areas": ["..."], "summon_phrases": ["..."], "description": "...", '
+    '"explanation": "..."}\n'
+    "El \"role_prompt\" debe describir, en segunda persona, cómo piensa y actúa el agente, "
+    "como si le dieras instrucciones a un colega experto; \"focus_areas\" son las áreas en "
+    "que interviene; \"summon_phrases\" son las frases con que el abogado lo llamaría en el "
+    "chat."
+)
+
+
+def _clip_list(value: Any, max_items: int, max_len: int) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[str] = []
+    for item in value:
+        s = _trim(str(item or ""), max_len)
+        if s:
+            out.append(s)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _clip_agente_draft(draft: dict) -> dict:
+    return {
+        "name": _trim(str(draft.get("name", "")), _AGENTE_NAME_MAX),
+        "title": _trim(str(draft.get("title", "")), _AGENTE_TITLE_MAX),
+        "role_prompt": _trim(str(draft.get("role_prompt", "")), _AGENTE_ROLE_PROMPT_MAX),
+        "tone": _trim(str(draft.get("tone", "")), _AGENTE_TONE_MAX),
+        "focus_areas": _clip_list(draft.get("focus_areas"), _AGENTE_FOCUS_MAX_ITEMS,
+                                  _AGENTE_FOCUS_MAX_LEN),
+        "summon_phrases": _clip_list(draft.get("summon_phrases"), _AGENTE_SUMMON_MAX_ITEMS,
+                                     _AGENTE_SUMMON_MAX_LEN),
+        "description": _trim(str(draft.get("description", "")), _AGENTE_DESCRIPTION_MAX),
+    }
+
+
+def _fallback_agente_draft(messages: list[dict]) -> dict:
+    """Borrador determinista del agente construido con las respuestas del transcript, para
+    cuando el LLM debía redactarlo (>=6 preguntas) y su JSON vino inválido."""
+    answers = [
+        str(m.get("content", "")).strip()
+        for m in messages
+        if isinstance(m, dict) and m.get("role") == "user" and str(m.get("content", "")).strip()
+    ]
+    if answers:
+        role_prompt = ("Instrucciones recogidas durante la entrevista (edítalas y dales "
+                       "forma):\n\n" + "\n\n".join(f"- {a}" for a in answers))
+    else:
+        role_prompt = ("La entrevista no dejó respuestas. Describe a mano cómo debe razonar "
+                       "y trabajar este agente.")
+    return {
+        "name": "Agente sin nombre — edítalo antes de guardar",
+        "title": "",
+        "role_prompt": role_prompt,
+        "tone": "",
+        "focus_areas": [],
+        "summon_phrases": [],
+        "description": "Agente generado a partir de las respuestas de la entrevista; revísalo.",
+        "explanation": (
+            "Mia no pudo diseñar el agente automáticamente esta vez, así que aquí quedan tus "
+            "respuestas tal cual las diste. Edítalas antes de guardar el agente."
+        ),
+    }
+
+
 class MatterNotFoundError(ValueError):
     """El `matter_id` no existe o no es del tenant. El endpoint lo mapea a 404."""
 
@@ -96,12 +203,15 @@ def _count_assistant_questions(messages: list[dict]) -> int:
     )
 
 
-def _fallback_question(already_asked: int) -> str:
-    idx = min(max(already_asked, 0), len(_FALLBACK_QUESTIONS) - 1)
-    return _FALLBACK_QUESTIONS[idx]
+def _fallback_question(already_asked: int, kind: str = "guia") -> str:
+    questions = _AGENTE_FALLBACK_QUESTIONS if kind == "agente" else _FALLBACK_QUESTIONS
+    idx = min(max(already_asked, 0), len(questions) - 1)
+    return questions[idx]
 
 
-def _fallback_draft(messages: list[dict]) -> dict:
+def _fallback_draft(messages: list[dict], kind: str = "guia") -> dict:
+    if kind == "agente":
+        return _fallback_agente_draft(messages)
     """Borrador determinista construido con las respuestas del transcript, para cuando
     el LLM debía redactar el borrador final (>=6 preguntas) y su JSON vino inválido."""
     answers = [
@@ -193,9 +303,9 @@ _SYSTEM_PROMPT = (
 
 
 def _build_llm_messages(
-    messages: list[dict], ctx: dict | None, forced_action: str | None
+    messages: list[dict], ctx: dict | None, forced_action: str | None, kind: str = "guia"
 ) -> list[dict]:
-    system = _SYSTEM_PROMPT
+    system = _AGENTE_SYSTEM_PROMPT if kind == "agente" else _SYSTEM_PROMPT
     if forced_action == "ask":
         system += (
             "\n\nTodavía no se han hecho las 3 preguntas mínimas. Debes responder "
@@ -228,7 +338,9 @@ def _build_llm_messages(
     return out
 
 
-def _clip_draft_fields(draft: dict) -> dict:
+def _clip_draft_fields(draft: dict, kind: str = "guia") -> dict:
+    if kind == "agente":
+        return _clip_agente_draft(draft)
     return {
         "title": _trim(str(draft.get("title", "")), _FIELD_MAX_CHARS),
         "summary": _trim(str(draft.get("summary", "")), _FIELD_MAX_CHARS),
@@ -237,7 +349,7 @@ def _clip_draft_fields(draft: dict) -> dict:
     }
 
 
-def _parse_llm_decision(raw: str) -> dict | None:
+def _parse_llm_decision(raw: str, kind: str = "guia") -> dict | None:
     """Devuelve {"action":..., ...} válido, o None si el JSON vino inválido/incompleto.
     JAMÁS lanza — cualquier problema de parseo cae a None (fallback determinista)."""
     try:
@@ -252,21 +364,22 @@ def _parse_llm_decision(raw: str) -> dict | None:
             return None
         return parsed
     if action == "draft":
-        required = ("title", "summary", "applies_when", "content")
+        required = ("name", "role_prompt") if kind == "agente" \
+            else ("title", "summary", "applies_when", "content")
         if any(not isinstance(parsed.get(f), str) for f in required):
             return None
         return parsed
     return None
 
 
-async def _ask_llm(llm_messages: list[dict]) -> dict | None:
+async def _ask_llm(llm_messages: list[dict], kind: str = "guia") -> dict | None:
     try:
         resp = await asyncio.to_thread(llm.call_llm, llm_messages, task="curator")
         raw = resp.choices[0].message.content or ""
     except Exception:
         logger.exception("interviewer: call_llm falló; se usa la pregunta/borrador de respaldo")
         return None
-    return _parse_llm_decision(raw)
+    return _parse_llm_decision(raw, kind)
 
 
 async def interview(
@@ -293,23 +406,23 @@ async def interview(
     else:
         forced = None
 
-    llm_messages = _build_llm_messages(messages, ctx, forced)
-    decision = await _ask_llm(llm_messages)
+    llm_messages = _build_llm_messages(messages, ctx, forced, kind)
+    decision = await _ask_llm(llm_messages, kind)
 
     if forced == "ask":
         if decision is None or decision.get("action") != "ask":
-            return {"done": False, "question": _fallback_question(already_asked)}
+            return {"done": False, "question": _fallback_question(already_asked, kind)}
         return {"done": False, "question": decision["question"]}
 
     if forced == "draft":
         if decision is None or decision.get("action") != "draft":
-            draft = _fallback_draft(messages)
+            draft = _fallback_draft(messages, kind)
             return {
                 "done": True,
-                "draft": _clip_draft_fields(draft),
+                "draft": _clip_draft_fields(draft, kind),
                 "explanation": draft["explanation"],
             }
-        draft = _clip_draft_fields(decision)
+        draft = _clip_draft_fields(decision, kind)
         return {
             "done": True,
             "draft": draft,
@@ -318,10 +431,10 @@ async def interview(
 
     # Entre MIN_QUESTIONS y MAX_QUESTIONS: decide el LLM.
     if decision is None:
-        return {"done": False, "question": _fallback_question(already_asked)}
+        return {"done": False, "question": _fallback_question(already_asked, kind)}
     if decision.get("action") == "ask":
         return {"done": False, "question": decision["question"]}
-    draft = _clip_draft_fields(decision)
+    draft = _clip_draft_fields(decision, kind)
     return {
         "done": True,
         "draft": draft,

@@ -42,7 +42,9 @@ from ...memory.playbook_manager import Playbook, PlaybookManager
 from ...memory.profile_manager import ProfileManager
 from ...memory.trace_capture import TraceCapture
 from ...memory.wiki_manager import WikiManager
-from ...onboarding.soul_interview import SoulInterview, load_responses, soul_status
+from ...onboarding.soul_interview import (
+    SoulInterview, build_summary, derive_firm_profile, load_responses, soul_status,
+)
 from ...output.docx_export import draft_to_docx
 from ._common import assert_owns_matter, MAX_UPLOAD_BYTES, _is_uuid
 from .hitl import _resume
@@ -481,10 +483,165 @@ async def get_profile(request: Request):
     return prof or {}
 
 
+# DEPRECADO (Bloque C2): usar /api/profile/full — se mantiene por compatibilidad.
 @router.put("/profile")
 async def put_profile(request: Request, body: ProfileBody):
     tid = _tenant(request)
     return await ProfileManager(pool=pool).upsert_firm_profile(tid, body.model_dump(exclude_none=True))
+
+
+# ── Pantalla 4 · perfil unificado (Bloque C · C2) ────────────────────────────
+# Hasta C2 había DOS fuentes desconectadas: las respuestas del onboarding (archivo por
+# tenant, fuente canónica del SOUL.md) y `firm_profiles` (editada por el PUT /api/profile
+# legado de arriba, solo llegaba al mensaje del nodo draft). Editar una no actualizaba la
+# otra. Ahora /api/profile/full es la única pantalla de edición: escribe SIEMPRE las
+# respuestas (fuente canónica) y deriva `firm_profiles` como best-effort auxiliar.
+MAX_PROFILE_RESPONSES_BYTES = 200_000
+
+
+def _validate_responses_shape(responses: dict) -> None:
+    """`responses` debe ser un dict de valores simples (str/list/dict anidado un nivel,
+    como llegan las respuestas de la entrevista) y no un payload descomunal — en llano,
+    para no dejar pasar algo que reviente el merge de `update_soul` más adelante."""
+    if not isinstance(responses, dict):
+        raise HTTPException(status_code=422, detail="El formato de tu perfil no es válido.")
+    size = len(json.dumps(responses, ensure_ascii=False))
+    if size > MAX_PROFILE_RESPONSES_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail="Tu perfil es demasiado extenso para guardarlo. Resume un poco e intenta de nuevo.",
+        )
+
+    def _is_simple(value) -> bool:
+        if value is None or isinstance(value, (str, bool, int, float)):
+            return True
+        if isinstance(value, list):
+            return all(_is_simple(v) for v in value)
+        if isinstance(value, dict):
+            return all(isinstance(k, str) and _is_simple(v) for k, v in value.items())
+        return False
+
+    for k, v in responses.items():
+        if not isinstance(k, str) or not _is_simple(v):
+            raise HTTPException(status_code=422, detail="El formato de tu perfil no es válido.")
+
+
+class ProfileExtras(BaseModel):
+    tp_number: str | None = None
+    preferred_sources: list[str] | None = None
+
+
+class ProfileFullBody(BaseModel):
+    responses: dict | None = None
+    jurisdictions: list[str] | None = None
+    extras: ProfileExtras | None = None
+
+
+async def _read_jurisdictions_config(tid: str) -> list[str]:
+    """Códigos de jurisdicción guardados (o [] si nunca se configuraron). Mismo SELECT
+    que `jurisdiction.resolver.resolve_jurisdictions`, sin el fallback ['generic'] — aquí
+    queremos saber si el abogado configuró algo, no resolver el modo activo."""
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT config->'jurisdictions' FROM tenant_settings WHERE tenant_id=%s::uuid", (tid,)
+        )).fetchone()
+    vals = row[0] if row and row[0] else []
+    return [str(c).strip().lower() for c in vals if str(c).strip()]
+
+
+@router.get("/profile/full")
+async def get_profile_full(request: Request):
+    """Perfil unificado del despacho: respuestas de la entrevista (fuente canónica),
+    jurisdicciones activas y los extras estructurados que solo viven en `firm_profiles`
+    (tarjeta profesional, fuentes preferidas). `summary` es el mismo resumen en lenguaje
+    llano que se muestra al terminar el onboarding."""
+    tid = _tenant(request)
+    responses = load_responses(tid)
+    jurisdictions = await _read_jurisdictions_config(tid)
+    prof = await ProfileManager(pool=pool, tenant_id=tid).get_firm_profile() or {}
+    extras = {
+        "tp_number": prof.get("tp_number") or "",
+        "preferred_sources": prof.get("preferred_sources") or [],
+    }
+    return {
+        "responses": responses,
+        "jurisdictions": jurisdictions,
+        "extras": extras,
+        "summary": build_summary(responses),
+        "completed": soul_status(tid)["completed"],
+    }
+
+
+@router.put("/profile/full")
+async def put_profile_full(request: Request, body: ProfileFullBody):
+    """Guarda el perfil del despacho en la fuente canónica (respuestas de la entrevista)
+    y, best-effort, refleja los campos derivables en `firm_profiles`.
+
+    1. `responses`: fusiona con `SoulInterview.update_soul` (merge superficial por clave
+       top-level — el llamador debe mandar el objeto COMPLETO por cada clave que edita).
+       Si falla, 502 en llano y NO se sigue (es la escritura crítica).
+    2. `jurisdictions`: persiste los códigos en `tenant_settings.config.jurisdictions`.
+    3. Best-effort: deriva `firm_profiles` de las respuestas actuales + los extras del
+       body y hace upsert. Si falla, NO rompe la respuesta — se avisa con `warning`.
+    """
+    tid = _tenant(request)
+    responses = load_responses(tid)
+
+    if body.responses is not None:
+        _validate_responses_shape(body.responses)
+        try:
+            await SoulInterview().update_soul(tid, body.responses)
+        except Exception:
+            logger.exception("no se pudo actualizar el perfil del despacho (tenant=%s)", tid)
+            raise HTTPException(status_code=502, detail="No pudimos guardar tu perfil. Intenta de nuevo.")
+        responses = load_responses(tid)
+
+    if body.jurisdictions is not None:
+        codes = [str(c).strip().lower() for c in body.jurisdictions if str(c).strip()]
+        async with pool.tenant_connection(tid) as conn:
+            await conn.execute(
+                "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+                "ON CONFLICT (tenant_id) DO UPDATE SET "
+                "config = jsonb_set(tenant_settings.config, '{jurisdictions}', %s::jsonb, true), "
+                "updated_at = now()",
+                (tid, Json({"jurisdictions": codes}), Json(codes)),
+            )
+
+    warning: str | None = None
+    try:
+        # `upsert_firm_profile` siempre escribe las 10 columnas (no hace update parcial) —
+        # sin esto, cada guardado desde aquí BORRARÍA en silencio lo que otro flujo (el PUT
+        # /api/profile legado, o una llamada anterior a este mismo endpoint que no volvió a
+        # mandar `extras`) ya había guardado en `voice_adjectives`/`banned_words`/`hard_nos`/
+        # `rhythm` y en los propios extras. Se preserva leyendo el estado actual primero.
+        existing = await ProfileManager(pool=pool, tenant_id=tid).get_firm_profile() or {}
+        derived = derive_firm_profile(responses)
+        extras = body.extras.model_dump(exclude_none=True) if body.extras else {}
+        # Se preservan TODAS las columnas existentes: las derivadas (`derived`) solo
+        # SOBREESCRIBEN cuando traen valor — un responses.json sin esos campos jamás
+        # anula con NULL lo que otro flujo ya había guardado en firm_profiles.
+        preserved = {
+            "name": existing.get("name"),
+            "lawyer_name": existing.get("lawyer_name"),
+            "jurisdiction": existing.get("jurisdiction"),
+            "practice_areas": existing.get("practice_areas"),
+            "tools": existing.get("tools"),
+            "tp_number": existing.get("tp_number"),
+            "preferred_sources": existing.get("preferred_sources"),
+            "voice_adjectives": existing.get("voice_adjectives"),
+            "banned_words": existing.get("banned_words"),
+            "hard_nos": existing.get("hard_nos"),
+            "rhythm": existing.get("rhythm"),
+        }
+        await ProfileManager(pool=pool).upsert_firm_profile(tid, {**preserved, **derived, **extras})
+    except Exception:
+        logger.exception("no se pudo actualizar el perfil auxiliar del despacho (tenant=%s)", tid)
+        warning = "Tu perfil quedó guardado. Una parte auxiliar no se pudo actualizar; Mia lo reintentará."
+
+    out: dict = {"ok": True, "summary": build_summary(responses)}
+    if warning:
+        out["warning"] = warning
+    return out
 
 
 # ── Pantalla 4 · playbooks (Bloque B · B0: CRUD + versiones + origen) ────────

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { CountrySelector, COUNTRY_NAME_BY_CODE } from "../_components/CountrySelector";
 
 type Question = {
   id: string;
@@ -65,33 +66,8 @@ const BLOCK_LABEL: Record<string, string> = {
 // además auto-llena `jurisdiction.base` (nombres, para el perfil del despacho). Los
 // países CON paquete instalado se marcan con la insignia "Conocimiento jurídico
 // profundo"; los demás se pueden elegir igual — quedan en el perfil sin prometer nada.
-const COUNTRY_OPTIONS: { code: string; name: string }[] = [
-  { code: "co", name: "Colombia" },
-  { code: "ar", name: "Argentina" },
-  { code: "bo", name: "Bolivia" },
-  { code: "cl", name: "Chile" },
-  { code: "cr", name: "Costa Rica" },
-  { code: "cu", name: "Cuba" },
-  { code: "ec", name: "Ecuador" },
-  { code: "sv", name: "El Salvador" },
-  { code: "es", name: "España" },
-  { code: "gt", name: "Guatemala" },
-  { code: "gq", name: "Guinea Ecuatorial" },
-  { code: "hn", name: "Honduras" },
-  { code: "mx", name: "México" },
-  { code: "ni", name: "Nicaragua" },
-  { code: "pa", name: "Panamá" },
-  { code: "py", name: "Paraguay" },
-  { code: "pe", name: "Perú" },
-  { code: "pr", name: "Puerto Rico" },
-  { code: "do", name: "República Dominicana" },
-  { code: "uy", name: "Uruguay" },
-  { code: "ve", name: "Venezuela" },
-];
-
-const COUNTRY_NAME_BY_CODE: Record<string, string> = Object.fromEntries(
-  COUNTRY_OPTIONS.map((c) => [c.code, c.name]),
-);
+// COUNTRY_OPTIONS/COUNTRY_NAME_BY_CODE viven en CountrySelector.tsx (C2: extracción para
+// compartir con "Mi despacho").
 
 // Riesgo #27 (CP7): el "modo profundo" (triad_mode) NO está implementado — no se
 // ofrece en la UI. Se filtra la pregunta si el backend aún la envía; se
@@ -638,7 +614,7 @@ function QuestionInput({
   switch (question.id) {
     // Paso local de jurisdicción — la única pregunta de país (multi-select de 21 países).
     case JURISDICTION_QUESTION_ID:
-      return <JurisdictionCheckboxes packCodes={packCodes} value={asList(value)} onChange={onChange} />;
+      return <CountrySelector packCodes={packCodes} value={asList(value)} onChange={onChange} />;
     // P1 — dos campos: despacho + abogado.
     case "p1": {
       const n = asNamePair(value);
@@ -915,55 +891,8 @@ function TagInput({
   );
 }
 
-// Paso local de jurisdicción (consolidado 2026-07-09): muestra los 21 países de habla
-// hispana (COUNTRY_OPTIONS, Colombia primero), guarda el `code`. Los países con paquete
-// jurídico instalado (según GET /api/jurisdictions) llevan la insignia discreta
-// "Conocimiento jurídico profundo"; los demás se pueden elegir igual.
-function JurisdictionCheckboxes({
-  packCodes,
-  value,
-  onChange,
-}: {
-  packCodes: Set<string>;
-  value: string[];
-  onChange: (value: string[]) => void;
-}) {
-  function toggle(code: string, checked: boolean) {
-    if (checked) onChange([...value, code]);
-    else onChange(value.filter((v) => v !== code));
-  }
-
-  return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {COUNTRY_OPTIONS.map((option) => {
-        const checked = value.includes(option.code);
-        const hasPack = packCodes.has(option.code);
-        return (
-          <label
-            key={option.code}
-            className={cn(
-              "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors",
-              checked ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-primary/25",
-            )}
-          >
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(e) => toggle(option.code, e.target.checked)}
-              className="h-4 w-4 shrink-0 rounded border-input accent-[hsl(var(--primary))]"
-            />
-            <span className="min-w-0">
-              <span className="block">{option.name}</span>
-              {hasPack ? (
-                <span className="mt-0.5 block text-xs text-primary">Conocimiento jurídico profundo</span>
-              ) : null}
-            </span>
-          </label>
-        );
-      })}
-    </div>
-  );
-}
+// Paso local de jurisdicción: ver CountrySelector.tsx (C2 — extracción, mismo componente
+// que usa "Mi despacho" al editar la jurisdicción después del onboarding).
 
 function CheckboxGroup({
   label,
