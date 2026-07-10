@@ -163,10 +163,10 @@ export default function DashboardPage() {
   const decisiones = pendingMatters.length + (s.proposals_pending || 0);
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10 md:px-8">
+    <div className="bg-aurora mx-auto max-w-5xl px-6 py-10 md:px-8">
       {/* Encabezado con resumen en llano: el panel saluda con lo que importa hoy. */}
       <header className="animate-slide-up">
-        <h1 className="text-2xl font-semibold tracking-tight">Panel del despacho</h1>
+        <h1 className="text-gradient-brand text-2xl font-semibold tracking-tight">Panel del despacho</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {s.matters_active || 0} {s.matters_active === 1 ? "asunto activo" : "asuntos activos"}
           {decisiones > 0
@@ -221,7 +221,7 @@ export default function DashboardPage() {
                 </p>
               ) : null}
               {pendingMatters.length > 0 ? (
-                <Button asChild size="sm" className="mt-4 gap-1.5">
+                <Button asChild variant="cta" size="sm" className="mt-4 gap-1.5">
                   <Link href="/">
                     Ver asuntos
                     <ArrowRight className="h-3.5 w-3.5" />
@@ -263,7 +263,7 @@ export default function DashboardPage() {
             {reminders.map((r, i) => (
               <li
                 key={r.id}
-                className="flex animate-slide-up items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm"
+                className="card-depth flex animate-slide-up items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3"
                 style={{ animationDelay: `${i * 40}ms`, animationFillMode: "backwards" }}
               >
                 <div className="min-w-0">
@@ -305,7 +305,7 @@ export default function DashboardPage() {
               return (
                 <li
                   key={p.id}
-                  className="animate-slide-up rounded-xl border border-border bg-card p-5 shadow-sm"
+                  className="card-depth animate-slide-up rounded-xl border border-border bg-card p-5"
                   style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">

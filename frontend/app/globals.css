@@ -4,30 +4,30 @@
 
 @layer base {
   :root {
-    /* MIA · tema claro — off-white cálido + índigo profundo + terracota */
-    --background: 40 33% 97%;
-    --foreground: 30 10% 10%;
+    /* MIA · tema claro — identidad Lexia (manual 2025): gris brillante + teal + verde CTA */
+    --background: 210 25% 98%; /* Bright Grey #FAFBFC */
+    --foreground: 0 0% 2%; /* #060606 */
 
     --card: 0 0% 100%;
-    --card-foreground: 30 10% 10%;
+    --card-foreground: 0 0% 2%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 30 10% 10%;
+    --popover-foreground: 0 0% 2%;
 
-    --primary: 241 37% 48%; /* índigo #4F4DA8 — confianza + foco */
-    --primary-foreground: 40 33% 98%;
+    --primary: 180 100% 25%; /* teal #008080 — marca Lexia */
+    --primary-foreground: 180 25% 98%;
 
-    --secondary: 43 22% 93%;
-    --secondary-foreground: 30 10% 22%;
+    --secondary: 180 12% 94%;
+    --secondary-foreground: 0 0% 2%;
 
-    --muted: 43 22% 93%;
-    --muted-foreground: 37 9% 42%;
+    --muted: 180 12% 94%;
+    --muted-foreground: 210 2% 45%;
 
-    --accent: 43 25% 91%; /* superficie sutil de hover */
-    --accent-foreground: 30 10% 18%;
+    --accent: 180 15% 92%; /* superficie sutil de hover */
+    --accent-foreground: 0 0% 2%;
 
-    --cta: 27 51% 47%; /* terracota #B4703A — CTA cálido, con moderación */
-    --cta-foreground: 40 33% 98%;
+    --cta: 160 100% 42%; /* verde vibrante de marca — legible en claro */
+    --cta-foreground: 0 0% 4%;
 
     --destructive: 4 55% 47%;
     --destructive-foreground: 0 0% 100%;
@@ -38,38 +38,38 @@
     --warning: 38 60% 45%;
     --warning-foreground: 0 0% 100%;
 
-    --border: 43 20% 89%;
-    --input: 43 20% 89%;
-    --ring: 241 37% 48%;
+    --border: 180 10% 89%;
+    --input: 180 10% 89%;
+    --ring: 180 100% 25%;
 
     --radius: 0.75rem;
   }
 
   .dark {
-    /* MIA · tema oscuro — carbón cálido con tinte índigo (de primera clase) */
-    --background: 250 12% 10%;
-    --foreground: 43 26% 91%;
+    /* MIA · tema oscuro — el look de la pantalla de arranque de escritorio: negro + teal */
+    --background: 180 8% 4%; /* #060606 con tinte teal */
+    --foreground: 180 17% 93%;
 
-    --card: 253 13% 14%;
-    --card-foreground: 43 26% 91%;
+    --card: 180 10% 8%;
+    --card-foreground: 180 17% 93%;
 
-    --popover: 253 13% 14%;
-    --popover-foreground: 43 26% 91%;
+    --popover: 180 10% 8%;
+    --popover-foreground: 180 17% 93%;
 
-    --primary: 241 61% 71%; /* índigo aclarado #8C8AE0 */
-    --primary-foreground: 250 12% 10%;
+    --primary: 180 55% 52%; /* teal aclarado, como el splash */
+    --primary-foreground: 180 30% 5%;
 
-    --secondary: 253 10% 20%;
-    --secondary-foreground: 43 26% 91%;
+    --secondary: 180 8% 13%;
+    --secondary-foreground: 180 17% 93%;
 
-    --muted: 253 10% 20%;
-    --muted-foreground: 43 12% 66%;
+    --muted: 180 8% 13%;
+    --muted-foreground: 180 10% 62%;
 
-    --accent: 253 12% 22%;
-    --accent-foreground: 43 26% 91%;
+    --accent: 180 10% 16%;
+    --accent-foreground: 180 17% 93%;
 
-    --cta: 27 55% 58%;
-    --cta-foreground: 250 12% 10%;
+    --cta: 160 100% 48%; /* #00F5A2 — brilla sobre negro */
+    --cta-foreground: 0 0% 4%;
 
     --destructive: 4 60% 56%;
     --destructive-foreground: 0 0% 100%;
@@ -80,9 +80,9 @@
     --warning: 38 70% 60%;
     --warning-foreground: 250 12% 10%;
 
-    --border: 253 10% 22%;
-    --input: 253 10% 24%;
-    --ring: 241 61% 71%;
+    --border: 180 10% 15%;
+    --input: 180 10% 17%;
+    --ring: 180 55% 52%;
   }
 }
 
@@ -106,26 +106,60 @@
   * {
     scrollbar-color: hsl(var(--border)) transparent;
   }
+  /* Titulares con la tipografía de despliegue de marca (aprox. web de Flama). */
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
 }
 
 @layer utilities {
-  /* Aurora: lavado radial índigo muy sutil para pantallas hero (chat, login).
-     Da profundidad sin ruido; se intensifica apenas en dark. */
+  /* Aurora: lavado radial TEAL de marca para pantallas hero (chat, login, panel).
+     Da profundidad sin ruido; se intensifica y gana un toque de verde CTA en dark,
+     como la pantalla de arranque de la app de escritorio. */
   .bg-aurora {
     background-image:
-      radial-gradient(1100px 520px at 50% -12%, hsl(var(--primary) / 0.07), transparent 60%),
-      radial-gradient(700px 380px at 85% 8%, hsl(var(--cta) / 0.05), transparent 55%);
+      radial-gradient(1100px 520px at 50% -12%, hsl(var(--primary) / 0.09), transparent 60%),
+      radial-gradient(700px 380px at 85% 8%, hsl(var(--cta) / 0.06), transparent 55%);
   }
   .dark .bg-aurora {
     background-image:
-      radial-gradient(1100px 520px at 50% -12%, hsl(var(--primary) / 0.14), transparent 60%),
-      radial-gradient(700px 380px at 85% 8%, hsl(var(--cta) / 0.08), transparent 55%);
+      radial-gradient(1100px 600px at 50% -10%, hsl(var(--primary) / 0.18), transparent 60%),
+      radial-gradient(700px 500px at 85% 8%, hsl(var(--cta) / 0.1), transparent 55%);
   }
-  /* Titular con degradado de marca (usar solo en saludos/hero). */
+  /* Titular con degradado de marca (usar solo en saludos/hero): foreground→teal en
+     claro; teal→verde CTA en dark (mismo espíritu que el splash de escritorio). */
   .text-gradient-brand {
     background-image: linear-gradient(115deg, hsl(var(--foreground)) 30%, hsl(var(--primary)) 85%);
     background-clip: text;
     -webkit-background-clip: text;
     color: transparent;
+  }
+  .dark .text-gradient-brand {
+    background-image: linear-gradient(115deg, hsl(var(--primary)) 20%, hsl(var(--cta)) 90%);
+  }
+  /* Degradado de marca para los CTA principales (aprobar, ver asuntos…): siempre
+     verde de marca con texto negro encima, sea cual sea el tema. */
+  .bg-gradient-cta {
+    background-image: linear-gradient(135deg, #98e4bf, #00f5a2);
+  }
+  /* Halo teal sutil para el ítem activo del nav y hovers de hero. */
+  .glow-teal {
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 0 18px hsl(var(--primary) / 0.35);
+  }
+  /* Profundidad de dos capas para tarjetas: sombra de contacto + sombra amplia,
+     más un realce superior sutil (hairline teal en claro, blanco/5 en dark). */
+  .card-depth {
+    box-shadow:
+      0 1px 2px hsl(var(--foreground) / 0.04),
+      0 14px 32px -16px hsl(var(--foreground) / 0.2),
+      inset 0 1px 0 hsl(var(--primary) / 0.18);
+  }
+  .dark .card-depth {
+    box-shadow:
+      0 1px 2px hsl(0 0% 0% / 0.35),
+      0 18px 38px -16px hsl(0 0% 0% / 0.5),
+      inset 0 1px 0 hsl(0 0% 100% / 0.05);
   }
 }

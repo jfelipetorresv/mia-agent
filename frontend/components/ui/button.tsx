@@ -11,7 +11,8 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm",
-        cta: "bg-cta text-cta-foreground hover:bg-cta/90 shadow-sm",
+        // CTA principal de marca: degradé verde Lexia + texto negro (ver .bg-gradient-cta).
+        cta: "bg-gradient-cta text-cta-foreground shadow-sm hover:opacity-90",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm",
         success: "bg-success text-success-foreground hover:bg-success/90 shadow-sm",
         outline: "border border-input bg-transparent hover:bg-accent hover:text-accent-foreground",

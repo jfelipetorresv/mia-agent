@@ -64,7 +64,7 @@ export function StatCard({
 }) {
   return (
     <div
-      className="animate-slide-up rounded-xl border border-border bg-card p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+      className="card-depth animate-slide-up rounded-xl border border-border bg-card p-4 transition-all duration-200 hover:-translate-y-0.5"
       style={{ animationDelay: `${delay * 45}ms`, animationFillMode: "backwards" }}
     >
       <Icon className="mb-2 h-4 w-4 text-primary" />
@@ -105,7 +105,7 @@ export function ConnectorCard({
   children?: ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+    <div className="card-depth rounded-xl border border-border bg-card p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span

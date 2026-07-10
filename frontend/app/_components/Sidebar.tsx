@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LogOut, Menu, Search, Scale } from "lucide-react";
+import { LogOut, Menu, Search } from "lucide-react";
 import { clearToken } from "@/lib/api";
 import { NAV_ITEMS } from "./nav";
 import ThemeToggle from "./ThemeToggle";
@@ -11,14 +11,15 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
+// Logotipo de marca: wordmark "MIA" con la I en teal, como en la pantalla de
+// arranque de la app de escritorio (desktop/src/index.html). Siempre enlaza a "/".
 function BrandMark() {
   return (
-    <div className="flex items-center gap-2.5">
-      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
-        <Scale className="h-4 w-4" />
-      </div>
-      <span className="text-lg font-semibold tracking-tight">Mia</span>
-    </div>
+    <Link href="/" className="flex items-center gap-2.5">
+      <span className="select-none text-xl font-light uppercase tracking-[0.3em] text-foreground">
+        M<span className="font-semibold text-[#2EA9A9]">I</span>A
+      </span>
+    </Link>
   );
 }
 
@@ -41,8 +42,8 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
             className={cn(
               "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
               active
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                ? "glow-teal bg-primary/15 text-primary"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
             )}
           >
             <Icon className="h-4 w-4 shrink-0" />
@@ -68,8 +69,10 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Desktop */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card/50 md:flex">
+      {/* Desktop — la barra lateral es SIEMPRE oscura (identidad de marca), sin
+          importar el tema claro/oscuro del resto de la app: se fuerza el scope
+          "dark" para que todos los tokens (fondo, bordes, texto) resuelvan fijos. */}
+      <aside className="dark hidden w-64 shrink-0 flex-col border-r border-border bg-background md:flex">
         <div className="px-5 py-5">
           <BrandMark />
         </div>
@@ -97,8 +100,8 @@ export default function Sidebar() {
         </div>
       </aside>
 
-      {/* Mobile top bar */}
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-card/80 px-4 py-3 backdrop-blur md:hidden">
+      {/* Mobile top bar — misma identidad oscura fija que el sidebar de escritorio. */}
+      <header className="dark sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background px-4 py-3 md:hidden">
         <BrandMark />
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" onClick={openCommandPalette} aria-label="Buscar">
@@ -110,7 +113,7 @@ export default function Sidebar() {
                 <Menu className="h-4 w-4" />
               </Button>
             </DialogTrigger>
-            <DialogContent className="left-0 top-0 h-full max-w-[17rem] translate-x-0 translate-y-0 rounded-none border-r sm:rounded-none">
+            <DialogContent className="dark left-0 top-0 h-full max-w-[17rem] translate-x-0 translate-y-0 rounded-none border-r bg-background sm:rounded-none">
               <DialogTitle className="sr-only">Menú de navegación</DialogTitle>
               <div className="flex h-full flex-col">
                 <div className="pb-4">

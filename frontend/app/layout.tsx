@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Newsreader } from "next/font/google";
+import { Archivo, Hind, Newsreader } from "next/font/google";
 import "./globals.css";
 import Sidebar from "./_components/Sidebar";
 import AuthGate from "./_components/AuthGate";
@@ -7,7 +7,10 @@ import OnboardingGate from "./_components/OnboardingGate";
 import CommandPalette from "./_components/CommandPalette";
 import { cn } from "@/lib/utils";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
+// Cuerpo de texto — aproximación web de Hind Guntur del manual de marca Lexia.
+const hind = Hind({ subsets: ["latin"], weight: ["300", "400", "500"], variable: "--font-sans", display: "swap" });
+// Titulares/despliegue — aproximación web de Flama del manual de marca Lexia.
+const archivo = Archivo({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-display", display: "swap" });
 // Serif humanista para el texto jurídico (borradores, documentos): evoca lo impreso.
 const newsreader = Newsreader({
   subsets: ["latin"],
@@ -27,7 +30,7 @@ const themeScript = `(function(){try{var t=localStorage.getItem('mia-theme');var
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" className={cn(inter.variable, newsreader.variable)} suppressHydrationWarning>
+    <html lang="es" className={cn(hind.variable, archivo.variable, newsreader.variable)} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

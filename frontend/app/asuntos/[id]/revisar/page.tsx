@@ -340,7 +340,7 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
         ) : null}
         <div className="flex flex-wrap justify-center gap-3">
           <Button
-            variant="success"
+            variant="cta"
             size="lg"
             onClick={approve}
             disabled={busy || gateCitasPendiente || versionVacia}
