@@ -235,3 +235,25 @@ aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
 - [x] Regresión completa 70/70 suites ALL PASS (corrida en la retoma post-apagón;
       `test_rls`/`check_env_pins` HALT intactos; línea base 69 → 70)
 - [ ] Decidir push a `origin/main` de los 4 commits (`ad16a64`..`315dbd1`)
+
+## Evolución de producto — BLOQUE A: Proyectos + carpetas sin fricción (Sesión 39, 2026-07-09)
+Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado por Pipe.
+- [x] A0 — migración `028_projects_multifolder.sql` (`matters.kind`, `documents.source_id`,
+      `documents.body`, `ck_documents_origin` gana `'mia'`, backfill conservador
+      `HAVING count(*)=1` espejado a `origin='drive'`) — `execution/init_projects_multifolder.py`
+- [x] A2 — fix del bug latente de poda cruzada (`local_folders.py` acota por `source_id`) +
+      superficie plural de carpetas por expediente (`matter_folders.py`, tope 10) —
+      `test_matter_folders_multi.py` 30/30
+- [x] A1 — navegador seguro de carpetas (`safe_browse_roots`/`browse_folder`, fail-closed,
+      `MIA_DISABLE_FOLDER_BROWSE`) + `FolderPicker.tsx` — `test_folder_browse.py` 15/15
+- [x] A3 — vista "Fuentes" unificada (`matter_sources.py` + `FuentesPanel.tsx`) —
+      `test_matter_sources.py` 26/26
+- [x] A4 — pestaña "Proyectos" (kind, outputs `.docx`, `build_project_graph()` sin HITL,
+      `proyectos/page.tsx` + `proyectos/[id]/page.tsx`) — `test_projects.py` 33/33
+- [x] Capa 2: revisión adversarial multi-agente, 12 hallazgos confirmados (2 bloqueantes de
+      pérdida de datos, 2 mayores, 5 menores), TODOS corregidos salvo 2 notas de deuda aceptadas
+      (Riesgo #56 abierto; Riesgo #57 RESUELTO en esta sesión) — ver `progress.md` sesión 39
+- [x] Regresión completa 74/74 suites ALL PASS (línea base 70 → 74); `test_rls`/`check_env_pins`
+      HALT intactos; `npm run build` verde
+- [ ] Capa 3 EN VIVO de Pipe (Proyectos, FolderPicker, FuentesPanel) — pendiente
+- [ ] Siguiente: BLOQUE B — guías de trabajo asistidas + gobernanza de skills

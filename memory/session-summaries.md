@@ -885,3 +885,37 @@ Qué sigue:
 - Capa 3 EN VIVO de Pipe/Cursor (fuentes remotas + botón "Revisar ahora") — sin cambios.
 - ACCIÓN DE PIPE: llaves OAuth (Azure AD + Google Cloud) en `.env`.
 - Decidir push de los 4 commits de esta sesión.
+
+## 2026-07-09 — Sesión 39
+TL;DR: Bloque A del plan de evolución de producto COMPLETO — Proyectos + carpetas sin fricción,
+orquestación multi-agente autorizada por Pipe.
+Qué construimos:
+- A0: migración `028_projects_multifolder.sql` (`matters.kind`, `documents.source_id`,
+  `documents.body`, `ck_documents_origin` gana `'mia'`) con backfill conservador
+  (`HAVING count(*)=1`, huérfanos `NULL` nunca se podan) espejado a `origin='drive'`.
+- A2: fix del bug latente de poda cruzada en `local_folders.py` (scoping por `source_id`) +
+  superficie plural de carpetas por expediente (tope 10).
+- A1: navegador seguro de carpetas (`safe_browse_roots`/`browse_folder`, fail-closed,
+  `MIA_DISABLE_FOLDER_BROWSE`) + `FolderPicker.tsx` reemplazando los 3 inputs de ruta manual.
+- A3: `matter_sources.py` + `FuentesPanel.tsx` — vista unificada de carpetas/OneDrive/correo con
+  "+ Conectar fuente", absorbe el bloque de carpeta suelto de `asuntos/[id]/page.tsx`.
+- A4: pestaña "Proyectos" completa — `kind` en matters, outputs `origin='mia'` con descarga
+  `.docx`, `build_project_graph()` sin HITL (intake→work→END), nav + `proyectos/page.tsx` +
+  `proyectos/[id]/page.tsx` (3 columnas).
+Qué decidimos:
+- Regresión completa ALL PASS 74/74 (línea base sube de 70 a 74); `npm run build` verde (14
+  páginas). `test_rls`/`check_env_pins` (HALT) intactos.
+- Capa 2 (5 revisores Opus por dimensión + verificador escéptico, contexto fresco): 12 hallazgos
+  CONFIRMADOS, 0 descartados, TODOS corregidos salvo 2 notas de deuda aceptadas — incluye 2
+  bloqueantes de pérdida de datos (backfill `DISTINCT ON` colapsaba historial multi-carpeta;
+  poda de OneDrive sin `source_id` con el `FuentesPanel` nuevo permitiendo varias carpetas
+  drive), 2 mayores (carrera en `sync_tenant` sin candado; chat de proyecto sin memoria
+  conversacional) y 5 menores. Detalle completo en `progress.md` sesión 39.
+- Riesgo #57 (`min(uuid)` en el backfill LOCAL de la migración) RESUELTO en esta sesión —
+  `(array_agg(id))[1]`, confirmado por la regresión. Riesgo #56 (navegador de carpetas fail-open
+  en Modo A) sigue abierto como deuda documentada.
+Qué sigue:
+- Bloque B del plan de evolución de producto: guías de trabajo asistidas + gobernanza de skills
+  (`memory/plan-evolucion-producto.md`).
+- Capa 3 EN VIVO de Pipe (Proyectos, FolderPicker, FuentesPanel) — pendiente, junto con la deuda
+  de capa 3 acumulada de sesiones anteriores (OAuth de correo/OneDrive en `.env`).

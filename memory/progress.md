@@ -1959,6 +1959,97 @@ esta memoria + HANDOFF.
 Pipe/Cursor; ACCIÓN DE PIPE: llaves OAuth en `.env`; quick win #5 esperando aprobación) + decidir
 si se hace push de los 4 commits de esta sesión (la sesión 36 ya está en `origin/main`).
 
+## 2026-07-09 — Sesión 39 — Bloque A del plan de evolución de producto COMPLETO (Proyectos + carpetas sin fricción)
+
+**Contexto:** plan de evolución de producto (Bloques A/B/C) aprobado por Pipe en
+`memory/plan-evolucion-producto.md` tras el feedback "Mia necesita evolucionar a un espacio de
+trabajo estilo Claude Cowork/ChatGPT Work". Autorización expresa de orquestación multi-agente
+dada por Pipe en el HANDOFF de la sesión 38. Esta sesión ejecutó el Bloque A completo (A0-A4);
+todo vive en el working tree y se commitea hoy.
+
+**Qué se construyó (por pieza):**
+1. **A0 — Migración de cimientos (`028_projects_multifolder.sql` +
+   `execution/init_projects_multifolder.py`):** `matters.kind` (`'asunto'|'proyecto'`, CHECK +
+   índice); `documents.source_id` (procedencia por fuente, sin FK dura); `documents.body` (texto
+   íntegro de archivos producidos por Mia — los chunks con overlap no se pueden reconstruir para
+   el .docx); `ck_documents_origin` gana `'mia'`. Backfill conservador: `source_id` solo se asigna
+   cuando el expediente tiene EXACTAMENTE UNA fuente (`HAVING count(*)=1`) — los ambiguos quedan
+   `NULL` y `NULL` jamás se poda. Espejo del backfill para `origin='drive'`. Trampa descubierta:
+   Postgres no tiene `min()`/`max()` para `uuid` → `(array_agg(id))[1]`.
+2. **A2 — Fix del bug latente de poda cruzada (`local_folders.py`):** `_ingest_matter_file` y
+   `_prune_matter_docs` ahora acotan por `source_id`; `sync_source` lo pasa. Superficie plural en
+   `matter_folders.py`: `GET/POST /api/matters/{id}/folders`, `POST .../folders/{sid}/sync`,
+   `DELETE .../folders/{sid}`, tope 10 carpetas (422); endpoints singulares `/folder` quedan como
+   wrappers deprecados SIN el 409 de una-sola-carpeta. `get_matter_sources()` plural
+   (`get_matter_source()` wrapper deprecado).
+3. **A1 — Navegador seguro de carpetas:** `safe_browse_roots()` + `browse_folder()` (fail-closed:
+   `resolve`, `_FORBIDDEN_PARTS`, sin symlinks, tope 500+`truncated`) + `GET /api/folders/browse`
+   (deshabilitable con `MIA_DISABLE_FOLDER_BROWSE` → 503). Frontend `FolderPicker.tsx` (clon del
+   `OneDriveFolderPicker`) reemplazó los 3 inputs de ruta pegada a mano (`CarpetasSection`, diálogo
+   del asunto, vault Obsidian en `ConexionesSection`).
+4. **A3 — Fuentes unificadas:** `backend/mia/api/routes/matter_sources.py`
+   (`GET /api/matters/{id}/sources` — carpetas + OneDrive + correo, estados EN LLANO, fail-soft si
+   Graph revienta) + frontend `FuentesPanel.tsx` (panel autocontenido con "+ Conectar fuente":
+   carpeta del equipo / OneDrive / correos) que absorbió en `asuntos/[id]/page.tsx` el bloque de
+   carpeta, `MatterDriveFolder` (quedó sin uso, no borrado) y el botón de correos.
+5. **A4 — Pestaña "Proyectos":** `MatterCreate.kind`, `GET /api/matters?kind=` (default solo
+   `'asunto'` por compatibilidad; `'proyecto'`; `'todos'`), outputs (`POST/GET
+   /api/matters/{id}/outputs` `origin='mia'` con dedupe sha256 + `GET .../outputs/{doc}.docx`),
+   instrucción de nodo `"work"` en `prompt_builder`, `build_project_graph()` (intake→work→END, sin
+   HITL — un proyecto NO tiene borrador/aprobación por diseño; el guardado de outputs es acción
+   explícita del abogado), `stream.py` decide por `kind` (eventos `thinking`/`reply`), nav
+   "Proyectos" (FolderKanban), `proyectos/page.tsx` (lista + creación 2 pasos) y
+   `proyectos/[id]/page.tsx` (3 columnas: Fuentes · chat · Archivos del proyecto con descarga
+   Word). Bugfix colateral: `Content-Disposition` con títulos acentuados crasheaba (`isalnum()`
+   Unicode → `isascii()`) — bug preexistente del `draft.docx`.
+
+**Verificación 3 capas:**
+- **Capa 1:** regresión completa ALL PASS (74 suites) — línea base sube de 70 a 74 con los gates
+  nuevos: `test_matter_folders_multi.py` 30/30 (incluye el caso del bug de poda cruzada,
+  concurrencia sin duplicados y el backfill conservador), `test_folder_browse.py` 15/15,
+  `test_projects.py` 33/33 (incluye memoria conversacional), `test_matter_sources.py` 26/26.
+  `test_rls` 12/12 y `check_env_pins` 9/9 (HALT) intactos. `npm run build` verde (14 páginas,
+  `/proyectos` y `/proyectos/[id]` nuevas).
+- **Capa 2:** revisión adversarial multi-agente (5 revisores Opus por dimensión + verificador
+  escéptico por hallazgo, contexto fresco): 12 hallazgos CONFIRMADOS, 0 descartados. TODOS
+  corregidos antes del commit salvo 2 notas aceptadas:
+  - **BLOQUEANTE H3:** el backfill original (`DISTINCT ON`) colapsaba el historial multi-carpeta
+    de un asunto en un solo `source_id` → la poda habría borrado docs conservados de una carpeta
+    desvinculada. Corregido (`HAVING count(*)=1`) + caso de gate.
+  - **BLOQUEANTE H11:** la poda de OneDrive (`graph_drive.py`) seguía sin `source_id` y el
+    `FuentesPanel` nuevo permite varias carpetas drive por expediente → borrado cruzado silencioso
+    (incluso por el cron de 6h). Corregido en espejo (`source_id` en ingest/prune/move de
+    `RemoteDriveSync`) + backfill drive + conteo por fuente en `matter_sources` + 4 checks nuevos
+    en `test_remote_drive` (48/48).
+  - **MAYOR H1:** `sync_tenant` (`POST /api/folders/sync` y cron) corría `sync_source` sin el
+    candado `_SYNCS_IN_FLIGHT` → carrera con documentos duplicados. Corregido con
+    `_SOURCE_SYNC_LOCKS` (`asyncio.Lock` por fuente) EN EL MOTOR; el set de las rutas queda como
+    señal de UX.
+  - **MAYOR H6:** el chat de proyecto no recordaba turnos anteriores (`prepare_new_turn` borra el
+    checkpoint). Corregido: `MatterState.history`, `stream.py` recupera el historial del
+    checkpoint previo (solo proyectos, últimos 6 turnos / 8000 chars) y `work_node` lo antepone
+    como "Conversación reciente" sin ensuciar el retrieval del intake.
+  - **MENORES corregidos:** asistente general y dashboard contaban proyectos como asuntos
+    (`WHERE kind='asunto'` en `core.py` y `dashboard_stats`); endpoint legacy `GET /matters`
+    filtrado; burbuja "pensando" infinita en error del chat de proyecto; doble Enter creaba dos
+    proyectos; mensaje de error del `FuentesPanel` decía "asunto" en un proyecto.
+  - **NOTAS aceptadas (deuda documentada):** H2 navegador de carpetas fail-open en Modo A (Riesgo
+    #56, invertir default cuando exista la plantilla Docker); los correctores documentaron Riesgo
+    #57.
+- **Capa 3:** PENDIENTE de Pipe (recorrido en vivo).
+
+**Deudas/riesgos:** ver `bugs-and-risks.md` Riesgo #56 (abierto, deuda de Modo A) y Riesgo #57
+(RESUELTO en esta sesión — el bloqueante residual del `min(uuid)` en el backfill LOCAL de la
+migración quedó corregido con `(array_agg(id))[1]`, confirmado por la regresión 74/74 ALL PASS).
+Nota de límite consciente añadida: los documentos con `source_id NULL` (procedencia ambigua
+pre-028) nunca se podan por sync — pueden quedar "fantasmas" si el archivo físico desaparece; se
+limpian solo manualmente.
+
+**Pendiente para la próxima sesión:** Bloque B (guías de trabajo asistidas + gobernanza de
+skills, `plan-evolucion-producto.md`) + Capa 3 EN VIVO de Pipe sobre el Bloque A (Proyectos,
+FolderPicker, FuentesPanel) — sin cambios respecto a la deuda de capa 3 de sesiones anteriores
+(OAuth de correo/OneDrive).
+
 ---
 
 ## 2026-07-09 — Sesión 37 (continuación) — SPIKE Fase 4: distribución VIABLE

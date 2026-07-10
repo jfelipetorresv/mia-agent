@@ -1111,3 +1111,75 @@ Notas del revisor de capa 2 tras APROBAR — todas fail-closed, ninguna bloquea:
    correcto en Modo B single-worker; revisar si algún día hay multi-worker.
 7. **Nota de tally:** `test_speech_tts` es 24/24 en el script actual (el 26/26 histórico era de
    otra versión); PASS con exit 0 — no es regresión.
+
+## 🟡 Riesgo #56 — Navegador de carpetas (GET /api/folders/browse, Bloque A · A1) expone el árbol local del servidor (2026-07-09)
+
+**Contexto:** para que el abogado elija una carpeta navegando (en vez de escribir la ruta a
+mano), `browse_folder()`/`safe_browse_roots()` (connectors/local_folders.py) listan nombres
+de subcarpetas de CUALQUIER punto del disco del equipo donde corre Mia, sin exigir que esa
+ruta ya esté registrada — es la vía para ELEGIR qué registrar, así que necesariamente ve
+más árbol que la allowlist.
+
+**Riesgo:** en Modo B (nativo, un solo despacho por instalación) esto es aceptable —
+el abogado navega SU PROPIO equipo. En Modo A (Docker, servidor compartido entre varios
+despachos) un endpoint así en el servidor expondría la estructura de carpetas del HOST,
+no la de cada cliente — no tiene sentido ahí y podría filtrar nombres de carpetas de otro
+despacho si el aislamiento de proceso fallara.
+
+**Mitigación:** (1) fail-closed — mismas reglas que registrar una fuente
+(`_FORBIDDEN_PARTS`, `Path.resolve()`, existencia/tipo); solo devuelve NOMBRES de
+subcarpetas, nunca archivos ni su contenido, tope de 500 con `truncated`. (2) flag
+`MIA_DISABLE_FOLDER_BROWSE` para apagar el endpoint por completo en despliegues
+compartidos (mismo patrón que la guarda de `POST /obsidian/install`, revisión CP-C2).
+**Acción pendiente:** activar el flag por defecto en la plantilla de despliegue Docker
+(Modo A) cuando exista — hoy el flag existe pero nadie lo enciende automáticamente.
+
+## 🟢 Riesgo #57 — H11 CORREGIDO: poda cruzada de OneDrive entre carpetas hermanas del mismo expediente  [CERRADO 2026-07-09, Sesión 39]
+
+**Contexto:** capa 2 (revisión adversarial del Bloque A) encontró que el fix de poda cruzada
+que `LocalFolderSync` sí tenía (acotar la poda por `source_id`) NO se había espejado a
+`RemoteDriveSync` (`connectors/graph_drive.py`). Con el `FuentesPanel.tsx` nuevo, un
+expediente puede tener VARIAS carpetas de OneDrive vinculadas; `_prune_matter_docs` y el
+borra-y-reinserta de `_ingest_matter_file` filtraban SOLO por `matter_id`, así que
+sincronizar la carpeta B (manual o por el cron de 6h, `scheduler.py::sync_remote_drive_all_tenants`)
+borraba en silencio los documentos que había traído la carpeta A — pérdida de datos real,
+contradiciendo la promesa "los documentos se conservan".
+
+**Corregido (espejo exacto del fix de `local_folders.py`):**
+1. `documents.source_id` ahora se llena también para `origin='drive'` (`_ingest_matter_file`
+   inserta con `source_id`, el DELETE previo queda acotado a `source_path=%s AND
+   (source_id=%s::uuid OR source_id IS NULL)`).
+2. `_prune_matter_docs` filtra SELECT y DELETE por `source_id` exacto — los huérfanos
+   `source_id IS NULL` NUNCA se podan (mismo criterio conservador que local).
+3. `_move_content` (renombre/movimiento remoto) también acotado por `source_id` para
+   `kind='matters'`.
+4. Backfill AL FINAL de la migración `028_projects_multifolder.sql`: los documentos
+   `origin='drive'` con `source_id NULL` se asignan a la fuente `remote_drive_sources`
+   `kind='matters'` de su expediente SOLO cuando hay EXACTAMENTE UNA (procedencia
+   inequívoca); los expedientes con historial multi-carpeta quedan con `source_id NULL` a
+   propósito (nunca se podan). Nota técnica: se usa `(array_agg(id))[1]` en vez de
+   `min(id)` porque PostgreSQL no tiene agregado `min`/`max` nativo para `uuid`.
+5. `matter_sources.py::_onedrive_sources` ahora cuenta documentos POR fuente exacta
+   (`source_id`); los huérfanos `NULL` solo se suman al conteo cuando hay UNA sola carpeta
+   activa (inequívoco) — con varias, no se le atribuyen a ninguna para no mentirle al
+   abogado sobre qué carpeta trajo qué. Reemplaza el reparto anterior ("la primera se lleva
+   el total, las demás 0").
+6. Test nuevo en `execution/test_remote_drive.py` (anti-poda-cruzada): dos carpetas drive
+   del mismo expediente, cada una ingiere su archivo, se borra un archivo de A y se
+   re-sincroniza SOLO A → el documento de B queda intacto.
+
+**RESUELTO en la misma sesión 39 (cierre del bloqueante residual):** el bloque de backfill
+LOCAL de `028_projects_multifolder.sql` (el que asignaba `min(id)` sobre
+`local_folder_sources.id`, uuid sin agregado `min`/`max` nativo en PostgreSQL 16) quedó
+corregido con `(array_agg(id))[1]` — mismo patrón que el punto 4 de arriba. La migración
+completa corre end-to-end sin reventar (verificado con `execution/init_projects_multifolder.py`)
+y la regresión completa 74/74 ALL PASS lo confirma, incluyendo `test_matter_sources.py` 26/26
+(ya actualizado al reparto honesto del punto 5) y `test_matter_folders_multi.py` 30/30 (con el
+caso del backfill conservador). Sin residuales pendientes de este hallazgo.
+
+**Límite consciente (deuda por diseño, no un bug):** los documentos con `source_id NULL`
+(procedencia ambigua pre-028, expedientes con historial multi-carpeta) NUNCA se podan por
+sync — es la mitad conservadora del backfill (mejor conservar de más que borrar por error).
+Si el archivo físico que los originó desaparece, esos documentos quedan "fantasmas" en el
+expediente indefinidamente; hoy solo se limpian manualmente. Revisar si en la práctica esto
+ensucia expedientes viejos con muchas carpetas rotadas.

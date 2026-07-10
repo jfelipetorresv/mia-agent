@@ -10,7 +10,7 @@ Ya existe (verificado): asuntos con 1 carpeta local + 1 OneDrive + correos; pick
 
 ---
 
-## BLOQUE A — Proyectos + carpetas sin fricción (primera sesión)
+## BLOQUE A — Proyectos + carpetas sin fricción (primera sesión) ✅ COMPLETADO (sesión 39, 2026-07-09)
 
 **Decisión arquitectónica:** reusar `matters` con discriminador `kind ('asunto'|'proyecto')` — todo el sistema (documents, chunks, RLS, retrieval RRF, checkpointer, SSE, dedupe) cuelga de `matter_id`; una entidad nueva duplicaría ~8 tablas y 4 routers. Lo que un proyecto NO necesita (diagnóstico/borrador/HITL/misiones) no vive en el esquema sino en el grafo y la página → grafo alterno liviano + página propia.
 
