@@ -2196,3 +2196,72 @@ Configuración en subtabs, `plan-evolucion-producto.md`) + Capa 3 EN VIVO de Pip
 (wizard "Crear con Mia", historial/restauración de versiones, "Convertir en guía",
 "Editar antes de aplicar") — sin cambios respecto a la deuda de capa 3 arrastrada de sesiones
 35-39 (OAuth de correo/OneDrive) ni a la acción de Pipe pendiente (registrar apps OAuth).
+
+
+## 2026-07-10 — Sesión 41 — Bloque C del plan de evolución de producto COMPLETO (Agentes jurídicos + perfil unificado + Configuración en subtabs)
+
+**Contexto:** cierre del plan de evolución de producto (Bloques A/B/C) aprobado por Pipe,
+bajo la autorización expresa de orquestación multi-agente de la sesión 38. Flujo: recon con
+5 lectores → specs por frente (Fable) → 3 ejecutores en paralelo sobre archivos disjuntos
+(C1 Opus, C2/C3 Sonnet) → capa 1 → capa 2 (4 revisores + refutación por hallazgo) →
+correcciones → re-verificación. Commit `acba433` (23 archivos, +2737/−399).
+
+**Qué se construyó (por pieza):**
+1. **C1 — Agentes jurídicos con conocimiento:** migración `030_persona_playbooks.sql`
+   (M2M con RLS FORCE patrón 023/029, tope 8 guías por agente, `execution/init_persona_playbooks.py`);
+   `PersonaService.get/set_linked_playbooks` (transaccional: un error deja los vínculos previos
+   intactos; dedupe; errores en llano) con doble fail-open al cargar vínculos; `turn_context()`
+   y `to_public()` ganan `playbook_ids`; en el turno de asunto `_prepare_playbooks` activa PRIMERO
+   las guías vinculadas activas (tope 3 y `_shrink` intactos; sin agente = byte a byte igual);
+   en el asistente, bloque "Guías que este rol prioriza" (≤16.000 chars con la nota de recorte
+   INCLUIDA en el presupuesto, ≤4.000 por guía, tras la voz, jamás en role_prompt); entrevista
+   `kind='agente'` (interviewer parametrizado por kind, draft con campos de agente, clips
+   server-side, `suggested_playbook_ids` por afinidad de tokens solo de guías activas del tenant,
+   fail-open); `GuideInterviewWizard` gana `onDraftReady` (con kind='agente' NO guarda: entrega el
+   borrador al formulario del agente — gate HITL = el POST del form); UI `/personas` renombrada
+   "Agentes jurídicos" (ruta y API intactas) con checklist de guías ("N de 8"; una archivada
+   vinculada se muestra con etiqueta "Archivada — ya no se usa" y se puede desmarcar) y botón
+   "Crear con Mia". Riesgo #58 CERRADO.
+2. **C2 — Perfil del despacho unificado:** las respuestas de la entrevista (archivo por tenant
+   en `$MIA_HOME`) quedan como FUENTE CANÓNICA y `firm_profiles` pasa a DERIVADO:
+   `derive_firm_profile(responses)` determinista (omite vacíos; no deriva extras/legacy);
+   `GET/PUT /api/profile/full` (PUT: `update_soul()` crítico → 502 si falla; jurisdicciones a
+   `tenant_settings`; upsert best-effort con `warning` en llano que PRESERVA las 11 columnas
+   existentes — lo derivado solo sobreescribe cuando trae valor, jamás anula con NULL lo sembrado
+   por el flujo legado); PUT `/api/profile` legado deprecado pero funcional;
+   `MiDespachoSection.tsx` (Identidad · Jurisdicción y práctica con `CountrySelector` extraído
+   del onboarding · Datos profesionales · Herramientas; "Modo profundo" p19 NO se muestra —
+   coherente con Riesgo #27); el ejecutor C2 además atrapó DE PASO el bug latente de
+   `upsert_firm_profile` (escribe siempre las 10 columnas → cada guardado nuevo habría borrado
+   en silencio lo del flujo legado).
+3. **C3 — Configuración en subtabs:** `configurar/page.tsx` con shadcn Tabs (Primeros pasos con
+   contador "X de Y" y default si incompleto · Conexiones · Carpetas · Automatizaciones · Valor
+   y gasto con "Procesos de fondo" plegado); deep-links `#hash` sincronizados (lazy init del
+   estado con el hash + listener `hashchange` + `replaceState`, sin loops); TODAS las anclas
+   externas intactas sin tocar backend (setup.py `#conexiones`/`#carpetas`, dashboard `#valor`,
+   FuentesPanel/OneDriveFolderPicker `#conexiones`); el mapa "¿Qué hace cada sección?" y la ayuda
+   viven en Primeros pasos (decisión declarada).
+
+**Verificación:**
+- **Capa 1:** regresión completa **ALL PASS (79 suites)** — línea base sube de 76 a 79 con
+  `test_agent_playbooks` 55/55, `test_profile_full` 51/51, `test_config_tabs` 14/14;
+  `test_guide_interview` 25/25 actualizado (kind='agente' ya no responde "próximamente");
+  `test_rls` 12/12 y `check_env_pins` 9/9 (HALT) intactos. `npm run build` verde (14 páginas).
+- **Capa 2:** 4 revisores adversariales independientes (seguridad · backend C1 · backend C2 ·
+  frontend/§G) + refutación por hallazgo con agentes escépticos: **5 menores CONFIRMADOS, 0
+  mayores/bloqueantes, 0 falsos positivos; seguridad/RLS sin hallazgos.** Los 5 corregidos y
+  re-verificados ANTES del commit: (1) off-by-one del presupuesto del bloque de guías (la nota
+  de recorte no se contabilizaba → el guard ahora la reserva; check de barrido de frontera
+  añadido); (2) el PUT /profile/full anulaba con NULL name/lawyer_name/jurisdiction/
+  practice_areas/tools si las responses no los traían (preserved ampliado a las 11 columnas;
+  check con el escenario real "legado sin entrevista" añadido); (3) guías archivadas invisibles
+  inflaban el cupo "N de 8" (ahora visibles con etiqueta y desmarcables); (4) MiDespachoSection
+  podía mostrar "Error 500" crudo (guard §G); (5) `ChipsField` muerto en memoria/page.tsx
+  (eliminado + import X).
+- **Capa 3: PENDIENTE — recorrido en vivo de Pipe** (lista en HANDOFF.md).
+
+**Notas/deuda consciente:**
+- POST /api/personas con `playbook_ids` inválidos crea el agente SIN vínculos y responde 422 en
+  llano (decisión documentada del ejecutor C1, cubierta por test).
+- Las 3 personas canónicas de fábrica siguen SIN guías pre-vinculadas (decisión).
+- Carpetas vinculadas POR AGENTE: sigue pospuesto a v2 (nota de alcance del plan).

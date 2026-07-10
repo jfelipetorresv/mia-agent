@@ -1184,7 +1184,7 @@ Si el archivo físico que los originó desaparece, esos documentos quedan "fanta
 expediente indefinidamente; hoy solo se limpian manualmente. Revisar si en la práctica esto
 ensucia expedientes viejos con muchas carpetas rotadas.
 
-## Riesgo #58 — Bloque B (guías asistidas): `kind='agente'` reservado al Bloque C (2026-07-10)
+## Riesgo #58 — CERRADO (sesión 41, Bloque C): `kind='agente'` implementado (2026-07-10)
 
 **Contexto:** el motor de entrevista stateless (`POST /api/guides/interview`, `guides.py`) ya
 acepta `kind` ∈ {`'guia'`, `'agente'`} en el contrato, pero el Bloque B solo construyó el flujo
@@ -1196,5 +1196,6 @@ ya quedó construido de forma reusable (recibe `kind` como prop) para que el Blo
 "Agentes jurídicos con conocimiento") solo tenga que cablear el flujo de entrevista de agentes
 sobre el mismo componente, sin rehacer la UI.
 
-**Acción:** ninguna hasta el Bloque C; cerrar este riesgo cuando `kind='agente'` quede
-implementado.
+**Acción:** CERRADO en la sesión 41 — la entrevista `kind='agente'` quedó implementada
+(interviewer parametrizado por kind + `suggested_playbook_ids` + `onDraftReady` en el wizard,
+gate HITL verificado: la entrevista completa sin guardar deja 0 filas). Gate: `test_agent_playbooks.py`.

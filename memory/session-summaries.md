@@ -1,5 +1,18 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-10 — Sesión 41 · Bloque C COMPLETO — Agentes jurídicos + perfil unificado + Configuración en subtabs
+TL;DR: se cerró el plan de evolución de producto (A/B/C): agentes jurídicos con guías vinculadas, perfil del despacho editable sin repetir la entrevista, y Configuración en subtabs con deep-links.
+Qué construimos:
+- C1: migración 030 persona_playbooks (RLS, tope 8), prioridad de guías vinculadas en el turno (tope 3 intacto), bloque ≤16k en el asistente (tras la voz, jamás en role_prompt), entrevista kind='agente' con sugerencia de guías y gate HITL por construcción, UI "Agentes jurídicos" con checklist y "Crear con Mia". Riesgo #58 cerrado.
+- C2: responses de la entrevista = fuente canónica, firm_profiles derivado (derive_firm_profile), GET/PUT /api/profile/full (update_soul crítico + upsert best-effort que preserva lo sembrado por el flujo legado), MiDespachoSection + CountrySelector extraído del onboarding.
+- C3: configurar/page.tsx en 5 subtabs shadcn con hash sincronizado (mount + hashchange + replaceState); todas las anclas externas intactas sin tocar backend.
+Qué decidimos:
+- Regresión ALL PASS 79 suites (línea base 76→79); npm build verde. Capa 2: 5 menores confirmados (0 mayores/bloqueantes, seguridad sin hallazgos), TODOS corregidos y re-verificados antes del commit `acba433`.
+- "soul_responses" sigue siendo archivo por tenant en disco (nombre lógico, no tabla nueva); las canónicas de fábrica sin guías pre-vinculadas; "Modo profundo" (p19) no se muestra en el perfil.
+Qué sigue:
+- Capa 3 EN VIVO de Pipe (Bloques A+B+C — lista consolidada en HANDOFF.md) y registrar las apps OAuth (guía en docs/guia-conectar-correo-y-nube.md).
+- El plan A/B/C quedó COMPLETO: la próxima sesión define el siguiente objetivo de producto con Pipe.
+
 ## 2026-07-10 — Sesión 40 · Bloque B COMPLETO — Guías asistidas + gobernanza de skills
 TL;DR: El abogado ya puede crear guías conversando con Mia (nunca
        se guardan sin su aprobación) y gobernar lo que Mia sabe

@@ -64,7 +64,7 @@ Ya existe (verificado): asuntos con 1 carpeta local + 1 OneDrive + correos; pick
 
 ---
 
-## BLOQUE C — Agentes jurídicos + perfil unificado + Configuración en subtabs (tercera sesión)
+## BLOQUE C — Agentes jurídicos + perfil unificado + Configuración en subtabs (tercera sesión) ✅ COMPLETADO (sesión 41, 2026-07-10)
 
 ### C1. Personas → "Agentes jurídicos" con conocimiento
 - Migración `persona_playbooks` (M2M, RLS patrón 023); tope 8 guías por agente.
