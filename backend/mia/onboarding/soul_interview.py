@@ -15,6 +15,12 @@ el resultado mezclaba respuestas reales con plantilla vacía. Ahora:
   cero riesgo de que un modelo devuelva el molde a medio llenar.
 - Se removieron las preguntas de "objetivo del año" y "los 3 pilares" (estrategia de
   negocio, no de redacción; reportadas como confusas) — junto con la sección `mission`.
+- 2026-07-09 (decisión de Pipe): se removieron del cuestionario P10 (legal_voice.structure),
+  P11 (legal_voice.banned_words), P14 (hard_nos) y P17 (rhythm) — el estilo de escritura se
+  aprende de los escritos reales y del flywheel HITL (no se pregunta), los límites se
+  construyen con el tiempo, y el ritmo/horario no le sirve a Mia. `build_soul`/`build_summary`
+  SIGUEN renderizando esos campos si vienen en respuestas legacy (`responses.json` viejo) —
+  solo desaparecieron del cuestionario, no de la generación.
 - `build_summary` produce un RESUMEN en lenguaje llano ("Así entendí a tu despacho")
   que es lo que ve el abogado; el SOUL.md técnico queda por debajo.
 
@@ -36,7 +42,10 @@ from .. import config
 logger = logging.getLogger("mia.onboarding.soul")
 
 # ── Las preguntas del onboarding (bloques del Doc 4, menos P8/P9/P12/P13 que el
-#    agente aprende del uso, y menos P15/P16 de estrategia — decisión de Pipe 2026-07-06).
+#    agente aprende del uso, y menos P15/P16 de estrategia — decisión de Pipe 2026-07-06;
+#    menos P10/P11/P14/P17 — decisión de Pipe 2026-07-09: la voz de redacción se aprende
+#    de los escritos reales y del flywheel HITL (no se pregunta), los límites (hard_nos)
+#    se construyen con el tiempo, y el ritmo/horario es irrelevante para Mia).
 # Cada pregunta: id · block · field (sección/campo del SOUL que alimenta) · question
 # (lo que ve el abogado) · example. Las respuestas del frontend llegan como
 # {field: respuesta}; el campo es la llave.
@@ -44,7 +53,7 @@ QUESTIONS: list[dict] = [
     # Bloque 1 — Identidad
     {"id": "p1", "block": "identity", "field": "identity.name",
      "question": "¿Cuál es el nombre completo de tu despacho y tu nombre como abogado principal?",
-     "example": "Lexia Abogados S.A.S. · Juan Felipe Torres"},
+     "example": "Fajardo & Asociados · María Fajardo"},
     {"id": "p2", "block": "identity", "field": "identity.location",
      "question": "¿En qué ciudad y país operas principalmente?",
      "example": "Bogotá, Colombia"},
@@ -53,35 +62,23 @@ QUESTIONS: list[dict] = [
      "example": "Técnico, argumentativo, conciso"},
     {"id": "p4", "block": "identity", "field": "identity.channels",
      "question": "¿Tienes sitio web o canales públicos del despacho?",
-     "example": "lexia.co — LinkedIn Lexia Abogados"},
-    # Bloque 2 — Jurisdicción
-    {"id": "p5", "block": "jurisdiction", "field": "jurisdiction.base",
-     "question": "¿En qué jurisdicción trabajas principalmente?",
-     "example": "Colombia — también España ocasionalmente"},
+     "example": "fajardoasociados.co — LinkedIn Fajardo & Asociados"},
+    # Bloque 2 — Jurisdicción. NOTA (consolidación 2026-07-09, decisión de Pipe): la
+    # pregunta descriptiva de país (antes p5, field jurisdiction.base) ya NO se hace —
+    # el frontend tiene UN solo selector múltiple de países (el mismo del enrutamiento
+    # de paquetes jurídicos) y auto-llena `jurisdiction.base` con los países elegidos
+    # al completar. build_soul/build_summary siguen renderizando ese campo.
     {"id": "p6", "block": "jurisdiction", "field": "jurisdiction.practice_areas",
      "question": "¿Cuáles son las ramas del derecho en que te especializas?",
-     "example": "Seguros, responsabilidad fiscal, contencioso-administrativo, contratos públicos"},
+     "example": "Civil, comercial, laboral, seguros"},
     {"id": "p7", "block": "jurisdiction", "field": "jurisdiction.client_type",
      "question": "¿Qué tipo de cliente defiende principalmente tu despacho?",
      "example": "Aseguradoras (HDI, Zurich, SURA, Seguros del Estado)"},
-    # Bloque 3 — Voz jurídica
-    {"id": "p10", "block": "legal_voice", "field": "legal_voice.structure",
-     "question": "¿Cómo estructuras típicamente tus escritos?",
-     "example": "Párrafos narrativos continuos. Sin viñetas en escritos de fondo."},
-    {"id": "p11", "block": "legal_voice", "field": "legal_voice.banned_words",
-     "question": "¿Hay palabras o expresiones que nunca usas?",
-     "example": "Sin latinismos. Sin 'insalvable'. Sin 'en ese orden de ideas'."},
-    {"id": "p14", "block": "legal_voice", "field": "hard_nos",
-     "question": "¿Qué cosas Mia nunca debe hacer en tu nombre?",
-     "example": "Nunca presentar borrador sin revisión. Nunca recomendar allanarse sin análisis."},
-    # Bloque 4 — Ritmo y herramientas
-    {"id": "p17", "block": "rhythm", "field": "rhythm",
-     "question": "¿Cuándo trabajas mejor? ¿Tienes días sin reuniones?",
-     "example": "Mañanas 7am-12pm trabajo profundo. Sin reuniones lunes ni viernes."},
-    {"id": "p18", "block": "rhythm", "field": "memory.tools_that_survived",
+    # Bloque 3 — Herramientas
+    {"id": "p18", "block": "tools", "field": "memory.tools_that_survived",
      "question": "¿Hay herramientas que usas a diario que Mia debe conocer?",
      "example": "Correo, gestor documental, calendario, mensajería."},
-    # Bloque 5 — Modo profundo (opcional; el frontend puede ocultarlo hasta implementarse)
+    # Bloque 4 — Modo profundo (opcional; el frontend puede ocultarlo hasta implementarse)
     {"id": "p19", "block": "triad_mode", "field": "triad_mode",
      "question": "¿Quieres habilitar el modo de análisis profundo para asuntos de alta "
                  "complejidad? Tres modelos distintos en ciclo cerrado: más tiempo y costo, "
@@ -90,7 +87,7 @@ QUESTIONS: list[dict] = [
 ]
 
 # Orden canónico de los bloques (para el progreso del frontend).
-BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "legal_voice", "rhythm", "triad_mode")
+BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "tools", "triad_mode")
 
 # Secciones que el SOUL.md PUEDE contener (solo aparecen si hay respuesta). Sirve al
 # gate y a la inspección; ya NO es un template fijo obligatorio.
@@ -321,6 +318,7 @@ def build_summary(responses: dict) -> str:
     firm, lawyer = _firm_lawyer(r.get("identity.name"))
     location = _location(r.get("identity.location"))
     voice = _text(r.get("identity.voice"))
+    base = _text(r.get("jurisdiction.base"))
     areas = _text(r.get("jurisdiction.practice_areas"))
     client = _text(r.get("jurisdiction.client_type"))
     structure = _text(r.get("legal_voice.structure"))
@@ -339,6 +337,7 @@ def build_summary(responses: dict) -> str:
     bullets = [
         ("Despacho", despacho),
         ("Dónde trabajas", location),
+        ("Jurisdicción", base),
         ("Áreas de práctica", areas),
         ("Tipo de cliente", client),
         ("Estilo de escritura", voice),
@@ -354,6 +353,11 @@ def build_summary(responses: dict) -> str:
     if hard_nos:
         lines.append("- **Reglas que nunca debo romper:**")
         lines.extend(f"  - {h}" for h in hard_nos)
+    lines.append("")
+    lines.append(
+        "Tu estilo de redacción no te lo pregunto: Mia lo aprende de tus propios escritos "
+        "y de las correcciones que hagas a sus borradores."
+    )
     lines.append("")
     lines.append("Puedes ajustar cualquiera de estos datos cuando quieras desde “Mi despacho”.")
     return "\n".join(lines)

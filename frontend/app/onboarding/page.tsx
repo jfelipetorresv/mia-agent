@@ -48,13 +48,50 @@ type CompletionResult = {
   path: string;
 };
 
+// Nota: el bloque "triad_mode" (p19) NO tiene etiqueta a propósito — Riesgo #27: el
+// modo de análisis profundo no está implementado; su pregunta queda filtrada del
+// wizard (HIDDEN_QUESTION_IDS) y no debe existir rastro visible de él en el onboarding.
 const BLOCK_LABEL: Record<string, string> = {
   identity: "Identidad",
   jurisdiction: "Contexto",
-  legal_voice: "Voz",
-  mission_rhythm: "Ritmo",
-  rhythm: "Ritmo",
+  tools: "Herramientas",
 };
+
+// Países para la pregunta ÚNICA de jurisdicción — Colombia primero, resto alfabético
+// (decisión de Pipe 2026-07-09: consolidar las dos preguntas de país en una, con todos
+// los países de habla hispana y selección múltiple). Los códigos siguen ISO 3166-1
+// alfa-2 y coinciden con los códigos de los paquetes jurídicos (p. ej. "co"): la
+// selección viaja como `jurisdictions` (códigos, para el enrutamiento de paquetes) y
+// además auto-llena `jurisdiction.base` (nombres, para el perfil del despacho). Los
+// países CON paquete instalado se marcan con la insignia "Conocimiento jurídico
+// profundo"; los demás se pueden elegir igual — quedan en el perfil sin prometer nada.
+const COUNTRY_OPTIONS: { code: string; name: string }[] = [
+  { code: "co", name: "Colombia" },
+  { code: "ar", name: "Argentina" },
+  { code: "bo", name: "Bolivia" },
+  { code: "cl", name: "Chile" },
+  { code: "cr", name: "Costa Rica" },
+  { code: "cu", name: "Cuba" },
+  { code: "ec", name: "Ecuador" },
+  { code: "sv", name: "El Salvador" },
+  { code: "es", name: "España" },
+  { code: "gt", name: "Guatemala" },
+  { code: "gq", name: "Guinea Ecuatorial" },
+  { code: "hn", name: "Honduras" },
+  { code: "mx", name: "México" },
+  { code: "ni", name: "Nicaragua" },
+  { code: "pa", name: "Panamá" },
+  { code: "py", name: "Paraguay" },
+  { code: "pe", name: "Perú" },
+  { code: "pr", name: "Puerto Rico" },
+  { code: "do", name: "República Dominicana" },
+  { code: "uy", name: "Uruguay" },
+  { code: "ve", name: "Venezuela" },
+];
+
+const COUNTRY_NAME_BY_CODE: Record<string, string> = Object.fromEntries(
+  COUNTRY_OPTIONS.map((c) => [c.code, c.name]),
+);
 
 // Riesgo #27 (CP7): el "modo profundo" (triad_mode) NO está implementado — no se
 // ofrece en la UI. Se filtra la pregunta si el backend aún la envía; se
@@ -64,15 +101,10 @@ const HIDDEN_QUESTION_IDS = new Set(["p19"]);
 // Solo P1 y P2 son obligatorias; el resto es opcional.
 const REQUIRED_IDS = new Set(["p1", "p2"]);
 
-// Tipos de input por pregunta (onboarding horizontal: sin conocimiento jurídico hardcodeado).
-const TEXT_IDS = new Set(["p4", "p5", "p8", "p9", "p11"]);
-const TAG_IDS = new Set(["p3", "p6", "p7", "p14"]);
-const SELECT_OPTIONS: Record<string, string[]> = {
-  p10: ["Narrativo continuo", "Estructurado con secciones", "Depende del tipo de escrito"],
-};
-const CHECKBOX_OPTIONS: Record<string, string[]> = {
-  p17: ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"],
-};
+// Tipos de input por pregunta (onboarding horizontal: sin conocimiento jurídico hardcodeado
+// fuera de la lista de países del paso de jurisdicción, que es deliberada).
+const TEXT_IDS = new Set(["p4", "p8", "p9"]);
+const TAG_IDS = new Set(["p3", "p6", "p7"]);
 
 const TOOL_OPTIONS: { name: string; description: string; comingSoon?: boolean }[] = [
   { name: "Correo", description: "Mia vigila tus correos urgentes y te avisa." },
@@ -88,7 +120,6 @@ const TOOL_OPTIONS: { name: string; description: string; comingSoon?: boolean }[
 
 // Sugerencias genéricas (no jurisdicción, ramas del derecho ni tribunales).
 const VOICE_SUGGESTIONS = ["Técnico", "Argumentativo", "Conciso", "Formal", "Directo", "Analítico", "Detallado", "Estratégico"];
-const LIMIT_SUGGESTIONS = ["Revisión humana obligatoria", "Verificar antes de enviar", "Consultar al abogado antes de actuar"];
 
 // ── Conversores tolerantes (incluyen fallback desde strings de onboardings viejos) ──
 function asText(value: AnswerValue | undefined): string {
@@ -113,13 +144,6 @@ function asLocationPair(value: AnswerValue | undefined): LocationPair {
     return { country: value.country || "", city: value.city || "" };
   }
   return { country: typeof value === "string" ? value : "", city: "" };
-}
-
-function asRhythm(value: AnswerValue | undefined): { no_meetings: string[]; hours: string } {
-  if (value && typeof value === "object" && !Array.isArray(value) && "no_meetings" in value) {
-    return { no_meetings: value.no_meetings, hours: value.hours || "" };
-  }
-  return { no_meetings: [], hours: typeof value === "string" ? value : "" };
 }
 
 // Una pregunta está "completa" si cumple su requisito. Solo P1/P2 son obligatorias.
@@ -149,7 +173,8 @@ export default function OnboardingPage() {
   const [completion, setCompletion] = useState<CompletionResult | null>(null);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<{ responses: Record<string, AnswerValue>; idx: number; qid?: string | null } | null>(null);
-  const [jurisdictionOptions, setJurisdictionOptions] = useState<JurisdictionOption[]>([]);
+  // Códigos de país con paquete jurídico instalado (insignia "Conocimiento jurídico profundo").
+  const [packCodes, setPackCodes] = useState<Set<string>>(new Set());
   // Microtexto discreto de autosave — ayuda, no candado (§ autosave).
   const [savedFlash, setSavedFlash] = useState(false);
 
@@ -162,25 +187,25 @@ export default function OnboardingPage() {
         ]);
         let list = qs.filter((q) => !HIDDEN_QUESTION_IDS.has(q.id));
 
-        // Paso local de jurisdicción (Fase 2): NO viene del backend. Se inserta justo
-        // después de p2. Fail-open: si /api/jurisdictions falla, el paso se omite en silencio.
+        // Paso local de jurisdicción: la ÚNICA pregunta de país (consolidación 2026-07-09).
+        // La lista de países es fija (COUNTRY_OPTIONS); el paso SIEMPRE se inserta después
+        // de p2. /api/jurisdictions solo aporta qué países tienen paquete jurídico instalado
+        // (insignia "Conocimiento jurídico profundo"). Fail-open: si falla, sin insignias.
+        const jurisdictionStep: Question = {
+          id: JURISDICTION_QUESTION_ID,
+          block: "jurisdiction",
+          field: JURISDICTION_FIELD,
+          question: "¿Con las reglas jurídicas de qué país trabaja tu despacho?",
+          example: "",
+        };
+        const p2Index = list.findIndex((q) => q.id === "p2");
+        const insertAt = p2Index >= 0 ? p2Index + 1 : list.length;
+        list = [...list.slice(0, insertAt), jurisdictionStep, ...list.slice(insertAt)];
         try {
           const jd = await apiGet<{ jurisdictions: JurisdictionOption[] }>("/api/jurisdictions");
-          if (jd.jurisdictions && jd.jurisdictions.length > 0) {
-            setJurisdictionOptions(jd.jurisdictions);
-            const jurisdictionStep: Question = {
-              id: JURISDICTION_QUESTION_ID,
-              block: "jurisdiction",
-              field: JURISDICTION_FIELD,
-              question: "¿Con las reglas jurídicas de qué país trabaja tu despacho?",
-              example: "",
-            };
-            const p2Index = list.findIndex((q) => q.id === "p2");
-            const insertAt = p2Index >= 0 ? p2Index + 1 : list.length;
-            list = [...list.slice(0, insertAt), jurisdictionStep, ...list.slice(insertAt)];
-          }
+          setPackCodes(new Set((jd.jurisdictions ?? []).map((j) => j.code)));
         } catch {
-          /* fail-open: sin jurisdicciones disponibles, el paso se omite */
+          /* fail-open: sin insignias de paquete */
         }
 
         setQuestions(list);
@@ -225,10 +250,14 @@ export default function OnboardingPage() {
     setSubmitting(true);
     setError("");
     try {
-      // La jurisdicción es un paso local (no del SOUL): se extrae de `responses`
-      // y viaja aparte como `jurisdictions`.
+      // La selección de país se extrae de `responses` y viaja DOBLE: como
+      // `jurisdictions` (códigos, para el enrutamiento de paquetes jurídicos) y como
+      // `jurisdiction.base` (nombres, auto-llenado para que el SOUL.md y el resumen
+      // sigan mostrando la jurisdicción — la pregunta descriptiva p5 ya no existe).
       const { [JURISDICTION_FIELD]: jurisdictionValue, ...soulResponses } = answers;
       const jurisdictions = asList(jurisdictionValue);
+      const countryNames = jurisdictions.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c);
+      if (countryNames.length > 0) soulResponses["jurisdiction.base"] = countryNames;
       const res = await apiSend<CompletionResult>("POST", "/api/onboarding/complete", {
         responses: soulResponses,
         ...(jurisdictions.length > 0 ? { jurisdictions } : {}),
@@ -323,7 +352,7 @@ export default function OnboardingPage() {
           Tu despacho ya está configurado
         </h1>
         <p className="mt-2 max-w-md animate-slide-up text-sm text-muted-foreground" style={{ animationDelay: "120ms", animationFillMode: "backwards" }}>
-          Mia ya conoce tu identidad, tu voz y tus límites. Puedes revisarlos y actualizarlos.
+          Mia ya conoce tu identidad, tu jurisdicción y tus herramientas. Puedes revisarlas y actualizarlas.
         </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3 animate-slide-up" style={{ animationDelay: "180ms", animationFillMode: "backwards" }}>
           <Button variant="ghost" onClick={() => router.push("/")}>
@@ -376,8 +405,8 @@ export default function OnboardingPage() {
           style={{ animationDelay: "120ms", animationFillMode: "backwards" }}
         >
           Voy a ser tu asistente jurídica. Para trabajar como a ti te gusta, necesito
-          conocerte: te haré {total} preguntas cortas sobre tu despacho, tu forma de
-          escribir y tus límites. Solo dos son obligatorias; el resto las puedes saltar.
+          conocerte: te haré {total} preguntas cortas sobre tu despacho, tu jurisdicción
+          y tus herramientas. Solo dos son obligatorias; el resto las puedes saltar.
         </p>
         <p
           className="mt-2 animate-slide-up text-sm text-muted-foreground/80"
@@ -479,7 +508,7 @@ export default function OnboardingPage() {
           <div className="mb-6" />
         )}
 
-        <QuestionInput question={current} value={value} onChange={setAnswer} jurisdictionOptions={jurisdictionOptions} />
+        <QuestionInput question={current} value={value} onChange={setAnswer} packCodes={packCodes} />
       </div>
 
       {error ? <p className="mt-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
@@ -599,17 +628,17 @@ function QuestionInput({
   question,
   value,
   onChange,
-  jurisdictionOptions,
+  packCodes,
 }: {
   question: Question;
   value: AnswerValue | undefined;
   onChange: (value: AnswerValue) => void;
-  jurisdictionOptions: JurisdictionOption[];
+  packCodes: Set<string>;
 }) {
   switch (question.id) {
-    // Paso local de jurisdicción (Fase 2) — no viene de las preguntas del backend.
+    // Paso local de jurisdicción — la única pregunta de país (multi-select de 21 países).
     case JURISDICTION_QUESTION_ID:
-      return <JurisdictionCheckboxes options={jurisdictionOptions} value={asList(value)} onChange={onChange} />;
+      return <JurisdictionCheckboxes packCodes={packCodes} value={asList(value)} onChange={onChange} />;
     // P1 — dos campos: despacho + abogado.
     case "p1": {
       const n = asNamePair(value);
@@ -619,7 +648,7 @@ function QuestionInput({
             <Input
               value={n.firm}
               onChange={(e) => onChange({ ...n, firm: e.target.value })}
-              placeholder="Ej: Lexia Abogados S.A.S."
+              placeholder="Ej: Fajardo & Asociados S.A.S."
               autoFocus
             />
           </Field>
@@ -662,28 +691,6 @@ function QuestionInput({
     case "p3":
       return <TagInput value={asList(value)} onChange={onChange} suggestions={VOICE_SUGGESTIONS} max={3} placeholder="Escribe un adjetivo y presiona Enter" />;
 
-    // P17 — ritmo: días sin reuniones + horario de trabajo profundo.
-    case "p17": {
-      const rhythm = asRhythm(value);
-      return (
-        <div className="space-y-5">
-          <CheckboxGroup
-            label="Días sin reuniones"
-            options={CHECKBOX_OPTIONS.p17}
-            value={rhythm.no_meetings}
-            onChange={(days) => onChange({ ...rhythm, no_meetings: days as string[] })}
-          />
-          <Field label="Horario de trabajo profundo">
-            <Input
-              value={rhythm.hours}
-              onChange={(e) => onChange({ ...rhythm, hours: e.target.value })}
-              placeholder="Ej: 7am-12pm"
-            />
-          </Field>
-        </div>
-      );
-    }
-
     // P18 — herramientas (lista curada con descripción).
     case "p18":
       return <ToolsChecklist value={asList(value)} onChange={onChange} />;
@@ -702,18 +709,14 @@ function QuestionInput({
         );
       }
       if (TAG_IDS.has(question.id)) {
-        const hints = question.id === "p14" ? LIMIT_SUGGESTIONS : [];
         return (
           <TagInput
             value={asList(value)}
             onChange={onChange}
-            suggestions={hints}
+            suggestions={[]}
             placeholder="Escribe y presiona Enter"
           />
         );
-      }
-      if (SELECT_OPTIONS[question.id]) {
-        return <RadioGroup options={SELECT_OPTIONS[question.id]} value={asText(value)} onChange={onChange} />;
       }
       return (
         <Input
@@ -912,14 +915,16 @@ function TagInput({
   );
 }
 
-// Paso local de jurisdicción (Fase 2): muestra `name` (viene del API), guarda `code`.
-// Los nombres de jurisdicción NUNCA se hardcodean — llegan siempre de GET /api/jurisdictions.
+// Paso local de jurisdicción (consolidado 2026-07-09): muestra los 21 países de habla
+// hispana (COUNTRY_OPTIONS, Colombia primero), guarda el `code`. Los países con paquete
+// jurídico instalado (según GET /api/jurisdictions) llevan la insignia discreta
+// "Conocimiento jurídico profundo"; los demás se pueden elegir igual.
 function JurisdictionCheckboxes({
-  options,
+  packCodes,
   value,
   onChange,
 }: {
-  options: JurisdictionOption[];
+  packCodes: Set<string>;
   value: string[];
   onChange: (value: string[]) => void;
 }) {
@@ -930,8 +935,9 @@ function JurisdictionCheckboxes({
 
   return (
     <div className="grid gap-2 sm:grid-cols-2">
-      {options.map((option) => {
+      {COUNTRY_OPTIONS.map((option) => {
         const checked = value.includes(option.code);
+        const hasPack = packCodes.has(option.code);
         return (
           <label
             key={option.code}
@@ -944,9 +950,14 @@ function JurisdictionCheckboxes({
               type="checkbox"
               checked={checked}
               onChange={(e) => toggle(option.code, e.target.checked)}
-              className="h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
+              className="h-4 w-4 shrink-0 rounded border-input accent-[hsl(var(--primary))]"
             />
-            <span>{option.name}</span>
+            <span className="min-w-0">
+              <span className="block">{option.name}</span>
+              {hasPack ? (
+                <span className="mt-0.5 block text-xs text-primary">Conocimiento jurídico profundo</span>
+              ) : null}
+            </span>
           </label>
         );
       })}
@@ -997,34 +1008,3 @@ function CheckboxGroup({
   );
 }
 
-function RadioGroup({
-  options,
-  value,
-  onChange,
-}: {
-  options: string[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      {options.map((option) => (
-        <label
-          key={option}
-          className={cn(
-            "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors",
-            value === option ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-primary/25",
-          )}
-        >
-          <input
-            type="radio"
-            checked={value === option}
-            onChange={() => onChange(option)}
-            className="h-4 w-4 border-input accent-[hsl(var(--primary))]"
-          />
-          <span>{option}</span>
-        </label>
-      ))}
-    </div>
-  );
-}

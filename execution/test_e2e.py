@@ -187,12 +187,21 @@ def run_e2e(client, auth, tid) -> list[str]:
     print("\n-- Paso 1 · Onboarding (SOUL.md) --")
     r = client.get("/api/onboarding/questions", headers=auth)
     qs = r.json() if r.status_code == 200 else []
-    check("GET /api/onboarding/questions -> 13 preguntas (sin P8/P9/P12/P13 ni objetivo/pilares)",
-          r.status_code == 200 and len(qs) == 13)
+    # Contrato 2026-07-09 (consolidación): 8 preguntas. Removidas del cuestionario (el
+    # endpoint NO debe reintroducirlas): P8/P9/P12/P13 (se aprenden del uso), P15/P16
+    # (objetivo/pilares — estrategia), P10/P11/P14/P17 (voz/límites/ritmo — flywheel),
+    # y P5 (país — lo pregunta el selector único de jurisdicción del frontend, que
+    # auto-llena jurisdiction.base).
+    removed_ids = {"p5", "p8", "p9", "p10", "p11", "p12", "p13",
+                   "p14", "p15", "p16", "p17"}
+    qids = {q.get("id") for q in qs}
+    check("GET /api/onboarding/questions -> 8 preguntas (sin las removidas: "
+          "P5/P8/P9/P10-P17 salvo p18)",
+          r.status_code == 200 and len(qs) == 8 and not (qids & removed_ids))
     check("cada pregunta trae id/block/field/question/example",
           bool(qs) and all({"id", "block", "field", "question", "example"} <= set(q) for q in qs))
-    check("las preguntas cubren los bloques (sin las de estrategia removidas)",
-          {q["block"] for q in qs} == {"identity", "jurisdiction", "legal_voice", "rhythm", "triad_mode"})
+    check("las preguntas cubren los bloques vigentes (identity/jurisdiction/tools/triad_mode)",
+          {q["block"] for q in qs} == {"identity", "jurisdiction", "tools", "triad_mode"})
 
     r = client.post("/api/onboarding/complete", headers=auth, json={"responses": LEXIA})
     body = r.json() if r.status_code == 200 else {}

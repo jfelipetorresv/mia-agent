@@ -1,9 +1,17 @@
 """
 Mia · test_onboarding_jurisdictions.py — gate de selección/persistencia de jurisdicción
-(Fase 0.C). Verifica:
-  1. OPCIONES no hardcodeadas: se derivan de los packs instalados + 'generic' (Decisión #22).
-  2. PERSISTENCIA + RESOLVER (round-trip DB): un tenant con jurisdictions en tenant_settings
-     resuelve a esos códigos; sin config → ['generic'] (modo genérico, fail-soft).
+(Fase 0.C · consolidación 2026-07-09). Contrato vigente: el wizard muestra UNA pregunta
+de país con la lista fija de 21 países hispanohablantes (frontend, cubierta por
+test_onboarding_horizontal); /api/jurisdictions ya NO da las opciones — da qué códigos
+tienen paquete jurídico instalado (insignia "Conocimiento jurídico profundo").
+  Verifica:
+  1. INSIGNIAS del API: derivadas de los packs instalados + 'generic' (Decisión #22) —
+     nunca anuncian paquete para un país sin pack instalado.
+  2. PAÍS SIN PACK elegible con gracia: load_pack de un código sin pack cae al modo
+     genérico (fail-soft), nunca revienta.
+  3. PERSISTENCIA + RESOLVER (round-trip DB): un tenant con jurisdictions en
+     tenant_settings resuelve a esos códigos TAL CUAL, incluso sin pack (los
+     consumidores degradan a genérico); sin config → ['generic'] (fail-soft).
 
     .venv\\Scripts\\python.exe execution\\test_onboarding_jurisdictions.py
 """
@@ -76,7 +84,8 @@ async def run_db() -> None:
     await pool.open_pool()
     try:
         got = await resolve_jurisdictions(T_WITH)
-        check("resolver: tenant con config -> ['co','mx']", got == ["co", "mx"])
+        check("resolver: tenant con config -> ['co','mx'] (incluye país SIN pack, tal cual)",
+              got == ["co", "mx"])
         none = await resolve_jurisdictions(T_NONE)
         check("resolver: tenant sin config -> ['generic'] (fail-soft)", none == [GENERIC_CODE])
     finally:
@@ -84,12 +93,18 @@ async def run_db() -> None:
 
 
 def main() -> int:
-    print("== Fase 0.C · onboarding: opciones y persistencia de jurisdicción ==")
-    # 1 · opciones derivadas de packs (offline)
+    print("== Fase 0.C · onboarding: insignias de paquete y persistencia de jurisdicción ==")
+    # 1 · insignias derivadas de packs (offline): el API solo anuncia paquete instalado
     codes = [o["code"] for o in _options()]
-    check("opciones incluyen el pack 'co'", "co" in codes)
-    check("opciones incluyen 'generic' (modo genérico)", GENERIC_CODE in codes)
-    check("opciones NO hardcodean países sin pack (p. ej. 'ar' no instalado)", "ar" not in codes)
+    check("insignias incluyen el pack 'co'", "co" in codes)
+    check("insignias incluyen 'generic' (modo genérico)", GENERIC_CODE in codes)
+    check("el API NO anuncia paquete para países sin pack (p. ej. 'ar' no instalado)", "ar" not in codes)
+
+    # 1b · país sin pack elegible con gracia: load_pack degrada a genérico, no revienta
+    check("load_pack('ar') sin pack instalado cae al modo genérico (fail-soft)",
+          load_pack("ar").is_generic and load_pack("mx").is_generic)
+    check("load_pack('co') sí carga el pack de Colombia (no genérico)",
+          not load_pack("co").is_generic and load_pack("co").name == "Colombia")
 
     # 2 · persistencia + resolver (DB)
     seed()
