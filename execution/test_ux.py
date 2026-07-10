@@ -176,6 +176,11 @@ def run_checks(client, auth, tid) -> list[str]:
     r = client.get(f"/api/matters/{mA}/draft", headers=auth)
     check("GET /api/matters/{id}/draft -> 200 con borrador",
           r.status_code == 200 and r.json().get("draft", "").startswith("BORRADOR"))
+    # 9b · hallazgo post-review (frontend): mientras el grafo está pausado esperando
+    # revisión, hitl_outcome todavía NO es "approved" (evita que el botón "Convertir
+    # en guía" del frontend aparezca antes de que el abogado decida algo).
+    check("GET draft: hitl_outcome no es 'approved' mientras awaiting_review es true",
+          r.json().get("awaiting_review") is True and r.json().get("hitl_outcome") != "approved")
 
     # 10 · borrador 404 cuando el asunto no tiene turno
     r = client.get(f"/api/matters/{mB}/draft", headers=auth)
@@ -186,6 +191,13 @@ def run_checks(client, auth, tid) -> list[str]:
         ok_approve = s.status_code == 200
         _ = "".join(s.iter_text())
     check("POST /api/matters/{id}/draft/approve -> 200", ok_approve)
+    # 11b · hallazgo post-review (frontend): tras aprobar SIN editar, hitl_outcome
+    # queda 'approved' — la única señal con la que el frontend habilita "Convertir en
+    # guía" (asuntos/[id]/page.tsx). awaiting_review ya no distingue este caso solo.
+    r = client.get(f"/api/matters/{mA}/draft", headers=auth)
+    check("GET draft tras approve -> hitl_outcome == 'approved'",
+          r.status_code == 200 and r.json().get("awaiting_review") is False
+          and r.json().get("hitl_outcome") == "approved")
 
     # 12 · rechazar borrador (asunto C: correr el turno y rechazar)
     with client.stream("GET", f"/api/matters/{mC}/stream", params={"message": "Otra consulta"},
@@ -196,6 +208,14 @@ def run_checks(client, auth, tid) -> list[str]:
         ok_reject = s.status_code == 200
         _ = "".join(s.iter_text())
     check("POST /api/matters/{id}/draft/reject -> 200", ok_reject)
+    # 12b · hallazgo post-review (frontend): tras RECHAZAR, el grafo también llega a
+    # END (awaiting_review=false) pero hitl_outcome debe quedar 'rejected', NUNCA
+    # 'approved' — es la causa raíz del bug reportado (el botón "Convertir en guía"
+    # aparecía también tras un rechazo porque el frontend solo miraba awaiting_review).
+    r = client.get(f"/api/matters/{mC}/draft", headers=auth)
+    check("GET draft tras reject -> hitl_outcome == 'rejected' (no 'approved')",
+          r.status_code == 200 and r.json().get("awaiting_review") is False
+          and r.json().get("hitl_outcome") == "rejected")
 
     # 13 · perfil (get vacío + put)
     r = client.get("/api/profile", headers=auth)
@@ -256,6 +276,23 @@ def run_checks(client, auth, tid) -> list[str]:
     check("B4: la corrección del abogado quedó appendida al archivo del concepto",
           "## Corrección del abogado" in ctxt and "El término es de dos años" in ctxt)
 
+    # 16d · "Editar antes de aplicar" en una wiki_correction: la EDICIÓN del abogado,
+    # no el texto crudo de Mia, es lo que debe quedar escrito en el corpus.
+    r = client.post("/api/wiki/concepts/Caducidad/feedback", headers=auth,
+                    json={"correction": "Texto original propuesto por Mia (no debe quedar)."})
+    check("segunda corrección -> 201", r.status_code == 201)
+    props2 = client.get("/api/proposals", headers=auth).json()
+    wc2 = next(p for p in props2 if p["type"] == "Corrección pendiente"
+              and p["suggestion"].startswith("Texto original"))
+    r = client.post(f"/api/proposals/{wc2['id']}/apply", headers=auth,
+                    json={"content": "Texto EDITADO por el abogado antes de aplicar."})
+    check("POST apply (wiki_correction) con content editado -> 200 applied",
+          r.status_code == 200 and r.json().get("status") == "applied")
+    ctxt2 = cpath.read_text(encoding="utf-8")
+    check("la corrección EDITADA por el abogado quedó appendida (no el texto crudo de Mia)",
+          "Texto EDITADO por el abogado" in ctxt2
+          and "Texto original propuesto por Mia" not in ctxt2)
+
     # 17 · §G — sin jerga técnica en lo que ve el abogado
     blob = " ".join(visible_payloads).lower()
     leaked = [w for w in FORBIDDEN if w in blob]
@@ -300,6 +337,23 @@ def run_checks(client, auth, tid) -> list[str]:
         _ = "".join(s.iter_text())
     check("pending_review = false tras approve y tras reject (#25)",
           ok_after_approve and _pending(mE) is False)
+
+    # 22 · hallazgo post-review (frontend): "Aprobar con cambios" (edited_text en el
+    # body de /draft/approve) corre el nodo de edición del grafo, cuyo desenlace es
+    # 'editing' → hitl_outcome 'edited', NO 'approved' (mismo criterio que ya usa
+    # interviewer.py para excluir evidencia editada de la evidencia "confiable").
+    mF = client.post("/api/matters", headers=auth, json={"name": "Asunto con edición"}).json()["id"]
+    threads.append(thread_id_for(tid, mF))
+    with client.stream("GET", f"/api/matters/{mF}/stream", params={"message": "¿Caducó?"},
+                       headers=auth) as s:
+        _ = "".join(s.iter_text())
+    with client.stream("POST", f"/api/matters/{mF}/draft/approve", headers=auth,
+                       json={"edited_text": "Borrador editado por el abogado."}) as s:
+        _ = "".join(s.iter_text())
+    r = client.get(f"/api/matters/{mF}/draft", headers=auth)
+    check("GET draft tras 'aprobar con cambios' -> hitl_outcome == 'edited' (no 'approved')",
+          r.status_code == 200 and r.json().get("awaiting_review") is False
+          and r.json().get("hitl_outcome") == "edited")
 
     return threads
 

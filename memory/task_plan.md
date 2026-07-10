@@ -256,4 +256,24 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
 - [x] Regresión completa 74/74 suites ALL PASS (línea base 70 → 74); `test_rls`/`check_env_pins`
       HALT intactos; `npm run build` verde
 - [ ] Capa 3 EN VIVO de Pipe (Proyectos, FolderPicker, FuentesPanel) — pendiente
+
+## Evolución de producto — BLOQUE B: Guías de trabajo asistidas + gobernanza de skills (Sesión 40, 2026-07-10)
+Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado por Pipe.
+- [x] B0 — CRUD + versiones de playbooks (migración `029_playbook_versions.sql`, RLS FORCE
+      patrón 023, `origin` en metadata, archivar/restaurar, restaurar versión) —
+      `execution/init_playbook_versions.py`
+- [x] B1-B2 — motor de entrevista stateless (`interviewer.py`, nunca escribe en DB) +
+      `POST /api/guides/interview` (`guides.py`) + `GuideInterviewWizard.tsx` — botón
+      "Crear con Mia" en Conocimiento — `test_guide_interview.py` 25/25
+- [x] B3 — botón "Convertir en guía" en el asunto (solo con borrador aprobado, `hitl_outcome`
+      expuesto vía `HITL_OUTCOME` en `state.py`) + precarga de contexto del asunto
+- [x] B4 — `source_matters` en propuestas + "Editar antes de aplicar" + subtabs "Guías y
+      documentos" / "Lo que Mia sabe hacer" fusionados en "Guías y habilidades"
+- [x] Capa 2: 4 revisores adversariales independientes, 10 hallazgos confirmados (3 mayores +
+      7 menores), TODOS corregidos — ver `progress.md` sesión 40
+- [x] Regresión completa 76/76 suites ALL PASS (línea base 74 → 76,
+      `test_playbook_versions.py` 59/59, `test_guide_interview.py` 25/25); `test_rls`/
+      `check_env_pins` HALT intactos; `npm run build` verde
+- [ ] Capa 3 EN VIVO de Pipe (wizard "Crear con Mia", historial de versiones, "Convertir en
+      guía", "Editar antes de aplicar") — pendiente
 - [ ] Siguiente: BLOQUE B — guías de trabajo asistidas + gobernanza de skills

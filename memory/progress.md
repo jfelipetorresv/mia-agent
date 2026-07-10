@@ -2120,3 +2120,79 @@ siendo la migración a Vite ya planeada. El repo quedó limpio (config y rutas r
 `test_trace_capture` 26/26, `test_ux` 34/34 (falló una vez por colisión con el build del
 spike en paralelo — se re-corrió limpio), `test_rls` 12/12 (HALT). Regresión completa de
 las 71 suites corrida como capa final antes del commit (resultado en este mismo commit).
+
+---
+
+## 2026-07-10 — Sesión 40 — Bloque B del plan de evolución de producto COMPLETO (Guías de trabajo asistidas + gobernanza de skills)
+
+**Contexto:** continuación del plan de evolución de producto (Bloques A/B/C) aprobado por Pipe en
+`memory/plan-evolucion-producto.md`, bajo la misma autorización expresa de orquestación
+multi-agente de la sesión 38. Esta sesión ejecutó el Bloque B completo (B0-B4).
+
+**Qué se construyó (por pieza):**
+1. **B0 — CRUD completo de playbooks + versiones (`029_playbook_versions.sql` +
+   `execution/init_playbook_versions.py`, aplicada a la DB local):** tabla `playbook_versions`
+   (snapshot del estado ANTERIOR, `changed_by` `'abogado'|'mia'`, `reason` en llano, RLS FORCE
+   patrón 023). En `ux.py`: `POST /api/playbooks` gana `origin` ∈ {manual, importada, entrevista,
+   asunto, aprendida} → `metadata.origin` (import marca `'importada'`); `GET /api/playbooks?status=
+   activos|todos` con `origin`/`protected`/`status`; `GET /api/playbooks/{id}`; `PUT` (snapshot
+   previo + re-embed; editable aunque `protected` — protected solo bloquea cambios automáticos;
+   409 en llano si el título choca); `POST archive/restore`; `GET versions` + `POST restore` de
+   versión (con snapshot del estado actual antes).
+2. **B1-B2 — Wizard "Crear guía con Mia":** `backend/mia/memory/interviewer.py` (motor de
+   entrevista STATELESS: mín 3/máx 6 preguntas, LLM `task="curator"` vía `asyncio.to_thread`,
+   JSON inválido → fallback determinista jamás 500, recortes a 200 chars, NUNCA escribe en DB —
+   gate HITL por construcción) + `backend/mia/api/routes/guides.py` (`POST /api/guides/interview`;
+   422 en llano; `kind='agente'` → 422 "Los agentes se crean con Mia próximamente." — llega en el
+   Bloque C), registrado en `main.py`. Frontend: `GuideInterviewWizard.tsx` (dialog 3 pantallas:
+   entrevista → revisión con borrador 100% editable y el copy "Esta guía todavía no existe; solo
+   se guardará cuando pulses Guardar." → guardar con `origin` `'entrevista'` o `'asunto'`); botón
+   "Crear con Mia" en Conocimiento.
+3. **B3 — "Convierte lo que hicimos aquí en una guía":** botón en la pantalla del asunto, visible
+   SOLO con borrador realmente APROBADO (se expuso `hitl_outcome` en
+   `GET /api/matters/{id}/draft`, con constante compartida `HITL_OUTCOME` nueva en
+   `backend/mia/agents/state.py` — "aprobar con cambios" produce `'edited'` y NO muestra el botón,
+   alineado con el criterio de evidencia del interviewer); la entrevista precarga contexto del
+   asunto (título/descripción + `draft_final` de trazas aprobadas, patrón `_approved_evidence`,
+   tope 12.000 chars) y abre con resumen de confirmación.
+4. **B4 — Gobernanza de lo aprendido:** `GET /api/proposals` gana `source_matters` ("Aprendí esto
+   trabajando en: …", derivado de `trace_ids`, fail-open a `[]`); `POST apply` acepta
+   `{content?, title?}` editados (`improve_playbook` hace snapshot `changed_by='mia'`;
+   `new_playbook` usa el título editado — eliminado el placeholder "Sugerencia {id}" y ahora lleva
+   embedding); UI: subtabs "Guías y documentos" + "Lo que Mia sabe hacer" FUSIONADOS en "Guías y
+   habilidades" (badges de origen en llano, métrica GEPA por `skill_id==playbook.id`, acciones
+   Ver/Editar/Desactivar/Reactivar/Historial/Restaurar, botonera Importar · Escribir · Crear con
+   Mia); sugerencias con "Editar antes de aplicar".
+
+**Verificación 3 capas:**
+- **Capa 1:** regresión completa ALL PASS (76 suites) — línea base sube de 74 a 76 con
+  `test_playbook_versions` (59/59 tras capa 2; 48 iniciales) y `test_guide_interview` (25/25).
+  `test_rls` 12/12 y `check_env_pins` 9/9 (HALT) intactos. `test_ux` sube a 37/37,
+  `test_second_brain_ui` 26/26. `npm run build` verde (14 páginas). Hubo 1 ciclo de corrección en
+  el gate: `test_second_brain_ui` buscaba el literal del tab viejo "Habilidades"; se actualizó al
+  nuevo copy sin debilitar la aserción (verificado por revisor independiente).
+- **Capa 2:** 4 revisores adversariales independientes (Opus, contexto fresco: seguridad/RLS,
+  gate HITL+integridad, corrección backend, frontend/§G) → 10 hallazgos CONFIRMADOS (0
+  descartados), TODOS corregidos en causa raíz con checks nuevos, y re-gate ALL PASS 76 + build
+  verde:
+  - **3 MAYORES:** restore de versión no capturaba `UniqueViolation` al restaurar título → 500 con
+    jerga (ahora 409 en llano); crear guía (wizard/manual) SOBRESCRIBÍA en silencio un playbook
+    homónimo sin snapshot y podía "desaparecer" la guía en una fila archivada (ahora
+    `INSERT ... DO NOTHING` + 409 "Ya tienes una guía con ese nombre."); "Editar antes de aplicar"
+    descartaba la corrección del abogado en propuestas `wiki_correction`.
+  - **7 menores:** `proposal_id` malformado → 404 (antes 500); `new_playbook` aplicado sin
+    embedding (nunca se recuperaba por similitud); `PUT` sin truncar título a 200 → posible 500;
+    `matter_id` malformado en interview → 404 (invariante "jamás 500"); conexión pooled abierta
+    durante llamada de embeddings en restore; título editado ignorado en `improve_playbook`; botón
+    "Convertir en guía" aparecía tras borrador rechazado/editado.
+- **Capa 3:** PENDIENTE — recorrido en vivo de Pipe.
+
+**Deudas/riesgos nuevos:** ver `bugs-and-risks.md` Riesgo #58 (deuda consciente, no un bug:
+`kind='agente'` del endpoint `/api/guides/interview` responde 422 hasta el Bloque C;
+`GuideInterviewWizard` ya es reusable para ese caso).
+
+**Pendiente para la próxima sesión:** Bloque C (agentes jurídicos + perfil unificado +
+Configuración en subtabs, `plan-evolucion-producto.md`) + Capa 3 EN VIVO de Pipe sobre el Bloque B
+(wizard "Crear con Mia", historial/restauración de versiones, "Convertir en guía",
+"Editar antes de aplicar") — sin cambios respecto a la deuda de capa 3 arrastrada de sesiones
+35-39 (OAuth de correo/OneDrive) ni a la acción de Pipe pendiente (registrar apps OAuth).

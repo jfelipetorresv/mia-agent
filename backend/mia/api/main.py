@@ -18,7 +18,7 @@ from ..cron import build_scheduler
 from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, auth, automations, curator, folders, hitl, learning,
+from .routes import (assistant, auth, automations, curator, folders, guides, hitl, learning,
                      mailbox, matter_folders, matter_mail, matter_sources, mcp, missions,
                      personas, policy, remote_drive, settings, setup, sources, speech,
                      stream, traces, ux, value)
@@ -154,6 +154,9 @@ app.include_router(curator.router)
 app.include_router(learning.router)
 # Búsqueda FTS de trazas (H.3): session_search sin LLM.
 app.include_router(traces.router)
+# BLOQUE B (evolución de producto): entrevista para crear guías de trabajo → /api/guides/*.
+# El router ya trae su propio prefijo /api/guides, se monta sin prefijo extra.
+app.include_router(guides.router)
 # MODO ASISTENTE (CP-B1, Pilar B): conversación libre fuera de un asunto → /api/assistant/*.
 app.include_router(assistant.router, prefix="/api")
 # CARPETAS DE TRABAJO (CP-C1, Pilar C): allowlist de carpetas locales/nubes → /api/folders/*.

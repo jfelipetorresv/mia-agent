@@ -1,5 +1,35 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-10 — Sesión 40 · Bloque B COMPLETO — Guías asistidas + gobernanza de skills
+TL;DR: El abogado ya puede crear guías conversando con Mia (nunca
+       se guardan sin su aprobación) y gobernar lo que Mia sabe
+       hacer desde una sola pantalla.
+Qué construimos:
+- B0: CRUD + versiones de playbooks (migración 029, RLS FORCE);
+  origin ∈ {manual, importada, entrevista, asunto, aprendida};
+  archivar/restaurar y restaurar versión con snapshot
+- B1-B2: motor de entrevista stateless (interviewer.py, jamás
+  escribe en DB) + GuideInterviewWizard.tsx (entrevista → borrador
+  editable → guardar); botón "Crear con Mia" en Conocimiento
+- B3: botón "Convertir en guía" en el asunto, con hitl_outcome
+  expuesto al frontend y precarga de contexto del asunto
+- B4: subtabs "Guías y documentos" + "Lo que Mia sabe hacer"
+  fusionados en "Guías y habilidades"; sugerencias con
+  "Editar antes de aplicar"; source_matters en propuestas
+Qué decidimos: crear guía ya NO upsertea — si el título choca con
+  un playbook existente, 409 en llano (antes sobrescribía en
+  silencio); hitl_outcome se expone al frontend con 'edited'
+  distinto de 'approved' para no ofrecer "Convertir en guía" sobre
+  un borrador editado o rechazado; kind='agente' queda reservado al
+  Bloque C (422 por ahora, wizard ya reusable).
+Verificación: regresión 76/76 (línea base 74→76, test_playbook_versions
+  59/59, test_guide_interview 25/25) · npm build ✓ · revisor capa 2
+  con 4 agentes independientes: 10 hallazgos CONFIRMADOS (3 mayores +
+  7 menores), TODOS corregidos, re-gate 76/76 · capa 3 PENDIENTE de Pipe.
+Qué sigue: Bloque C (agentes jurídicos + perfil unificado +
+  Configuración en subtabs) + capa 3 en vivo de Pipe sobre el
+  Bloque B; acción de Pipe sin cambio (apps OAuth).
+
 ## 2026-07-02 — Sesión 23 · CP7 Frontend sincronizado
 TL;DR: El abogado gobierna todo desde la pantalla. CP6 sigue
        esperando la decisión de Pipe (A/B entregado).

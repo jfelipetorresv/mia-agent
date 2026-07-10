@@ -56,7 +56,7 @@ from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
 from ..policy import budget as policy_budget
 from . import context_recovery, delegation, research, retrieval, untrusted, verification
-from .state import MatterState
+from .state import HITL_OUTCOME, MatterState
 
 logger = logging.getLogger("mia.agents.graph")
 
@@ -903,7 +903,6 @@ class MatterGraphBuilder:
 
         # Señales HITL para el Feedback processor (3e, decisión #19): la traza v2 registra
         # el desenlace, el borrador original vs. final y los documentos recuperados.
-        _OUTCOME = {"approved": "approved", "rejected": "rejected", "editing": "edited"}
         # B1 (frente B): cuando el abogado RECHAZA, su motivo textual (RejectBody.feedback,
         # llega en decision["feedback"]) es el oro del loop — se guarda en la traza truncado
         # a 2000 chars para que el Feedback processor ataque el porqué real del rechazo.
@@ -924,7 +923,7 @@ class MatterGraphBuilder:
             model=config.MIA_MODEL,
             tokens=md.get("usage", {"prompt": 0, "completion": 0, "total": 0}),
             latency_ms=float(md.get("latency_ms", 0.0)),
-            hitl_outcome=_OUTCOME.get(status, "approved"),
+            hitl_outcome=HITL_OUTCOME.get(status, "approved"),
             draft_original=draft,
             draft_final=final,
             retrieved_doc_ids=retrieved_doc_ids,
@@ -941,7 +940,7 @@ class MatterGraphBuilder:
                 input=_last_user_message(state),
                 output=final,
                 model=config.MIA_MODEL,
-                hitl_outcome=_OUTCOME.get(status, "approved"),
+                hitl_outcome=HITL_OUTCOME.get(status, "approved"),
                 activated_playbooks=activated,
                 retrieved_doc_ids=retrieved_doc_ids,
                 trace_ts=trace.timestamp,

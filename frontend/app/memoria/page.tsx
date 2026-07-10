@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  Archive,
+  ArchiveRestore,
   BookMarked,
   BookOpen,
   Building2,
@@ -10,14 +12,18 @@ import {
   FileText,
   FolderOpen,
   GraduationCap,
+  History,
   Lightbulb,
   Loader2,
+  Pencil,
   Plus,
+  ShieldCheck,
   Sparkles,
   Upload,
   X,
 } from "lucide-react";
-import { apiGet, apiSend, apiUploadMany } from "@/lib/api";
+import { apiGet, apiSend, apiUploadMany, ApiError } from "@/lib/api";
+import GuideInterviewWizard from "../_components/GuideInterviewWizard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,7 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type Tab = "despacho" | "wiki" | "saber" | "habilidades" | "sugerencias";
+type Tab = "despacho" | "wiki" | "saber" | "sugerencias";
 
 export default function MemoriaPage() {
   const [tab, setTab] = useState<Tab>("despacho");
@@ -59,11 +65,7 @@ export default function MemoriaPage() {
           </TabsTrigger>
           <TabsTrigger value="saber" className="gap-1.5">
             <BookMarked className="h-4 w-4" />
-            Guías y documentos
-          </TabsTrigger>
-          <TabsTrigger value="habilidades" className="gap-1.5">
-            <Sparkles className="h-4 w-4" />
-            Lo que Mia sabe hacer
+            Guías y habilidades
           </TabsTrigger>
           <TabsTrigger value="sugerencias" className="gap-1.5">
             <Lightbulb className="h-4 w-4" />
@@ -79,9 +81,6 @@ export default function MemoriaPage() {
         </TabsContent>
         <TabsContent value="saber">
           <Saber />
-        </TabsContent>
-        <TabsContent value="habilidades">
-          <Habilidades />
         </TabsContent>
         <TabsContent value="sugerencias">
           <Sugerencias />
@@ -288,16 +287,71 @@ function Wiki() {
   );
 }
 
-type Playbook = { id: string; title: string; summary: string; applies_when?: string };
+type Playbook = {
+  id: string;
+  title: string;
+  summary: string;
+  applies_when?: string;
+  status?: string;
+  protected?: boolean;
+  origin?: string;
+  content?: string;
+};
+type Skill = { skill_id: string; title: string; approval_rate: number; edit_rate: number; activations: number };
+type PlaybookVersion = { id: string; changed_by: string; reason: string; created_at: string; title: string };
+
+const ORIGIN_LABEL: Record<string, string> = {
+  manual: "Escrita a mano",
+  importada: "Importada",
+  entrevista: "Creada con Mia",
+  asunto: "Nacida de un asunto",
+  aprendida: "Aprendida por Mia",
+};
+
+function originLabel(origin?: string): string {
+  return ORIGIN_LABEL[origin || "manual"] || "Escrita a mano";
+}
+
+function fmtDateTime(s?: string): string {
+  if (!s) return "";
+  try {
+    return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return "";
+  }
+}
 
 function Saber() {
   const [items, setItems] = useState<Playbook[]>([]);
+  const [skills, setSkills] = useState<Record<string, Skill>>({});
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [form, setForm] = useState({ title: "", applies_when: "", content: "", summary: "" });
 
+  const [viewing, setViewing] = useState<Playbook | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
+
+  const [editing, setEditing] = useState<Playbook | null>(null);
+  const [editForm, setEditForm] = useState({ title: "", summary: "", applies_when: "", content: "" });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const [historyFor, setHistoryFor] = useState<Playbook | null>(null);
+  const [versions, setVersions] = useState<PlaybookVersion[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const [busyId, setBusyId] = useState<string | null>(null);
+
   async function load() {
-    setItems(await apiGet<Playbook[]>("/api/playbooks").catch(() => []));
+    const [pbs, ranked] = await Promise.all([
+      apiGet<Playbook[]>("/api/playbooks?status=todos").catch(() => []),
+      apiGet<Skill[]>("/api/skills/ranked").catch(() => []),
+    ]);
+    setItems(pbs);
+    const map: Record<string, Skill> = {};
+    for (const s of ranked) map[s.skill_id] = s;
+    setSkills(map);
   }
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -310,6 +364,7 @@ function Saber() {
       summary: form.summary.trim() || form.title.trim(),
       applies_when: form.applies_when.trim() || "Depende del contexto del asunto.",
       content: form.content.trim(),
+      origin: "manual",
     });
     setModal(false);
     setForm({ title: "", applies_when: "", content: "", summary: "" });
@@ -352,6 +407,100 @@ function Saber() {
     }
   }
 
+  async function openView(p: Playbook) {
+    setViewing(p);
+    setViewLoading(true);
+    try {
+      setViewing(await apiGet<Playbook>(`/api/playbooks/${p.id}`));
+    } catch {
+      setViewing(null);
+    } finally {
+      setViewLoading(false);
+    }
+  }
+
+  async function openEdit(p: Playbook) {
+    setEditError(null);
+    setEditing(p);
+    try {
+      const detail = await apiGet<Playbook>(`/api/playbooks/${p.id}`);
+      setEditing(detail);
+      setEditForm({
+        title: detail.title,
+        summary: detail.summary,
+        applies_when: detail.applies_when || "",
+        content: detail.content || "",
+      });
+    } catch {
+      setEditing(null);
+    }
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    if (!editForm.title.trim() || !editForm.content.trim()) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      await apiSend("PUT", `/api/playbooks/${editing.id}`, editForm);
+      setEditing(null);
+      await load();
+    } catch (e) {
+      setEditError(e instanceof ApiError ? e.message : "No se pudo guardar la guía. Intenta de nuevo.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function toggleArchive(p: Playbook) {
+    const archiving = p.status !== "archived";
+    if (
+      !window.confirm(
+        archiving
+          ? `¿Desactivar "${p.title}"? Mia dejará de usarla hasta que la reactives.`
+          : `¿Reactivar "${p.title}"? Mia volverá a usarla en sus borradores.`
+      )
+    ) {
+      return;
+    }
+    setBusyId(p.id);
+    try {
+      await apiSend("POST", `/api/playbooks/${p.id}/${archiving ? "archive" : "restore"}`);
+      await load();
+    } catch {
+      /* el abogado puede reintentar desde la lista */
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function openHistory(p: Playbook) {
+    setHistoryFor(p);
+    setHistoryLoading(true);
+    try {
+      const res = await apiGet<{ versions: PlaybookVersion[] }>(`/api/playbooks/${p.id}/versions`);
+      setVersions(res.versions || []);
+    } catch {
+      setVersions([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function restoreVersion(versionId: string) {
+    if (!historyFor) return;
+    if (
+      !window.confirm(
+        "¿Restaurar esta versión? Reemplazará el contenido actual (se guarda un respaldo del estado de hoy antes de restaurar)."
+      )
+    ) {
+      return;
+    }
+    await apiSend("POST", `/api/playbooks/${historyFor.id}/versions/${versionId}/restore`).catch(() => {});
+    setHistoryFor(null);
+    await load();
+  }
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
@@ -365,11 +514,15 @@ function Saber() {
         />
         <Button variant="outline" onClick={() => fileInput.current?.click()} disabled={importing} className="gap-2">
           {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          {importing ? "Importando…" : "Importar guías"}
+          {importing ? "Importando…" : "Importar"}
         </Button>
         <Button variant="outline" onClick={() => setModal(true)} className="gap-2">
           <GraduationCap className="h-4 w-4" />
-          Enseñarle algo a Mia
+          Escribir
+        </Button>
+        <Button onClick={() => setWizardOpen(true)} className="gap-2">
+          <Sparkles className="h-4 w-4" />
+          Crear con Mia
         </Button>
       </div>
 
@@ -402,7 +555,8 @@ function Saber() {
           <h2 className="text-lg font-medium">Mia aún no tiene guías del despacho</h2>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Aquí viven las guías de trabajo de tu despacho: cómo contestar una demanda,
-            cómo estructurar un recurso. Impórtalas (.md, .txt o Word) o escríbelas tú mismo.
+            cómo estructurar un recurso. Impórtalas (.md, .txt o Word), escríbelas tú mismo
+            o deja que Mia te ayude a extraerlas con unas preguntas.
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
             <Button onClick={() => fileInput.current?.click()} disabled={importing} className="gap-2">
@@ -413,28 +567,86 @@ function Saber() {
               <Plus className="h-4 w-4" />
               Escribir una guía
             </Button>
+            <Button variant="outline" onClick={() => setWizardOpen(true)} className="gap-2">
+              <Sparkles className="h-4 w-4" />
+              Crear con Mia
+            </Button>
           </div>
         </div>
       ) : (
         <ul className="space-y-3">
-          {items.map((p, i) => (
-            <li
-              key={p.id}
-              className="flex animate-slide-up items-start gap-4 rounded-xl border border-border bg-card px-5 py-4 shadow-sm"
-              style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
-            >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <FileText className="h-5 w-5" />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate font-medium">{p.title}</div>
-                <div className="mt-0.5 text-sm text-muted-foreground">{p.summary}</div>
-              </div>
-            </li>
-          ))}
+          {items.map((p, i) => {
+            const skill = skills[p.id];
+            const archived = p.status === "archived";
+            return (
+              <li
+                key={p.id}
+                className={`flex animate-slide-up items-start gap-4 rounded-xl border border-border bg-card px-5 py-4 shadow-sm ${
+                  archived ? "opacity-60" : ""
+                }`}
+                style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <FileText className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate font-medium">{p.title}</span>
+                    <Badge variant="secondary">{originLabel(p.origin)}</Badge>
+                    {p.protected ? (
+                      <Badge variant="outline" className="gap-1">
+                        <ShieldCheck className="h-3 w-3" />
+                        Protegida
+                      </Badge>
+                    ) : null}
+                    {archived ? <Badge variant="warning">Archivada</Badge> : null}
+                  </div>
+                  <div className="mt-0.5 text-sm text-muted-foreground">{p.summary}</div>
+                  {skill ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="h-1.5 w-24 shrink-0 rounded-full bg-muted">
+                        <div
+                          className="h-1.5 rounded-full bg-primary transition-all duration-200"
+                          style={{ width: `${Math.round((skill.approval_rate || 0) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {Math.round((skill.approval_rate || 0) * 100)}% aprobado · usada {skill.activations}{" "}
+                        {skill.activations === 1 ? "vez" : "veces"}
+                      </span>
+                    </div>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    <Button size="sm" variant="ghost" onClick={() => openView(p)}>
+                      Ver
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => openEdit(p)} className="gap-1.5">
+                      <Pencil className="h-3.5 w-3.5" />
+                      Editar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => toggleArchive(p)}
+                      disabled={busyId === p.id}
+                      className="gap-1.5"
+                    >
+                      {archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+                      {archived ? "Reactivar" : "Desactivar"}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => openHistory(p)} className="gap-1.5">
+                      <History className="h-3.5 w-3.5" />
+                      Historial
+                    </Button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
 
+      {/* Escribir una guía a mano */}
       <Dialog open={modal} onOpenChange={setModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -465,94 +677,128 @@ function Saber() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
 
-type Skill = { skill_id: string; title: string; approval_rate: number; edit_rate: number; activations: number };
-
-function Habilidades() {
-  const [items, setItems] = useState<Skill[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    apiGet<Skill[]>("/api/skills/ranked")
-      .then(setItems)
-      .catch(() => setItems([]))
-      .finally(() => setLoaded(true));
-  }, []);
-
-  if (!loaded) {
-    return (
-      <div className="space-y-3">
-        <Skeleton className="h-16 w-full rounded-xl" />
-        <Skeleton className="h-16 w-full rounded-xl" />
-        <Skeleton className="h-16 w-full rounded-xl" />
-      </div>
-    );
-  }
-
-  if (items.length === 0) {
-    return (
-      <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-          <Sparkles className="h-6 w-6" />
-        </div>
-        <h2 className="text-lg font-medium">Mia todavía no tiene habilidades medidas</h2>
-        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-          Cada vez que apruebas o corriges el trabajo de Mia, aquí verás qué tan bien le va
-          con cada procedimiento del despacho. Empieza aprobando su primer borrador.
-        </p>
-        <Button asChild variant="outline" className="mt-6 gap-2">
-          <Link href="/">
-            <FolderOpen className="h-4 w-4" />
-            Ir a mis asuntos
-          </Link>
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <p className="mb-4 text-sm text-muted-foreground">
-        Qué tan bien le va a Mia con cada procedimiento del despacho, según tus aprobaciones y correcciones.
-      </p>
-      <ul className="space-y-3">
-        {items.map((s, i) => (
-          <li
-            key={s.skill_id}
-            className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm"
-            style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
-          >
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <div className="truncate font-medium">{s.title}</div>
-                <div className="mt-0.5 text-sm text-muted-foreground">
-                  Usada {s.activations} {s.activations === 1 ? "vez" : "veces"}
-                  {s.activations > 0 ? ` · corregida el ${Math.round((s.edit_rate || 0) * 100)}%` : ""}
-                </div>
-              </div>
-              <div className="w-28 shrink-0">
-                <div className="h-1.5 rounded-full bg-muted">
-                  <div
-                    className="h-1.5 rounded-full bg-primary transition-all duration-200"
-                    style={{ width: `${Math.round((s.approval_rate || 0) * 100)}%` }}
-                  />
-                </div>
-                <div className="mt-1 text-right text-xs text-muted-foreground">
-                  {Math.round((s.approval_rate || 0) * 100)}% aprobado
-                </div>
-              </div>
+      {/* Ver (solo lectura) */}
+      <Dialog open={!!viewing} onOpenChange={(o) => { if (!o) setViewing(null); }}>
+        <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{viewing?.title}</DialogTitle>
+            <DialogDescription>{viewing?.applies_when || viewing?.summary}</DialogDescription>
+          </DialogHeader>
+          {viewLoading ? (
+            <div className="space-y-2 rounded-lg bg-muted/50 p-4">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-2/3" />
             </div>
-          </li>
-        ))}
-      </ul>
+          ) : (
+            <div className="whitespace-pre-wrap rounded-lg bg-muted/50 p-4 font-serif text-sm leading-relaxed text-foreground">
+              {viewing?.content}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setViewing(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Editar */}
+      <Dialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }}>
+        <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Editar guía</DialogTitle>
+            <DialogDescription>
+              Los cambios quedan guardados en el historial de esta guía por si necesitas volver atrás.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <TextField label="Título" value={editForm.title} onChange={(v) => setEditForm({ ...editForm, title: v })} />
+            <TextField label="Resumen" value={editForm.summary} onChange={(v) => setEditForm({ ...editForm, summary: v })} />
+            <TextField
+              label="Cuándo aplica"
+              value={editForm.applies_when}
+              onChange={(v) => setEditForm({ ...editForm, applies_when: v })}
+            />
+            <div className="space-y-1.5">
+              <Label htmlFor="playbook-edit-content">Contenido</Label>
+              <Textarea
+                id="playbook-edit-content"
+                value={editForm.content}
+                onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+                className="h-48 resize-none"
+              />
+            </div>
+          </div>
+          {editError ? <p className="text-sm text-destructive">{editError}</p> : null}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditing(null)} disabled={editSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={saveEdit} disabled={editSaving} className="gap-2">
+              {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Guardar cambios
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Historial de versiones */}
+      <Dialog open={!!historyFor} onOpenChange={(o) => { if (!o) setHistoryFor(null); }}>
+        <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Historial — {historyFor?.title}</DialogTitle>
+            <DialogDescription>Versiones anteriores de esta guía. Puedes restaurar cualquiera.</DialogDescription>
+          </DialogHeader>
+          {historyLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-14 w-full rounded-lg" />
+              <Skeleton className="h-14 w-full rounded-lg" />
+            </div>
+          ) : versions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Esta guía todavía no tiene versiones anteriores.</p>
+          ) : (
+            <ul className="space-y-2">
+              {versions.map((v) => (
+                <li key={v.id} className="rounded-lg border border-border bg-card px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{v.title}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {v.changed_by === "mia" ? "Cambio de Mia" : "Cambio del abogado"} · {fmtDateTime(v.created_at)}
+                        {v.reason ? ` · ${v.reason}` : ""}
+                      </div>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => restoreVersion(v.id)} className="shrink-0">
+                      Restaurar
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setHistoryFor(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <GuideInterviewWizard open={wizardOpen} onOpenChange={setWizardOpen} kind="guia" onSaved={load} />
     </div>
   );
 }
 
-type Proposal = { id: string; type: string; suggestion: string; reason: string; target?: string | null };
+type Proposal = {
+  id: string;
+  type: string;
+  suggestion: string;
+  reason: string;
+  target?: string | null;
+  source_matters?: string[];
+};
 type CuratorMerge = { target_title?: string; reason?: string };
 type CuratorDeletion = { title?: string; reason?: string };
 type CuratorProposal = {
@@ -573,6 +819,12 @@ function Sugerencias() {
   const [reviewing, setReviewing] = useState(false);
   const [reviewMsg, setReviewMsg] = useState<string | null>(null);
 
+  // B4 · "Editar antes de aplicar": el abogado corrige el título/contenido antes
+  // de que la sugerencia se convierta en guía o modifique una existente.
+  const [editing, setEditing] = useState<Proposal | null>(null);
+  const [editForm, setEditForm] = useState({ title: "", content: "" });
+  const [editSaving, setEditSaving] = useState(false);
+
   async function load() {
     setItems(await apiGet<Proposal[]>("/api/proposals").catch(() => []));
     setCurator(await apiGet<CuratorProposal[]>("/api/curator/proposals").catch(() => []));
@@ -586,6 +838,29 @@ function Sugerencias() {
   async function act(id: string, action: "apply" | "ignore") {
     await apiSend("POST", `/api/proposals/${id}/${action}`).catch(() => {});
     await load();
+  }
+
+  function openEdit(p: Proposal) {
+    setEditForm({ title: p.target || "", content: p.suggestion });
+    setEditing(p);
+  }
+
+  async function saveEditAndApply() {
+    if (!editing) return;
+    if (!editForm.content.trim()) return;
+    setEditSaving(true);
+    try {
+      await apiSend("POST", `/api/proposals/${editing.id}/apply`, {
+        content: editForm.content.trim(),
+        title: editForm.title.trim() || undefined,
+      });
+      setEditing(null);
+      await load();
+    } catch {
+      /* el abogado puede reintentar desde la lista */
+    } finally {
+      setEditSaving(false);
+    }
   }
 
   async function curatorAct(id: string, action: "approve" | "reject") {
@@ -698,10 +973,19 @@ function Sugerencias() {
             ) : null}
             <div className="mb-2 whitespace-pre-wrap text-sm">{p.suggestion}</div>
             <div className="text-sm text-muted-foreground">{p.reason}</div>
-            <div className="mt-3 flex gap-2">
+            {p.source_matters && p.source_matters.length > 0 ? (
+              <div className="mt-1.5 text-xs text-muted-foreground">
+                Aprendí esto trabajando en: {p.source_matters.join(", ")}
+              </div>
+            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
               <Button size="sm" onClick={() => act(p.id, "apply")} className="gap-1.5">
                 <Check className="h-3.5 w-3.5" />
                 Aplicar
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => openEdit(p)} className="gap-1.5">
+                <Pencil className="h-3.5 w-3.5" />
+                Editar antes de aplicar
               </Button>
               <Button size="sm" variant="ghost" onClick={() => act(p.id, "ignore")}>
                 Ignorar
@@ -710,6 +994,42 @@ function Sugerencias() {
           </li>
         ))}
       </ul>
+
+      <Dialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }}>
+        <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Editar antes de aplicar</DialogTitle>
+            <DialogDescription>
+              Corrige lo que Mia propone antes de guardarlo. Nada cambia hasta que confirmes aquí.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <TextField
+              label="Título de la guía"
+              value={editForm.title}
+              onChange={(v) => setEditForm({ ...editForm, title: v })}
+            />
+            <div className="space-y-1.5">
+              <Label htmlFor="proposal-edit-content">Contenido</Label>
+              <Textarea
+                id="proposal-edit-content"
+                value={editForm.content}
+                onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+                className="h-48 resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditing(null)} disabled={editSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={saveEditAndApply} disabled={editSaving} className="gap-2">
+              {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Aplicar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {curator.length > 0 ? (
         <div>
           <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">

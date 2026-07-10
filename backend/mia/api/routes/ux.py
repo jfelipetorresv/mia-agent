@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
+import psycopg
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from psycopg.types.json import Json
 from psycopg.rows import dict_row
@@ -27,7 +28,7 @@ from ... import embeddings
 from ...agent.prompt_builder import strip_diagnosis_closing
 from ...agents.checkpointer import open_checkpointer
 from ...agents.graph import build_matter_graph
-from ...agents.state import thread_id_for
+from ...agents.state import HITL_OUTCOME, thread_id_for
 from ... import config
 from ...connectors import ObsidianSync, PineconeConnector
 from ...security import assert_no_stray_secret
@@ -382,7 +383,15 @@ async def get_draft(matter_id: str, request: Request):
     # diagnosis_summary = cierre estructurado (problema/normas/riesgo) para la
     # Pantalla 2; None si el modelo no emitió el bloque.
     md = values.get("metadata") or {}
-    return {"draft": draft, "awaiting_review": awaiting,
+    # B3 (corrección post-review): el desenlace REAL del HITL (mismo vocabulario que
+    # finalize_node usa para la traza: approved/rejected/edited). `awaiting_review=False`
+    # por sí solo NO distingue "aprobado" de "rechazado" o "editado" — los tres llegan a
+    # END con el grafo ya no pausado (finalize_node conserva el borrador en los tres
+    # casos). El frontend usa este campo (no awaiting_review) para decidir si el botón
+    # "Convertir en guía" es válido, alineado con el mismo criterio que ya usa
+    # interviewer.py para cargar evidencia (`hitl_outcome == 'approved'`).
+    hitl_outcome = HITL_OUTCOME.get(values.get("hitl_status"))
+    return {"draft": draft, "awaiting_review": awaiting, "hitl_outcome": hitl_outcome,
             "diagnosis": strip_diagnosis_closing(md.get("diagnosis") or "") or None,
             "diagnosis_summary": md.get("diagnosis_summary"),
             # CP9: informe del especialista de verificación de citas (None en
@@ -478,29 +487,230 @@ async def put_profile(request: Request, body: ProfileBody):
     return await ProfileManager(pool=pool).upsert_firm_profile(tid, body.model_dump(exclude_none=True))
 
 
-# ── Pantalla 4 · playbooks ───────────────────────────────────────────────────
+# ── Pantalla 4 · playbooks (Bloque B · B0: CRUD + versiones + origen) ────────
+# origin: de dónde salió el playbook — se guarda en metadata.origin (la tabla no gana
+# columna nueva; jsonb evita otra migración solo para un rótulo informativo).
+_PLAYBOOK_ORIGINS = ("manual", "importada", "entrevista", "asunto", "aprendida")
+
+
 class PlaybookBody(BaseModel):
     title: str
     summary: str
     applies_when: str
     content: str
+    origin: str = "manual"
+
+
+def _playbook_out(row: dict, *, with_content: bool = False) -> dict:
+    """Traduce una fila de `playbooks` a lo que ve el abogado. `origin` sale de
+    metadata (default 'manual' para playbooks creados antes de que existiera el campo)."""
+    md = row.get("metadata") or {}
+    out = {"id": str(row["id"]), "title": row["title"], "summary": row["summary"],
+           "applies_when": row["applies_when"], "status": row.get("status", "active"),
+           "protected": bool(row.get("protected")), "origin": md.get("origin", "manual")}
+    if with_content:
+        out["content"] = row["content"]
+    return out
+
+
+async def _set_playbook_origin(tid: str, playbook_id: str, origin: str) -> None:
+    async with pool.tenant_connection(tid) as conn:
+        await conn.execute(
+            "UPDATE playbooks SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), "
+            "'{origin}', to_jsonb(%s::text)) WHERE id = %s::uuid", (origin, playbook_id))
+
+
+async def _get_playbook_row(tid: str, playbook_id: str) -> dict | None:
+    async with pool.tenant_connection(tid) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT id, title, summary, applies_when, content, status, protected, "
+                "usage_count, last_used_at, metadata, created_at, updated_at "
+                "FROM playbooks WHERE id = %s::uuid", (playbook_id,))
+            return await cur.fetchone()
 
 
 @router.get("/playbooks")
-async def list_playbooks(request: Request):
+async def list_playbooks(request: Request, status: str = Query("activos")):
+    """`status=activos` (default): solo playbooks activos. `status=todos`: incluye
+    archivados. Cualquier otro valor se trata como 'activos' (mismo criterio conservador
+    que el filtro de /matters)."""
     tid = _tenant(request)
-    rows = await PlaybookManager(pool=pool, tenant_id=tid).list_active()
-    return [{"id": str(r["id"]), "title": r["title"], "summary": r["summary"],
-             "applies_when": r["applies_when"]} for r in rows]
+    where = "" if status == "todos" else "WHERE status = 'active'"
+    async with pool.tenant_connection(tid) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT id, title, summary, applies_when, status, protected, metadata "
+                f"FROM playbooks {where} ORDER BY usage_count DESC, created_at", ())
+            rows = await cur.fetchall()
+    return [_playbook_out(r) for r in rows]
+
+
+@router.get("/playbooks/{playbook_id}")
+async def get_playbook_detail(playbook_id: str, request: Request):
+    tid = _tenant(request)
+    if not _is_uuid(playbook_id):
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    row = await _get_playbook_row(tid, playbook_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    return _playbook_out(row, with_content=True)
 
 
 @router.post("/playbooks", status_code=201)
 async def create_playbook(request: Request, body: PlaybookBody):
+    """Crea una guía NUEVA. A diferencia de `PlaybookManager.register_playbook` (usado por
+    el import y por el seeding, que hacen UPSERT a propósito por título), este camino
+    NUNCA pisa una guía existente: si el título ya lo tiene otra guía del despacho (activa
+    O archivada) se responde 409 en llano — nada se sobrescribe en silencio ni queda
+    "oculta" en una fila archivada (hallazgo mayor del revisor)."""
     tid = _tenant(request)
-    pid = await PlaybookManager(pool=pool, tenant_id=tid).register_playbook(
-        Playbook(id="", title=body.title, summary=body.summary,
-                 applies_when=body.applies_when, content=body.content))
-    return {"id": str(pid), "title": body.title}
+    if body.origin not in _PLAYBOOK_ORIGINS:
+        raise HTTPException(status_code=422, detail="Ese origen no es válido.")
+    vec = embeddings.embed_texts([f"{body.summary}\n{body.applies_when}"])[0]
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content, "
+            "embedding, metadata) VALUES (%s::uuid, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (tenant_id, title) DO NOTHING RETURNING id",
+            (tid, body.title, body.summary, body.applies_when, body.content, vec,
+             Json({"origin": body.origin})))).fetchone()
+    if not row:
+        raise HTTPException(status_code=409, detail="Ya tienes una guía con ese nombre.")
+    return {"id": str(row[0]), "title": body.title, "origin": body.origin}
+
+
+class PlaybookUpdate(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+    applies_when: str | None = None
+    content: str | None = None
+
+
+@router.put("/playbooks/{playbook_id}")
+async def update_playbook(playbook_id: str, request: Request, body: PlaybookUpdate):
+    """Edición manual del abogado. Editable AUNQUE el playbook esté protegido —
+    `protected` solo bloquea cambios AUTOMÁTICOS (apply_proposal). Antes de escribir,
+    guarda un snapshot del estado ANTERIOR en playbook_versions y re-embebe
+    (summary+applies_when) igual que register_playbook."""
+    tid = _tenant(request)
+    if not _is_uuid(playbook_id):
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    row = await _get_playbook_row(tid, playbook_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    # `title` es varchar(200) NOT NULL; recortar aquí evita un StringDataRightTruncation
+    # no capturado (500 técnico) ante un título editado a mano que exceda el límite —
+    # mismo tope que ya aplican el motor de entrevista y la rama new_playbook de abajo.
+    new_title = (body.title if body.title is not None else row["title"])[:200]
+    new_summary = body.summary if body.summary is not None else row["summary"]
+    new_applies = body.applies_when if body.applies_when is not None else row["applies_when"]
+    new_content = body.content if body.content is not None else row["content"]
+    vec = embeddings.embed_texts([f"{new_summary}\n{new_applies}"])[0]
+    async with pool.tenant_connection(tid) as conn:
+        await conn.execute(
+            "INSERT INTO playbook_versions (tenant_id, playbook_id, title, summary, "
+            "applies_when, content, changed_by, reason) VALUES "
+            "(%s::uuid, %s::uuid, %s, %s, %s, %s, 'abogado', %s)",
+            (tid, playbook_id, row["title"], row["summary"], row["applies_when"],
+             row["content"], "Edición manual del abogado"))
+        try:
+            await conn.execute(
+                "UPDATE playbooks SET title=%s, summary=%s, applies_when=%s, content=%s, "
+                "embedding=%s, updated_at=now() WHERE id=%s::uuid",
+                (new_title, new_summary, new_applies, new_content, vec, playbook_id))
+        except psycopg.errors.UniqueViolation:
+            raise HTTPException(status_code=409, detail="Ya existe otra guía con ese nombre.")
+    updated = await _get_playbook_row(tid, playbook_id)
+    return _playbook_out(updated, with_content=True)
+
+
+@router.post("/playbooks/{playbook_id}/archive")
+async def archive_playbook(playbook_id: str, request: Request):
+    """Archivar saca el playbook del índice del prompt (get_index filtra status='active')
+    sin tocar prompt_builder."""
+    tid = _tenant(request)
+    if not _is_uuid(playbook_id):
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    async with pool.tenant_connection(tid) as conn:
+        res = await conn.execute(
+            "UPDATE playbooks SET status='archived', updated_at=now() WHERE id=%s::uuid",
+            (playbook_id,))
+    if res.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    return {"status": "archivada"}
+
+
+@router.post("/playbooks/{playbook_id}/restore")
+async def restore_playbook(playbook_id: str, request: Request):
+    tid = _tenant(request)
+    if not _is_uuid(playbook_id):
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    async with pool.tenant_connection(tid) as conn:
+        res = await conn.execute(
+            "UPDATE playbooks SET status='active', updated_at=now() WHERE id=%s::uuid",
+            (playbook_id,))
+    if res.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    return {"status": "activa"}
+
+
+@router.get("/playbooks/{playbook_id}/versions")
+async def list_playbook_versions(playbook_id: str, request: Request):
+    tid = _tenant(request)
+    if not _is_uuid(playbook_id):
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    if not await _get_playbook_row(tid, playbook_id):
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    async with pool.tenant_connection(tid) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT id, changed_by, reason, created_at, title FROM playbook_versions "
+                "WHERE playbook_id = %s::uuid ORDER BY created_at DESC", (playbook_id,))
+            rows = await cur.fetchall()
+    return {"versions": [{"id": str(r["id"]), "changed_by": r["changed_by"],
+                          "reason": r["reason"], "created_at": r["created_at"],
+                          "title": r["title"]} for r in rows]}
+
+
+@router.post("/playbooks/{playbook_id}/versions/{version_id}/restore")
+async def restore_playbook_version(playbook_id: str, version_id: str, request: Request):
+    """Restaura una versión anterior. Antes de restaurar, guarda snapshot del estado
+    ACTUAL (para poder deshacer también la restauración)."""
+    tid = _tenant(request)
+    if not _is_uuid(playbook_id) or not _is_uuid(version_id):
+        raise HTTPException(status_code=404, detail="Esa versión no existe.")
+    current = await _get_playbook_row(tid, playbook_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="Esa guía no existe.")
+    async with pool.tenant_connection(tid) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT title, summary, applies_when, content FROM playbook_versions "
+                "WHERE id = %s::uuid AND playbook_id = %s::uuid", (version_id, playbook_id))
+            ver = await cur.fetchone()
+    if not ver:
+        raise HTTPException(status_code=404, detail="Esa versión no existe.")
+    # E/S de red (embeddings) FUERA de la conexión pooled del tenant — mismo criterio que
+    # update_playbook y que el comentario de apply_proposal sobre no agotar el pool del
+    # tenant bajo carga concurrente (hallazgo del revisor).
+    vec = embeddings.embed_texts([f"{ver['summary']}\n{ver['applies_when']}"])[0]
+    async with pool.tenant_connection(tid) as conn:
+        try:
+            await conn.execute(
+                "INSERT INTO playbook_versions (tenant_id, playbook_id, title, summary, "
+                "applies_when, content, changed_by, reason) VALUES "
+                "(%s::uuid, %s::uuid, %s, %s, %s, %s, 'abogado', %s)",
+                (tid, playbook_id, current["title"], current["summary"], current["applies_when"],
+                 current["content"], "Restauración a una versión anterior"))
+            await conn.execute(
+                "UPDATE playbooks SET title=%s, summary=%s, applies_when=%s, content=%s, "
+                "embedding=%s, updated_at=now() WHERE id=%s::uuid",
+                (ver["title"], ver["summary"], ver["applies_when"], ver["content"], vec, playbook_id))
+        except psycopg.errors.UniqueViolation:
+            raise HTTPException(status_code=409, detail="Ya existe otra guía con ese nombre.")
+    updated = await _get_playbook_row(tid, playbook_id)
+    return _playbook_out(updated, with_content=True)
 
 
 # ── Pantalla 4 · import de guías de trabajo (Riesgo #20: seeding de playbooks) ──
@@ -597,8 +807,9 @@ async def import_playbooks(request: Request,
                 omitidos.append(title)
                 continue
             try:
-                await mgr.register_playbook(_section_to_playbook(title, body_lines),
-                                            protected=protected)
+                pid = await mgr.register_playbook(_section_to_playbook(title, body_lines),
+                                                  protected=protected)
+                await _set_playbook_origin(tid, pid, "importada")
             except Exception:
                 # (revisión CP4) un fallo puntual (p. ej. embeddings caído) no aborta el
                 # batch ni deja la respuesta inconsistente: las demás guías siguen.
@@ -611,6 +822,35 @@ async def import_playbooks(request: Request,
 
 
 # ── Pantalla 4 · sugerencias de Mia (feedback_proposals) ─────────────────────
+async def _source_matters(conn, trace_ids: list[str] | None) -> list[str]:
+    """B4: títulos de los asuntos/proyectos de donde salió una propuesta, derivados de
+    `trace_ids` ('tenant:matter:ts', ver feedback_processor.py). split(":", 2) porque el
+    timestamp ISO trae colones propios (HH:MM:SS) — solo los DOS primeros colones separan
+    tenant/matter. Fail-open: cualquier trace_id mal formado, matter_id inválido o ya
+    borrado se ignora en silencio; nunca rompe la lista de propuestas."""
+    if not trace_ids:
+        return []
+    matter_ids: list[str] = []
+    seen: set[str] = set()
+    for t in trace_ids:
+        parts = (t or "").split(":", 2)
+        if len(parts) < 2:
+            continue
+        mid = parts[1]
+        if _is_uuid(mid) and mid not in seen:
+            seen.add(mid)
+            matter_ids.append(mid)
+    if not matter_ids:
+        return []
+    try:
+        rows = await (await conn.execute(
+            "SELECT title FROM matters WHERE id = ANY(%s::uuid[])", (matter_ids,))).fetchall()
+        return [r[0] for r in rows]
+    except Exception:  # noqa: BLE001 — la lista de propuestas nunca debe romperse por esto
+        logger.exception("no se pudieron resolver los asuntos de origen de una propuesta")
+        return []
+
+
 @router.get("/proposals")
 async def list_proposals(request: Request):
     tid = _tenant(request)
@@ -620,23 +860,40 @@ async def list_proposals(request: Request):
             # QUÉ procedimiento se modificará al aplicar (hallazgo mayor del revisor).
             await cur.execute(
                 "SELECT fp.id, fp.proposal_type, fp.suggested_content, fp.rationale, "
-                "       fp.signal_count, fp.created_at, "
+                "       fp.signal_count, fp.created_at, fp.trace_ids, "
                 "       COALESCE(pb.title, fp.target_concept) AS target_title "
                 "FROM feedback_proposals fp "
                 "LEFT JOIN playbooks pb ON pb.id = fp.target_playbook_id "
                 "WHERE fp.status = 'pending' ORDER BY fp.created_at DESC")
             rows = await cur.fetchall()
-    return [{"id": str(r["id"]), "type": _PROPOSAL_LABEL.get(r["proposal_type"], r["proposal_type"]),
-             "suggestion": r["suggested_content"], "reason": r["rationale"],
-             "target": r["target_title"],
-             "times_seen": r["signal_count"], "created_at": r["created_at"]} for r in rows]
+        out = []
+        for r in rows:
+            out.append({"id": str(r["id"]),
+                        "type": _PROPOSAL_LABEL.get(r["proposal_type"], r["proposal_type"]),
+                        "suggestion": r["suggested_content"], "reason": r["rationale"],
+                        "target": r["target_title"],
+                        "times_seen": r["signal_count"], "created_at": r["created_at"],
+                        "source_matters": await _source_matters(conn, r["trace_ids"])})
+    return out
+
+
+class ApplyProposalBody(BaseModel):
+    """B4: el abogado corrige antes de aplicar — ya no es solo aprobar/ignorar."""
+    content: str | None = None
+    title: str | None = None
 
 
 @router.post("/proposals/{proposal_id}/apply")
-async def apply_proposal(proposal_id: str, request: Request):
+async def apply_proposal(proposal_id: str, request: Request,
+                         body: ApplyProposalBody | None = None):
     """Aplica una propuesta: actualiza/crea un playbook y la marca 'applied' (cierra parte del
-    Riesgo #21)."""
+    Riesgo #21). `body` opcional deja que el abogado edite el contenido (y, para una guía
+    nueva, el título) antes de guardarlo — nunca se guarda a ciegas lo que Mia propuso."""
     tid = _tenant(request)
+    if not _is_uuid(proposal_id):
+        raise HTTPException(status_code=404, detail="Sugerencia no encontrada o ya revisada.")
+    edited_content = body.content if body and body.content else None
+    edited_title = body.title if body and body.title else None
     async with pool.tenant_connection(tid) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -649,30 +906,69 @@ async def apply_proposal(proposal_id: str, request: Request):
         if p["proposal_type"] == "improve_playbook" and p["target_playbook_id"]:
             # H.6: no se puede sobrescribir un playbook protegido (semilla/core) desde una
             # sugerencia automática. La propuesta queda pendiente; se responde 409.
-            prot = await (await conn.execute(
-                "SELECT protected FROM playbooks WHERE id = %s", (p["target_playbook_id"],))).fetchone()
-            if prot and prot[0]:
+            async with conn.cursor(row_factory=dict_row) as cur2:
+                await cur2.execute(
+                    "SELECT title, summary, applies_when, content, protected FROM playbooks "
+                    "WHERE id = %s", (p["target_playbook_id"],))
+                target = await cur2.fetchone()
+            if target and target["protected"]:
                 raise HTTPException(
                     status_code=409,
                     detail="El playbook está protegido y no puede modificarse automáticamente.")
+            new_content = edited_content if edited_content is not None else p["suggested_content"]
+            # El diálogo "Editar antes de aplicar" muestra el título para TODA propuesta;
+            # si el abogado lo cambia aquí también, honrarlo — antes se descartaba en
+            # silencio (hallazgo del revisor: parte de la edición surtía efecto y parte no).
+            new_title = edited_title[:200] if edited_title else None
+            # B0: snapshot del estado ANTERIOR en playbook_versions antes de que Mia lo
+            # sobreescriba (changed_by='mia') — complementa metadata.last_improvement.
+            if target:
+                await conn.execute(
+                    "INSERT INTO playbook_versions (tenant_id, playbook_id, title, summary, "
+                    "applies_when, content, changed_by, reason) VALUES "
+                    "(%s::uuid, %s::uuid, %s, %s, %s, %s, 'mia', %s)",
+                    (tid, p["target_playbook_id"], target["title"], target["summary"],
+                     target["applies_when"], target["content"],
+                     f"Mejora aplicada de una propuesta de Mia "
+                     f"({_PROPOSAL_LABEL.get(p['proposal_type'], p['proposal_type'])})"))
             # CP-C3: trazabilidad de la mejora — el playbook registra QUÉ propuesta lo
             # modificó, cuándo, y guarda el CONTENIDO ANTERIOR (metadata.last_improvement):
             # aplicar una mejora deja de ser irreversible (hallazgo mayor del revisor).
             applied_at = datetime.now(timezone.utc).isoformat()
-            await conn.execute(
-                "UPDATE playbooks SET content = %s, updated_at = now(), "
-                "metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{last_improvement}', "
-                "  jsonb_build_object('proposal_id', %s::text, 'applied_at', %s::text, "
-                "                     'previous_content', playbooks.content), true) "
-                "WHERE id = %s AND NOT protected",
-                (p["suggested_content"], str(proposal_id), applied_at,
-                 p["target_playbook_id"]))
+            try:
+                await conn.execute(
+                    "UPDATE playbooks SET content = %s, title = COALESCE(%s, title), "
+                    "updated_at = now(), "
+                    "metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{last_improvement}', "
+                    "  jsonb_build_object('proposal_id', %s::text, 'applied_at', %s::text, "
+                    "                     'previous_content', playbooks.content), true) "
+                    "WHERE id = %s AND NOT protected",
+                    (new_content, new_title, str(proposal_id), applied_at,
+                     p["target_playbook_id"]))
+            except psycopg.errors.UniqueViolation:
+                raise HTTPException(status_code=409, detail="Ya existe otra guía con ese nombre.")
         elif p["proposal_type"] == "new_playbook":
+            new_content = edited_content if edited_content is not None else p["suggested_content"]
+            if edited_title:
+                new_title = edited_title[:200]
+            else:
+                # nunca más el placeholder "Sugerencia {id}" — se deriva un título en
+                # llano de las primeras palabras de la sugerencia (revisor B4).
+                words = (p["suggested_content"] or "").strip().split()
+                new_title = (" ".join(words[:8])[:200]
+                            or f"Procedimiento sugerido {proposal_id[:8]}")
+            new_summary = "Propuesta aplicada de Mia"
+            new_applies = "(por afinar)"
+            # Re-embed (hallazgo del revisor): sin esto el playbook "aprendido" nace con
+            # embedding=NULL y el Curator jamás lo considera en su dedup/consolidación
+            # semántica (find_candidates exige embedding IS NOT NULL en ambos lados).
+            vec_new = embeddings.embed_texts([f"{new_summary}\n{new_applies}"])[0]
             await conn.execute(
-                "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content) "
-                "VALUES (%s::uuid, %s, %s, %s, %s) ON CONFLICT (tenant_id, title) DO NOTHING",
-                (tid, f"Sugerencia {proposal_id[:8]}", "Propuesta aplicada de Mia",
-                 "(por afinar)", p["suggested_content"]))
+                "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content, "
+                "embedding, metadata) VALUES (%s::uuid, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (tenant_id, title) DO NOTHING",
+                (tid, new_title, new_summary, new_applies, new_content, vec_new,
+                 Json({"origin": "aprendida"})))
         # wiki_correction: el append al archivo del concepto es E/S de disco bloqueante
         # (el vault puede vivir en OneDrive) — se hace DESPUÉS de soltar esta conexión
         # pooled (revisor capa 2: sostenerla durante la escritura arriesgaba agotar el
@@ -690,10 +986,15 @@ async def apply_proposal(proposal_id: str, request: Request):
         # sin 500) — la corrección igual quedó registrada como propuesta.
         concept = p.get("target_concept") or _concept_from_wiki_correction(p["rationale"])
         appended = False
+        # Honrar la corrección EDITADA por el abogado (hallazgo del revisor): "Editar
+        # antes de aplicar" se ofrece para toda propuesta, wiki_correction incluida; si se
+        # ignora edited_content aquí, lo que queda escrito en el corpus del despacho es el
+        # texto crudo de Mia, no lo que el abogado aprobó.
+        wiki_content = edited_content if edited_content is not None else p["suggested_content"]
         if concept:
             try:
                 appended = await WikiManager().append_correction(
-                    tid, concept, p["suggested_content"] or "")
+                    tid, concept, wiki_content or "")
             except Exception:  # noqa: BLE001 — el archivo de wiki nunca tumba la aprobación
                 logger.exception(
                     "no se pudo appendear la corrección al concepto '%s' (tenant=%s)",

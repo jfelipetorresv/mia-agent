@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  BookOpen,
   ChevronRight,
   FileText,
   Paperclip,
@@ -17,6 +18,7 @@ import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
 import CitationReview, { type Verification } from "../../_components/CitationReview";
 import FuentesPanel from "../../_components/FuentesPanel";
+import GuideInterviewWizard from "../../_components/GuideInterviewWizard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +47,13 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
   const [hasDraft, setHasDraft] = useState(false);
+  // B3: "Convierte lo que hicimos aquí en una guía" — solo visible cuando el
+  // desenlace real del borrador fue APROBADO. `awaiting_review=false` por sí solo NO
+  // alcanza como señal: el grafo también llega a END (deja de estar pausado) cuando el
+  // abogado RECHAZA o EDITA el borrador, así que se usa el desenlace explícito
+  // (hitl_outcome) que expone GET /matters/{id}/draft, no un proxy.
+  const [draftApproved, setDraftApproved] = useState(false);
+  const [guideWizardOpen, setGuideWizardOpen] = useState(false);
   const [diagnosis, setDiagnosis] = useState("");
   // CP7: cierre estructurado del diagnostico (problema/normas/riesgo) cuando el
   // backend lo emite (CP6); si no viene, el panel muestra solo la prosa como antes.
@@ -102,8 +111,10 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       .catch(() => setMissionsSummary(null));
     // Si el asunto ya tiene un borrador en curso, recupera tambien su diagnostico.
     apiGet<{
+      draft?: string | null;
       diagnosis?: string;
       awaiting_review?: boolean;
+      hitl_outcome?: "approved" | "rejected" | "edited" | null;
       diagnosis_summary?: DiagnosisSummary | null;
       verification?: Verification | null;
     }>(`/api/matters/${matterId}/draft`)
@@ -112,6 +123,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         if (d.diagnosis_summary) setSummary(d.diagnosis_summary);
         if (d.verification) setVerification(d.verification);
         if (d.awaiting_review) setHasDraft(true);
+        setDraftApproved(Boolean(d.draft) && d.hitl_outcome === "approved");
       })
       .catch(() => {
         /* sin borrador todavia */
@@ -350,17 +362,30 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
           <div className="mb-2 flex min-h-5 items-center justify-between text-sm">
             <span className="text-muted-foreground">{status}</span>
-            {hasDraft ? (
-              <Button
-                variant="cta"
-                size="sm"
-                onClick={() => router.push(`/asuntos/${matterId}/revisar`)}
-                className="gap-1.5 animate-slide-up"
-              >
-                <FileText className="h-3.5 w-3.5" />
-                Revisar borrador
-              </Button>
-            ) : null}
+            <div className="flex items-center gap-2">
+              {draftApproved && !hasDraft ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGuideWizardOpen(true)}
+                  className="gap-1.5 animate-slide-up"
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Convertir en guía
+                </Button>
+              ) : null}
+              {hasDraft ? (
+                <Button
+                  variant="cta"
+                  size="sm"
+                  onClick={() => router.push(`/asuntos/${matterId}/revisar`)}
+                  className="gap-1.5 animate-slide-up"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  Revisar borrador
+                </Button>
+              ) : null}
+            </div>
           </div>
           <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-2 shadow-lg shadow-primary/5 transition-shadow focus-within:border-primary/40 focus-within:shadow-primary/10">
             <textarea
@@ -452,6 +477,13 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           </div>
         </details>
       </aside>
+
+      <GuideInterviewWizard
+        open={guideWizardOpen}
+        onOpenChange={setGuideWizardOpen}
+        kind="guia"
+        matterId={matterId}
+      />
     </div>
   );
 }

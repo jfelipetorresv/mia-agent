@@ -43,7 +43,7 @@ Ya existe (verificado): asuntos con 1 carpeta local + 1 OneDrive + correos; pick
 
 ---
 
-## BLOQUE B — Guías de trabajo asistidas + gobernanza de skills (segunda sesión)
+## BLOQUE B — Guías de trabajo asistidas + gobernanza de skills (segunda sesión) ✅ COMPLETADO (sesión 40, 2026-07-10)
 
 **Decisión transversal:** UN motor de entrevista **stateless** (`backend/mia/memory/interviewer.py` + router `backend/mia/api/routes/guides.py`): el frontend manda el transcript completo; el backend responde la siguiente pregunta o el borrador. **El borrador solo existe en la respuesta HTTP — nunca toca la DB hasta que el abogado pulsa Guardar** (gate por construcción). LLM `task="curator"` (respeta política del despacho, incl. `soberano` 100% local). Contrato: `POST /api/guides/interview {kind:'guia'|'agente', messages[], matter_id?}` → `{done:false, question}` | `{done:true, draft, explanation}`. Mín 3 / máx 6 preguntas; JSON inválido → pregunta de fallback determinista, jamás un 500; recortes server-side a 200 chars (presupuesto índice 3000 tok).
 

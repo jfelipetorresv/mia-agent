@@ -1183,3 +1183,18 @@ sync — es la mitad conservadora del backfill (mejor conservar de más que borr
 Si el archivo físico que los originó desaparece, esos documentos quedan "fantasmas" en el
 expediente indefinidamente; hoy solo se limpian manualmente. Revisar si en la práctica esto
 ensucia expedientes viejos con muchas carpetas rotadas.
+
+## Riesgo #58 — Bloque B (guías asistidas): `kind='agente'` reservado al Bloque C (2026-07-10)
+
+**Contexto:** el motor de entrevista stateless (`POST /api/guides/interview`, `guides.py`) ya
+acepta `kind` ∈ {`'guia'`, `'agente'`} en el contrato, pero el Bloque B solo construyó el flujo
+de guías de trabajo. Con `kind='agente'` el endpoint responde 422 en llano ("Los agentes se
+crean con Mia próximamente.") en vez de tramitar la entrevista.
+
+**Riesgo:** ninguno — es una deuda consciente de secuenciación, no un bug. `GuideInterviewWizard.tsx`
+ya quedó construido de forma reusable (recibe `kind` como prop) para que el Bloque C (C1 —
+"Agentes jurídicos con conocimiento") solo tenga que cablear el flujo de entrevista de agentes
+sobre el mismo componente, sin rehacer la UI.
+
+**Acción:** ninguna hasta el Bloque C; cerrar este riesgo cuando `kind='agente'` quede
+implementado.

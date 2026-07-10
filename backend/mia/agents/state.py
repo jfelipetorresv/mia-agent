@@ -21,6 +21,13 @@ from typing import Annotated, Any, Literal, Optional, TypedDict
 # las traduce a frases del oficio ("Esperando tu revisión", "Listo").
 HitlStatus = Literal["pending", "approved", "rejected", "editing"]
 
+# Desenlace HITL normalizado (mismo vocabulario en toda la app): finalize_node lo usa
+# para la traza (trace_capture/index_trace), interviewer.py lo usa para filtrar qué
+# evidencia es confiable (solo "approved"), y la API /matters/{id}/draft lo expone al
+# frontend para decidir si el borrador quedó realmente aprobado (no basta con que el
+# grafo ya no esté pausado: "rejected" y "editing" también llegan a END).
+HITL_OUTCOME: dict[str, str] = {"approved": "approved", "rejected": "rejected", "editing": "edited"}
+
 
 class MatterState(TypedDict, total=False):
     """Estado de un asunto en el grafo. `total=False`: los nodos devuelven parciales."""

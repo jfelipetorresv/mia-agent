@@ -121,8 +121,11 @@ def run_frontend_checks() -> None:
     check("frontend CP7: selector 'Motor de IA' consume /settings/model-policy (PUT al cambiar)",
           "Motor de IA" in conexiones_src and "/settings/model-policy" in conexiones_src
           and "Modelo preferido" not in conexiones_src)
-    check("frontend CP7: tab Habilidades consume /api/skills/ranked",
-          "Habilidades" in memoria and "/api/skills/ranked" in memoria)
+    # B4: "Guías y documentos" + "Lo que Mia sabe hacer" se fusionaron en un solo
+    # subtab ("Guías y habilidades", sentence case como el resto de tabs de esta
+    # página: "Mi despacho", "Criterios aprendidos") que muestra la métrica GEPA.
+    check("frontend CP7: tab Guías y habilidades consume /api/skills/ranked",
+          "Guías y habilidades" in memoria and "/api/skills/ranked" in memoria)
     check("frontend CP7: botón Importar guías → /api/playbooks/import (multipart)",
           "Importar guías" in memoria and "/api/playbooks/import" in memoria)
     check("frontend CP7: la sugerencia muestra el procedimiento que se modificaría (target)",
