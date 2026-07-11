@@ -277,3 +277,25 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
 - [ ] Capa 3 EN VIVO de Pipe (wizard "Crear con Mia", historial de versiones, "Convertir en
       guía", "Editar antes de aplicar") — pendiente
 - [ ] Siguiente: BLOQUE B — guías de trabajo asistidas + gobernanza de skills
+
+## Fase 4 · BLOQUE INSTALADOR (Sesión 42, 2026-07-10) — plan de 4 fases aprobado por Pipe
+- [x] F1a — Bundle backend PyInstaller reproducible en el repo (`packaging/`: entry + spec +
+      build_backend.ps1; 459.5 MB; /health + 401 verificados sin Python; smoke OCR OK;
+      voz fuera por construcción) — gate `test_packaging.py` 23/23
+- [x] F1b — Frontend autocontenido (`output: 'standalone'` + node.exe portable v22.23.1
+      pineado; ensamblado 103.5 MB; humo con puerto libre + identidad del listener) —
+      gate `test_frontend_packaging.py` 24/24
+- [x] Blindaje cáscara (adelanto F2): single-instance 2.4.2, CSP + splash externalizado,
+      pg_isready tri-estado, identidad backend/frontend en 4 caminos — gate
+      `test_shell_hardening.py` 42/42; cargo build exit 0
+- [x] Capa 2 ×2 (empaquetado y cáscara): 1 BLOQUEANTE + 4 MAYORES + 5 menores, TODOS corregidos
+- [x] Regresión completa 82/82 ALL PASS (79 base + 3 gates nuevos); test_ux recalibrado
+      (timeout build 300→600s post-standalone) y re-verificado 41/41
+- [ ] F2 — Primer arranque automático: %LOCALAPPDATA%\Mia + .env semilla (JWT_SECRET generado)
+      + initdb + migraciones 003→030 + checkpointer + orchestration.json de instalador +
+      **LiteLLM como 2º exe desde .venv-litellm** (decisión sesión 42)
+- [ ] F3 — Wizard de bienvenida (llaves mínimas, política suscripción-first, §G)
+- [ ] F4 — tauri bundle NSIS/MSI + E2E en frío (máquina limpia) + verificación 3 capas +
+      splash bajo CSP visual + IPC remoto empírico + decidir console=True
+- [ ] Pre-lanzamiento (acción de Pipe): registrar Azure Trusted Signing (firma) — no bloquea
+      el build del equipo

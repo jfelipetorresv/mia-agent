@@ -962,3 +962,25 @@ Qué sigue:
   (`memory/plan-evolucion-producto.md`).
 - Capa 3 EN VIVO de Pipe (Proyectos, FolderPicker, FuentesPanel) — pendiente, junto con la deuda
   de capa 3 acumulada de sesiones anteriores (OAuth de correo/OneDrive en `.env`).
+
+## 2026-07-10 — Sesión 42
+TL;DR: Arrancó el BLOQUE INSTALADOR (Fase 4 distribución): Fase 1 de empaquetado COMPLETA
+(backend PyInstaller 459 MB + frontend standalone con Node portable 103 MB) + cáscara blindada
+(instancia única, CSP, identidad de procesos), regresión 82/82.
+Qué construimos:
+- packaging/ completo (entry + spec + builds reproducibles) con gates 23/23 y 24/24; bundle
+  verificado en vivo sin Python (/health + 401) y humo del frontend con node.exe portable.
+- Blindaje de desktop/: single-instance, CSP con splash externalizado, pg_isready, identidad
+  backend/frontend en los 4 caminos (gate 42/42) — motivado por incidente real: la cáscara
+  adoptó a voicebox (8000) y al Next de Intelligence Sura (3100) en la máquina de Pipe.
+- 2 revisiones adversariales (empaquetado y cáscara): 1B+4M+5m, todos corregidos de raíz.
+Qué decidimos:
+- Pipe: OCR dentro del instalador, voz como descarga posterior; instalador sin firma para el
+  equipo (Azure Trusted Signing pendiente de registro para venta).
+- Fable: LiteLLM va como 2º exe empaquetado (F2) — sin él, políticas nube/soberano rotas.
+- test_ux timeout 300→600s (recalibración post-standalone, no debilitamiento).
+Qué sigue:
+- F2: primer arranque automático (%LOCALAPPDATA%\Mia, .env semilla + JWT, initdb + migraciones
+  003→030 + checkpointer, orchestration.json de instalador, LiteLLM 2º exe).
+- F3 wizard de bienvenida · F4 instalador NSIS + E2E en frío.
+- Capa 3 de Pipe acumulada: splash bajo CSP (visual), recorrido de producto sesiones 39-41.

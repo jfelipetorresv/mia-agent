@@ -2265,3 +2265,66 @@ correcciones → re-verificación. Commit `acba433` (23 archivos, +2737/−399).
   llano (decisión documentada del ejecutor C1, cubierta por test).
 - Las 3 personas canónicas de fábrica siguen SIN guías pre-vinculadas (decisión).
 - Carpetas vinculadas POR AGENTE: sigue pospuesto a v2 (nota de alcance del plan).
+
+## Sesión 42 (2026-07-10) — BLOQUE INSTALADOR · Fase 1 (empaquetado) + blindaje de la cáscara
+
+**Objetivo aprobado por Pipe:** instalador de Windows para que cualquier abogado instale MIA con
+doble clic (Fase 4 de distribución del plan local-first). Plan de 4 fases: F1 empaquetado,
+F2 primer arranque automático, F3 wizard de bienvenida, F4 instalador NSIS + E2E en frío.
+Decisiones de Pipe: OCR incluido, VOZ como descarga posterior; plan aprobado con orquestación
+multi-agente.
+
+**F1 — Empaquetado (COMPLETO):**
+- `packaging/entry_backend.py` + `mia-backend.spec` + `build_backend.ps1`: bundle PyInstaller
+  onedir del backend (459.5 MB, exe verificado: /health db:true + pgvector 0.8.2 + 401 sin
+  token, corriendo SIN venv/Python). Lecciones del spike preservadas (import explícito
+  mia.api.main, collect litellm + rapidocr, tiktoken_ext). Smoke OCR post-build
+  (`--ocr-smoke-test` → OK). Voz fuera del bundle por construcción (verificado).
+- `packaging/build_frontend.ps1` + `output: 'standalone'` en next.config.mjs: pantalla
+  autocontenida (103.5 MB con node.exe portable v22.23.1 pineado en `node-version.txt`);
+  humo con detección de puerto ocupado + verificación de identidad del listener (OwningProcess).
+  Node portable en `tools\node-portable\` (fuera del repo; README-frontend.md documenta).
+- Gates nuevos: `test_packaging.py` 23/23 · `test_frontend_packaging.py` 24/24.
+- Capa 2 (revisor adversarial Opus): 0 bloqueantes, 3 MAYORES + 3 menores, TODOS corregidos:
+  M1 litellm llamaba a raw.githubusercontent.com EN CADA ARRANQUE del exe (violaba local-first;
+  fix: setdefault LITELLM_LOCAL_MODEL_COST_MAP antes del import); M2 upx=True podía corromper
+  las DLL de onnxruntime → OCR muerto en silencio (fix: upx=False); M3 humo del frontend daba
+  PASS falso contra un squatter del puerto (fix: puerto libre automático + HasExited +
+  identidad del listener); m4 comentario-promesa falsa del import rapidocr (fix + smoke real);
+  m5 pip install sin --no-deps podía mover pins (fix: --no-deps + pins + gate duro
+  check_env_pins DENTRO del build); m6 selección de Node no determinista (fix: pin file).
+
+**Blindaje de la cáscara (adelanto de F2, COMPLETO):**
+- `tauri-plugin-single-instance` 2.4.2 (2ª instancia muere sin tocar procesos; 1ª al frente).
+- CSP explícita (`default-src 'self'; connect-src ipc: http://ipc.localhost`); splash
+  externalizado a `splash.css`/`splash.js` (cero inline) para no depender de unsafe-inline.
+- `db_check.rs`: pg_isready antes de adoptar el 55432, tri-estado Ready/PortBusy/ToolMissing
+  con mensajes en llano distintos (puerto ocupado ≠ instalación rota); spawn_blocking.
+- `identity.rs`: NADIE se adopta por responder 200 — backend debe traer claves propias de
+  /health (db/pgvector/embed_model), frontend la huella de cabeceras de next.config.mjs; en
+  los 4 caminos (adopción y post-lanzamiento). **Evidencia real que lo motivó:** en la máquina
+  de Pipe el 8000 lo ocupaba voicebox-server.exe (¡pasó el health-check viejo!) y el 3100 el
+  Next de "Intelligence Sura" — la cáscara vieja los adoptó y le mostró a Pipe la app
+  equivocada. Colisión de puertos = caso ESPERADO.
+- Gate nuevo: `test_shell_hardening.py` 42/42 (endurecido: strip de comentarios Rust para
+  anclar checks al código; probado contra implementaciones rotas a propósito).
+- Capa 2 independiente (Opus): 1 BLOQUEANTE (CSP rompía los estilos inline del splash —
+  fix de raíz: externalización) + 1 MAYOR (gate validaba comentarios) + 2 menores
+  (ToolMissing, spawn_blocking) — TODOS corregidos; cargo build exit 0.
+
+**Capa 1 final: regresión 82/82 suites ALL PASS** (79 base + 3 gates nuevos), test_rls 12/12 y
+check_env_pins 9/9 (HALT) intactos. `test_ux` recalibrado de raíz: su timeout de build (300s)
+era pre-standalone; el file-tracing lo supera en máquinas cargadas → 600s con comentario
+(el check valida returncode, no velocidad); re-corrido 41/41.
+
+**Decisión técnica declarada (para F2):** LiteLLM entra al instalador como SEGUNDO exe
+empaquetado desde `.venv-litellm` (~150-300 MB): sin él, las políticas "nube" y "soberano"
+quedan rotas y "suscripcion" pierde sus fallbacks (investigación con evidencia en el hilo:
+embeddings van in-process directo a Voyage; turnos suscripción van por CLI y solo caen al
+proxy como red). La consolidación in-process (Riesgo #4) queda como refactor futuro.
+
+**Lecciones operativas:** (1) nunca dos `next build` concurrentes sobre el mismo `.next`
+(ENOENT por carrera de renames — pasó entre orquestador y ejecutor); (2) los ejecutores en
+background que esperan notificaciones de builds largos se duermen — despertarlos con evidencia
+(timestamps de dist/, procesos vivos); (3) la máquina de Pipe corre múltiples proyectos Node
+a la vez — los tests con topes de tiempo deben calibrarse para máquina cargada.

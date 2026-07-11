@@ -1199,3 +1199,22 @@ sobre el mismo componente, sin rehacer la UI.
 **Acción:** CERRADO en la sesión 41 — la entrevista `kind='agente'` quedó implementada
 (interviewer parametrizado por kind + `suggested_playbook_ids` + `onDraftReady` en el wizard,
 gate HITL verificado: la entrevista completa sin guardar deja 0 filas). Gate: `test_agent_playbooks.py`.
+
+---
+
+## Riesgo #59 — Verificaciones del instalador diferidas al E2E de Fase 4 (ABIERTO, 2026-07-10)
+
+**Qué:** el blindaje de la cáscara y el empaquetado (sesión 42) dejaron verificaciones que SOLO
+pueden hacerse lanzando la cáscara/instalador de verdad, prohibidas en la sesión por el
+incidente de ventanas en la máquina de Pipe (la cáscara vieja adoptó voicebox en 8000 y el
+Next de "Intelligence Sura" en 3100 — evidencia de que la colisión de puertos es caso esperado):
+1. Splash bajo la CSP nueva: confirmar VISUALMENTE que estilos y mensajes de error en llano se
+   pintan (css/js ya externalizados — el riesgo residual es bajo, pero nadie lo ha VISTO).
+2. Gating de IPC remoto: `window.__TAURI__ === undefined` desde localhost:3100 (paso exacto en
+   desktop/README.md).
+3. `console=True` del exe del backend: hoy abriría ventana de consola negra al abogado —
+   decidir console=False al ensamblar el instalador (N9 de la capa 2).
+4. E2E completo en frío: máquina sin Python/Node, LOCALAPPDATA virgen, primer arranque.
+
+**Acción:** todas quedan como pasos OBLIGATORIOS del E2E de F4 (task_plan) — no cerrar el
+bloque instalador sin ellas.
