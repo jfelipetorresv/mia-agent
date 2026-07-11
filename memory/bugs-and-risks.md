@@ -1216,5 +1216,16 @@ Next de "Intelligence Sura" en 3100 — evidencia de que la colisión de puertos
    decidir console=False al ensamblar el instalador (N9 de la capa 2).
 4. E2E completo en frío: máquina sin Python/Node, LOCALAPPDATA virgen, primer arranque.
 
+**Añadidos de la sesión 43 (F2) al mismo E2E de F4:**
+5. Recompilar `mia-backend.exe` y compilar `mia-litellm.exe` DESPUÉS de F2/F3 y verificar en
+   frío: el exe del backend actual en dist/ NO tiene el `--first-run` ni las datas .sql, y el
+   de litellm NO tiene el Blindaje 6 (inyección default de `--host 127.0.0.1` en el entry) —
+   hoy la protección de loopback vigente es el flag explícito en `orchestration.installer.json`
+   (verificado en vivo: netstat 127.0.0.1, intento LAN rechazado).
+6. Primer arranque interrumpido a mitad (cerrar la ventana durante el setup) y verificar que la
+   reapertura auto-repara (gatillo triple: marcador `.mia-setup-complete` + PG_VERSION + .env).
+   La lógica está cubierta por `test_first_run.py` 68/68; falta VERLO con la cáscara real.
+7. `console=True` del exe de LiteLLM: misma decisión pendiente que el del backend (punto 3).
+
 **Acción:** todas quedan como pasos OBLIGATORIOS del E2E de F4 (task_plan) — no cerrar el
 bloque instalador sin ellas.

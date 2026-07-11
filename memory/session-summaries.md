@@ -984,3 +984,28 @@ Qué sigue:
   003→030 + checkpointer, orchestration.json de instalador, LiteLLM 2º exe).
 - F3 wizard de bienvenida · F4 instalador NSIS + E2E en frío.
 - Capa 3 de Pipe acumulada: splash bajo CSP (visual), recorrido de producto sesiones 39-41.
+
+## 2026-07-11 — Sesión 43
+TL;DR: Fase 2 del instalador COMPLETA — MIA se prepara sola en el primer arranque y LiteLLM
+es el 4º servicio supervisado; 84/84 suites, 11 hallazgos de capa 2 corregidos.
+Qué construimos:
+- `mia.setup.first_run` (`--first-run` del exe): app_dir + .env semilla atómico + initdb
+  loopback/scram + migraciones 003→030 + checkpointer + marcador `.mia-setup-complete`;
+  idempotente y auto-reparable. Gate test_first_run 68/68 (initdb y login reales).
+- mia-litellm.exe (108 MB) desde `.venv-litellm` con blindajes portados (cost-map, allowlist,
+  scrub anti-Prisma, dotenv neutralizado, --host 127.0.0.1); humo vivo 200/200/401 + bind
+  loopback verificado. Gate test_litellm_packaging 60/60.
+- Cáscara: gatillo triple del setup (marcador+PG_VERSION+.env), tokens ${exe_dir}/
+  ${local_app_data}, LiteLLM con identidad de adopción, child_died antes del health (bug en
+  los 3 bucles), plantilla `orchestration.installer.json`. Gate shell_hardening 77/77.
+Qué decidimos:
+- Bootstrap en Python (no Rust); la cáscara solo decide cuándo y muestra progreso.
+- Marcador de finalización como fuente de verdad de "setup completo" (PG_VERSION/.env no
+  bastan — hallazgo M1 de capa 2).
+- Loopback para TODO servicio empaquetado (litellm bindeaba 0.0.0.0 — M5, corregido y
+  verificado en vivo).
+- Dev sigue con LiteLLM manual (3 terminales); el 4º servicio es solo del modo instalado.
+Qué sigue:
+- F3 wizard de bienvenida (llaves mínimas, política suscripción-first, §G).
+- F4: recompilar ambos exes + NSIS + E2E en frío (Riesgo #59 con 7 puntos acumulados).
+- Capa 3 de Pipe acumulada (sin cambios de esta sesión: fue backend/cáscara/packaging).

@@ -291,9 +291,23 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
 - [x] Capa 2 ×2 (empaquetado y cáscara): 1 BLOQUEANTE + 4 MAYORES + 5 menores, TODOS corregidos
 - [x] Regresión completa 82/82 ALL PASS (79 base + 3 gates nuevos); test_ux recalibrado
       (timeout build 300→600s post-standalone) y re-verificado 41/41
-- [ ] F2 — Primer arranque automático: %LOCALAPPDATA%\Mia + .env semilla (JWT_SECRET generado)
-      + initdb + migraciones 003→030 + checkpointer + orchestration.json de instalador +
-      **LiteLLM como 2º exe desde .venv-litellm** (decisión sesión 42)
+- [x] F2 — Primer arranque automático (sesión 43, 2026-07-11): `mia.setup.first_run` invocable
+      como `mia-backend.exe --first-run` (app_dir + .env semilla atómico con secretos generados
+      + initdb endurecido loopback/scram + migraciones 003→030 + checkpointer + marcador
+      `.mia-setup-complete` al final; idempotente y auto-reparable) — gate `test_first_run.py`
+      68/68 con initdb real y login real de mia_app
+- [x] F2 — LiteLLM 2º exe: `.venv-litellm` creado + `entry_litellm.py` (cost-map → allowlist
+      .env → scrub DATABASE_URL/PG_* → dotenv neutralizado → CLI) + build real 108 MB con humo
+      vivo (liveliness 200, /v1/models 200 con Bearer/alias, 401 sin Bearer, bind SOLO
+      127.0.0.1 con intento LAN rechazado) — gate `test_litellm_packaging.py` 60/60
+- [x] F2 — Cáscara: tokens `${exe_dir}`/`${local_app_data}`, paso `setup` con gatillo triple
+      (marcador+PG_VERSION+.env, timeout 15 min), LiteLLM 4º servicio con identidad
+      (/v1/models+Bearer+alias), child_died antes del health en los 3 bucles, shutdown inverso
+      — `orchestration.installer.json` plantilla estática; gate `test_shell_hardening.py` 77/77;
+      cargo build exit 0
+- [x] F2 — Capa 2 ×3 (bootstrap, cáscara, litellm): 6 MAYORES + 5 menores confirmados, TODOS
+      corregidos y re-verificados (detalle en progress.md sesión 43)
+- [x] F2 — Regresión completa 84/84 ALL PASS (82 base + test_first_run + test_litellm_packaging)
 - [ ] F3 — Wizard de bienvenida (llaves mínimas, política suscripción-first, §G)
 - [ ] F4 — tauri bundle NSIS/MSI + E2E en frío (máquina limpia) + verificación 3 capas +
       splash bajo CSP visual + IPC remoto empírico + decidir console=True

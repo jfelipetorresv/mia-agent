@@ -2328,3 +2328,81 @@ proxy como red). La consolidación in-process (Riesgo #4) queda como refactor fu
 background que esperan notificaciones de builds largos se duermen — despertarlos con evidencia
 (timestamps de dist/, procesos vivos); (3) la máquina de Pipe corre múltiples proyectos Node
 a la vez — los tests con topes de tiempo deben calibrarse para máquina cargada.
+
+## Sesión 43 (2026-07-11) — BLOQUE INSTALADOR · Fase 2 (primer arranque automático) COMPLETA
+
+**Objetivo cumplido (meta declarada por Pipe: "terminar la fase 2"):** en una máquina limpia,
+la cáscara detecta que MIA no está preparada y la deja funcionando sola. Diseño en
+`memory/plan-f2-instalador.md` (contrato entre 3 ejecutores); orquestación multi-agente
+(3 recon → diseño → 3 ejecutores → 3 revisores capa 2 → 3 correctores → regresión).
+
+**F2a — Bootstrap (`backend/mia/setup/`):** `first_run.py` invocable como
+`mia-backend.exe --first-run --pg-bin --pg-data --pg-port [--app-dir]` y
+`python -m mia.setup.first_run`. Crea app_dir; `.env` semilla ATÓMICO (tmp+fsync+os.replace;
+JWT_SECRET/PG_PASSWORD/PG_APP_PASSWORD/LITELLM_MASTER_KEY=LITELLM_API_KEY generados con
+token_urlsafe, CORS 3100, MIA_ENV=prod verificado contra los 5 usos de IS_PRODUCTION; NUNCA
+regenera secretos); initdb endurecido (pwfile en `<app_dir>/.setup-tmp`, UTF8, locale C,
+scram-sha-256, listen_addresses=127.0.0.1 escrito ANTES del primer arranque); postgres temporal
+con ownership limpio (si él lo arranca lo detiene SIEMPRE — try/finally); rol/DB/extensiones/
+schema + migraciones 003→030 (runner Python; los .sql entran al bundle como `datas` del spec,
+resolución dev/frozen en `setup/paths.py`) + checkpointer; marcador `.mia-setup-complete`
+escrito de ÚLTIMO (contrato con la cáscara). Estados a medias auto-reparables: initdb
+interrumpido → vacía pg_data y reintenta; cluster sin .env → error en llano SIN regenerar
+secretos huérfanos. `init_db.py`/`init_checkpointer.py` refactorizados a `setup/db_bootstrap.py`
+(compatibilidad conservada). Bug real corregido: `pg_ctl start` con capture_output cuelga en
+Windows (postgres hereda pipes) → `-l logfile` + DEVNULL. Gate `test_first_run.py` 68/68
+(initdb real ×2, login real con DATABASE_URL, has_table_privilege checkpoint%, reparación,
+desajuste, idempotencia byte a byte).
+
+**F2b — LiteLLM 2º exe (`packaging/`):** `.venv-litellm` creado (litellm[proxy]==1.74.8 desde
+el intérprete base del .venv); `entry_litellm.py` con orden estricto: cost-map →
+allowlist-load del .env del app_dir (solo *_API_KEY/LITELLM_*; utf-8-sig, nunca sobreescribe)
+→ scrub DATABASE_URL/PG_* (Prisma muerto: único gatillo es DATABASE_URL, verificado en el
+código de litellm) → `dotenv.load_dotenv` neutralizado (las 2 rutas reales) → CLI
+`litellm.run_server()` + Blindaje 6 (inyección default `--host 127.0.0.1`).
+`litellm_config.installer.yaml` con master_key (dev intacto). Build real: mia-litellm.exe
+108.2 MB onedir upx=False; DOS causas raíz reales: certifi fuera del bundle
+(pyinstaller-hooks-contrib==2026.6 pineado + collect_data_files("certifi")) y
+UnicodeEncodeError cp1252 del banner (reconfigure utf-8 en el entry). Humo vivo: liveliness
+200, /v1/models 200 con Bearer y alias, 401 sin Bearer, bind SOLO 127.0.0.1 (netstat) e
+intento desde la IP LAN rechazado. Gate `test_litellm_packaging.py` 60/60.
+
+**F2c — Cáscara (desktop/):** tokens `${exe_dir}`/`${local_app_data}` expandidos en punto
+único (abort en llano si irresolubles); paso `setup` opcional con GATILLO TRIPLE (falta
+marcador O PG_VERSION O .env → correr `--first-run`, timeout 15 min, stage "setup", última
+línea del log en el error); LiteLLM 4º servicio (db→litellm→backend→frontend, shutdown
+inverso, Job Object) con identidad de adopción `/v1/models` + Bearer (key leída del .env del
+app_dir) + alias `claude-haiku`/`mia-local` — sin key NO se adopta; `child_died` evaluado
+ANTES del health en los 3 bucles de espera (litellm/backend/frontend — el bug existía en los
+3); PORT/HOSTNAME del frontend standalone. `packaging/orchestration.installer.json`: plantilla
+ESTÁTICA para F4 (NSIS no templa nada). Dev SIN bloque litellm (el saneo de
+run_litellm_clean.ps1 es scrubbing, no replicable vía env-add; documentado en README).
+Gate `test_shell_hardening.py` 77/77; cargo build exit 0.
+
+**Capa 2 (3 revisores adversariales independientes, contexto fresco):** 6 MAYORES + 5 menores
+CONFIRMADOS, TODOS corregidos y re-verificados antes del commit:
+M1 setup interrumpido tras escribir .env+PG_VERSION jamás se re-ejecutaba → instalación rota
+para siempre (fix: marcador de finalización + gatillo triple); M2 .env no atómico → secretos
+truncados permanentes; M3 cluster existente + .env perdido → regeneraba secretos que no calzan
+(fix: error en llano); M4 gate sin login real de mia_app (verde falso posible); M5 proxy
+LiteLLM bindeaba 0.0.0.0 → gateway de modelos con las llaves de la firma expuesto a la RED del
+despacho (fix: --host 127.0.0.1 en installer json + dev + entry, verificado en vivo con
+netstat e intento LAN rechazado); M6 initdb a medias irrecuperable (fix: auto-limpieza).
+Menores: pwfile en %TEMP% compartido → carpeta privada; child_died después del health
+(ventana de squatter); tokens vacíos silenciosos; pins de pyinstaller sin anclar en el gate;
+allowlist LITELLM_* amplia (nota aceptada, sin acción).
+
+**Capa 1: regresión completa 84/84 ALL PASS** (82 base + `test_first_run` +
+`test_litellm_packaging`; `test_shell_hardening` sube 69→77 checks). `test_rls` 12/12 y
+`check_env_pins` 9/9 (HALT) intactos. 0 reintentos.
+
+**Deudas conscientes (todas en Riesgo #59, E2E de F4):** los exes de dist/ se recompilan en
+F4 (el backend actual no trae --first-run/datas; el litellm no trae el Blindaje 6 — la
+protección loopback vigente es el flag del installer json, verificada en vivo); interrupción
+real del setup con la cáscara visual; console=True de ambos exes.
+
+**Lecciones nuevas:** (4) los correctores de capa 2 también se duermen esperando builds —
+despertarlos con evidencia es parte del protocolo, no excepción; (5) el runner
+`scripts/run_tests.ps1` auto-descubre `execution/test_*.py` — los gates nuevos entran solos a
+la regresión; (6) el default de bind de un servicio empaquetado NUNCA se asume: litellm CLI
+default es 0.0.0.0 (el criterio loopback de la decisión 7 del plan aplica a TODO servicio).

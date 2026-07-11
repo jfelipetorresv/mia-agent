@@ -101,6 +101,19 @@ def _ocr_smoke_test() -> int:
 if __name__ == "__main__":
     import sys
 
+    # --first-run (bootstrap de primer arranque, F2 · sesión 43): la cáscara lo
+    # invoca ANTES de arrancar uvicorn normalmente, en una máquina limpia, para
+    # dejar Postgres/.env/migraciones/checkpointer listos. Los imports pesados de
+    # arriba (mia.api.main, litellm, rapidocr) ya ocurrieron para cuando llegamos
+    # aquí — no dependen de que la base de datos exista, así que no hay que
+    # reordenarlos ni duplicar el entry point. Sin esta bandera, el arranque es
+    # IDÉNTICO al de siempre.
+    if "--first-run" in sys.argv:
+        from mia.setup.first_run import main as first_run_main
+
+        rest = [a for a in sys.argv[1:] if a != "--first-run"]
+        sys.exit(first_run_main(rest))
+
     if "--ocr-smoke-test" in sys.argv:
         sys.exit(_ocr_smoke_test())
     main()

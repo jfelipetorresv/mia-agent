@@ -24,6 +24,13 @@ lecciones OBLIGATORIAS que este spec preserva:
   6. upx=False en EXE y COLLECT (fix Fase 1 · capa 2 · M2) — UPX puede
      corromper en silencio las DLL nativas de onnxruntime (OCR muerto sin
      error visible). La compresión final la hace el instalador NSIS.
+  7. datas explícitas (NO collect_*) para mia/db/schema.sql y
+     mia/db/migrations/*.sql (F2 · sesión 43, bootstrap de primer arranque):
+     mia.setup.first_run necesita aplicarlos dentro del bundle (sys._MEIPASS),
+     igual que en dev. Se usa una lista `datas=[(origen, "mia/db")]` explícita
+     y NO collect_data_files/collect_all porque execution/test_packaging.py
+     exige EXACTAMENTE 2 llamadas collect_*() reales (litellm + rapidocr) —
+     agregar una tercera rompería ese gate.
 
 FUERA del bundle (decisión de Pipe 2026-07-10): los pesos de voz
 (sherpa-onnx / Parakeet TDT / Silero VAD / Piper TTS) NO se incluyen. Viven en
@@ -55,6 +62,15 @@ ENTRY_SCRIPT = os.path.join(PACKAGING_DIR, "entry_backend.py")
 datas = []
 binaries = []
 hiddenimports = ["tiktoken_ext", "tiktoken_ext.openai_public"]
+
+# F2 (sesión 43): schema.sql + migrations/*.sql, para que mia.setup.first_run
+# los resuelva dentro del bundle (mia/db/... bajo sys._MEIPASS) igual que en
+# dev (backend/mia/db/...). Datas explícitas, no collect_* — ver nota 7 arriba.
+DB_DIR = os.path.join(BACKEND_DIR, "mia", "db")
+datas += [(os.path.join(DB_DIR, "schema.sql"), "mia/db")]
+for _mig in sorted(os.listdir(os.path.join(DB_DIR, "migrations"))):
+    if _mig.endswith(".sql"):
+        datas.append((os.path.join(DB_DIR, "migrations", _mig), "mia/db/migrations"))
 
 datas += collect_data_files("litellm")
 

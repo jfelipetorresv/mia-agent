@@ -1,0 +1,50 @@
+# Mia - LiteLLM proxy EMPAQUETADO (mia-litellm.exe). Copia de litellm_config.yaml
+# (dev, raiz del repo) + general_settings.master_key: el proxy instalado SI exige
+# una llave (Bearer) para toda peticion, porque en la maquina del abogado no hay
+# firewall de terminal-a-terminal como en Modo B dev (3 terminales del propio
+# desarrollador) -- cualquier proceso local podria pegarle al puerto 4000 si no
+# hubiera master_key. LITELLM_MASTER_KEY se genera una sola vez en el .env semilla
+# (first_run, Contrato 1) y es el MISMO valor que LITELLM_API_KEY que usa el backend
+# como Bearer (decision de diseno #3 del plan F2).
+#
+# El litellm_config.yaml de DESARROLLO (raiz del repo) NO se toca: sigue sin
+# master_key porque en Modo B las 3 terminales corren en la maquina del propio
+# desarrollador y el riesgo de un proceso ajeno pegandole al puerto 4000 es
+# aceptable (documentado, no un descuido).
+model_list:
+  - model_name: voyage-law-2
+    litellm_params:
+      model: voyage/voyage-law-2
+      api_key: os.environ/VOYAGE_API_KEY
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+  # CP-S3 · OpenRouter (red de respaldo en la nube, política "nube"). Una sola clave
+  # da acceso a decenas de modelos; aquí se enruta al mismo Claude Sonnet como fallback
+  # de la API directa de Anthropic. OPCIONAL: sin OPENROUTER_API_KEY en el .env, este
+  # alias no se usa (agent/llm.py solo lo mete en la cadena si hay clave). Poner tope
+  # de gasto en el panel de OpenRouter al crear la clave.
+  - model_name: openrouter-sonnet
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.6
+      api_key: os.environ/OPENROUTER_API_KEY
+  # Modelo local (Ollama). Sin coste y sin Anthropic. Activar con
+  # MIA_MODEL=mia-local en .env + reiniciar uvicorn. ollama_chat/ usa /api/chat.
+  # fallback de emergencia; qwen2.5:32b fue removido — restaurar si se reinstala.
+  - model_name: mia-local
+    litellm_params:
+      model: ollama/qwen2.5:7b-instruct
+      api_base: http://127.0.0.1:11434
+
+litellm_settings:
+  drop_params: true
+
+# Unico bloque que difiere del dev: master_key exigida en toda peticion del proxy
+# instalado. os.environ/LITELLM_MASTER_KEY -- NUNCA hardcodeado en este archivo.
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

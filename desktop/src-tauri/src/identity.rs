@@ -76,6 +76,58 @@ pub async fn backend_identity(client: &reqwest::Client, health_url: &str) -> Ide
     }
 }
 
+/// LiteLLM (adopción de un puerto YA ocupado): exige IDENTIDAD, igual que el
+/// backend. GET `http://127.0.0.1:<port>/v1/models` con
+/// `Authorization: Bearer <LITELLM_MASTER_KEY>` (la key vive en el `.env` del
+/// app_dir). 2xx cuyo cuerpo contenga los alias propios de MIA
+/// (`claude-haiku` Y `mia-local`) → Mia. 2xx sin esos alias → NotMia (otro
+/// proxy: fallar YA). Cualquier otra cosa → NoResponse (reintentar). Sin la
+/// master key la cáscara NO llama esta función: no adopta a ciegas.
+pub async fn litellm_identity(
+    client: &reqwest::Client,
+    port: u16,
+    master_key: &str,
+) -> Identity {
+    let url = format!("http://127.0.0.1:{port}/v1/models");
+    let resp = match client
+        .get(&url)
+        .header("Authorization", format!("Bearer {master_key}"))
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return Identity::NoResponse,
+    };
+    if !resp.status().is_success() {
+        return Identity::NoResponse;
+    }
+    let body = match resp.text().await {
+        Ok(b) => b,
+        Err(_) => return Identity::NoResponse,
+    };
+    if body.contains("claude-haiku") && body.contains("mia-local") {
+        Identity::Mia
+    } else {
+        Identity::NotMia
+    }
+}
+
+/// LiteLLM lanzado por la PROPIA cáscara: como somos su padre no hay riesgo de
+/// adoptar a un extraño, así que basta liveliness (2xx en `health_url`, p. ej.
+/// `/health/liveliness`). `Mia` cuando responde 2xx; `NoResponse` mientras no.
+pub async fn litellm_health(client: &reqwest::Client, health_url: &str) -> Identity {
+    match client
+        .get(health_url)
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => Identity::Mia,
+        _ => Identity::NoResponse,
+    }
+}
+
 /// Frontend: GET a `url` y exigir la huella de cabeceras que
 /// `frontend/next.config.mjs` fija en todas las rutas de MIA.
 pub async fn frontend_identity(client: &reqwest::Client, url: &str) -> Identity {

@@ -31,6 +31,21 @@ cáscara) que las 3 deudas documentadas en desktop/README.md quedaron saldadas:
      desktop/src/splash.js, referenciados por <link>/<script src=>, que sí
      pasan la CSP al servirse desde 'self'.
 
+  6. F2 (primer arranque automático): la cáscara aprende a preparar MIA sola
+     y a supervisar LiteLLM. Verifica los structs SetupCfg/LiteLlmCfg y sus
+     campos opcionales en OrchCfg, la expansión de tokens ${exe_dir}/
+     ${local_app_data} en un ÚNICO punto post-parse (abortando en llano si
+     alguno no se pudo resolver, en vez de sustituir por cadena vacía), el
+     gatillo TRIPLE del setup (marcador `.mia-setup-complete` + PG_VERSION +
+     .env) con timeout de 15 min, que LiteLLM arranca ANTES que el backend,
+     que los 3 bucles de espera (litellm/backend/frontend) evalúan
+     `child_died` ANTES del health-check (evita que un squatter rápido de
+     puerto pase por "vivo"), la identidad de adopción de LiteLLM (/v1/models
+     + Bearer + los alias claude-haiku y mia-local), la NO adopción sin
+     master key, el taskkill de litellm en el apagado (orden inverso) y la
+     plantilla estática packaging/orchestration.installer.json (tokens +
+     --first-run).
+
 Nota de raíz sobre el gate mismo (hallazgo del revisor adversarial,
 2026-07-10): los checks de la sección 4 (identidad) buscaban los literales
 de identidad (`"db"`, `x-frame-options`, `NotMia`, etc.) en el TEXTO CRUDO
@@ -67,6 +82,7 @@ DESKTOP_SRC = ROOT / "desktop" / "src"
 INDEX_HTML = DESKTOP_SRC / "index.html"
 SPLASH_CSS = DESKTOP_SRC / "splash.css"
 SPLASH_JS = DESKTOP_SRC / "splash.js"
+ORCH_INSTALLER = ROOT / "packaging" / "orchestration.installer.json"
 
 _results: list[tuple[str, bool]] = []
 
@@ -319,6 +335,211 @@ def main() -> int:
         "index.html referencia splash.js vía <script src=...>",
         re.search(r'<script[^>]+src=["\']splash\.js["\']', index_html, re.IGNORECASE) is not None,
     )
+
+    # --- 6 · F2: setup de primer arranque + LiteLLM + tokens + plantilla -----
+    # La cáscara aprende a preparar MIA sola (bootstrap Python) y a supervisar
+    # LiteLLM como 4º servicio. Todos los checks de lógica se anclan al CÓDIGO
+    # real (sin doc-comments) igual que las secciones 1/3/4.
+    identity_rs_code_f2 = identity_rs_code  # ya calculado en la sección 4
+
+    # 6a · structs y campos opcionales en OrchCfg
+    check(
+        "lib.rs define struct SetupCfg (paso de primer arranque)",
+        "struct SetupCfg" in lib_rs_code,
+    )
+    check(
+        "lib.rs define struct LiteLlmCfg (motor de modelos)",
+        "struct LiteLlmCfg" in lib_rs_code,
+    )
+    check(
+        "OrchCfg tiene el campo opcional setup: Option<SetupCfg>",
+        re.search(r"setup\s*:\s*Option\s*<\s*SetupCfg\s*>", lib_rs_code) is not None,
+    )
+    check(
+        "OrchCfg tiene el campo opcional litellm: Option<LiteLlmCfg>",
+        re.search(r"litellm\s*:\s*Option\s*<\s*LiteLlmCfg\s*>", lib_rs_code) is not None,
+    )
+
+    # 6b · expansión de tokens en un ÚNICO punto post-parse
+    check(
+        "lib.rs define fn expand_tokens (expansión de tokens del config)",
+        "fn expand_tokens" in lib_rs_code,
+    )
+    check(
+        "expand_tokens expande ${exe_dir} y ${local_app_data}",
+        "${exe_dir}" in lib_rs_code and "${local_app_data}" in lib_rs_code,
+    )
+    check(
+        "la expansión de tokens ocurre en un ÚNICO punto (una sola llamada .expand_tokens(...))",
+        lib_rs_code.count(".expand_tokens(") == 1,
+    )
+    check(
+        "si ${exe_dir} o ${local_app_data} no se pudieron resolver, lib.rs ABORTA en llano "
+        "(en vez de sustituir por cadena vacía y fallar después con rutas sin sentido)",
+        "exe_dir.is_empty()" in lib_rs_code
+        and "local_app_data.is_empty()" in lib_rs_code
+        and "MIA no pudo determinar sus carpetas de instalación" in lib_rs_code,
+    )
+    check(
+        "el aborto por tokens vacíos ocurre ANTES de .expand_tokens(...) (guard, no sustitución silenciosa)",
+        lib_rs_code.find("exe_dir.is_empty()") != -1
+        and lib_rs_code.find(".expand_tokens(") != -1
+        and lib_rs_code.find("exe_dir.is_empty()") < lib_rs_code.find(".expand_tokens("),
+    )
+
+    # 6c · gatillo TRIPLE del setup: marcador .mia-setup-complete, PG_VERSION o .env faltantes
+    check(
+        "el gatillo del setup mira el marcador <app_dir>/.mia-setup-complete "
+        "(escrito por el bootstrap SOLO al terminar TODO con éxito)",
+        ".mia-setup-complete" in lib_rs_code,
+    )
+    check(
+        "el gatillo del setup mira <data_dir>/PG_VERSION",
+        "PG_VERSION" in lib_rs_code,
+    )
+    check(
+        "el gatillo del setup mira <app_dir>/.env",
+        'join(".env")' in lib_rs_code,
+    )
+    check(
+        "el gatillo del setup dispara si falta CUALQUIERA de marcador/PG_VERSION/.env "
+        "(triple OR, no solo PG_VERSION/.env) — un setup interrumpido a medias se re-ejecuta",
+        re.search(
+            r"marker_missing\s*\|\|\s*pg_version_missing\s*\|\|\s*env_missing",
+            lib_rs_code,
+        )
+        is not None,
+    )
+    check(
+        "el setup tiene timeout de 15 minutos (15 * 60 s)",
+        "15 * 60" in lib_rs_code,
+    )
+    check(
+        "en fallo del setup se muestra la última línea no vacía de su stdout",
+        "last_nonempty_line" in lib_rs_code,
+    )
+
+    # 6d · orden: LiteLLM arranca ANTES que el backend
+    litellm_stage = lib_rs_code.find('emit(&app, "litellm"')
+    backend_stage = lib_rs_code.find('emit(&app, "backend"')
+    check(
+        "el stage 'setup' se emite a la pantalla de arranque",
+        '"setup"' in lib_rs_code,
+    )
+    check(
+        "el stage 'litellm' se emite a la pantalla de arranque",
+        litellm_stage != -1,
+    )
+    check(
+        "LiteLLM se enciende ANTES que el backend (litellm entre DB y backend)",
+        litellm_stage != -1 and backend_stage != -1 and litellm_stage < backend_stage,
+    )
+
+    # 6e · identidad de adopción de LiteLLM (/v1/models + Bearer + 2 alias)
+    check(
+        "identity.rs define litellm_identity (adopción con identidad) y litellm_health (liveliness)",
+        "litellm_identity" in identity_rs_code_f2 and "litellm_health" in identity_rs_code_f2,
+    )
+    check(
+        "la identidad de LiteLLM consulta /v1/models con Authorization Bearer",
+        "/v1/models" in identity_rs_code_f2
+        and "Authorization" in identity_rs_code_f2
+        and "Bearer" in identity_rs_code_f2,
+    )
+    check(
+        "la identidad de LiteLLM exige los dos alias propios (claude-haiku y mia-local)",
+        "claude-haiku" in identity_rs_code_f2 and "mia-local" in identity_rs_code_f2,
+    )
+    check(
+        "identity.rs distingue NotMia vs NoResponse también para LiteLLM (patrón tri-estado)",
+        "NotMia" in identity_rs_code_f2 and "NoResponse" in identity_rs_code_f2,
+    )
+
+    # 6f · NO adoptar sin la master key; la key se lee del .env
+    check(
+        "lib.rs lee LITELLM_MASTER_KEY del .env (parser read_dotenv_value)",
+        "LITELLM_MASTER_KEY" in lib_rs_code and "read_dotenv_value" in lib_rs_code,
+    )
+    check(
+        "lib.rs llama la identidad de LiteLLM al adoptar un puerto ocupado",
+        "litellm_identity" in lib_rs_code,
+    )
+    check(
+        "mensaje en llano cuando el puerto de LiteLLM está ocupado por otra app (no se adopta a ciegas)",
+        "está ocupado por otra aplicación" in lib_rs_code,
+    )
+
+    # 6i · child_died evaluado ANTES del health-check en los 3 bucles de espera
+    # (hallazgo del revisor adversarial: un hijo muerto + un squatter rápido del
+    # puerto podía leerse como "vivo" si el health-check corría primero).
+    check(
+        "lib.rs llama child_died(shared, ...) exactamente 3 veces (litellm/backend/frontend, un bucle cada uno)",
+        lib_rs_code.count("child_died(shared,") == 3,
+    )
+    litellm_child_died_idx = lib_rs_code.find('child_died(shared, "litellm")')
+    litellm_health_wait_idx = lib_rs_code.find("litellm_health(&client")
+    check(
+        "bucle de espera de LiteLLM: child_died se evalúa ANTES del health-check (liveliness)",
+        litellm_child_died_idx != -1
+        and litellm_health_wait_idx != -1
+        and litellm_child_died_idx < litellm_health_wait_idx,
+    )
+    backend_child_died_idx = lib_rs_code.find('child_died(shared, "backend")')
+    backend_identity_wait_idx = lib_rs_code.rfind("backend_identity(&client")
+    check(
+        "bucle de espera del backend: child_died se evalúa ANTES de re-chequear identidad "
+        "(mismo orden que LiteLLM — misma clase de bug, corregida igual)",
+        backend_child_died_idx != -1
+        and backend_identity_wait_idx != -1
+        and backend_child_died_idx < backend_identity_wait_idx,
+    )
+    frontend_child_died_idx = lib_rs_code.find('child_died(shared, "frontend")')
+    frontend_identity_wait_idx = lib_rs_code.rfind("frontend_identity(&client")
+    check(
+        "bucle de espera del frontend: child_died se evalúa ANTES de re-chequear identidad "
+        "(mismo orden que LiteLLM — misma clase de bug, corregida igual)",
+        frontend_child_died_idx != -1
+        and frontend_identity_wait_idx != -1
+        and frontend_child_died_idx < frontend_identity_wait_idx,
+    )
+
+    # 6g · shutdown incluye litellm, en orden inverso
+    check(
+        "el apagado hace taskkill de litellm (litellm_pid en la lista de cierre)",
+        "litellm_pid" in lib_rs_code
+        and re.search(r'\("litellm"\s*,\s*o\.litellm_pid\)', lib_rs_code) is not None,
+    )
+
+    # 6h · plantilla del instalador estática con tokens + --first-run
+    check(
+        "packaging/orchestration.installer.json existe (plantilla estática del instalador)",
+        ORCH_INSTALLER.is_file(),
+    )
+    installer_raw = ORCH_INSTALLER.read_text(encoding="utf-8") if ORCH_INSTALLER.is_file() else ""
+    check(
+        "la plantilla del instalador usa los tokens ${exe_dir} y ${local_app_data}",
+        "${exe_dir}" in installer_raw and "${local_app_data}" in installer_raw,
+    )
+    check(
+        "la plantilla del instalador arranca el setup con --first-run",
+        "--first-run" in installer_raw,
+    )
+    if installer_raw:
+        try:
+            installer_json = json.loads(installer_raw)
+        except Exception:
+            installer_json = {}
+        check(
+            "la plantilla del instalador es JSON válido con bloques setup, litellm, db, backend y frontend",
+            all(k in installer_json for k in ("app_dir", "setup", "litellm", "db", "backend", "frontend")),
+        )
+        litellm_blk = installer_json.get("litellm", {}) if isinstance(installer_json, dict) else {}
+        check(
+            "el bloque litellm de la plantilla usa health de liveliness y puerto 4000",
+            isinstance(litellm_blk, dict)
+            and "liveliness" in str(litellm_blk.get("health_url", ""))
+            and litellm_blk.get("port") == 4000,
+        )
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

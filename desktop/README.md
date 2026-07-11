@@ -36,20 +36,41 @@ El lado Rust lee `orchestration.json` al arrancar. Se busca, en este orden:
 Campos:
 
 - `app_dir`: carpeta de datos del usuario. Si viene no-nulo, se pasa como
-  variable de entorno `MIA_APP_DIR` al backend (el instalador escribirá aquí la
-  ruta empaquetada; en dev es `null`).
+  variable de entorno `MIA_APP_DIR` al backend, al **setup** y a **LiteLLM** (el
+  instalador escribirá aquí la ruta empaquetada; en dev es `null`).
+- `setup` (opcional): `cmd`, `cwd`. Paso de **primer arranque** (ver F2 abajo).
 - `db`: `pg_bin` (carpeta de binarios de Postgres), `data_dir`, `port`.
+- `litellm` (opcional): `cmd`, `cwd`, `env`, `health_url`, `port`. Motor de
+  modelos, 4º servicio (ver F2 abajo). Si el bloque no está, la cáscara orquesta
+  3 servicios como siempre.
 - `backend`: `cmd` (programa + argumentos), `cwd`, `env`, `health_url`, `port`.
 - `frontend`: `cmd`, `cwd`, `url`, `port`.
 
+**Tokens del config (F2):** al cargar `orchestration.json`, la cáscara expande
+en un **único punto** (`OrchCfg::expand_tokens`) dos tokens en TODOS los campos
+string —rutas, vectores `cmd`, `cwd`, valores de `env`, URLs—:
+
+- `${exe_dir}` → carpeta del ejecutable de la cáscara.
+- `${local_app_data}` → `%LOCALAPPDATA%`.
+
+Así el JSON del instalador es **estático** (F4/NSIS lo copia tal cual, sin
+templar) y la cáscara lo aterriza a la máquina concreta al arrancar. En dev el
+JSON usa rutas absolutas sin tokens, así que la expansión no cambia nada.
+
 ### Secuencia de arranque
 
-Para cada servicio (DB → backend → frontend): si el puerto **ya responde Y la
-identidad calza** (pg_isready para la DB, JSON de /health con claves propias
-para el backend, huella de cabeceras para el frontend — ver "Blindaje" abajo),
-la cáscara lo adopta sin apagarlo; si no, lo lanza y espera su salud + identidad
-(polling cada 2 s). Cuando backend y frontend responden y son MIA, la ventana
-navega a `frontend.url`.
+Orden completo: **setup (si hace falta) → DB → LiteLLM → backend → frontend**.
+El apagado es inverso (frontend → backend → LiteLLM → DB). El setup y LiteLLM
+son opcionales: sin sus bloques en el JSON, la secuencia es la de siempre
+(DB → backend → frontend).
+
+Para cada servicio de red (DB → LiteLLM → backend → frontend): si el puerto **ya
+responde Y la identidad calza** (pg_isready para la DB, `/v1/models` + Bearer
+para LiteLLM, JSON de /health con claves propias para el backend, huella de
+cabeceras para el frontend — ver "Blindaje" abajo), la cáscara lo adopta sin
+apagarlo; si no, lo lanza y espera su salud + identidad (polling cada 2 s).
+Cuando backend y frontend responden y son MIA, la ventana navega a
+`frontend.url`.
 
 Si un puerto está tomado por un proceso que **no** responde salud, o que
 responde pero **no es MIA** (un extraño — caso esperado: en la máquina del
@@ -226,3 +247,102 @@ ajena), `NoResponse` (aún no responde → reintentar dentro del deadline).
 y también en la espera después de que la cáscara lanza el proceso — si un
 tercero gana la carrera por el puerto y responde 200 sin ser MIA, se falla
 de inmediato en vez de navegar a lo que sea que haya contestado.
+
+## Fase 2 · Primer arranque automático
+
+En una máquina limpia, la cáscara detecta que no hay datos y deja MIA
+funcionando sola: crea la carpeta de datos, el `.env` semilla, el cluster de
+Postgres, las migraciones, y enciende el motor de modelos. Todo esto se activa
+por dos bloques **opcionales** de `orchestration.json` (`setup` y `litellm`) más
+la expansión de tokens; si esos bloques faltan (como en el JSON de dev), el
+comportamiento es idéntico al de siempre. Gate en frío: sección 6 de
+`execution/test_shell_hardening.py`.
+
+### Paso de setup (primer arranque)
+
+El bloque `setup` (`{ "cmd": [...], "cwd": "..." }`) apunta al bootstrap Python
+(`mia-backend.exe --first-run --pg-bin ... --pg-data ... --pg-port 55432`). La
+cáscara lo corre **antes que todo** si falta CUALQUIERA de:
+
+- el marcador `<app_dir>/.mia-setup-complete` (con `app_dir` configurado) — el
+  bootstrap lo escribe **solo** al terminar TODO con éxito;
+- `<db.data_dir>/PG_VERSION` (no hay cluster de Postgres);
+- —con `app_dir` configurado— `<app_dir>/.env` (no hay semilla).
+
+Sin `app_dir` configurado, el marcador y el `.env` no se pueden mirar: el
+gatillo se reduce a `PG_VERSION` (comportamiento de siempre en dev). Este
+triple gatillo existe porque un setup interrumpido justo después de escribir
+`.env`+`PG_VERSION` (p. ej. una falla a media migración) antes NUNCA se
+volvía a ejecutar y dejaba la instalación rota para siempre; el bootstrap es
+idempotente y resiliente a estados a medias (repara un `initdb` interrumpido,
+falla en llano si hay cluster sin `.env`), así que basta con volver a
+llamarlo.
+
+Mientras corre, el splash muestra `"Preparando Mia por primera vez, puede tardar
+unos minutos…"` (stage `setup`). Timeout: **15 minutos**. El proceso entra al
+Job Object (red anti-huérfanos) y recibe `MIA_APP_DIR` cuando hay `app_dir`. Su
+stdout/stderr van a `logs/setup.out.log`; si sale con código ≠0, la cáscara
+muestra la **última línea no vacía** de ese stdout (el bootstrap garantiza que
+es un mensaje en español llano). Al terminar bien, la cáscara sigue con su flujo
+normal y enciende la DB ella misma (el bootstrap deja el Postgres temporal
+apagado).
+
+### LiteLLM como 4º servicio
+
+El bloque `litellm` (`{ "cmd", "cwd", "env", "health_url", "port" }`) se enciende
+**entre la DB y el backend**, con el mismo patrón tri-estado que el backend:
+
+- **Puerto libre** → la cáscara lanza el proceso hijo y espera **liveliness**
+  (un 200 en `health_url`, p. ej. `/health/liveliness`). Como es su propio hijo,
+  no hay riesgo de adoptar a un extraño: basta el 200. Entra al Job Object y
+  recibe su `env` + `MIA_APP_DIR` (si hay `app_dir`).
+- **Puerto ocupado** → **adopción SOLO con identidad**: GET
+  `http://127.0.0.1:<port>/v1/models` con `Authorization: Bearer
+  <LITELLM_MASTER_KEY>`, donde la master key se lee del `<app_dir>/.env` (parser
+  `.env` mínimo en Rust). Se adopta solo si responde 200 y el cuerpo contiene los
+  dos alias propios de MIA (`claude-haiku` **y** `mia-local`). Sin `app_dir`, sin
+  `.env` o sin la key → **no se adopta** (mensaje en llano: *"El puerto N está
+  ocupado por otra aplicación — ciérrala o reinicia el equipo"*). Nunca se
+  adopta por un simple 200 (misma lección que voicebox/Sura en la sección 4).
+
+En el apagado, `litellm` se mata por PID en el orden inverso del arranque
+(frontend → backend → **litellm** → DB).
+
+### Frontend instalado (PORT + HOSTNAME)
+
+Al lanzar el frontend, la cáscara fija la env `PORT` al puerto configurado y
+**limpia `HOSTNAME`**. El `server.js` del standalone de Next (instalado) toma su
+puerto de `PORT` y su host de `HOSTNAME`; si el sistema trae `HOSTNAME` seteado
+(nombre de equipo que puede resolver a una IP de VPN), el server escucharía solo
+en esa IP y ni `localhost` ni `127.0.0.1` conectarían (gotcha documentado en
+`packaging/build_frontend.ps1`). En dev (`npm run start -- -p 3100`) ambos
+coinciden en 3100, así que es inocuo.
+
+### Dev sigue con LiteLLM manual (decisión)
+
+El `orchestration.json` de **dev NO lleva bloque `litellm`**: sigue en 3
+terminales y LiteLLM se arranca a mano (`scripts/run_litellm_clean.ps1`). Razón:
+ese launcher **quita** variables de entorno (scrubbing de `DATABASE_URL`, `PG_*`
+y ~15 más para que LiteLLM no intente Prisma), además de aislar el CWD y parchear
+`proxy_server.py` en caliente. El campo `env` de `orchestration.json` solo
+**añade** variables, no las quita, así que no puede replicar ese saneo de forma
+limpia. En **instalado**, en cambio, el exe empaquetado de LiteLLM
+(`entry_litellm.py`, a cargo de otro frente) hace su propio saneo por dentro, y
+ahí sí la cáscara lo enciende como 4º servicio vía el bloque `litellm` de
+`packaging/orchestration.installer.json`.
+
+### Plantilla del instalador
+
+`packaging/orchestration.installer.json` es la plantilla **estática** que el
+instalador (F4) copiará junto al ejecutable, sin templar nada. Usa los tokens
+`${exe_dir}` / `${local_app_data}` en todas las rutas, define el `setup` con
+`--first-run`, el `litellm` con `health_url` de liveliness en el 4000, el
+`backend` en el 8000 y el `frontend` con el `node.exe` portable + `server.js`.
+La cáscara la expande al cargarla. Los comentarios JSON no son válidos: para
+anotar se usan campos `_nota` string (serde los ignora al deserializar).
+
+> **Verificación diferida a F4 / Riesgo #59:** la confirmación visual del stage
+> `setup` (que el splash pinta "Preparando Mia por primera vez…" y, en fallo, la
+> última línea en llano del bootstrap) y el E2E con los exes reales en una
+> máquina limpia son de la capa 3 en vivo / Fase 4. F2 verifica en frío (gate)
+> y por compilación.

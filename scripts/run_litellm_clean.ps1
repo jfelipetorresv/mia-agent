@@ -48,4 +48,4 @@ if (Test-Path $proxyServer) {
   }
 }
 
-& $LiteLLM --config $Config --port 4000
+& $LiteLLM --config $Config --host 127.0.0.1 --port 4000

@@ -1,0 +1,53 @@
+{
+  "_nota": "Plantilla ESTATICA del instalador (Fase 4). La cascara expande los tokens ${exe_dir} (carpeta del ejecutable de la cascara) y ${local_app_data} (%LOCALAPPDATA%) al cargar este archivo, en un unico punto post-parse. NSIS NO templa nada: copia este JSON tal cual junto al ejecutable. Comentarios JSON no son validos: para anotar usar campos _nota string.",
+  "app_dir": "${local_app_data}/Mia",
+  "setup": {
+    "_nota": "Primer arranque (bootstrap Python). Corre si falta CUALQUIERA de: ${local_app_data}/Mia/.mia-setup-complete (marcador que el bootstrap escribe SOLO al terminar TODO con exito), ${local_app_data}/Mia/pgdata/PG_VERSION, o ${local_app_data}/Mia/.env. Crea la carpeta de datos, el .env semilla, initdb y las migraciones; recibe MIA_APP_DIR automatico (app_dir). El bootstrap es idempotente y resiliente a estados a medias (setup interrumpido se re-ejecuta solo). Timeout 15 min.",
+    "cmd": [
+      "${exe_dir}/mia-backend/mia-backend.exe",
+      "--first-run",
+      "--pg-bin",
+      "${exe_dir}/pgsql/bin",
+      "--pg-data",
+      "${local_app_data}/Mia/pgdata",
+      "--pg-port",
+      "55432"
+    ],
+    "cwd": "${exe_dir}/mia-backend"
+  },
+  "db": {
+    "pg_bin": "${exe_dir}/pgsql/bin",
+    "data_dir": "${local_app_data}/Mia/pgdata",
+    "port": 55432
+  },
+  "litellm": {
+    "_nota": "Motor de modelos (4o servicio, entre DB y backend). El exe empaquetado hace su propio saneo de env por dentro (entry_litellm.py). Puerto libre -> lanzar y esperar liveliness; puerto ocupado -> adoptar SOLO con identidad (/v1/models + Bearer LITELLM_MASTER_KEY del .env con alias claude-haiku y mia-local). Recibe MIA_APP_DIR automatico.",
+    "cmd": [
+      "${exe_dir}/mia-litellm/mia-litellm.exe",
+      "--config",
+      "${exe_dir}/litellm_config.installer.yaml",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "4000"
+    ],
+    "cwd": "${exe_dir}/mia-litellm",
+    "env": {},
+    "health_url": "http://127.0.0.1:4000/health/liveliness",
+    "port": 4000
+  },
+  "backend": {
+    "cmd": ["${exe_dir}/mia-backend/mia-backend.exe"],
+    "cwd": "${exe_dir}/mia-backend",
+    "env": {},
+    "health_url": "http://127.0.0.1:8000/health",
+    "port": 8000
+  },
+  "frontend": {
+    "_nota": "Standalone de Next.js: node.exe portable + server.js (ver packaging/build_frontend.ps1 y README-frontend.md). La cascara fija la env PORT al puerto configurado y LIMPIA HOSTNAME antes de lanzar (gotcha de bind documentado). El layout mia-frontend/ contiene node.exe, server.js, node_modules minimos y .next/static.",
+    "cmd": ["${exe_dir}/mia-frontend/node.exe", "server.js"],
+    "cwd": "${exe_dir}/mia-frontend",
+    "url": "http://localhost:3100",
+    "port": 3100
+  }
+}
