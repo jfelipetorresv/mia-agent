@@ -25,8 +25,14 @@ use windows_sys::Win32::System::JobObjects::{
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
+mod db_check;
+mod identity;
+
+use db_check::PgReadyOutcome;
+use identity::Identity;
+
 /// Windows: no abrir ventana de consola al lanzar procesos hijos.
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 // ---------------------------------------------------------------------------
 // Job Object — red de seguridad anti-huérfanos
@@ -148,7 +154,7 @@ struct Progress {
 // Logging simple a desktop/logs/mia-shell.log
 // ---------------------------------------------------------------------------
 
-fn log_line(log_dir: &Path, msg: &str) {
+pub(crate) fn log_line(log_dir: &Path, msg: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
     let line = format!("[{ts}] {msg}\n");
     // Consola (útil en dev) + archivo.
@@ -203,19 +209,6 @@ fn find_config() -> Option<PathBuf> {
 fn port_open(port: u16) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok()
-}
-
-/// GET a una URL; true si responde con status 2xx.
-async fn http_ok(client: &reqwest::Client, url: &str) -> bool {
-    match client
-        .get(url)
-        .timeout(Duration::from_secs(4))
-        .send()
-        .await
-    {
-        Ok(resp) => resp.status().is_success(),
-        Err(_) => false,
-    }
 }
 
 fn emit(app: &AppHandle, stage: &str, text: &str) {
@@ -304,10 +297,37 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
     // --- a) Base de datos ------------------------------------------------
     emit(&app, "db", "Encendiendo la base de datos del despacho…");
     if port_open(cfg.db.port) {
+        // El puerto abierto no basta: puede ser cualquier programa. Antes de
+        // adoptar, exigimos que pg_isready.exe confirme el protocolo Postgres
+        // ("accepting connections", exit 0). Si Postgres apenas está
+        // arrancando (exit 1, "rejecting connections") reintentamos dentro
+        // del mismo deadline de 60s que usa un arranque en frío.
         log_line(
             &log_dir,
-            &format!("DB: puerto {} ya responde — ya estaba encendida, no la apagaré.", cfg.db.port),
+            &format!("DB: puerto {} abierto — validando con pg_isready que sea Postgres antes de adoptar.", cfg.db.port),
         );
+        match db_check::wait_pg_isready(&log_dir, &cfg.db.pg_bin, cfg.db.port, 60).await {
+            PgReadyOutcome::Ready => {
+                log_line(
+                    &log_dir,
+                    &format!("DB: pg_isready confirma Postgres en el puerto {} — la adopto, no la apagaré.", cfg.db.port),
+                );
+            }
+            PgReadyOutcome::PortBusy => {
+                log_line(
+                    &log_dir,
+                    &format!("ERROR técnico: puerto {} abierto pero pg_isready nunca confirmó Postgres dentro del deadline.", cfg.db.port),
+                );
+                return Err("otro programa está ocupando el lugar de la base de datos de Mia — reinicia el equipo".into());
+            }
+            PgReadyOutcome::ToolMissing => {
+                log_line(
+                    &log_dir,
+                    &format!("ERROR técnico: pg_isready.exe nunca pudo ejecutarse en '{}' (instalación dañada).", cfg.db.pg_bin),
+                );
+                return Err("no encuentro las herramientas de la base de datos de Mia — reinstala Mia o avísale a soporte".into());
+            }
+        }
     } else {
         log_line(&log_dir, &format!("DB: puerto {} libre — la enciendo.", cfg.db.port));
         let pg_ctl = Path::new(&cfg.db.pg_bin).join("pg_ctl.exe");
@@ -357,14 +377,27 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
     }
     emit(&app, "backend", "Despertando a Mia…");
     if port_open(cfg.backend.port) {
-        // Puerto tomado: adoptar solo si responde salud (con margen por si el
-        // servicio ajeno está terminando de arrancar); si nunca responde, es
-        // un extraño ocupando el puerto — avisar ya, no lanzar un competidor.
+        // Puerto tomado: adoptar solo si responde salud Y ES MIA de verdad.
+        // Lección real (2026-07-10): en esta máquina el 8000 estuvo ocupado
+        // por voicebox-server.exe, una app ajena que respondía 200 — la
+        // identidad se valida contra el JSON de /health (ver identity.rs).
+        // Margen de reintentos por si MIA está terminando de arrancar; si
+        // responde pero NO es MIA, fallar YA (reintentar es inútil).
         let mut adopted = false;
         for _ in 0..5 {
-            if http_ok(&client, &cfg.backend.health_url).await {
-                adopted = true;
-                break;
+            match identity::backend_identity(&client, &cfg.backend.health_url).await {
+                Identity::Mia => {
+                    adopted = true;
+                    break;
+                }
+                Identity::NotMia => {
+                    log_line(
+                        &log_dir,
+                        &format!("ERROR técnico: el puerto {} responde 200 pero NO es el backend de MIA (health sin las claves propias db/pgvector/embed_model).", cfg.backend.port),
+                    );
+                    return Err("otro programa está ocupando el lugar de Mia — ciérralo o reinicia el equipo".into());
+                }
+                Identity::NoResponse => {}
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
@@ -377,7 +410,7 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
         }
         log_line(
             &log_dir,
-            &format!("Backend: puerto {} ya responde — lo adopto, no lo apagaré.", cfg.backend.port),
+            &format!("Backend: puerto {} responde y es MIA (health con claves propias) — lo adopto, no lo apagaré.", cfg.backend.port),
         );
     } else {
         log_line(&log_dir, "Backend: lo enciendo.");
@@ -410,14 +443,24 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
             }
         }
         let pid = register_child(shared, "backend", child)?;
-        log_line(&log_dir, &format!("Backend: lanzado (PID {pid}). Esperando su salud…"));
+        log_line(&log_dir, &format!("Backend: lanzado (PID {pid}). Esperando su salud e identidad…"));
         // Polling del health cada 2s, timeout 180s (puede tardar en importar),
         // con latido visible y falla rápida si el proceso muere.
         let wait_start = Instant::now();
         let deadline = wait_start + Duration::from_secs(180);
         loop {
-            if http_ok(&client, &cfg.backend.health_url).await {
-                break;
+            // Misma exigencia de identidad que al adoptar: si un tercero ganó
+            // la carrera por el puerto y responde 200 sin ser MIA, fallar YA.
+            match identity::backend_identity(&client, &cfg.backend.health_url).await {
+                Identity::Mia => break,
+                Identity::NotMia => {
+                    log_line(
+                        &log_dir,
+                        &format!("ERROR técnico: el puerto {} responde 200 pero NO es el backend de MIA (¿un tercero ganó la carrera por el puerto?).", cfg.backend.port),
+                    );
+                    return Err("otro programa está ocupando el lugar de Mia — ciérralo o reinicia el equipo".into());
+                }
+                Identity::NoResponse => {}
             }
             if let Some(status) = child_died(shared, "backend") {
                 log_line(&log_dir, &format!("ERROR técnico: el backend terminó solo ({status})."));
@@ -439,7 +482,7 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
-        log_line(&log_dir, "Backend: salud OK.");
+        log_line(&log_dir, "Backend: salud OK y es MIA (health con claves propias).");
     }
 
     // --- c) Frontend -----------------------------------------------------
@@ -448,11 +491,27 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
     }
     emit(&app, "frontend", "Preparando tu pantalla…");
     if port_open(cfg.frontend.port) {
+        // "Responde 200" NO basta: así se llegó a adoptar el Next.js de OTRO
+        // proyecto ("Intelligence Sura") que ocupaba el 3100 en esta máquina,
+        // y el abogado vio la app equivocada. La identidad se valida con la
+        // huella de cabeceras que frontend/next.config.mjs fija en todas las
+        // rutas de MIA (ver identity.rs). Si responde pero NO es MIA, fallar
+        // YA — jamás navegar a una app ajena.
         let mut adopted = false;
         for _ in 0..5 {
-            if http_ok(&client, &cfg.frontend.url).await {
-                adopted = true;
-                break;
+            match identity::frontend_identity(&client, &cfg.frontend.url).await {
+                Identity::Mia => {
+                    adopted = true;
+                    break;
+                }
+                Identity::NotMia => {
+                    log_line(
+                        &log_dir,
+                        &format!("ERROR técnico: el puerto {} responde 200 pero NO es la pantalla de MIA (sin la huella de cabeceras propia).", cfg.frontend.port),
+                    );
+                    return Err("otro programa está ocupando el lugar de la pantalla de Mia — ciérralo o reinicia el equipo".into());
+                }
+                Identity::NoResponse => {}
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
@@ -465,7 +524,7 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
         }
         log_line(
             &log_dir,
-            &format!("Frontend: puerto {} ya responde — lo adopto, no lo apagaré.", cfg.frontend.port),
+            &format!("Frontend: puerto {} responde y es MIA (huella de cabeceras) — lo adopto, no lo apagaré.", cfg.frontend.port),
         );
     } else {
         log_line(&log_dir, "Frontend: lo enciendo.");
@@ -491,12 +550,22 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
             }
         }
         let pid = register_child(shared, "frontend", child)?;
-        log_line(&log_dir, &format!("Frontend: lanzado (PID {pid}). Esperando 200…"));
+        log_line(&log_dir, &format!("Frontend: lanzado (PID {pid}). Esperando 200 e identidad…"));
         let wait_start = Instant::now();
         let deadline = wait_start + Duration::from_secs(180);
         loop {
-            if http_ok(&client, &cfg.frontend.url).await {
-                break;
+            // Misma exigencia de identidad que al adoptar: nunca navegar a
+            // una app ajena aunque responda 200 en el puerto esperado.
+            match identity::frontend_identity(&client, &cfg.frontend.url).await {
+                Identity::Mia => break,
+                Identity::NotMia => {
+                    log_line(
+                        &log_dir,
+                        &format!("ERROR técnico: el puerto {} responde 200 pero NO es la pantalla de MIA (¿un tercero ganó la carrera por el puerto?).", cfg.frontend.port),
+                    );
+                    return Err("otro programa está ocupando el lugar de la pantalla de Mia — ciérralo o reinicia el equipo".into());
+                }
+                Identity::NoResponse => {}
             }
             if let Some(status) = child_died(shared, "frontend") {
                 log_line(&log_dir, &format!("ERROR técnico: el frontend terminó solo ({status})."));
@@ -514,7 +583,7 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
-        log_line(&log_dir, "Frontend: 200 OK.");
+        log_line(&log_dir, "Frontend: 200 OK y es MIA (huella de cabeceras).");
     }
 
     // --- d) Navegar a la app ---------------------------------------------
@@ -589,6 +658,18 @@ fn shutdown(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Guard de instancia única — DEBE ser el primer plugin del builder
+        // (los plugins corren en el orden en que se registran). Si ya hay una
+        // cáscara abierta, esta segunda invocación nunca llega a `.setup()`
+        // (el plugin la mata antes): no toca la DB/backend/frontend ya
+        // encendidos por la primera. La primera instancia recibe el aviso y
+        // trae su ventana al frente.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .setup(|app| {
             // Localizar y cargar la configuración.
             let cfg_path = find_config();

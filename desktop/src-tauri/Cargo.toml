@@ -15,6 +15,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# Guard de instancia única: si se abre una segunda cáscara, esta la enfoca y
+# muere sin lanzar una orquestación competidora sobre la misma DB/backend.
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
