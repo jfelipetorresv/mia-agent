@@ -16,3 +16,8 @@ mia_backend.egg-info/
 .claude/
 frontend/.playwright-cli/
 .playwright-cli/
+
+# Artefactos del build de PyInstaller (packaging/): los fuentes .py/.spec/.ps1
+# SI se versionan, solo se ignora la salida del build.
+packaging/dist/
+packaging/build/

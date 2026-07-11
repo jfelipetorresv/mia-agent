@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Fase 1 instalador (frente B): standalone genera .next/standalone/server.js con el
+  // subconjunto mínimo de node_modules, para empaquetar el frontend sin exigir `npm install`
+  // completo en la máquina del abogado. No afecta `next dev` (solo cambia la salida de `next build`).
+  output: "standalone",
   // El gate verifica la COMPILACIÓN de TypeScript (corrección estructural). ESLint queda fuera
   // del build para que reglas de estilo no lo tumben; el type-check de TS sigue activo.
   eslint: { ignoreDuringBuilds: true },

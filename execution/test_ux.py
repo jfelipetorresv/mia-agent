@@ -377,9 +377,12 @@ def frontend_checks() -> None:
           layout.exists() and "Sidebar" in layout.read_text(encoding="utf-8"))
 
     # El check más importante: que el frontend COMPILE (TypeScript).
+    # Timeout 600s: con output 'standalone' (bloque instalador, 2026-07-10) el build
+    # añade el file-tracing de node_modules y puede superar los 300s en máquinas
+    # cargadas; el check valida que compile (returncode), no que sea rápido.
     try:
         r = subprocess.run("npm run build", cwd=str(ROOT / "frontend"), shell=True,
-                           capture_output=True, text=True, timeout=300)
+                           capture_output=True, text=True, timeout=600)
         check("test_build_nextjs (npm run build sin errores)", r.returncode == 0)
     except Exception as e:
         check(f"test_build_nextjs (npm run build) [excepción: {e}]", False)
