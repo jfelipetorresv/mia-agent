@@ -15,6 +15,9 @@ export default function OnboardingGate() {
   useEffect(() => {
     if (pathname.startsWith("/login") || pathname.startsWith("/register")) return;
     if (pathname.startsWith("/onboarding")) return;
+    // `/activar` es el paso previo a conocerte dentro del mismo viaje: aunque el
+    // onboarding aún no esté completo, no debemos sacar al abogado de la activación.
+    if (pathname.startsWith("/activar")) return;
     let cancelled = false;
     (async () => {
       try {

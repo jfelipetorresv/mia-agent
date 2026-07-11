@@ -533,7 +533,7 @@ def _clear_message(kind: LLMErrorKind, model: str) -> str:
     """Mensaje claro (en español, sin jerga técnica de proveedor) por tipo de error."""
     if kind is LLMErrorKind.AUTH:
         return (f"Credenciales inválidas o sin créditos para el modelo '{model}'. "
-                "Revisa ANTHROPIC_API_KEY / la cuenta del proveedor.")
+                "Revisa la clave de respaldo del motor o la cuenta del proveedor.")
     if kind is LLMErrorKind.MODEL_UNAVAILABLE:
         return (f"El modelo '{model}' no está disponible en el gateway. "
                 "Revisa litellm_config.yaml y que el proxy esté arriba.")

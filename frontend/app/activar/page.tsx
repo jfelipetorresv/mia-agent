@@ -1,0 +1,733 @@
+"use client";
+
+// Activar MIA — paso 2 del viaje de bienvenida (F3).
+// El abogado confirma el motor de Mia y pega la clave mínima de búsqueda, con
+// validación en vivo. Todo en lenguaje llano (§G): NUNCA se muestra "API key",
+// "Voyage", "Anthropic", "token", "endpoint", "modelo" ni "LLM".
+//
+// Consumo de infraestructura visual: WelcomeShell + WelcomeProgress (current=1),
+// StepTransition entre sub-pasos, Stagger/WelcomeField y MiaLine para la voz de
+// Mia. El motion "grande" lo dan esos wrappers; los micro-remates (✓ que aparece)
+// usan clases de tailwindcss-animate — no se importa framer-motion directo.
+
+import * as React from "react";
+import { useRouter } from "next/navigation";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Check,
+  Cloud,
+  Cpu,
+  Loader2,
+  Sparkles,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  WelcomeShell,
+  WelcomeProgress,
+  StepTransition,
+  Stagger,
+  StaggerItem,
+  WelcomeField,
+  MiaLine,
+  JOURNEY_STEPS,
+} from "@/app/_welcome";
+import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+
+// ── Contratos backend (welcome) ────────────────────────────────────────────
+type Politica = "suscripcion" | "nube" | "soberano";
+
+interface WelcomeStatus {
+  instalado: boolean;
+  hay_usuario: boolean;
+  faltan_llaves: { busqueda: boolean; respaldo: boolean };
+  onboarding_completo: boolean;
+  motor_detectado: { claude: boolean; ollama: boolean };
+  politica: Politica;
+}
+
+interface TestResult {
+  ok: boolean;
+  motivo?: string;
+}
+
+interface KeysResult {
+  guardado: Record<string, unknown>;
+  mensaje: string;
+  aviso: string | null;
+}
+
+type TestState = "idle" | "testing" | "ok" | "error";
+
+// Los pasos del viaje (la constelación de progreso, "Activar" = índice 1) viven en
+// `_welcome/WelcomeProgress` como fuente única (JOURNEY_STEPS): se importan, no se duplican.
+
+// Mensaje amable por defecto cuando el backend no da un motivo en llano.
+const GENERIC_TEST_ERROR = "No pude usar esa clave. Revísala y vuelve a intentarlo.";
+const GENERIC_TEST_UNAVAILABLE = "No pude comprobar la clave en este momento. Puedes intentarlo de nuevo.";
+
+// Extrae el mensaje en llano del backend (§G): solo se muestra un ApiError con
+// `detail` redactado para el abogado; nunca un error de red en crudo.
+function plainMessage(err: unknown, fallback: string): string {
+  const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+  return msg || fallback;
+}
+
+// ── Hook: validación en vivo de una clave (con debounce y guardia de carrera) ─
+function useKeyValidation(tipo: "busqueda" | "respaldo") {
+  const [value, setValue] = React.useState("");
+  const [state, setState] = React.useState<TestState>("idle");
+  const [motivo, setMotivo] = React.useState("");
+  // Contador para descartar respuestas obsoletas (si el abogado sigue tecleando).
+  const reqRef = React.useRef(0);
+  // Timer del debounce en curso: se guarda para poder CANCELARLO cuando el abogado
+  // fuerza la comprobación con Enter, y así no disparar dos POST reales (M2).
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const run = React.useCallback(
+    async (clave: string) => {
+      const trimmed = clave.trim();
+      if (!trimmed) {
+        setState("idle");
+        setMotivo("");
+        return;
+      }
+      const id = ++reqRef.current;
+      setState("testing");
+      setMotivo("");
+      try {
+        const res = await apiSend<TestResult>("POST", "/api/welcome/keys/test", {
+          tipo,
+          clave: trimmed,
+        });
+        if (id !== reqRef.current) return; // respuesta obsoleta
+        if (res.ok) {
+          setState("ok");
+          setMotivo("");
+        } else {
+          setState("error");
+          setMotivo(res.motivo || GENERIC_TEST_ERROR);
+        }
+      } catch (err) {
+        if (id !== reqRef.current) return;
+        setState("error");
+        setMotivo(plainMessage(err, GENERIC_TEST_UNAVAILABLE));
+      }
+    },
+    [tipo],
+  );
+
+  // Debounce: al dejar de teclear ~700ms, comprueba en vivo. Mientras tanto,
+  // muestra el spinner (state "testing"). Si el campo queda vacío, vuelve a idle.
+  React.useEffect(() => {
+    if (!value.trim()) {
+      reqRef.current++; // invalida cualquier comprobación pendiente
+      setState("idle");
+      setMotivo("");
+      return;
+    }
+    setState("testing");
+    const t = setTimeout(() => run(value), 700);
+    timerRef.current = t;
+    return () => clearTimeout(t);
+  }, [value, run]);
+
+  const reset = React.useCallback(() => {
+    reqRef.current++;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setValue("");
+    setState("idle");
+    setMotivo("");
+  }, []);
+
+  // Enter fuerza la comprobación YA: cancela el debounce pendiente (para que no
+  // dispare un segundo POST real ~700ms después) e invalida cualquier respuesta en
+  // vuelo antes de correr. Resultado: teclear + Enter produce UN solo POST.
+  const recheck = React.useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    reqRef.current++;
+    run(value);
+  }, [run, value]);
+
+  return { value, setValue, state, motivo, reset, recheck };
+}
+
+// ── Campo de clave con indicador ✓ / spinner / ✗ y motivo en llano ──────────
+interface KeyFieldProps {
+  id: string;
+  /** Nombre accesible del campo en llano (§G): asociado al input vía htmlFor. */
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  state: TestState;
+  motivo: string;
+  placeholder: string;
+  onRecheck: () => void;
+}
+
+function KeyField({ id, label, value, onChange, state, motivo, placeholder, onRecheck }: KeyFieldProps) {
+  return (
+    <div className="flex flex-col gap-2">
+      {/* Rótulo accesible asociado al input. Visualmente oculto (sr-only) porque el
+          enunciado de Mia + la ayuda ya lo describen; el lector de pantalla sí lo anuncia. */}
+      <label htmlFor={id} className="sr-only">
+        {label}
+      </label>
+      <div className="relative">
+        <Input
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onRecheck();
+            }
+          }}
+          type="text"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          placeholder={placeholder}
+          aria-invalid={state === "error"}
+          className={cn(
+            "pr-10 font-mono text-sm tracking-tight transition-colors",
+            state === "ok" && "border-primary focus-visible:ring-primary",
+            state === "error" && "border-destructive focus-visible:ring-destructive",
+          )}
+        />
+        {/* Indicador de estado a la derecha del campo. */}
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+          {state === "testing" && (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+          )}
+          {state === "ok" && (
+            <span
+              className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-primary duration-300 animate-in zoom-in-50 fade-in"
+              aria-label="Clave válida"
+            >
+              <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden />
+            </span>
+          )}
+          {state === "error" && (
+            <span
+              className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive/15 text-destructive duration-300 animate-in zoom-in-50 fade-in"
+              aria-label="Clave no válida"
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={3} aria-hidden />
+            </span>
+          )}
+        </span>
+      </div>
+
+      {/* Retroalimentación en llano. */}
+      {state === "ok" && (
+        <p className="text-xs text-primary duration-300 animate-in fade-in" role="status">
+          Perfecto, esa clave funciona.
+        </p>
+      )}
+      {state === "error" && motivo && (
+        <p className="text-xs text-destructive duration-300 animate-in fade-in" role="alert">
+          {motivo}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Tarjeta de motor seleccionable ──────────────────────────────────────────
+interface EngineCardProps {
+  icon: LucideIcon;
+  title: string;
+  badge?: string;
+  description: string;
+  detected?: boolean;
+  detectedLabel?: string;
+  selected: boolean;
+  onSelect: () => void;
+}
+
+function EngineCard({
+  icon: Icon,
+  title,
+  badge,
+  description,
+  detected,
+  detectedLabel,
+  selected,
+  onSelect,
+}: EngineCardProps) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      role="radio"
+      aria-checked={selected}
+      // Roving tabindex del radiogroup: solo la tarjeta elegida entra en el orden de
+      // tabulación; entre tarjetas se navega con flechas (manejadas por el grupo).
+      tabIndex={selected ? 0 : -1}
+      className={cn(
+        "group relative w-full rounded-xl border bg-card/60 p-4 text-left transition-all duration-300",
+        "hover:border-primary/60 hover:bg-card",
+        selected ? "glow-teal border-primary bg-primary/10" : "border-border",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className={cn(
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-colors",
+            selected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground",
+          )}
+        >
+          <Icon className="h-5 w-5" aria-hidden />
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-foreground">{title}</span>
+            {badge && (
+              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                {badge}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          {detected && (
+            <p className="mt-1.5 inline-flex items-center gap-1 text-xs text-primary">
+              <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
+              {detectedLabel}
+            </p>
+          )}
+        </div>
+
+        {/* Marca de selección. */}
+        <span
+          className={cn(
+            "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors",
+            selected ? "border-primary bg-primary text-primary-foreground" : "border-border",
+          )}
+          aria-hidden
+        >
+          {selected && <Check className="h-3.5 w-3.5 duration-200 animate-in zoom-in-50" strokeWidth={3} />}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+// ── Pantalla ────────────────────────────────────────────────────────────────
+type Phase = "cargando" | "error-carga" | "activar" | "listo";
+
+export default function ActivarPage() {
+  const router = useRouter();
+
+  const [phase, setPhase] = React.useState<Phase>("cargando");
+  const [status, setStatus] = React.useState<WelcomeStatus | null>(null);
+
+  // Sub-paso interno: 0 = motor, 1 = clave de búsqueda, 2 = clave de respaldo.
+  const [subStep, setSubStep] = React.useState(0);
+  const [direction, setDirection] = React.useState(1);
+
+  const [politica, setPolitica] = React.useState<Politica>("suscripcion");
+  const busqueda = useKeyValidation("busqueda");
+  const respaldo = useKeyValidation("respaldo");
+
+  const [saving, setSaving] = React.useState(false);
+  const [saveError, setSaveError] = React.useState("");
+  const [result, setResult] = React.useState<{ mensaje: string; aviso: string | null } | null>(null);
+
+  // Al montar: consulta el estado y decide si auto-omitir (modo dev / nada que falta).
+  React.useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const s = await apiGet<WelcomeStatus>("/api/welcome/status");
+        if (cancel) return;
+        const nadaQueFalta = !s.faltan_llaves.busqueda && !s.faltan_llaves.respaldo;
+        // En modo dev (no instalado) o si no falta ninguna clave, este paso no debe
+        // estorbar: se salta directo a "Conocer tu despacho".
+        if (!s.instalado || nadaQueFalta) {
+          router.replace("/onboarding");
+          return;
+        }
+        setStatus(s);
+        setPolitica(s.politica ?? "suscripcion");
+        setPhase("activar");
+      } catch {
+        if (cancel) return;
+        // Fail-open amable: nada bloquea al abogado; ofrecemos reintentar o seguir.
+        setPhase("error-carga");
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [router]);
+
+  function goNext() {
+    setDirection(1);
+    setSubStep((s) => s + 1);
+  }
+  function goBack() {
+    setDirection(-1);
+    setSubStep((s) => s - 1);
+  }
+
+  // Guarda lo que haya (política + claves validadas) y termina el paso.
+  // `includeRespaldo=false` cuando el abogado pulsa "Omitir" — así no se envía
+  // la clave de respaldo aunque haya alcanzado a validarla antes de omitir.
+  async function finish(includeRespaldo: boolean) {
+    if (!status) return;
+    setSaving(true);
+    setSaveError("");
+    try {
+      // Fija la política solo si el abogado la cambió (el default ya es "suscripcion").
+      if (politica !== status.politica) {
+        await apiSend("PUT", "/api/settings/model-policy", { politica });
+      }
+
+      // Solo se envían claves que quedaron validadas (✓). Las omitidas no se tocan.
+      const payload: { busqueda?: string; respaldo?: string } = {};
+      if (busqueda.state === "ok" && busqueda.value.trim()) payload.busqueda = busqueda.value.trim();
+      if (includeRespaldo && respaldo.state === "ok" && respaldo.value.trim())
+        payload.respaldo = respaldo.value.trim();
+
+      if (payload.busqueda || payload.respaldo) {
+        const res = await apiSend<KeysResult>("POST", "/api/welcome/keys", payload);
+        setResult({ mensaje: res.mensaje, aviso: res.aviso });
+        setPhase("listo");
+      } else {
+        // No hay claves que guardar: continúa directo (la política ya se persistió).
+        router.push("/onboarding");
+      }
+    } catch (err) {
+      setSaveError(plainMessage(err, "No pude guardar los cambios. Inténtalo de nuevo."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── Estados de carga y error de la consulta inicial ──────────────────────
+  if (phase === "cargando") {
+    return (
+      <WelcomeShell progress={<WelcomeProgress steps={JOURNEY_STEPS} current={1} />}>
+        <div className="flex flex-col items-center gap-3 py-10 text-center text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
+          <p className="text-sm">Preparando la activación de Mia…</p>
+        </div>
+      </WelcomeShell>
+    );
+  }
+
+  if (phase === "error-carga") {
+    return (
+      <WelcomeShell progress={<WelcomeProgress steps={JOURNEY_STEPS} current={1} />}>
+        <Stagger className="flex flex-col items-center gap-4 text-center">
+          <StaggerItem>
+            <MiaLine
+              text="Tuve un problema para preparar este paso."
+              className="text-xl sm:text-2xl"
+            />
+          </StaggerItem>
+          <StaggerItem>
+            <p className="text-sm text-muted-foreground">
+              No te preocupes: puedes intentarlo otra vez o seguir y activar la búsqueda más adelante.
+            </p>
+          </StaggerItem>
+          <StaggerItem>
+            <div className="mt-2 flex flex-col items-center gap-2 sm:flex-row">
+              <Button variant="cta" size="lg" onClick={() => window.location.reload()}>
+                Intentar de nuevo
+              </Button>
+              <Button variant="ghost" size="lg" onClick={() => router.push("/onboarding")}>
+                Seguir por ahora
+              </Button>
+            </div>
+          </StaggerItem>
+        </Stagger>
+      </WelcomeShell>
+    );
+  }
+
+  // ── Pantalla "Listo" del paso (confirmación con mensaje + aviso) ─────────
+  if (phase === "listo" && result) {
+    return (
+      <WelcomeShell progress={<WelcomeProgress steps={JOURNEY_STEPS} current={1} />}>
+        <Stagger className="flex flex-col items-center gap-4 text-center">
+          <StaggerItem>
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/15 text-primary duration-500 animate-in zoom-in-50 fade-in">
+              <Check className="h-7 w-7" strokeWidth={2.5} aria-hidden />
+            </span>
+          </StaggerItem>
+          <StaggerItem>
+            <MiaLine text={result.mensaje} className="text-xl sm:text-2xl" />
+          </StaggerItem>
+          {/* Aviso FUERTE del backend: solo llega cuando se guardó una clave que sirve
+              al MOTOR de modelos (no para la clave de búsqueda, que activa al instante).
+              Se muestra como llamada de atención prominente, no como nota al pie: sin
+              este paso, Mia no termina de activar su capacidad de razonar. */}
+          {result.aviso && (
+            <StaggerItem>
+              <div
+                role="status"
+                className="flex max-w-md items-start gap-3 rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-left"
+              >
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
+                <p className="text-sm font-medium text-foreground">{result.aviso}</p>
+              </div>
+            </StaggerItem>
+          )}
+          <StaggerItem>
+            <Button variant="cta" size="lg" className="mt-2" onClick={() => router.push("/onboarding")}>
+              Continuar
+            </Button>
+          </StaggerItem>
+        </Stagger>
+      </WelcomeShell>
+    );
+  }
+
+  if (!status) return null; // salvaguarda de tipos
+
+  // Encuadre de la clave de respaldo según el motor elegido.
+  const respaldoEsMotor = politica === "nube";
+
+  // ── Sub-pasos del asistente de activación ────────────────────────────────
+  const stepMotor = (
+    <Stagger className="flex flex-col gap-6">
+      <StaggerItem>
+        <MiaLine
+          text="Para ayudarte necesito un motor que me haga razonar. Elige de dónde saco esa capacidad."
+          className="text-xl leading-snug sm:text-2xl"
+        />
+      </StaggerItem>
+
+      <WelcomeField>
+        <div
+          role="radiogroup"
+          aria-label="Motor de Mia"
+          className="flex flex-col gap-3"
+          onKeyDown={(e) => {
+            const order: Politica[] = ["suscripcion", "nube", "soberano"];
+            const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
+            const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
+            if (!forward && !backward) return;
+            e.preventDefault();
+            const cur = order.indexOf(politica);
+            const next = (cur + (forward ? 1 : -1) + order.length) % order.length;
+            setPolitica(order[next]);
+            // Mueve el foco al radio recién seleccionado (la selección sigue al foco).
+            const radios = e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+            radios[next]?.focus();
+          }}
+        >
+          <EngineCard
+            icon={Sparkles}
+            title="Mi suscripción"
+            badge="Recomendado"
+            description="Razono usando la suscripción que ya tienes. Es lo más simple y lo que te recomiendo."
+            detected={status.motor_detectado.claude}
+            detectedLabel="Ya la detecté lista en este equipo."
+            selected={politica === "suscripcion"}
+            onSelect={() => setPolitica("suscripcion")}
+          />
+          <EngineCard
+            icon={Cloud}
+            title="En la nube"
+            description={
+              status.motor_detectado.claude
+                ? "Me conecto a un motor en internet. Necesitarás una clave de respaldo del motor."
+                : "Me conecto a un motor en internet para razonar. Necesitarás una clave de respaldo del motor."
+            }
+            selected={politica === "nube"}
+            onSelect={() => setPolitica("nube")}
+          />
+          <EngineCard
+            icon={Cpu}
+            title="Todo en tu equipo"
+            description="Razono sin que nada salga de tu computador. Ideal si quieres máxima privacidad."
+            detected={status.motor_detectado.ollama}
+            detectedLabel="Ya lo detecté listo en este equipo."
+            selected={politica === "soberano"}
+            onSelect={() => setPolitica("soberano")}
+          />
+        </div>
+      </WelcomeField>
+
+      <WelcomeField>
+        <Button variant="cta" size="lg" className="w-full" onClick={goNext}>
+          Continuar
+        </Button>
+      </WelcomeField>
+    </Stagger>
+  );
+
+  const stepBusqueda = (
+    <Stagger className="flex flex-col gap-6">
+      <StaggerItem>
+        <button
+          type="button"
+          onClick={goBack}
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Volver
+        </button>
+      </StaggerItem>
+
+      <StaggerItem>
+        <MiaLine
+          text="Ahora, pega tu clave de búsqueda en tus documentos."
+          className="text-xl leading-snug sm:text-2xl"
+        />
+      </StaggerItem>
+
+      <WelcomeField hint="Con esta clave puedo leer y encontrar lo que necesito dentro de tus documentos. Es la que hace que la búsqueda funcione.">
+        <KeyField
+          id="clave-busqueda"
+          label="Clave de búsqueda en tus documentos"
+          value={busqueda.value}
+          onChange={busqueda.setValue}
+          state={busqueda.state}
+          motivo={busqueda.motivo}
+          onRecheck={busqueda.recheck}
+          placeholder="Pega aquí tu clave de búsqueda"
+        />
+      </WelcomeField>
+
+      <WelcomeField>
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="cta"
+            size="lg"
+            className="w-full"
+            disabled={busqueda.state !== "ok"}
+            onClick={goNext}
+          >
+            Continuar
+          </Button>
+          <Button variant="ghost" size="lg" className="w-full" onClick={goNext}>
+            Lo haré después
+          </Button>
+        </div>
+      </WelcomeField>
+    </Stagger>
+  );
+
+  const stepRespaldo = (
+    <Stagger className="flex flex-col gap-6">
+      <StaggerItem>
+        <button
+          type="button"
+          onClick={goBack}
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Volver
+        </button>
+      </StaggerItem>
+
+      <StaggerItem>
+        <MiaLine
+          text={
+            respaldoEsMotor
+              ? "Por último, pega la clave de respaldo del motor."
+              : "¿Quieres añadir una clave de respaldo del motor? Es opcional."
+          }
+          className="text-xl leading-snug sm:text-2xl"
+        />
+      </StaggerItem>
+
+      <WelcomeField
+        hint={
+          respaldoEsMotor
+            ? "Es la clave que me da la capacidad de razonar en la nube, así que la necesito para poder ayudarte."
+            : "Es un plan B por si tu suscripción no está disponible. No la necesitas para empezar; puedes añadirla ahora o más adelante."
+        }
+      >
+        <KeyField
+          id="clave-respaldo"
+          label="Clave de respaldo del motor"
+          value={respaldo.value}
+          onChange={respaldo.setValue}
+          state={respaldo.state}
+          motivo={respaldo.motivo}
+          onRecheck={respaldo.recheck}
+          placeholder={
+            respaldoEsMotor
+              ? "Pega aquí la clave del motor"
+              : "Pega aquí tu clave de respaldo (opcional)"
+          }
+        />
+      </WelcomeField>
+
+      {saveError && (
+        <StaggerItem>
+          <p
+            className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+          >
+            {saveError}
+          </p>
+        </StaggerItem>
+      )}
+
+      <WelcomeField>
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="cta"
+            size="lg"
+            className="w-full"
+            // En "nube" la clave de respaldo ES el motor primario: obligatoria — el
+            // botón exige clave válida. En suscripción/soberano es de verdad opcional:
+            // basta que, si escribió algo, esté validado.
+            disabled={
+              saving ||
+              (respaldoEsMotor
+                ? respaldo.state !== "ok"
+                : respaldo.value.trim().length > 0 && respaldo.state !== "ok")
+            }
+            onClick={() => finish(true)}
+          >
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Guardando…
+              </>
+            ) : (
+              "Terminar y continuar"
+            )}
+          </Button>
+          {/* "Omitir" solo cuando el respaldo es REALMENTE opcional. En "nube" no se
+              ofrece: sin esa clave Mia no tiene motor para razonar. */}
+          {!respaldoEsMotor && (
+            <Button
+              variant="ghost"
+              size="lg"
+              className="w-full"
+              disabled={saving}
+              onClick={() => finish(false)}
+            >
+              Omitir por ahora
+            </Button>
+          )}
+        </div>
+      </WelcomeField>
+    </Stagger>
+  );
+
+  const steps = [stepMotor, stepBusqueda, stepRespaldo];
+
+  return (
+    <WelcomeShell progress={<WelcomeProgress steps={JOURNEY_STEPS} current={1} />}>
+      <StepTransition stepKey={subStep} direction={direction}>
+        {steps[subStep]}
+      </StepTransition>
+    </WelcomeShell>
+  );
+}

@@ -21,7 +21,7 @@ from .middleware import TenantContextMiddleware
 from .routes import (assistant, auth, automations, curator, folders, guides, hitl, learning,
                      mailbox, matter_folders, matter_mail, matter_sources, mcp, missions,
                      personas, policy, remote_drive, settings, setup, sources, speech,
-                     stream, traces, ux, value)
+                     stream, traces, ux, value, welcome)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -194,6 +194,9 @@ app.include_router(missions.router, prefix="/api")
 app.include_router(mcp.router, prefix="/api")
 # Fase 1b (transformación) · consulta de fuentes del corpus para citas en línea.
 app.include_router(sources.router, prefix="/api")
+# F3 (bienvenida + activación) · estado de la primera vez y llaves mínimas de
+# instalación (búsqueda documental / respaldo del motor) → /api/welcome/*.
+app.include_router(welcome.router, prefix="/api")
 
 
 @app.get("/health")

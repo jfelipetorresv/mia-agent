@@ -1229,3 +1229,30 @@ Next de "Intelligence Sura" en 3100 — evidencia de que la colisión de puertos
 
 **Acción:** todas quedan como pasos OBLIGATORIOS del E2E de F4 (task_plan) — no cerrar el
 bloque instalador sin ellas.
+
+**Ampliado en sesión 44 (2026-07-11):** el E2E de F4 ahora también debe recompilar los exes
+incluyendo `welcome.py` (rutas de activación), la migración `031_welcome_bootstrap.sql` y
+`env_writer.py` — el `mia-backend.exe` actual en `dist/` no los trae.
+
+## 🟡 Riesgo #60 — El motor que depende del proxy LiteLLM no queda activo hasta reabrir MIA (2026-07-11, sesión 44)
+
+**Contexto:** F3 (wizard de bienvenida) añadió `POST /api/welcome/keys` para activar llaves
+sin volver a la terminal. La clave de BÚSQUEDA (VOYAGE) se recarga EN CALIENTE porque
+`embeddings.py` la consume in-process vía `config`. Pero la clave de RESPALDO (ANTHROPIC) y
+OpenRouter alimentan al proxy `mia-litellm.exe`, que lee su `.env` SOLO al arrancar — F3 no
+abre el IPC de Tauri necesario para reiniciar el proceso del proxy (mismo hueco que el punto 2
+del Riesgo #59).
+
+**Riesgo:** un abogado que elige la política "nube" (o "suscripción" sin el CLI de Claude Code
+instalado, que cae de respaldo al proxy) escribe su clave en el wizard y el motor sigue sin
+responder hasta que cierre y reabra MIA — sorpresa silenciosa si no se avisa. Para el equipo de
+Lexia (suscripción con el CLI de Pipe ya instalado) el riesgo NO aplica.
+
+**Mitigación aplicada en la sesión:** la pantalla `/activar` EXIGE la clave para la política
+"nube" (no deja continuar sin ella) y muestra un AVISO FUERTE de que hay que reabrir MIA para
+que el motor quede activo. La clave de búsqueda (Voyage) sí queda funcionando de inmediato, sin
+aviso necesario.
+
+**Acción (F4 o una ola futura):** el reinicio automático del proxy LiteLLM tras guardar la
+clave requiere el mismo IPC remoto que el Riesgo #59 punto 2 deja pendiente de verificación
+visual — cerrar ambos juntos cuando F4 monte la cáscara real con Tauri IPC probado en vivo.

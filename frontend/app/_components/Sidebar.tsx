@@ -10,18 +10,9 @@ import ThemeToggle from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-
-// Logotipo de marca: wordmark "MIA" con la I en teal, como en la pantalla de
-// arranque de la app de escritorio (desktop/src/index.html). Siempre enlaza a "/".
-function BrandMark() {
-  return (
-    <Link href="/" className="flex items-center gap-2.5">
-      <span className="select-none text-xl font-light uppercase tracking-[0.3em] text-foreground">
-        M<span className="font-semibold text-[#2EA9A9]">I</span>A
-      </span>
-    </Link>
-  );
-}
+// Wordmark compartido (infra visual F3). size="sm" reproduce exactamente el
+// logotipo previo de la sidebar; href="/" conserva el enlace a inicio.
+import BrandMark from "@/app/_welcome/BrandMark";
 
 function openCommandPalette() {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
@@ -60,7 +51,13 @@ export default function Sidebar() {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
-  if (path.startsWith("/login") || path.startsWith("/register")) return null;
+  if (
+    path.startsWith("/login") ||
+    path.startsWith("/register") ||
+    path.startsWith("/activar") ||
+    path.startsWith("/onboarding")
+  )
+    return null;
 
   function logout() {
     clearToken();
@@ -74,7 +71,7 @@ export default function Sidebar() {
           "dark" para que todos los tokens (fondo, bordes, texto) resuelvan fijos. */}
       <aside className="dark hidden w-64 shrink-0 flex-col border-r border-border bg-background md:flex">
         <div className="px-5 py-5">
-          <BrandMark />
+          <BrandMark size="sm" href="/" />
         </div>
         <div className="px-3">
           <button
@@ -102,7 +99,7 @@ export default function Sidebar() {
 
       {/* Mobile top bar — misma identidad oscura fija que el sidebar de escritorio. */}
       <header className="dark sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background px-4 py-3 md:hidden">
-        <BrandMark />
+        <BrandMark size="sm" href="/" />
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" onClick={openCommandPalette} aria-label="Buscar">
             <Search className="h-4 w-4" />
@@ -117,7 +114,7 @@ export default function Sidebar() {
               <DialogTitle className="sr-only">Menú de navegación</DialogTitle>
               <div className="flex h-full flex-col">
                 <div className="pb-4">
-                  <BrandMark />
+                  <BrandMark size="sm" href="/" />
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   <NavLinks onNavigate={() => setMobileOpen(false)} />

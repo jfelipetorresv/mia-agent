@@ -1,5 +1,17 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-11 — Sesión 44 · BLOQUE INSTALADOR F3 COMPLETA — primera experiencia del abogado rediseñada
+TL;DR: el wizard de bienvenida creció a pedido de Pipe: login + registro + activación de llaves + onboarding ahora son UNA experiencia cinematográfica cohesiva, con activación real de la clave de búsqueda en caliente.
+Qué construimos:
+- Infraestructura visual `frontend/app/_welcome/` (primer uso de framer-motion en el repo): WelcomeShell, BrandMark, WelcomeProgress, transiciones/stagger con soporte reduced-motion, Celebration, MiaLine (typewriter accesible).
+- Backend de activación: `GET /api/welcome/status` (público, enriquecido con token), `POST /api/welcome/keys` (escribe .env atómico, hot-reload de la clave de búsqueda VOYAGE, respaldo/OpenRouter diferidos con aviso de reabrir), `POST /api/welcome/keys/test` (ping fail-soft). `env_writer.py` (upsert robusto CRLF/BOM/lock). Migración 031 (`mia_any_tenant_exists()` SECURITY DEFINER endurecida).
+- Pantallas rediseñadas: register → "Crear tu despacho", login compacto, `/activar` nueva (motor + clave de búsqueda con validación en vivo + clave de respaldo), onboarding con el mismo lenguaje visual (autosave/reanudación/SOUL intactos).
+Qué decidimos:
+- Regresión ALL PASS 85 suites (línea base 84→85, `test_welcome_keys` 39/39); npm build verde. Capa 2: 4 revisores independientes (seguridad, backend, frontend, §G/accesibilidad), 0 bloqueantes, varios mayores/menores TODOS corregidos y re-verificados antes del cierre (caso "nube" exige clave, Enter ya no duplica validación, accesibilidad de labels, CRLF+lock en env_writer, SECURITY DEFINER endurecida).
+- Riesgo #60 nuevo: el motor que depende del proxy LiteLLM no queda activo hasta reabrir MIA (el exe solo lee .env al arrancar); mitigado con clave obligatoria + aviso fuerte para la política "nube". Modelo de confianza mono-despacho documentado (cualquier usuario autenticado escribe las llaves globales).
+Qué sigue:
+- Capa 3 EN VIVO de Pipe (recorrido del viaje completo registro→activar→onboarding) y luego F4: tauri bundle NSIS/MSI + E2E en frío + los puntos acumulados del Riesgo #59 (ahora incluye recompilar con welcome.py + migración 031). F4 es la ÚLTIMA fase del bloque instalador.
+
 ## 2026-07-10 — Sesión 41 · Bloque C COMPLETO — Agentes jurídicos + perfil unificado + Configuración en subtabs
 TL;DR: se cerró el plan de evolución de producto (A/B/C): agentes jurídicos con guías vinculadas, perfil del despacho editable sin repetir la entrevista, y Configuración en subtabs con deep-links.
 Qué construimos:

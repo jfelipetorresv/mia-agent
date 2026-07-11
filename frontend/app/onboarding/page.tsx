@@ -2,13 +2,22 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, PartyPopper, Scale, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Sparkles } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { CountrySelector, COUNTRY_NAME_BY_CODE } from "../_components/CountrySelector";
+import {
+  WelcomeShell,
+  WelcomeProgress,
+  StepTransition,
+  Stagger,
+  StaggerItem,
+  MiaLine,
+  Celebration,
+} from "@/app/_welcome";
 
 type Question = {
   id: string;
@@ -140,6 +149,8 @@ export default function OnboardingPage() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [idx, setIdx] = useState(0);
+  // Dirección de la transición entre preguntas: +1 avanza, -1 retrocede.
+  const [direction, setDirection] = useState(1);
   const [started, setStarted] = useState(false);
   // Bienvenida cálida antes de la primera pregunta: la entrevista no arranca en frío.
   const [welcomed, setWelcomed] = useState(false);
@@ -222,6 +233,19 @@ export default function OnboardingPage() {
     setAnswers((a) => ({ ...a, [current.field]: value }));
   }
 
+  // Navegación con dirección: alimenta la transición direccional de StepTransition.
+  function goNext() {
+    const nextIdx = Math.min(total - 1, idx + 1);
+    setDirection(1);
+    setIdx(nextIdx);
+    triggerAutosave(nextIdx, answers);
+  }
+
+  function goBack() {
+    setDirection(-1);
+    setIdx((i) => Math.max(0, i - 1));
+  }
+
   async function finish() {
     setSubmitting(true);
     setError("");
@@ -245,198 +269,216 @@ export default function OnboardingPage() {
     setSubmitting(false);
   }
 
+  // ── Carga: esqueleto sereno dentro del lienzo cinematográfico ──
   if (loading) {
     return (
-      <div className="mx-auto max-w-2xl space-y-4 px-8 py-16">
-        <Skeleton className="h-3 w-full rounded-full" />
-        <Skeleton className="h-9 w-3/4" />
-        <Skeleton className="h-32 w-full rounded-xl" />
-      </div>
+      <WelcomeShell progress={<WelcomeProgress current={2} />} width="lg">
+        <div className="space-y-5">
+          <Skeleton className="mx-auto h-8 w-3/4 rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-2xl" />
+        </div>
+      </WelcomeShell>
     );
   }
 
-  // Espera del LLM: Mia "pensando" mientras genera el perfil.
+  // ── Mia "pensando" mientras arma el perfil del despacho ──
   if (submitting) {
     return (
-      <div className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center px-8 text-center bg-aurora">
-        <div className="relative">
-          <span className="absolute inset-0 rounded-3xl bg-primary/40 blur-2xl animate-pulse-soft" aria-hidden />
-          <div className="relative flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-lg">
-            <Scale className="h-8 w-8" />
-          </div>
+      <WelcomeShell progress={<WelcomeProgress current={2} />}>
+        <div className="space-y-3 text-center">
+          <MiaLine
+            text="Estoy armando el perfil de tu despacho…"
+            className="text-center text-xl font-semibold tracking-tight sm:text-2xl"
+          />
+          <p className="text-sm text-muted-foreground">Un momento — casi listo.</p>
         </div>
-        <p className="mt-6 text-lg font-medium">Generando tu perfil…</p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Mia está construyendo la identidad de tu despacho. Toma unos segundos.
-        </p>
-      </div>
+      </WelcomeShell>
     );
   }
 
+  // ── Pantalla final: celebración detrás del resumen "Así entendí a tu despacho" ──
   if (completion !== null) {
     return (
-      <div className="mx-auto max-w-2xl px-6 py-12 md:px-8">
-        <div className="mb-6 animate-slide-up rounded-2xl border border-border bg-card p-6 shadow-sm md:p-8">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-success/15 text-success">
-              <PartyPopper className="h-5 w-5" />
+      <WelcomeShell progress={<WelcomeProgress current={3} />} width="lg">
+        <div className="relative">
+          {/* Celebración a pantalla completa DETRÁS del resumen (fixed inset-0, z-0, sin
+              capturar clics): así el estallido cubre toda la ventana en vez de recortarse
+              a la columna acotada (max-w) del contenido. */}
+          <Celebration fullscreen />
+
+          <div className="relative z-10 space-y-6">
+            <div className="space-y-2 text-center">
+              <MiaLine
+                text="Así entendí a tu despacho."
+                className="text-center text-2xl font-semibold tracking-tight sm:text-3xl"
+              />
+              <p className="mx-auto max-w-md text-sm text-muted-foreground">
+                Ya puedo empezar a trabajar contigo. Podrás cambiar lo que quieras cuando quieras.
+              </p>
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight">Tu perfil está listo</h1>
+
+            <div className="rounded-2xl border border-border bg-card/80 p-6 shadow-sm backdrop-blur-sm md:p-8">
+              <SummaryMarkdown markdown={completion.summary} />
+            </div>
+
+            <details className="rounded-xl border border-border bg-card/50">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+                Ver el perfil completo que guardé
+              </summary>
+              <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+                {completion.soul_content}
+              </pre>
+            </details>
+
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setCompletion(null);
+                  setDirection(-1);
+                  setIdx(0);
+                  setStarted(true);
+                  setWelcomed(true);
+                  setAlreadyDone(false);
+                }}
+              >
+                Editar mis respuestas
+              </Button>
+              <Button variant="cta" size="lg" onClick={() => router.push("/")} className="gap-2">
+                Entrar a Mia
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
-          <SummaryMarkdown markdown={completion.summary} />
         </div>
-        <details className="mb-6 animate-slide-up rounded-xl border border-border bg-card/60" style={{ animationDelay: "80ms", animationFillMode: "backwards" }}>
-          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-            Ver detalle técnico
-          </summary>
-          <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-            {completion.soul_content}
-          </pre>
-        </details>
-        <div className="flex flex-wrap gap-3 animate-slide-up" style={{ animationDelay: "140ms", animationFillMode: "backwards" }}>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setCompletion(null);
-              setIdx(0);
-              setStarted(true);
-              setWelcomed(true);
-              setAlreadyDone(false);
-            }}
-          >
-            Editar
-          </Button>
-          <Button variant="outline" onClick={() => router.push("/")} className="gap-2">
-            Continuar a mis asuntos
-          </Button>
-          <Button variant="cta" onClick={() => router.push("/configurar")} className="gap-2">
-            Seguir con la configuración
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
+      </WelcomeShell>
     );
   }
 
+  // ── Ya configurado: retorno del abogado que ya se presentó ──
   if (alreadyDone && !started) {
     return (
-      <div className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center px-8 text-center bg-aurora">
-        <div className="mb-5 flex h-14 w-14 animate-slide-up items-center justify-center rounded-2xl bg-success/15 text-success">
-          <Check className="h-7 w-7" />
-        </div>
-        <h1 className="animate-slide-up text-2xl font-semibold tracking-tight" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
-          Tu despacho ya está configurado
-        </h1>
-        <p className="mt-2 max-w-md animate-slide-up text-sm text-muted-foreground" style={{ animationDelay: "120ms", animationFillMode: "backwards" }}>
-          Mia ya conoce tu identidad, tu jurisdicción y tus herramientas. Puedes revisarlas y actualizarlas.
-        </p>
-        <div className="mt-8 flex flex-wrap justify-center gap-3 animate-slide-up" style={{ animationDelay: "180ms", animationFillMode: "backwards" }}>
-          <Button variant="ghost" onClick={() => router.push("/")}>
-            Ir a mis asuntos
-          </Button>
-          <Button variant="outline" onClick={() => router.push("/configurar")}>
-            Ver toda la configuración
-          </Button>
-          <Button
-            onClick={() => {
-              setStarted(true);
-              setWelcomed(true);
-              setIdx(0);
-            }}
-          >
-            Revisar mi perfil
-          </Button>
-        </div>
-        {error ? <p className="mt-6 text-sm text-destructive">{error}</p> : null}
-      </div>
+      <WelcomeShell progress={<WelcomeProgress current={3} />}>
+        <StepTransition stepKey="ya-listo" direction={1}>
+          <Stagger className="space-y-6 text-center">
+            <StaggerItem className="space-y-2">
+              <MiaLine
+                text="Ya nos conocemos."
+                className="text-center text-2xl font-semibold tracking-tight sm:text-3xl"
+              />
+              <p className="mx-auto max-w-md text-sm text-muted-foreground">
+                Ya conozco tu despacho, tu jurisdicción y tus herramientas. Puedes revisarlas y
+                actualizarlas cuando quieras.
+              </p>
+            </StaggerItem>
+            <StaggerItem className="flex flex-wrap justify-center gap-3">
+              <Button variant="ghost" onClick={() => router.push("/")}>
+                Ir a mis asuntos
+              </Button>
+              <Button
+                variant="cta"
+                size="lg"
+                onClick={() => {
+                  setStarted(true);
+                  setWelcomed(true);
+                  setDirection(1);
+                  setIdx(0);
+                }}
+              >
+                Revisar mi perfil
+              </Button>
+            </StaggerItem>
+            {error ? (
+              <StaggerItem>
+                <p className="text-sm text-destructive">{error}</p>
+              </StaggerItem>
+            ) : null}
+          </Stagger>
+        </StepTransition>
+      </WelcomeShell>
     );
   }
 
   if (!current) {
     return (
-      <div className="mx-auto max-w-2xl px-8 py-16 text-sm text-muted-foreground">
-        {error || "No hay preguntas disponibles."}
-      </div>
+      <WelcomeShell progress={<WelcomeProgress current={2} />}>
+        <p className="text-center text-sm text-muted-foreground">
+          {error || "No hay preguntas disponibles."}
+        </p>
+      </WelcomeShell>
     );
   }
 
-  // Bienvenida: qué es esto, cuánto tarda y qué gana el abogado. Una sola vez.
+  // ── Bienvenida: qué es esto, cuánto tarda y qué gana el abogado. Una sola vez. ──
   if (!welcomed) {
     return (
-      <div className="mx-auto flex min-h-[80vh] max-w-2xl flex-col items-center justify-center px-8 py-12 text-center bg-aurora">
-        <div className="relative mb-6 animate-slide-up">
-          <div className="absolute inset-0 rounded-3xl bg-primary/30 blur-2xl" aria-hidden />
-          <div className="relative flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-lg">
-            <Scale className="h-8 w-8" />
-          </div>
-        </div>
-        <h1
-          className="text-gradient-brand animate-slide-up text-3xl font-semibold tracking-tight"
-          style={{ animationDelay: "60ms", animationFillMode: "backwards" }}
-        >
-          Hola, soy Mia.
-        </h1>
-        <p
-          className="mt-3 max-w-md animate-slide-up text-muted-foreground"
-          style={{ animationDelay: "120ms", animationFillMode: "backwards" }}
-        >
-          Voy a ser tu asistente jurídica. Para trabajar como a ti te gusta, necesito
-          conocerte: te haré {total} preguntas cortas sobre tu despacho, tu jurisdicción
-          y tus herramientas. Solo dos son obligatorias; el resto las puedes saltar.
-        </p>
-        <p
-          className="mt-2 animate-slide-up text-sm text-muted-foreground/80"
-          style={{ animationDelay: "160ms", animationFillMode: "backwards" }}
-        >
-          Toma unos 3 minutos. Podrás cambiar todo después.
-        </p>
-        {draft ? (
-          <div
-            className="mt-8 flex flex-wrap justify-center gap-3 animate-slide-up"
-            style={{ animationDelay: "220ms", animationFillMode: "backwards" }}
-          >
-            <Button
-              size="lg"
-              onClick={() => {
-                setAnswers(draft.responses);
-                // Reanudar por IDENTIDAD de pregunta (qid): la lista de pasos puede
-                // cambiar de largo entre sesiones (p.ej. el paso de jurisdicción no
-                // cargó) y un índice posicional mostraría otra pregunta. El índice
-                // guardado queda solo como respaldo.
-                const porId = draft.qid ? questions.findIndex((q) => q.id === draft.qid) : -1;
-                setIdx(porId >= 0 ? porId : Math.max(0, Math.min(total - 1, draft.idx)));
-                setWelcomed(true);
-              }}
-              className="gap-2"
-            >
-              <Sparkles className="h-4 w-4" />
-              Continuar donde ibas
-            </Button>
-            <Button
-              size="lg"
-              variant="ghost"
-              onClick={() => {
-                setAnswers({});
-                setIdx(0);
-                setDraft(null);
-                setWelcomed(true);
-              }}
-            >
-              Empezar de nuevo
-            </Button>
-          </div>
-        ) : (
-          <Button
-            size="lg"
-            onClick={() => setWelcomed(true)}
-            className="mt-8 animate-slide-up gap-2"
-            style={{ animationDelay: "220ms", animationFillMode: "backwards" }}
-          >
-            <Sparkles className="h-4 w-4" />
-            Empecemos
-          </Button>
-        )}
-      </div>
+      <WelcomeShell progress={<WelcomeProgress current={2} />}>
+        <StepTransition stepKey="intro" direction={1}>
+          <Stagger className="space-y-6 text-center">
+            <StaggerItem>
+              <MiaLine
+                text="Hola, soy Mia. Voy a ser tu asistente."
+                className="text-center text-2xl font-semibold tracking-tight sm:text-3xl"
+              />
+            </StaggerItem>
+            <StaggerItem>
+              <p className="mx-auto max-w-md text-muted-foreground">
+                Para trabajar como a ti te gusta, primero quiero conocerte. Te haré {total}{" "}
+                preguntas cortas sobre tu despacho, tu jurisdicción y tus herramientas. Solo dos son
+                obligatorias; el resto las puedes saltar.
+              </p>
+            </StaggerItem>
+            <StaggerItem>
+              <p className="text-sm text-muted-foreground/80">
+                Toma unos 3 minutos y podrás cambiar todo cuando quieras.
+              </p>
+            </StaggerItem>
+            <StaggerItem>
+              {draft ? (
+                <div className="flex flex-wrap justify-center gap-3">
+                  <Button
+                    variant="cta"
+                    size="lg"
+                    onClick={() => {
+                      setAnswers(draft.responses);
+                      // Reanudar por IDENTIDAD de pregunta (qid): la lista de pasos puede
+                      // cambiar de largo entre sesiones (p.ej. el paso de jurisdicción no
+                      // cargó) y un índice posicional mostraría otra pregunta. El índice
+                      // guardado queda solo como respaldo.
+                      const porId = draft.qid ? questions.findIndex((q) => q.id === draft.qid) : -1;
+                      setDirection(1);
+                      setIdx(porId >= 0 ? porId : Math.max(0, Math.min(total - 1, draft.idx)));
+                      setWelcomed(true);
+                    }}
+                    className="gap-2"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Continuar donde ibas
+                  </Button>
+                  <Button
+                    size="lg"
+                    variant="ghost"
+                    onClick={() => {
+                      setAnswers({});
+                      setDirection(1);
+                      setIdx(0);
+                      setDraft(null);
+                      setWelcomed(true);
+                    }}
+                  >
+                    Empezar de nuevo
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="cta" size="lg" onClick={() => setWelcomed(true)} className="gap-2">
+                  <Sparkles className="h-4 w-4" />
+                  Empecemos
+                </Button>
+              )}
+            </StaggerItem>
+          </Stagger>
+        </StepTransition>
+      </WelcomeShell>
     );
   }
 
@@ -447,77 +489,82 @@ export default function OnboardingPage() {
   const canAdvance = isComplete(current, value);
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-12 md:px-8">
-      <div className="mb-8">
-        <div className="mb-2 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground/70">Configuración de Mia — tu perfil</p>
-          <p aria-live="polite" className="text-xs text-muted-foreground/70">
-            {savedFlash ? "Avance guardado" : ""}
-          </p>
+    <WelcomeShell progress={<WelcomeProgress current={2} />} width="lg">
+      <div className="w-full">
+        {/* Sub-progreso sutil: en qué parte de la conversación vamos, sin competir con la
+            constelación del viaje. Junto al aviso discreto de autosave (aria-live). */}
+        <div className="mb-6">
+          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground/70">
+            <span>
+              {BLOCK_LABEL[current.block] ?? current.block} · {idx + 1} de {total}
+            </span>
+            <span aria-live="polite" className="transition-opacity">
+              {savedFlash ? "Avance guardado" : ""}
+            </span>
+          </div>
+          <div className="h-0.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-primary/70 transition-all duration-500"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
         </div>
-        <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            {BLOCK_LABEL[current.block] ?? current.block} · Pregunta {idx + 1} de {total}
-          </span>
-          <span className="tabular-nums">{pct}%</span>
-        </div>
-        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-primary to-primary/80 transition-all duration-500"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
 
-      <div key={current.id} className="animate-slide-up">
-        <h1 className="mb-1 text-center text-2xl font-semibold leading-snug tracking-tight">
-          {current.question}
-          {optional ? <span className="ml-2 align-middle text-sm font-normal text-muted-foreground">(opcional)</span> : null}
-        </h1>
-        {current.id === JURISDICTION_QUESTION_ID ? (
-          <p className="mb-6 text-center text-xs text-muted-foreground">
-            Esto le dice a Mia qué normas y jurisprudencia usar. Puedes elegir más de uno.
-          </p>
-        ) : current.example ? (
-          <p className="mb-6 text-center text-xs text-muted-foreground">Ej: {current.example}</p>
-        ) : (
-          <div className="mb-6" />
-        )}
+        {/* Cada pregunta entra/sale con transición direccional real; sus elementos se
+            escalonan. Mia "habla" el enunciado con el efecto máquina de escribir. */}
+        <StepTransition stepKey={current.id} direction={direction}>
+          <Stagger className="space-y-6">
+            <StaggerItem className="space-y-2 text-center">
+              <MiaLine
+                text={current.question}
+                className="text-center text-2xl font-semibold leading-snug tracking-tight"
+              />
+              {current.id === JURISDICTION_QUESTION_ID ? (
+                <p className="text-xs text-muted-foreground">
+                  Esto le dice a Mia qué normas y jurisprudencia usar. Puedes elegir más de uno.
+                </p>
+              ) : current.example ? (
+                <p className="text-xs text-muted-foreground">Ej: {current.example}</p>
+              ) : null}
+              {optional ? (
+                <p className="text-xs text-muted-foreground/70">Opcional — puedes saltarla.</p>
+              ) : null}
+            </StaggerItem>
 
-        <QuestionInput question={current} value={value} onChange={setAnswer} packCodes={packCodes} />
-      </div>
+            <StaggerItem>
+              <QuestionInput question={current} value={value} onChange={setAnswer} packCodes={packCodes} />
+            </StaggerItem>
+          </Stagger>
+        </StepTransition>
 
-      {error ? <p className="mt-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
+        {error ? (
+          <p className="mt-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+        ) : null}
 
-      <div className="mt-8 flex items-center justify-between">
-        <Button variant="ghost" onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={idx === 0} className="gap-2">
-          <ArrowLeft className="h-4 w-4" />
-          Anterior
-        </Button>
-        {isLast ? (
-          <Button variant="cta" onClick={finish} disabled={!canAdvance} className="gap-2">
-            <Check className="h-4 w-4" />
-            Finalizar
+        <div className="mt-8 flex items-center justify-between">
+          <Button variant="ghost" onClick={goBack} disabled={idx === 0} className="gap-2">
+            <ArrowLeft className="h-4 w-4" />
+            Anterior
           </Button>
-        ) : (
-          <Button
-            onClick={() => {
-              const nextIdx = Math.min(total - 1, idx + 1);
-              setIdx(nextIdx);
-              triggerAutosave(nextIdx, answers);
-            }}
-            disabled={!canAdvance}
-            className="gap-2"
-          >
-            Siguiente
-            <ArrowRight className="h-4 w-4" />
-          </Button>
-        )}
+          {isLast ? (
+            <Button variant="cta" onClick={finish} disabled={!canAdvance} className="gap-2">
+              <Check className="h-4 w-4" />
+              Finalizar
+            </Button>
+          ) : (
+            <Button onClick={goNext} disabled={!canAdvance} className="gap-2">
+              Siguiente
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        {!canAdvance ? (
+          <p className="mt-3 text-right text-xs text-muted-foreground/70">
+            Completa esta pregunta para continuar.
+          </p>
+        ) : null}
       </div>
-      {!canAdvance ? (
-        <p className="mt-3 text-right text-xs text-muted-foreground">Completa esta pregunta para continuar.</p>
-      ) : null}
-    </div>
+    </WelcomeShell>
   );
 }
 
@@ -893,47 +940,3 @@ function TagInput({
 
 // Paso local de jurisdicción: ver CountrySelector.tsx (C2 — extracción, mismo componente
 // que usa "Mi despacho" al editar la jurisdicción después del onboarding).
-
-function CheckboxGroup({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label?: string;
-  options: string[];
-  value: string[];
-  onChange: (value: string[]) => void;
-}) {
-  return (
-    <div>
-      {label ? <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div> : null}
-      <div className="grid gap-2 sm:grid-cols-2">
-        {options.map((option) => {
-          const checked = value.includes(option);
-          return (
-            <label
-              key={option}
-              className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors",
-                checked ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-primary/25",
-              )}
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={(e) => {
-                  if (e.target.checked) onChange([...value, option]);
-                  else onChange(value.filter((v) => v !== option));
-                }}
-                className="h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
-              />
-              <span>{option}</span>
-            </label>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-

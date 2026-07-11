@@ -3,11 +3,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Scale } from "lucide-react";
 import { ApiError, apiSend, setToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  WelcomeShell,
+  StepTransition,
+  Stagger,
+  WelcomeField,
+  MiaLine,
+} from "@/app/_welcome";
 
 type AuthResponse = { token: string; tenant_id: string };
 
@@ -31,26 +36,40 @@ export default function LoginPage() {
       // un error de red del navegador ("Failed to fetch") jamás llega a pantalla.
       const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
       const generic = !msg || msg === "Credenciales invalidas" || msg === "Sesión expirada";
-      setError(generic ? "Email o contraseña incorrectos." : msg);
+      setError(generic ? "El correo o la contraseña no coinciden." : msg);
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-background px-6">
-      <div className="w-full max-w-sm animate-slide-up">
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-            <Scale className="h-6 w-6" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Bienvenido a Mia</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Tu asistente jurídica. Accede al espacio de tu despacho.</p>
-        </div>
+    // Regreso al despacho: mismo lienzo cinematográfico, versión compacta y SIN
+    // la constelación de progreso del viaje (esto no es la primera vez).
+    <WelcomeShell
+      width="sm"
+      footer={
+        <span>
+          ¿Aún no tienes tu espacio?{" "}
+          <Link href="/register" className="font-medium text-primary hover:underline">
+            Crear mi despacho
+          </Link>
+        </span>
+      }
+    >
+      <StepTransition stepKey="entrar" direction={1}>
+        {/* El propio <form> es el contenedor de stagger (as="form"): los campos,
+            hijos DIRECTOS, entran escalonados en vez de todos a la vez. */}
+        <Stagger as="form" onSubmit={submit} className="space-y-6">
+          <WelcomeField>
+            <div className="space-y-2 text-center">
+              <MiaLine text="Qué bueno verte otra vez." className="text-xl sm:text-2xl" />
+              <p className="text-sm text-muted-foreground">
+                Entra al espacio de tu despacho.
+              </p>
+            </div>
+          </WelcomeField>
 
-        <form onSubmit={submit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="email">Email</Label>
+          <WelcomeField label="Tu correo" htmlFor="email">
             <Input
               id="email"
               value={email}
@@ -58,12 +77,12 @@ export default function LoginPage() {
               type="email"
               autoComplete="email"
               placeholder="tu@despacho.com"
+              autoFocus
               required
             />
-          </div>
+          </WelcomeField>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="password">Contraseña</Label>
+          <WelcomeField label="Tu contraseña" htmlFor="password">
             <Input
               id="password"
               value={password}
@@ -73,26 +92,32 @@ export default function LoginPage() {
               placeholder="••••••••"
               required
             />
-          </div>
+          </WelcomeField>
 
           {error ? (
-            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-              {error}
-            </p>
+            <WelcomeField>
+              <p
+                className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                role="alert"
+              >
+                {error}
+              </p>
+            </WelcomeField>
           ) : null}
 
-          <Button type="submit" disabled={loading} className="w-full" size="lg">
-            {loading ? "Ingresando…" : "Ingresar"}
-          </Button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-muted-foreground">
-          ¿Aún no tienes cuenta?{" "}
-          <Link href="/register" className="font-medium text-primary hover:underline">
-            Crear cuenta
-          </Link>
-        </p>
-      </div>
-    </div>
+          <WelcomeField>
+            <Button
+              type="submit"
+              disabled={loading}
+              variant="cta"
+              size="lg"
+              className="w-full"
+            >
+              {loading ? "Entrando…" : "Entrar"}
+            </Button>
+          </WelcomeField>
+        </Stagger>
+      </StepTransition>
+    </WelcomeShell>
   );
 }

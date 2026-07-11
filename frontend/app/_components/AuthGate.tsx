@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { apiGet, clearToken, getToken } from "@/lib/api";
 
+// Rutas SIN sesión (primera vez o regreso). `/activar` NO está aquí a propósito:
+// es parte del viaje de bienvenida pero el abogado ya tiene sesión (viene de crear
+// su despacho), así que debe exigir sesión como cualquier ruta privada.
 const PUBLIC_PATHS = ["/login", "/register"];
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {

@@ -35,7 +35,14 @@ _AUDIT_SKIP_PREFIXES = ("/api/speech/",)
 # navegador redirigido por Microsoft/Google. Su autenticidad se verifica con el `state`
 # FIRMADO (routes/mailbox.verify_state), no con el JWT de sesión.
 OPEN_PATHS = {"/health", "/api/auth/register", "/api/auth/login",
-              "/api/mailbox/oauth/callback"}
+              "/api/mailbox/oauth/callback",
+              # F3 (bienvenida): el frontend necesita saber si ya hay un despacho
+              # creado ANTES de que exista sesión, para decidir "crear despacho" vs
+              # "iniciar sesión". El handler (routes/welcome.py) solo expone campos
+              # NO sensibles sin sesión (ver docstring del módulo); con Bearer válido
+              # enriquece la respuesta con datos del despacho. `/keys` y `/keys/test`
+              # NO están aquí: exigen sesión (llaves globales de instalación).
+              "/api/welcome/status"}
 if not config.IS_PRODUCTION:
     OPEN_PATHS |= {"/docs", "/openapi.json", "/redoc"}
 

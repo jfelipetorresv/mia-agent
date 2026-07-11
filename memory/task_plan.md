@@ -308,8 +308,19 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
 - [x] F2 — Capa 2 ×3 (bootstrap, cáscara, litellm): 6 MAYORES + 5 menores confirmados, TODOS
       corregidos y re-verificados (detalle en progress.md sesión 43)
 - [x] F2 — Regresión completa 84/84 ALL PASS (82 base + test_first_run + test_litellm_packaging)
-- [ ] F3 — Wizard de bienvenida (llaves mínimas, política suscripción-first, §G)
+- [x] F3 — Wizard de bienvenida (sesión 44, 2026-07-11): alcance EXPANDIDO por Pipe (el
+      onboarding existente "no estaba chévere") — login + registro + activación de llaves +
+      onboarding rediseñados como UNA experiencia cinematográfica cohesiva (infraestructura
+      `frontend/app/_welcome/` con framer-motion, primer uso real en el repo). Backend de
+      activación (`welcome.py`: `/api/welcome/status`/`keys`/`keys/test`, `env_writer.py`,
+      migración `031_welcome_bootstrap.sql`). Clave de búsqueda (Voyage) activable EN CALIENTE;
+      respaldo/OpenRouter diferidos con aviso fuerte de reabrir (Riesgo #60) — gate
+      `test_welcome_keys.py` 39/39; regresión 85/85 ALL PASS; capa 2 con 4 revisores
+      independientes, 0 bloqueantes, todos los mayores/menores corregidos. Capa 3 EN VIVO de
+      Pipe PENDIENTE.
 - [ ] F4 — tauri bundle NSIS/MSI + E2E en frío (máquina limpia) + verificación 3 capas +
-      splash bajo CSP visual + IPC remoto empírico + decidir console=True
+      splash bajo CSP visual + IPC remoto empírico + decidir console=True + recompilar exes
+      incluyendo `welcome.py`/migración 031/`env_writer.py` (Riesgo #59 ampliado en sesión 44) —
+      **SIGUIENTE PENDIENTE, última fase del bloque instalador**
 - [ ] Pre-lanzamiento (acción de Pipe): registrar Azure Trusted Signing (firma) — no bloquea
       el build del equipo

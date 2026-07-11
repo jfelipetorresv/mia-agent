@@ -2406,3 +2406,96 @@ despertarlos con evidencia es parte del protocolo, no excepción; (5) el runner
 `scripts/run_tests.ps1` auto-descubre `execution/test_*.py` — los gates nuevos entran solos a
 la regresión; (6) el default de bind de un servicio empaquetado NUNCA se asume: litellm CLI
 default es 0.0.0.0 (el criterio loopback de la decisión 7 del plan aplica a TODO servicio).
+
+## Sesión 44 (2026-07-11) — BLOQUE INSTALADOR · Fase 3 (wizard de bienvenida) COMPLETA — alcance expandido a toda la primera experiencia
+
+**Objetivo aprobado por Pipe (EXPANDIDO en la sesión):** F3 iba a ser solo el wizard de llaves
+mínimas; Pipe vio el onboarding existente y dijo que "no estaba chévere" — pidió rediseñar TODA
+la primera experiencia del abogado (login + registro + activación de llaves + onboarding) como
+UNA experiencia cohesiva, con diseño "cinematográfico premium + guiado/gratificante, wow
+factor". Orquestación multi-agente: 4 recon → oleada 1 (backend de activación + infraestructura
+visual) → oleada 2 (3 pantallas rediseñadas) → integración → capa 2 (4 revisores independientes)
+→ 2 correctores → verificación final.
+
+**Infraestructura visual nueva (`frontend/app/_welcome/`):** primer uso real de framer-motion
+@12.42 en el repo (ya estaba instalado sin usar). `WelcomeShell` (pantalla completa oscura
+#060606, `.bg-aurora` con blobs teal/CTA en deriva lenta, marca respirando); `BrandMark`
+(wordmark MIA compartido, I en teal #2EA9A9, reemplaza el duplicado de `Sidebar` sin cambiar su
+look); `WelcomeProgress` (constelación de progreso, `JOURNEY_STEPS` como fuente única del
+viaje); `StepTransition`/`Stagger`/`StaggerItem`/`MotionField` (transiciones direccionales +
+stagger, todas respetan `prefers-reduced-motion`); `Celebration` (partículas sin dependencias);
+`WelcomeField`; `MiaLine` (typewriter en voz de Mia, con `aria-label` del texto completo para
+lectores de pantalla); `motion.ts` (variantes + `useReducedMotion`); barrel `index.ts`.
+
+**Backend de activación (`backend/mia/api/routes/welcome.py`):**
+- `GET /api/welcome/status` — OPEN_PATH público, se enriquece si llega token; devuelve
+  instalado/hay_usuario/`faltan_llaves{busqueda,respaldo}`/onboarding_completo/
+  `motor_detectado{claude,ollama}`/política. `faltan_llaves` se lee del `.env` en disco.
+- `POST /api/welcome/keys` — AUTH; escribe SOLO las claves pedidas al `.env` con escritura
+  atómica que preserva el resto del archivo. La clave de BÚSQUEDA (VOYAGE) se recarga EN
+  CALIENTE (embeddings.py la usa in-process vía config, sin reinicio). La clave de RESPALDO
+  (ANTHROPIC) y OpenRouter quedan DIFERIDAS al proxy LiteLLM con AVISO FUERTE de reabrir MIA.
+- `POST /api/welcome/keys/test` — AUTH; ping real fail-soft vía `run_in_threadpool`, con
+  timeout, sin filtrar la clave en la respuesta ni en logs.
+- `backend/mia/setup/env_writer.py` — upsert robusto: preserva CRLF, tolera BOM, matchea
+  líneas `export`/con indentación, `threading.Lock` anti lost-update, escritura a `.tmp` único
+  vía `mkstemp`; más `read_env_values`.
+- Migración `031_welcome_bootstrap.sql` — `mia_any_tenant_exists()` SECURITY DEFINER con
+  `search_path` fijado a `pg_catalog, public` y `tenants` calificado, `REVOKE PUBLIC` + `GRANT
+  mia_app` — devuelve SOLO un booleano de existencia, para que `/welcome/status` funcione
+  pre-login sin violar el RLS FORCE de `tenants`.
+- `middleware.py` gana `/api/welcome/status` a `OPEN_PATHS`; `main.py` registra el router;
+  `execution/init_welcome.py` aplica la migración 031 en los gates. Cambio menor §G en
+  `agent/llm.py` (`_clear_message` ya no menciona el literal `ANTHROPIC_API_KEY`).
+
+**Pantallas rediseñadas:**
+- `register/page.tsx` → "Crear tu despacho" (tras registrar, navega a `/activar`).
+- `login/page.tsx` → rediseño compacto sobre `WelcomeShell`.
+- `activar/page.tsx` (NUEVA) → elegir motor (`Mi suscripción` recomendado / `Nube` / `Todo en
+  tu equipo`, `role="radiogroup"`) + clave de búsqueda con validación en vivo (✓, debounce +
+  guardia de carrera) + clave de respaldo opcional; auto-omisión en dev; fail-open si el backend
+  de activación no responde.
+- `onboarding/page.tsx` → rediseño con el mismo lenguaje de movimiento; PRESERVA intacto el
+  autosave por `qid`, la reanudación, la generación determinista del SOUL, los tipos de campo y
+  el flujo de cierre (`complete`).
+- `AuthGate`/`OnboardingGate`/`Sidebar` ajustados al viaje nuevo (`Sidebar` se oculta en
+  `/activar` y `/onboarding`).
+
+**Verificación 3 capas:**
+- **Capa 1:** línea base sube de 84 a **85 suites** (nuevo `test_welcome_keys` 39/39). Gates
+  verdes: `test_welcome_keys` 39/39 · `test_rls` 12/12 (HALT) · `check_env_pins` 9/9 (HALT) ·
+  `test_first_run` 68/68 (con la migración 031 aplicada) · `test_setup_wizard` 28/28 ·
+  `test_onboarding_draft` 15/15 · `test_hitl_flow` 21/21. `npm run build` verde (15 páginas,
+  `/activar` nueva; `_welcome` no genera ruta propia por ser infraestructura compartida). La
+  migración 031 entra al bundle del instalador por el glob dinámico de
+  `packaging/mia-backend.spec` (`os.listdir` + filtro `.sql`, sin lista hardcodeada).
+- **Capa 2:** 4 revisores adversariales independientes de contexto fresco (seguridad,
+  corrección backend, corrección frontend, §G/visual/accesibilidad). **0 hallazgos
+  BLOQUEANTES.** Seguridad: sin mayores explotables — el intento de inyectar el `.env` para
+  sobrescribir secretos de instalación vía `/welcome/keys` queda BLOQUEADO por diseño; 5
+  menores de robustez + 1 riesgo futuro anotado. Corrección backend: 2 MAYORES + 5 menores.
+  Corrección frontend: 2 MAYORES + varios menores. §G: LIMPIO (cero jerga técnica visible al
+  abogado) + 2 hallazgos MAYORES de accesibilidad. **TODOS corregidos y re-verificados** antes
+  del cierre: el caso "nube" ahora EXIGE la clave y avisa fuerte de reabrir; OpenRouter/Anthropic
+  quedan tratadas como diferidas de verdad (ya no se les setea `config`/`os.environ` en
+  caliente); Enter ya no dispara doble validación real; los campos de clave y sus labels
+  quedaron con nombre accesible; `env_writer` preserva CRLF + candado de escritura; la función
+  SECURITY DEFINER quedó endurecida (search_path + revoke); se cerró un escape de la clave hacia
+  logs.
+- **Capa 3:** PENDIENTE de Pipe (recorrido visual en vivo del nuevo viaje de bienvenida
+  completo: registro → activar → onboarding).
+
+**Deuda/decisiones nuevas de esta sesión:**
+- Riesgo #60 nuevo (ver `bugs-and-risks.md`): el motor que depende del proxy LiteLLM no queda
+  activo hasta reabrir MIA, porque `mia-litellm.exe` solo lee el `.env` al arrancar y F3 no abre
+  IPC Tauri para reiniciarlo (ligado al punto 2 del Riesgo #59). Mitigado con clave obligatoria +
+  aviso fuerte en la pantalla de activación para la política "nube"; no aplica al equipo Lexia
+  (suscripción con el CLI de Pipe).
+- Modelo de confianza mono-despacho documentado en `welcome.py`: cualquier usuario autenticado
+  puede escribir las llaves GLOBALES de la instalación; si MIA pasa a multi-despacho hará falta
+  un rol "admin de instalación".
+- El Riesgo #59 (E2E de F4) ahora también debe recompilar los exes incluyendo `welcome.py` +
+  migración 031 + `env_writer.py`.
+
+**Próximo:** F4 — tauri bundle NSIS/MSI + E2E en frío en máquina limpia + los puntos acumulados
+del Riesgo #59. Es la ÚLTIMA de las 4 fases del bloque instalador.

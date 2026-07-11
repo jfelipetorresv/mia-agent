@@ -3,11 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Scale } from "lucide-react";
 import { ApiError, apiSend, setToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import {
+  WelcomeShell,
+  WelcomeProgress,
+  StepTransition,
+  Stagger,
+  WelcomeField,
+  MiaLine,
+} from "@/app/_welcome";
 
 type AuthResponse = { token: string; tenant_id: string };
 
@@ -30,7 +36,9 @@ export default function RegisterPage() {
         password,
       });
       setToken(res.token);
-      router.replace("/onboarding");
+      // Primer viaje: tras crear el despacho seguimos a la activación de Mia,
+      // no directo a conocerte. La navegación explícita la dispara esta pantalla.
+      router.replace("/activar");
     } catch (err: any) {
       // Solo mensajes del backend (ApiError, en llano — p. ej. "Email ya registrado"
       // o el freno anti fuerza-bruta); un error de red jamás se muestra en crudo.
@@ -42,30 +50,45 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-background px-6">
-      <div className="w-full max-w-sm animate-slide-up">
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-            <Scale className="h-6 w-6" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Crear cuenta</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Crea el espacio privado de tu despacho.</p>
-        </div>
+    <WelcomeShell
+      progress={<WelcomeProgress current={0} />}
+      footer={
+        <span>
+          ¿Ya trabajas con Mia?{" "}
+          <Link href="/login" className="font-medium text-primary hover:underline">
+            Entrar
+          </Link>
+        </span>
+      }
+    >
+      <StepTransition stepKey="crear" direction={1}>
+        {/* El propio <form> es el contenedor de stagger (as="form"): así cada
+            WelcomeField es hijo DIRECTO y su entrada se escalona de verdad. */}
+        <Stagger as="form" onSubmit={submit} className="space-y-6">
+          <WelcomeField>
+            <div className="space-y-2 text-center">
+              <MiaLine
+                text="Soy Mia. Creemos el espacio de tu despacho."
+                className="text-xl sm:text-2xl"
+              />
+              <p className="text-sm text-muted-foreground">
+                Un lugar privado, solo tuyo, para trabajar tus casos conmigo.
+              </p>
+            </div>
+          </WelcomeField>
 
-        <form onSubmit={submit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="firm">Nombre del despacho</Label>
+          <WelcomeField label="¿Cómo se llama tu despacho?" htmlFor="firm">
             <Input
               id="firm"
               value={firmName}
               onChange={(e) => setFirmName(e.target.value)}
               placeholder="Lexia Abogados"
+              autoFocus
               required
             />
-          </div>
+          </WelcomeField>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="email">Email</Label>
+          <WelcomeField label="Tu correo" htmlFor="email">
             <Input
               id="email"
               value={email}
@@ -75,10 +98,9 @@ export default function RegisterPage() {
               placeholder="tu@despacho.com"
               required
             />
-          </div>
+          </WelcomeField>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="password">Contraseña</Label>
+          <WelcomeField label="Crea una contraseña" htmlFor="password" hint="Mínimo 8 caracteres.">
             <Input
               id="password"
               value={password}
@@ -86,29 +108,35 @@ export default function RegisterPage() {
               type="password"
               autoComplete="new-password"
               minLength={8}
-              placeholder="Mínimo 8 caracteres"
+              placeholder="••••••••"
               required
             />
-          </div>
+          </WelcomeField>
 
           {error ? (
-            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-              {error}
-            </p>
+            <WelcomeField>
+              <p
+                className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                role="alert"
+              >
+                {error}
+              </p>
+            </WelcomeField>
           ) : null}
 
-          <Button type="submit" disabled={loading} className="w-full" size="lg">
-            {loading ? "Creando…" : "Crear cuenta"}
-          </Button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-muted-foreground">
-          ¿Ya tienes cuenta?{" "}
-          <Link href="/login" className="font-medium text-primary hover:underline">
-            Ingresar
-          </Link>
-        </p>
-      </div>
-    </div>
+          <WelcomeField>
+            <Button
+              type="submit"
+              disabled={loading}
+              variant="cta"
+              size="lg"
+              className="w-full"
+            >
+              {loading ? "Creando tu espacio…" : "Crear mi despacho"}
+            </Button>
+          </WelcomeField>
+        </Stagger>
+      </StepTransition>
+    </WelcomeShell>
   );
 }
