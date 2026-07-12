@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConnectorCard, fmt } from "@/app/_components/PanelUI";
+import ConnectedSystemsSection from "@/app/_components/ConnectedSystemsSection";
 import MailboxSectionLoader from "@/app/_components/MailboxSectionLoader";
 import FolderPicker from "@/app/_components/FolderPicker";
 
@@ -298,6 +299,9 @@ export default function ConexionesSection({
         ) : null}
         {speechMsg ? <p className="text-sm text-warning">{speechMsg}</p> : null}
       </ConnectorCard>
+
+      {/* Sistemas conectados (CP-E6) — una tarjeta por sistema */}
+      <ConnectedSystemsSection />
 
       {/* Calendario y correo */}
       <ConnectorCard icon={Mail} title="Calendario y correo" subtitle="Microsoft 365 o Google Workspace">

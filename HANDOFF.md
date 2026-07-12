@@ -837,7 +837,9 @@ y explicativos (estilo Hermes: cada opción con su descripción, un default sens
 
 ### Frontend PENDIENTE para Cursor — pantalla "Sistemas conectados"
 
-En "Configurar a Mia", una sección nueva para conectar sistemas. Endpoints (`/api/mcp/*`):
+**COMPLETADO** (Cursor capa 3 · 2026-07-12). Detalle en "Hallazgos de Cursor (capa 3)" al final.
+
+En Configuración → Conexiones, sección "Sistemas conectados". Endpoints (`/api/mcp/*`):
 
 - `GET /api/mcp/status` → lista de sistemas. Cada uno trae: `slug`, `display_name`
   (mostrar ESTE, en llano), `description`, `permissions_note` (nota de permisos mínimos —
@@ -1929,6 +1931,25 @@ la app usa mensajes inline en ámbar. Unificar cuando se retoque esa pantalla.
 **Build:** `npm run build` verde (12/12 páginas).
 
 **Pendiente de Pipe (capa 3 en vivo):** completar el onboarding de punta a punta y verificar que el resumen final refleja las respuestas; probar selección de herramientas y días de fin de semana.
+
+### 2026-07-12 — CP-E6: Sistemas conectados (capa 3)
+
+**Qué se construyó:**
+
+- **`frontend/app/_components/ConnectedSystemsSection.tsx`** — UI consent-first sobre `/api/mcp/*`.
+- Integrado en **Configuración → Conexiones** (`ConexionesSection.tsx`), alineado al design system actual (`ConnectorCard`, `Button`, `Input`, `Label`).
+
+**Comportamiento:**
+
+- `GET /api/mcp/status` → una tarjeta por sistema (`display_name`, descripción, nota de permisos).
+- Formulario con campos `fields` (secretos como password); **Conectar** → `POST .../enable` con `{ env, secrets }`.
+- Si habilitado: **Desconectar** (`disable`) y **Borrar credenciales** (`forget`, con confirmación).
+- Secretos nunca se precargan; errores del backend en llano (`ApiError.detail`).
+- §G: sin "MCP" / "servidor" / "tenant" en pantalla.
+
+**Build:** `npm run build` verde (warnings preexistentes de `useReducedMotion` en `_welcome/`, no bloquean).
+
+**Pendiente de Pipe:** conectar un sistema real cuando el cliente MCP esté activo; OAuth/correo siguen con activación diferida.
 
 ### Corrección post-Cursor (Claude Code · verificación de la entrega integrada)
 
