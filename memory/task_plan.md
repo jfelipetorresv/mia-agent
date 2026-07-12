@@ -318,9 +318,16 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
       `test_welcome_keys.py` 39/39; regresión 85/85 ALL PASS; capa 2 con 4 revisores
       independientes, 0 bloqueantes, todos los mayores/menores corregidos. Capa 3 EN VIVO de
       Pipe PENDIENTE.
-- [ ] F4 — tauri bundle NSIS/MSI + E2E en frío (máquina limpia) + verificación 3 capas +
-      splash bajo CSP visual + IPC remoto empírico + decidir console=True + recompilar exes
-      incluyendo `welcome.py`/migración 031/`env_writer.py` (Riesgo #59 ampliado en sesión 44) —
-      **SIGUIENTE PENDIENTE, última fase del bloque instalador**
+- [x] F4 — instalador NSIS de doble clic ENSAMBLADO (sesión 45): `packaging/build_installer.ps1`
+      (recompila 3 payloads + copia pgsql portable con pgvector, sin pgAdmin) + `bundle.resources`
+      en tauri.conf.json (payloads + `orchestration.json` renombrado junto al exe, sin subcarpeta
+      `resources/` — VERIFICADO empíricamente con install en frío aislado) + `offlineInstaller`
+      (instala sin internet) + gate `test_installer_bundle.py`. Salida real:
+      `Mia_0.1.0_x64-setup.exe` ~452 MB. console=True (la cáscara oculta la ventana con
+      CREATE_NO_WINDOW; cierra Riesgo #59 pt 3/7). Regresión: línea base 85→86 suites; capa 2
+      con 3 revisores, 5 hallazgos corregidos. **PENDIENTE = capa 3 de Pipe: E2E en máquina 100%
+      limpia (doble clic en frío) — física, no automatizable en la máquina de dev.**
+- [ ] Reinicio automático del proxy LiteLLM tras guardar clave en el wizard (Riesgo #60) — requiere
+      IPC de Tauri; NO se hizo en F4, queda para una ola futura.
 - [ ] Pre-lanzamiento (acción de Pipe): registrar Azure Trusted Signing (firma) — no bloquea
       el build del equipo

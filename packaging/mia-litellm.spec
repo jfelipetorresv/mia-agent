@@ -95,7 +95,11 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,  # console=True: mismo criterio pendiente que mia-backend.spec.
+    # console=True (F4 · sesión 45, cierre Riesgo #59 pt 7): igual criterio que
+    # mia-backend.spec — la cáscara lo lanza con CREATE_NO_WINDOW, que oculta la
+    # ventana al abogado (§G) sin volver el exe windowed. console=False descartaría
+    # el stdout que la cáscara redirige a archivo para diagnóstico. Reversible.
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

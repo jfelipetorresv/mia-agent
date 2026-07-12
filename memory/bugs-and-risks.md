@@ -1202,7 +1202,7 @@ gate HITL verificado: la entrevista completa sin guardar deja 0 filas). Gate: `t
 
 ---
 
-## Riesgo #59 — Verificaciones del instalador diferidas al E2E de Fase 4 (ABIERTO, 2026-07-10)
+## Riesgo #59 — Verificaciones del instalador diferidas al E2E de Fase 4 (CASI CERRADO tras F4, sesión 45 — solo resta el E2E en frío en máquina 100% limpia, que es de Pipe)
 
 **Qué:** el blindaje de la cáscara y el empaquetado (sesión 42) dejaron verificaciones que SOLO
 pueden hacerse lanzando la cáscara/instalador de verdad, prohibidas en la sesión por el
@@ -1234,7 +1234,25 @@ bloque instalador sin ellas.
 incluyendo `welcome.py` (rutas de activación), la migración `031_welcome_bootstrap.sql` y
 `env_writer.py` — el `mia-backend.exe` actual en `dist/` no los trae.
 
-## 🟡 Riesgo #60 — El motor que depende del proxy LiteLLM no queda activo hasta reabrir MIA (2026-07-11, sesión 44)
+**CERRADO en su mayoría (sesión 45, F4):**
+- pt 1 (splash bajo CSP): css/js externalizados verificados por `test_shell_hardening` 77/77; la
+  vista VISUAL sigue siendo de Pipe (capa 3).
+- pt 3 y 7 (console=True/negra): RESUELTO por diseño — la cáscara lanza cada hijo con
+  `CREATE_NO_WINDOW` (lib.rs), que oculta la ventana SIN volver el exe windowed. Se mantiene
+  `console=True` a propósito: windowed vaciaría el stdout que `run_setup` muestra al abogado como
+  motivo de error del primer arranque. (Hallazgo de capa 2: yo había puesto console=False y lo
+  revertí.)
+- pt 5 (recompilar exes con F2/F3 + placement): HECHO. Los dos exes recompilados (con welcome.py,
+  migración 031, env_writer.py, Blindaje 6 loopback en litellm) y **la ubicación física
+  verificada empíricamente**: instalación en frío aislada → payloads + `orchestration.json` caen
+  DIRECTAMENTE junto al exe, NO bajo `resources/`. La incógnita central de F4 queda resuelta.
+- **Resta SOLO:** pt 2 (IPC remoto `window.__TAURI__===undefined` empírico) y pt 4/6 (E2E completo
+  en frío en máquina 100% limpia + primer arranque interrumpido con la cáscara real). Son físicos
+  (esta máquina de dev tiene el entorno + colisión de puerto 55432) → **capa 3 de Pipe**.
+- Además F4 halló y cerró en capa 2: frontend expuesto en 0.0.0.0 → atado a 127.0.0.1; pgAdmin 4
+  (~700 MB) sacado del pgsql empaquetado; WebView2 `offlineInstaller` para instalar sin internet.
+
+## 🟡 Riesgo #60 — El motor que depende del proxy LiteLLM no queda activo hasta reabrir MIA (2026-07-11, sesión 44 · SIGUE ABIERTO tras F4/sesión 45: el reinicio automático por IPC de Tauri NO se implementó en F4; la mitigación de F3 —clave obligatoria + aviso de reabrir— sigue vigente; queda para una ola futura)
 
 **Contexto:** F3 (wizard de bienvenida) añadió `POST /api/welcome/keys` para activar llaves
 sin volver a la terminal. La clave de BÚSQUEDA (VOYAGE) se recarga EN CALIENTE porque

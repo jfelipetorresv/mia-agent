@@ -1,5 +1,20 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-11 — Sesión 45 · BLOQUE INSTALADOR F4 — instalador de doble clic ensamblado
+TL;DR: se ensambló el instalador NSIS de doble clic que un abogado instala sin Python/Node/Postgres; la incógnita crítica (dónde caen los payloads) se resolvió empíricamente a favor y la capa 2 cerró 5 hallazgos antes del sello.
+Qué construimos:
+- `packaging/build_installer.ps1` (contrato de ensamblaje): recompila los 3 payloads, copia el PostgreSQL 16 portable **con pgvector** a `dist/pgsql`, verifica y corre el bundler NSIS de Tauri.
+- `desktop/src-tauri/tauri.conf.json`: `bundle.resources` (mapa que deja los 4 payloads + yaml + `orchestration.json` RENOMBRADO junto al exe), `targets:["nsis"]`, `windows.nsis` (installMode currentUser = sin admin, lzma), WebView2 `offlineInstaller` (instala sin internet).
+- Gate nuevo `execution/test_installer_bundle.py`: invariante central = cada payload que la cáscara busca en `${exe_dir}\X` tiene destino `X` en el mapa, + el renombrado a `orchestration.json`, + console y exclusión de pgAdmin.
+- Instalador real producido y probado: `Mia_0.1.0_x64-setup.exe` (~452 MB). Instalado en carpeta aislada → los motores + `orchestration.json` caen DIRECTAMENTE junto al exe (NO bajo `resources/`) → la cáscara los encuentra sin cambios.
+Qué decidimos:
+- Capa 1: gates del instalador verdes (test_installer_bundle 30/30, test_packaging 23/23, test_litellm_packaging 60/60, test_frontend_packaging 24/24, test_shell_hardening 77/77, test_first_run 68/68) + HALT (test_rls 12/12, check_env_pins 9/9) + test_welcome_keys 39/39. Línea base sube de 85 a 86 suites.
+- Capa 2: 3 revisores independientes (seguridad, corrección/build, coherencia cáscara/§G), 0 bloqueantes, ningún secreto de Pipe en el bundle, DB endurecida. 5 correcciones aplicadas y re-verificadas: (1) REVERTIR console=False→True (la cáscara ya oculta la ventana con CREATE_NO_WINDOW; windowed vaciaba el stdout del primer arranque — regresión que introduje y corregí); (2) frontend atado a 127.0.0.1 (estaba en 0.0.0.0, expuesto a la LAN); (3) sacar pgAdmin 4 del pgsql (−736 MB: 860→124 MB); (4) WebView2 offlineInstaller (instalación sin internet); (5) endurecer el gate (backslash + pgAdmin).
+- Decisión console: la ventana negra la resuelve la cáscara (CREATE_NO_WINDOW), no el spec → console=True para no perder el diagnóstico del setup (cierra Riesgo #59 pt 3/7 correctamente).
+Qué sigue:
+- Capa 3 de Pipe (ÚNICO pendiente de F4): E2E en máquina 100% limpia (doble clic, primer arranque en frío, ver el viaje de bienvenida). Es física, no automatizable aquí (esta máquina tiene el entorno dev + colisión de puerto 55432).
+- Riesgo #60 (reinicio automático del proxy LiteLLM tras guardar clave) sigue abierto: requiere IPC de Tauri, no se hizo en F4. Acciones de Pipe sin cambio: firma digital (Azure Trusted Signing) + apps OAuth.
+
 ## 2026-07-11 — Sesión 44 · BLOQUE INSTALADOR F3 COMPLETA — primera experiencia del abogado rediseñada
 TL;DR: el wizard de bienvenida creció a pedido de Pipe: login + registro + activación de llaves + onboarding ahora son UNA experiencia cinematográfica cohesiva, con activación real de la clave de búsqueda en caliente.
 Qué construimos:

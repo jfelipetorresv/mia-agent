@@ -929,16 +929,18 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
             .ok_or("no pude preparar la pantalla")?;
         // El server.js del standalone (instalado) toma el puerto de la env
         // PORT y el host de HOSTNAME. Fijamos PORT al puerto configurado y
-        // LIMPIAMOS HOSTNAME: si el sistema lo trae seteado (nombre de equipo
-        // que resuelve a una IP de VPN), el server escucharía en esa IP y ni
-        // localhost ni 127.0.0.1 conectarían (gotcha de build_frontend.ps1).
-        // En dev (npm run start -- -p 3100) ambos coinciden en 3100: inocuo.
+        // HOSTNAME=127.0.0.1 (loopback): así (a) el server NO hereda un HOSTNAME
+        // del sistema que resuelva a una IP de VPN y dejaría a localhost sin
+        // conectar (gotcha de build_frontend.ps1), y (b) NO escucha en 0.0.0.0
+        // —el default de server.js sin HOSTNAME—, que expondría la pantalla de
+        // MIA a toda la LAN/VPN del despacho (seguridad, capa 2 sesión 45). La
+        // ventana Tauri navega a localhost:3100, que resuelve a 127.0.0.1: OK.
         let child = Command::new(prog)
             .args(rest)
             .current_dir(&cfg.frontend.cwd)
             .creation_flags(CREATE_NO_WINDOW)
             .env("PORT", cfg.frontend.port.to_string())
-            .env_remove("HOSTNAME")
+            .env("HOSTNAME", "127.0.0.1")
             .stdout(child_log(&log_dir, "frontend"))
             .stderr(child_log(&log_dir, "frontend"))
             .spawn()

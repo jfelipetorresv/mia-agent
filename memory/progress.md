@@ -2499,3 +2499,37 @@ lectores de pantalla); `motion.ts` (variantes + `useReducedMotion`); barrel `ind
 
 **Próximo:** F4 — tauri bundle NSIS/MSI + E2E en frío en máquina limpia + los puntos acumulados
 del Riesgo #59. Es la ÚLTIMA de las 4 fases del bloque instalador.
+
+---
+
+## Sesión 45 — 2026-07-11
+**Módulo:** BLOQUE INSTALADOR · Fase 4 (instalador de doble clic) — **ENSAMBLADA** (falta capa 3 en frío de Pipe)
+
+Construido:
+- `packaging/build_installer.ps1` (contrato de ensamblaje): recompila los 3 payloads, copia el
+  PostgreSQL 16 portable con pgvector a `dist/pgsql` (excluyendo pgAdmin/StackBuilder), verifica
+  y corre el bundler NSIS de Tauri. Autodetecta el pgsql en `..\tools\postgres16-portable-full`.
+- `desktop/src-tauri/tauri.conf.json`: `bundle.resources` (mapa) deja los 4 payloads + yaml +
+  `orchestration.json` RENOMBRADO junto al exe; `targets:["nsis"]`; `windows.nsis`
+  (installMode currentUser, lzma); WebView2 `offlineInstaller`.
+- Gate nuevo `execution/test_installer_bundle.py`: invariante central (cada `${exe_dir}\X` de la
+  cáscara tiene destino `X` en el mapa) + renombrado + console=True + exclusión de pgAdmin.
+- Salida real: `Mia_0.1.0_x64-setup.exe` ~452 MB. Instalación aislada → payloads junto al exe
+  (NO bajo `resources/`), pgvector presente, pgAdmin ausente, footprint 804 MB. El desinstalador
+  también quedó verificado (limpio).
+
+Errores/hallazgos (capa 2, 3 revisores, 0 bloqueantes):
+- **console=False era un error mío**: la cáscara ya oculta la ventana con CREATE_NO_WINDOW; un exe
+  windowed vacía el stdout que `run_setup` muestra al abogado como motivo de error del primer
+  arranque → REVERTIDO a console=True (verificado a nivel PE: subsistema consola).
+- **Frontend en 0.0.0.0** (expuesto a la LAN) → atado a 127.0.0.1 (lib.rs `env("HOSTNAME","127.0.0.1")`).
+- **pgAdmin 4 (~700 MB)** empaquetado sin uso → excluido (860→124 MB).
+- **WebView2 downloadBootstrapper** → `offlineInstaller` (instala sin internet, sirve el E2E en frío).
+- Gate endurecido (backslash en el escaneo + guarda de pgAdmin). Ningún secreto de Pipe en el bundle.
+
+Tests: línea base 85→86 suites. test_installer_bundle 30/30, test_shell_hardening 77/77,
+test_packaging 23/23, test_litellm_packaging 60/60, test_frontend_packaging 24/24,
+test_first_run 68/68, test_welcome_keys 39/39, HALT test_rls 12/12 + check_env_pins 9/9.
+
+**Próximo:** capa 3 de Pipe = E2E en máquina 100% limpia (doble clic en frío). Riesgo #60 (reinicio
+IPC del proxy) queda para una ola futura. Acciones de Pipe: firma Azure Trusted Signing + apps OAuth.

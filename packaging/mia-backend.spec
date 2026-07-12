@@ -117,7 +117,16 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,  # console=True por ahora (decisión pendiente: modo ventana/servicio en fases futuras).
+    # console=True (F4 · sesión 45, cierre Riesgo #59 pt 3): la cáscara Tauri
+    # lanza este exe con CREATE_NO_WINDOW (desktop/src-tauri/src/lib.rs), que YA
+    # oculta la ventana de consola negra al abogado (§G) SIN perder stdout. Un
+    # exe windowed (console=False) haría que el bootloader de PyInstaller descarte
+    # sys.stdout AUNQUE la cáscara redirija el handle a archivo: el paso de primer
+    # arranque (run_setup) le muestra al abogado la ÚLTIMA LÍNEA de setup.out.log
+    # como progreso/motivo de error — con windowed ese log queda vacío y, si el
+    # bootstrap falla, el abogado no sabría por qué. Por eso console=True + la
+    # ventana la esconde la cáscara, no el spec. Reversible.
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
