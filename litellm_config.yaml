@@ -18,9 +18,21 @@ model_list:
   # de la API directa de Anthropic. OPCIONAL: sin OPENROUTER_API_KEY en el .env, este
   # alias no se usa (agent/llm.py solo lo mete en la cadena si hay clave). Poner tope
   # de gasto en el panel de OpenRouter al crear la clave.
+  # DEUDA (revisión capa 2, MENOR 4): confirmar el slug EXACTO en openrouter.ai/models
+  # antes de producción — sin clave no se pudo validar contra el catálogo. Un slug errado
+  # falla MODEL_UNAVAILABLE y la cadena degrada a mia-local (no rompe, pero pierde el motor).
   - model_name: openrouter-sonnet
     litellm_params:
       model: openrouter/anthropic/claude-sonnet-4.6
+      api_key: os.environ/OPENROUTER_API_KEY
+  # CP-OR · OpenRouter económico para tareas baratas (compresión/clasificación/auxiliares)
+  # cuando la política es "openrouter" (motor principal propio del abogado). Misma clave
+  # única; modelo pequeño para no gastar de más. agent/llm.py lo usa en la cadena de la
+  # política "openrouter"; sin OPENROUTER_API_KEY el alias no se usa.
+  # DEUDA (MENOR 4): confirmar el slug EXACTO en openrouter.ai/models (ver nota en openrouter-sonnet).
+  - model_name: openrouter-haiku
+    litellm_params:
+      model: openrouter/anthropic/claude-haiku-4.5
       api_key: os.environ/OPENROUTER_API_KEY
   # Modelo local (Ollama). Sin coste y sin Anthropic. Activar con
   # MIA_MODEL=mia-local en .env + reiniciar uvicorn. ollama_chat/ usa /api/chat.

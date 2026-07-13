@@ -20,6 +20,7 @@ import {
   Cpu,
   Loader2,
   Sparkles,
+  Wallet,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -39,12 +40,12 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 // ── Contratos backend (welcome) ────────────────────────────────────────────
-type Politica = "suscripcion" | "nube" | "soberano";
+type Politica = "suscripcion" | "nube" | "soberano" | "openrouter";
 
 interface WelcomeStatus {
   instalado: boolean;
   hay_usuario: boolean;
-  faltan_llaves: { busqueda: boolean; respaldo: boolean };
+  faltan_llaves: { busqueda: boolean; respaldo: boolean; openrouter: boolean };
   onboarding_completo: boolean;
   motor_detectado: { claude: boolean; ollama: boolean };
   politica: Politica;
@@ -78,7 +79,7 @@ function plainMessage(err: unknown, fallback: string): string {
 }
 
 // ── Hook: validación en vivo de una clave (con debounce y guardia de carrera) ─
-function useKeyValidation(tipo: "busqueda" | "respaldo") {
+function useKeyValidation(tipo: "busqueda" | "respaldo" | "openrouter") {
   const [value, setValue] = React.useState("");
   const [state, setState] = React.useState<TestState>("idle");
   const [motivo, setMotivo] = React.useState("");
@@ -336,6 +337,7 @@ export default function ActivarPage() {
   const [politica, setPolitica] = React.useState<Politica>("suscripcion");
   const busqueda = useKeyValidation("busqueda");
   const respaldo = useKeyValidation("respaldo");
+  const openrouter = useKeyValidation("openrouter");
 
   const [saving, setSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState("");
@@ -348,7 +350,13 @@ export default function ActivarPage() {
       try {
         const s = await apiGet<WelcomeStatus>("/api/welcome/status");
         if (cancel) return;
-        const nadaQueFalta = !s.faltan_llaves.busqueda && !s.faltan_llaves.respaldo;
+        // MENOR 3 (revisión capa 2): si el motor elegido es la cuenta de OpenRouter y esa
+        // clave falta, NO auto-saltar — el asistente debe pedirla; de lo contrario Mia
+        // razonaría en local en silencio. La clave de OpenRouter solo es imprescindible
+        // cuando ES el motor (política 'openrouter'); como respaldo opcional no bloquea.
+        const faltaMotorOpenrouter = s.politica === "openrouter" && s.faltan_llaves.openrouter;
+        const nadaQueFalta =
+          !s.faltan_llaves.busqueda && !s.faltan_llaves.respaldo && !faltaMotorOpenrouter;
         // En modo dev (no instalado) o si no falta ninguna clave, este paso no debe
         // estorbar: se salta directo a "Conocer tu despacho".
         if (!s.instalado || nadaQueFalta) {
@@ -379,25 +387,44 @@ export default function ActivarPage() {
   }
 
   // Guarda lo que haya (política + claves validadas) y termina el paso.
-  // `includeRespaldo=false` cuando el abogado pulsa "Omitir" — así no se envía
-  // la clave de respaldo aunque haya alcanzado a validarla antes de omitir.
-  async function finish(includeRespaldo: boolean) {
+  // `includeRespaldo=false` / `includeOpenrouter=false` cuando el abogado pulsa
+  // "Omitir" — así no se envía esa clave aunque haya alcanzado a validarla antes.
+  async function finish(opts: { includeRespaldo?: boolean; includeOpenrouter?: boolean } = {}) {
+    const { includeRespaldo = true, includeOpenrouter = true } = opts;
     if (!status) return;
     setSaving(true);
     setSaveError("");
     try {
-      // Fija la política solo si el abogado la cambió (el default ya es "suscripcion").
-      if (politica !== status.politica) {
-        await apiSend("PUT", "/api/settings/model-policy", { politica });
+      // Si el abogado conectó una clave de OpenRouter válida y NO la eligió como
+      // motor principal, la está conectando como respaldo/"más uso": ese es el
+      // opt-in de confidencialidad para enrutar el overflow a un tercero (regla 2).
+      // Con "openrouter" como motor no hace falta (ya funciona sin el flag), pero
+      // mandarlo true es inocuo — se decide igual para no bifurcar la lógica.
+      const conectoOpenrouter = includeOpenrouter && openrouter.state === "ok" && openrouter.value.trim().length > 0;
+
+      // Fija la política si el abogado la cambió, o si hace falta mandar el opt-in
+      // de OpenRouter (el PUT es el único lugar que persiste ambas cosas juntas).
+      if (politica !== status.politica || conectoOpenrouter) {
+        try {
+          await apiSend("PUT", "/api/settings/model-policy", {
+            politica,
+            ...(conectoOpenrouter ? { allow_openrouter: true } : {}),
+          });
+        } catch {
+          // Fail-soft (§G): si esto falla, no rompe el asistente — las llaves de
+          // abajo se guardan igual; el abogado puede activar el respaldo después.
+        }
       }
 
       // Solo se envían claves que quedaron validadas (✓). Las omitidas no se tocan.
-      const payload: { busqueda?: string; respaldo?: string } = {};
+      const payload: { busqueda?: string; respaldo?: string; openrouter?: string } = {};
       if (busqueda.state === "ok" && busqueda.value.trim()) payload.busqueda = busqueda.value.trim();
       if (includeRespaldo && respaldo.state === "ok" && respaldo.value.trim())
         payload.respaldo = respaldo.value.trim();
+      if (includeOpenrouter && openrouter.state === "ok" && openrouter.value.trim())
+        payload.openrouter = openrouter.value.trim();
 
-      if (payload.busqueda || payload.respaldo) {
+      if (payload.busqueda || payload.respaldo || payload.openrouter) {
         const res = await apiSend<KeysResult>("POST", "/api/welcome/keys", payload);
         // Si el backend devolvió `aviso` (se guardó una clave DIFERIDA que solo
         // el proxy lee al arrancar) Y estamos dentro de la cáscara de escritorio,
@@ -511,8 +538,17 @@ export default function ActivarPage() {
 
   if (!status) return null; // salvaguarda de tipos
 
-  // Encuadre de la clave de respaldo según el motor elegido.
+  // Encuadre de la clave de respaldo (Anthropic) según el motor elegido: en "nube" ES el
+  // motor (obligatoria); en el resto es un plan B opcional.
   const respaldoEsMotor = politica === "nube";
+  // La clave de OpenRouter es el MOTOR cuando el abogado eligió "Tu cuenta de OpenRouter"
+  // (obligatoria); en "nube"/"suscripción" aparece como respaldo/"más uso" (opcional). En
+  // "soberano" no se ofrece (nada sale del equipo).
+  const openrouterEsMotor = politica === "openrouter";
+  // El paso de OpenRouter existe salvo en "soberano"; el paso de respaldo (Anthropic)
+  // existe salvo cuando OpenRouter ya es el motor. El ÚLTIMO paso presente es el que
+  // guarda y termina; el paso de respaldo solo es terminal en "soberano".
+  const respaldoIsLast = politica === "soberano";
 
   // ── Sub-pasos del asistente de activación ────────────────────────────────
   const stepMotor = (
@@ -530,7 +566,9 @@ export default function ActivarPage() {
           aria-label="Motor de Mia"
           className="flex flex-col gap-3"
           onKeyDown={(e) => {
-            const order: Politica[] = ["suscripcion", "nube", "soberano"];
+            // El orden DEBE coincidir con el orden visual de las tarjetas (abajo):
+            // las flechas mueven el foco por índice de DOM.
+            const order: Politica[] = ["suscripcion", "nube", "openrouter", "soberano"];
             const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
             const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
             if (!forward && !backward) return;
@@ -563,6 +601,13 @@ export default function ActivarPage() {
             }
             selected={politica === "nube"}
             onSelect={() => setPolitica("nube")}
+          />
+          <EngineCard
+            icon={Wallet}
+            title="Tu cuenta de OpenRouter"
+            description="Tú conectas tu cuenta y la cargas de crédito; pagas tu propio uso. Ideal si no usas la suscripción del equipo."
+            selected={politica === "openrouter"}
+            onSelect={() => setPolitica("openrouter")}
           />
           <EngineCard
             icon={Cpu}
@@ -702,14 +747,131 @@ export default function ActivarPage() {
             className="w-full"
             // En "nube" la clave de respaldo ES el motor primario: obligatoria — el
             // botón exige clave válida. En suscripción/soberano es de verdad opcional:
-            // basta que, si escribió algo, esté validado.
+            // basta que, si escribió algo, esté validado. Cuando este paso NO es el
+            // último (suscripción/nube tienen después el paso de OpenRouter), el botón
+            // avanza; solo en "soberano" (paso terminal) guarda y termina.
             disabled={
-              saving ||
+              (respaldoIsLast && saving) ||
               (respaldoEsMotor
                 ? respaldo.state !== "ok"
                 : respaldo.value.trim().length > 0 && respaldo.state !== "ok")
             }
-            onClick={() => finish(true)}
+            onClick={respaldoIsLast ? () => finish({ includeRespaldo: true }) : goNext}
+          >
+            {respaldoIsLast && saving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Guardando…
+              </>
+            ) : respaldoIsLast ? (
+              "Terminar y continuar"
+            ) : (
+              "Continuar"
+            )}
+          </Button>
+          {/* Salto solo cuando el respaldo es REALMENTE opcional. En "nube" no se ofrece:
+              sin esa clave Mia no tiene motor para razonar. Terminal (soberano) omite y
+              termina; intermedio (suscripción) simplemente avanza al paso de OpenRouter. */}
+          {!respaldoEsMotor && (
+            <Button
+              variant="ghost"
+              size="lg"
+              className="w-full"
+              disabled={saving}
+              onClick={respaldoIsLast ? () => finish({ includeRespaldo: false }) : goNext}
+            >
+              {respaldoIsLast ? "Omitir por ahora" : "Lo haré después"}
+            </Button>
+          )}
+        </div>
+      </WelcomeField>
+    </Stagger>
+  );
+
+  const stepOpenrouter = (
+    <Stagger className="flex flex-col gap-6">
+      <StaggerItem>
+        <button
+          type="button"
+          onClick={goBack}
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Volver
+        </button>
+      </StaggerItem>
+
+      <StaggerItem>
+        <MiaLine
+          text={
+            openrouterEsMotor
+              ? "Para razonar con tu cuenta de OpenRouter necesito tu clave. Tú la creas y la cargas de crédito."
+              : "¿Quieres más uso? Conecta tu cuenta de OpenRouter como respaldo."
+          }
+          className="text-xl leading-snug sm:text-2xl"
+        />
+      </StaggerItem>
+
+      <WelcomeField
+        hint={
+          openrouterEsMotor
+            ? "Con esta clave uso tu cuenta de OpenRouter para razonar. Tú pagas tu propio uso."
+            : "Cuando tu motor principal no esté disponible, sigo trabajando con tu cuenta de OpenRouter. Es opcional; puedes añadirla ahora o más adelante."
+        }
+      >
+        <KeyField
+          id="clave-openrouter"
+          label="Clave de tu cuenta de OpenRouter"
+          value={openrouter.value}
+          onChange={openrouter.setValue}
+          state={openrouter.state}
+          motivo={openrouter.motivo}
+          onRecheck={openrouter.recheck}
+          placeholder={
+            openrouterEsMotor
+              ? "Pega aquí la clave de tu cuenta de OpenRouter"
+              : "Pega aquí tu clave de OpenRouter (opcional)"
+          }
+        />
+        <div className="mt-3 flex flex-col gap-1.5 text-xs text-muted-foreground">
+          <a
+            href="https://openrouter.ai/keys"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex w-fit items-center gap-1 text-primary underline-offset-4 transition-colors hover:underline"
+          >
+            Crea tu clave en openrouter.ai/keys
+          </a>
+          <span>Ponle un tope de gasto en OpenRouter para no llevarte sorpresas.</span>
+        </div>
+      </WelcomeField>
+
+      {saveError && (
+        <StaggerItem>
+          <p
+            className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+          >
+            {saveError}
+          </p>
+        </StaggerItem>
+      )}
+
+      <WelcomeField>
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="cta"
+            size="lg"
+            className="w-full"
+            // Motor principal (openrouter): clave OBLIGATORIA. Respaldo/"más uso"
+            // (suscripción/nube): opcional — basta que, si escribió algo, esté validado.
+            disabled={
+              saving ||
+              (openrouterEsMotor
+                ? openrouter.state !== "ok"
+                : openrouter.value.trim().length > 0 && openrouter.state !== "ok")
+            }
+            onClick={() => finish({ includeOpenrouter: true })}
           >
             {saving ? (
               <>
@@ -720,15 +882,15 @@ export default function ActivarPage() {
               "Terminar y continuar"
             )}
           </Button>
-          {/* "Omitir" solo cuando el respaldo es REALMENTE opcional. En "nube" no se
-              ofrece: sin esa clave Mia no tiene motor para razonar. */}
-          {!respaldoEsMotor && (
+          {/* "Omitir" solo cuando OpenRouter es opcional (respaldo). Como motor principal
+              no se ofrece: sin esa clave Mia no tiene con qué razonar. */}
+          {!openrouterEsMotor && (
             <Button
               variant="ghost"
               size="lg"
               className="w-full"
               disabled={saving}
-              onClick={() => finish(false)}
+              onClick={() => finish({ includeOpenrouter: false })}
             >
               Omitir por ahora
             </Button>
@@ -738,7 +900,12 @@ export default function ActivarPage() {
     </Stagger>
   );
 
-  const steps = [stepMotor, stepBusqueda, stepRespaldo];
+  // Pasos dinámicos según el motor elegido: motor y búsqueda siempre; el respaldo
+  // (Anthropic) salvo cuando OpenRouter YA es el motor; el paso de OpenRouter salvo en
+  // "soberano" (nada sale del equipo). El último presente guarda y termina.
+  const steps = [stepMotor, stepBusqueda];
+  if (politica !== "openrouter") steps.push(stepRespaldo);
+  if (politica !== "soberano") steps.push(stepOpenrouter);
 
   return (
     <WelcomeShell progress={<WelcomeProgress steps={JOURNEY_STEPS} current={1} />}>

@@ -442,6 +442,28 @@ def run_checks(client, fake: FakeLLM, tenants: list[str]) -> None:
               and clave_respaldo not in (r_test_respaldo.json().get("motivo") or ""))
         fake.should_fail = False
 
+        # ── (t5) CP-OR · test-key tipo:"openrouter": ping fake OK y error en llano ──
+        # El probador de OpenRouter llama litellm.completion (mismo camino que respaldo),
+        # así que el FakeLLM lo cubre sin red. Verifica el enrutado del nuevo `tipo`.
+        r_test_or = client.post("/api/welcome/keys/test", headers=auth_a,
+                                json={"tipo": "openrouter", "clave": clave_or})
+        collect_strings(r_test_or.json(), all_response_strings)
+        check("t5a · test-key openrouter OK (fake completion) → {ok: true}",
+              r_test_or.json() == {"ok": True})
+
+        fake.should_fail = True
+        r_test_or_fail = client.post("/api/welcome/keys/test", headers=auth_a,
+                                     json={"tipo": "openrouter", "clave": clave_or})
+        body_or_fail = r_test_or_fail.json()
+        collect_strings(body_or_fail, all_response_strings)
+        check("t5b · test-key openrouter error (fake) → ok:false + motivo en llano sin filtrar clave/traza",
+              body_or_fail.get("ok") is False and isinstance(body_or_fail.get("motivo"), str)
+              and body_or_fail["motivo"]
+              and clave_or not in body_or_fail["motivo"]
+              and "RuntimeError" not in body_or_fail["motivo"]
+              and "api_key" not in body_or_fail["motivo"])
+        fake.should_fail = False
+
         # clave con salto de línea en /keys/test: rechazo SIN llamar al proveedor
         calls_before = len(fake.embed_calls)
         r_test_bad = client.post("/api/welcome/keys/test", headers=auth_a,

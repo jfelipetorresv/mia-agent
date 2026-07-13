@@ -80,11 +80,25 @@ _LOCKED_TASKS = frozenset({"compression"})
 _DEFAULT_TASK = "main"
 
 # ── CP2 · política de modelo por tenant (decisión #27) ──────────────────────────
-VALID_POLICIES = ("suscripcion", "nube", "soberano")
+# CP-OR (2026-07-13): se añade "openrouter" como MOTOR PRINCIPAL propio del abogado
+# (su cuenta/clave de OpenRouter, cargada de crédito). A diferencia de "nube" (API
+# directa de Anthropic de la instalación), en "openrouter" TODO el razonamiento sale
+# por la clave del despacho vía el alias openrouter-* del gateway, con red local final.
+VALID_POLICIES = ("suscripcion", "nube", "soberano", "openrouter")
 
 # Tareas auxiliares (baratas): comparten cadena dentro de cada política.
 _AUX_TASKS = ("verification", "title_generation", "session_search", "web_extract",
               "vision", "soul", "mission_decompose")
+
+# Aliases de OpenRouter (viven en litellm_config.yaml). `openrouter-sonnet` para el
+# razonamiento; `openrouter-haiku` para tareas baratas (compresión/auxiliares). Se
+# definen ANTES de _POLICY_CHAINS porque la política "openrouter" los referencia.
+OPENROUTER_ALIAS = "openrouter-sonnet"
+OPENROUTER_HAIKU_ALIAS = "openrouter-haiku"
+# Cualquier alias que salga por la cuenta de OpenRouter (para el salto opcional de
+# _call_with_retries: si un alias de OpenRouter falla por AUTH/402 —clave inválida o
+# sin saldo, que no salta solo— y hay red después en la cadena, se salta al siguiente).
+_OPENROUTER_ALIASES = frozenset({OPENROUTER_ALIAS, OPENROUTER_HAIKU_ALIAS})
 
 # Cadenas por política. Se SUPERPONEN a _TASK_FALLBACK_CHAINS (que queda como mapa base,
 # compat con tests que lo leen/mutan): un task inyectado ahí (no estándar) sigue resolviendo.
@@ -110,15 +124,29 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     },
     # Soberano: TODO local (Ollama), para despachos que exigen cero salida de datos.
     "soberano": {t: ["mia-local"] for t in ("main", "curator", "compression", *_AUX_TASKS)},
+    # OpenRouter como MOTOR PRINCIPAL (CP-OR): el abogado conecta su propia cuenta de
+    # OpenRouter (una clave da acceso a decenas de modelos, con su crédito). El
+    # razonamiento principal (main/curator) sale por openrouter-sonnet; las tareas
+    # baratas (compression + auxiliares) por openrouter-haiku. En AMBOS casos con red
+    # final a mia-local: si la clave se queda sin saldo o es inválida (AUTH/402, que no
+    # salta por sí solo), el respaldo openrouter de _call_with_retries salta al local en
+    # vez de matar el turno. Elegir esta política ES el consentimiento de enrutar a
+    # OpenRouter (no depende del opt-in `allow_openrouter`, que gobierna el overflow de
+    # otras políticas). Requiere OPENROUTER_API_KEY en el .env (lo exige la UI de activación).
+    "openrouter": {
+        "main": [OPENROUTER_ALIAS, "mia-local"],
+        "curator": [OPENROUTER_ALIAS, "mia-local"],
+        "compression": [OPENROUTER_HAIKU_ALIAS, "mia-local"],
+        **{t: [OPENROUTER_HAIKU_ALIAS, "mia-local"] for t in _AUX_TASKS},
+    },
 }
 
-# CP-S3 · OpenRouter como red de respaldo en la política 'nube'. OpenRouter da acceso
-# a decenas de modelos con UNA clave; aquí entra como fallback de la API directa de
-# Anthropic para el razonamiento (main/curator) ANTES de caer al modelo local. El
-# alias debe existir en litellm_config.yaml. Se inserta SOLO si hay OPENROUTER_API_KEY
-# configurada — sin clave, incluirlo rompería la cadena con un error de auth (que no
-# salta de proveedor); con la ausencia, el alias simplemente no aparece.
-OPENROUTER_ALIAS = "openrouter-sonnet"
+# CP-S3 · OpenRouter como red de respaldo/overflow ("más uso"). OpenRouter da acceso
+# a decenas de modelos con UNA clave; aquí entra como fallback del motor de razonamiento
+# (main/curator) ANTES de caer al modelo local. El alias debe existir en
+# litellm_config.yaml. Se inserta SOLO si hay OPENROUTER_API_KEY configurada — sin clave,
+# incluirlo rompería la cadena con un error de auth (que no salta de proveedor); con la
+# ausencia, el alias simplemente no aparece.
 _OPENROUTER_TASKS = ("main", "curator")
 
 
@@ -134,6 +162,47 @@ def _with_openrouter_fallback(chains: dict[str, list[str]]) -> dict[str, list[st
         chain.insert(idx, OPENROUTER_ALIAS)
         out[task] = chain
     return out
+
+
+# CP-OR/CP-S3 (revisión capa 2, MAYOR 1): disponibilidad REAL de la clave de OpenRouter.
+# `welcome.set_keys` escribe OPENROUTER_API_KEY al `.env` en disco pero, a propósito, NO la
+# inyecta en `config.OPENROUTER_API_KEY` ni en `os.environ` del proceso vivo (esa clave la
+# sirve el proxy mia-litellm.exe, un proceso APARTE que solo la lee al arrancar). Por eso, si
+# condicionáramos el overflow SOLO a `config.OPENROUTER_API_KEY` (leída UNA vez al importar
+# config.py:75), tras guardar la clave y reiniciar EN CALIENTE solo el proxy (restart_litellm,
+# que NO reinicia este backend uvicorn) el backend seguiría sin verla hasta un cierre/reapertura
+# COMPLETO — el overflow quedaría INERTE pese a que la UI ya limpió el aviso "cierra y reabre".
+# Este helper refleja la disponibilidad REAL: config (proceso vivo) O el `.env` en disco. Es
+# SEGURO adelantarse al proxy: si el alias openrouter-* se inserta antes de que el proxy tenga
+# la clave, la llamada falla AUTH/402 y `_call_with_retries` degrada a mia-local (salto opcional
+# de OpenRouter, ya existente). NO seteamos config/os.environ en caliente (respeta el comentario
+# de welcome.py). Cache de tiempo corto: se relee el `.env` a lo sumo cada _OPENROUTER_ENV_TTL
+# segundos, NO por turno (no golpear disco en cada call_llm).
+_OPENROUTER_ENV_TTL = 5.0  # segundos
+_openrouter_env_cache: tuple[float, bool] = (0.0, False)
+
+
+def _openrouter_key_present() -> bool:
+    """True si hay clave de OpenRouter disponible: en `config` (proceso vivo) O en el `.env`
+    en disco. El `.env` se relee a lo sumo cada _OPENROUTER_ENV_TTL s (cache por tiempo)."""
+    if (getattr(config, "OPENROUTER_API_KEY", "") or "").strip():
+        return True
+    global _openrouter_env_cache
+    now = time.monotonic()
+    ts, cached = _openrouter_env_cache
+    if now - ts < _OPENROUTER_ENV_TTL:
+        return cached
+    present = False
+    try:
+        from ..setup.env_writer import read_env_values  # import diferido (solo stdlib, sin ciclo)
+
+        values = read_env_values(config.PROJECT_ROOT / ".env")
+        present = bool(values.get("OPENROUTER_API_KEY", "").strip())
+    except Exception:  # noqa: BLE001 — un fallo de disco no debe tumbar el ruteo del turno
+        logger.exception("_openrouter_key_present: no se pudo leer el .env")
+        present = False
+    _openrouter_env_cache = (now, present)
+    return present
 
 # Alias CLI → hint de modelo para subscription_llm ("cli-claude" usa el default de la
 # suscripción; "cli-claude-haiku" pide el modelo pequeño para tareas auxiliares baratas).
@@ -316,13 +385,19 @@ def _active_chains() -> dict[str, list[str]]:
     merged = dict(_TASK_FALLBACK_CHAINS)
     policy = get_model_policy()
     merged.update(_POLICY_CHAINS[policy])
-    # CP-S3: OpenRouter entra SOLO si se cumplen TRES condiciones — política 'nube',
-    # clave global configurada (operador) Y opt-in explícito del despacho. El opt-in
-    # por tenant satisface la regla 2: enrutar los datos del cliente a un TERCERO
-    # adicional (OpenRouter, con su propia política de datos) es decisión informada
-    # del despacho, no un efecto colateral de que exista una clave global.
-    if (policy == "nube" and getattr(config, "OPENROUTER_API_KEY", "")
-            and openrouter_allowed()):
+    # CP-S3/CP-OR: OpenRouter entra como respaldo/overflow ("más uso") SOLO si se cumplen
+    # TRES condiciones — política 'nube' O 'suscripcion', opt-in explícito del despacho Y
+    # clave de OpenRouter REALMENTE disponible (`_openrouter_key_present`: config del proceso
+    # vivo O el `.env` en disco — ver MAYOR 1, para que el overflow no quede inerte tras
+    # guardar la clave + reiniciar el proxy en caliente). El opt-in por tenant satisface la
+    # regla 2: enrutar los datos del cliente a un TERCERO adicional (OpenRouter, con su propia
+    # política de datos) es decisión informada del despacho, no un efecto colateral de que
+    # exista una clave. NO aplica a 'soberano' (nada sale del equipo) ni a 'openrouter' (ahí
+    # OpenRouter YA es el motor principal, sin necesidad de insertarlo). Orden del AND: el
+    # opt-in (ContextVar barato) va antes que `_openrouter_key_present` (relee el `.env` con
+    # cache) para no tocar disco cuando el despacho no autorizó el overflow.
+    if (policy in ("nube", "suscripcion") and openrouter_allowed()
+            and _openrouter_key_present()):
         merged = _with_openrouter_fallback(merged)
     return merged
 
@@ -511,11 +586,14 @@ def _call_with_retries(
                                kind.value, task, alias, next_alias, attempt + 1)
                 raise _FallbackNeeded(kind, exc) from exc
 
-            # CP-S3 (revisión capa 2, H2): OpenRouter es un respaldo OPCIONAL. Si su
+            # CP-S3/CP-OR (revisión capa 2, H2): los aliases de OpenRouter (respaldo
+            # opcional en 'nube'/'suscripcion' o motor principal en 'openrouter'). Si la
             # clave es inválida o no tiene saldo (AUTH/402 → no saltable) y hay un
-            # proveedor DESPUÉS en la cadena (mia-local), no debe matar el turno: se
-            # salta al siguiente. Sin next_alias sí falla claro (era el último recurso).
-            if alias == OPENROUTER_ALIAS and next_alias:
+            # proveedor DESPUÉS en la cadena (mia-local), no debe matar el turno: se salta
+            # al siguiente. Sin next_alias sí falla claro (era el último recurso). Cubre
+            # openrouter-sonnet Y openrouter-haiku para que la política 'openrouter'
+            # degrade con gracia a local cuando la cuenta del abogado se agota.
+            if alias in _OPENROUTER_ALIASES and next_alias:
                 logger.warning("call_llm: el respaldo opcional %s falló [%s]; se salta a "
                                "%s (task=%s)", alias, kind.value, next_alias, task)
                 raise _FallbackNeeded(kind, exc) from exc

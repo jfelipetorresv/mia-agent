@@ -12,6 +12,8 @@ persiste por tenant en `tenant_settings` bajo RLS (decisión #12).
 """
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.types.json import Json
 
@@ -29,6 +31,7 @@ _POLICY_LABELS: dict[str, str] = {
     "suscripcion": "Mi suscripción (recomendado)",
     "nube": "Nube",
     "soberano": "Todo en mi equipo",
+    "openrouter": "Tu cuenta de OpenRouter",
 }
 
 
@@ -99,7 +102,13 @@ async def put_model_policy(request: Request):
     """Valida y persiste la política en tenant_settings.config['model_policy'] con un
     MERGE jsonb atómico (config || {"model_policy": …}): solo toca esa clave, sin
     read-modify-write que pise cambios concurrentes de otros settings (revisión CP2).
-    Invalida el caché del middleware: aplica de inmediato."""
+    Invalida el caché del middleware: aplica de inmediato.
+
+    CP-S3 (opt-in de confidencialidad): el body puede traer opcionalmente
+    `allow_openrouter` (bool). Si viene no-nulo, se incluye en el MISMO merge jsonb
+    atómico junto a `model_policy` — una sola escritura, sin pisar otras claves del
+    config. Sin el campo (o null), el comportamiento es idéntico al de antes
+    (retrocompatible): solo se toca 'model_policy'."""
     tenant_id = _tenant(request)
     try:
         body = await request.json()
@@ -110,17 +119,27 @@ async def put_model_policy(request: Request):
     if policy not in _POLICY_LABELS:
         raise HTTPException(
             status_code=422,
-            detail="Opción no válida. Usa 'suscripcion', 'nube' o 'soberano'.",
+            detail="Opción no válida. Usa 'suscripcion', 'nube', 'soberano' u 'openrouter'.",
         )
+    allow_or_raw = (body or {}).get("allow_openrouter") if isinstance(body, dict) else None
+    merge: dict[str, Any] = {"model_policy": policy}
+    if allow_or_raw is not None:
+        if not isinstance(allow_or_raw, bool):
+            raise HTTPException(
+                status_code=422,
+                detail="allow_openrouter debe ser verdadero o falso.",
+            )
+        merge["allow_openrouter"] = allow_or_raw
     async with pool.tenant_connection(tenant_id) as conn:
-        # Upsert con merge jsonb: `config || {clave nueva}` en el propio UPDATE — atómico,
-        # last-write-wins SOLO sobre 'model_policy', el resto del config queda intacto.
+        # Upsert con merge jsonb: `config || {claves nuevas}` en el propio UPDATE —
+        # atómico, last-write-wins SOLO sobre las claves de `merge`, el resto del
+        # config queda intacto.
         await conn.execute(
             "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
             "ON CONFLICT (tenant_id) DO UPDATE SET "
             "config = COALESCE(tenant_settings.config, '{}'::jsonb) || EXCLUDED.config, "
             "updated_at = now()",
-            (tenant_id, Json({"model_policy": policy})),
+            (tenant_id, Json(merge)),
         )
     invalidate_policy_cache(tenant_id)
     return {"politica": policy, "nombre": _POLICY_LABELS[policy], "opciones": _policy_options()}

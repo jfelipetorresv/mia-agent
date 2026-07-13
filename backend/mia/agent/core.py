@@ -44,7 +44,12 @@ class MiaAgent:
 
     tenant_id: str
     identity: str = DEFAULT_IDENTITY
-    model: str = field(default_factory=lambda: config.MIA_MODEL)
+    # None (NO un default a config.MIA_MODEL): un `model` explícito viaja como override a
+    # call_llm y SALTA toda la política de modelo (resolve_fallback_chain) — incluida la
+    # muralla de confidencialidad (un tenant 'soberano' JAMÁS debe salir a la nube por un
+    # override colado). Con None gobierna la POLÍTICA activa (revisión capa 2, MENOR 2).
+    # Un caller que de veras quiera forzar un alias puede fijarlo a conciencia.
+    model: str | None = None
     messages: list[dict] = field(default_factory=list)
 
     # Costuras que leen las 10 capas del prompt_builder. Vacías hoy; las llenan

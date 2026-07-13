@@ -167,9 +167,16 @@ async def welcome_status(request: Request):
     # (respaldo/openrouter) ya NO se inyectan al proceso vivo; leer el archivo hace
     # que el status refleje lo guardado sin depender de un reinicio.
     env_values = await run_in_threadpool(read_env_values, config.PROJECT_ROOT / ".env")
+    # MENOR 3 (revisión capa 2): `openrouter` también se reporta como booleano de PRESENCIA
+    # (nunca el valor). El frontend lo necesita para NO auto-saltar el wizard cuando el motor
+    # elegido es la cuenta de OpenRouter y esa clave falta (si no, Mia razonaría en local en
+    # silencio). Es imprescindible solo cuando la política del tenant es 'openrouter'; se
+    # incluye siempre porque es un dato no sensible del `.env` y el frontend decide según la
+    # política. La clave la sirve el proxy (proceso aparte); aquí solo se refleja si está en disco.
     faltan_llaves = {
         "busqueda": not env_values.get("VOYAGE_API_KEY", "").strip(),
         "respaldo": not env_values.get("ANTHROPIC_API_KEY", "").strip(),
+        "openrouter": not env_values.get("OPENROUTER_API_KEY", "").strip(),
     }
     motor_detectado = {
         "claude": bool(shutil.which("claude")),
@@ -281,7 +288,7 @@ async def set_keys(body: KeysBody, request: Request):
 
 
 class KeyTestBody(BaseModel):
-    tipo: Literal["busqueda", "respaldo"]
+    tipo: Literal["busqueda", "respaldo", "openrouter"]
     clave: str = Field(min_length=1, max_length=_CLAVE_MAX_FIELD)
 
 
@@ -322,6 +329,28 @@ def _probar_respaldo(clave: str) -> dict:
         return {"ok": False, "motivo": "No pude confirmar esa clave; revisa que esté completa y activa."}
 
 
+def _probar_openrouter(clave: str) -> dict:
+    """Ping mínimo a la cuenta de OpenRouter (CP-OR): confirma que la clave sirve y
+    tiene crédito. Usa el MISMO modelo del alias openrouter-sonnet del gateway, con la
+    clave del abogado (sin pasar por el proxy: es un ping directo, como respaldo). Igual
+    criterio fail-soft que _probar_respaldo: nunca filtra la clave ni el traceback."""
+    import litellm  # import diferido, mismo criterio que _probar_busqueda
+
+    try:
+        litellm.completion(
+            model="openrouter/anthropic/claude-sonnet-4.6",
+            messages=[{"role": "user", "content": "hola"}],
+            api_key=clave,
+            max_tokens=1,
+            timeout=8,
+            num_retries=0,
+        )
+        return {"ok": True}
+    except Exception as exc:  # noqa: BLE001 — fail-soft: nunca filtrar la clave ni el traceback
+        logger.error("welcome.keys.test fallo (%s)", type(exc).__name__)
+        return {"ok": False, "motivo": "No pude confirmar esa clave; revisa que esté completa, activa y con saldo."}
+
+
 @router.post("/keys/test")
 async def test_key(body: KeyTestBody, request: Request):
     """Ping mínimo y real de una clave, SIN guardarla. AUTENTICADO (mismo
@@ -334,4 +363,6 @@ async def test_key(body: KeyTestBody, request: Request):
 
     if body.tipo == "busqueda":
         return await run_in_threadpool(_probar_busqueda, body.clave)
+    if body.tipo == "openrouter":
+        return await run_in_threadpool(_probar_openrouter, body.clave)
     return await run_in_threadpool(_probar_respaldo, body.clave)

@@ -333,6 +333,24 @@ def main() -> int:
         "master_key" not in dev_cfg,
     )
 
+    # 7b · CP-OR: ambos yaml (dev + instalador) exponen los alias de OpenRouter,
+    #      SINCRONIZADOS: openrouter-sonnet (razonamiento) y openrouter-haiku (tareas
+    #      baratas de la política "openrouter"), ambos con os.environ/OPENROUTER_API_KEY.
+    for cfg_name, cfg_text in (("litellm_config.yaml (dev)", dev_cfg),
+                               ("litellm_config.installer.yaml", installer_cfg)):
+        check(
+            f"{cfg_name} expone el alias openrouter-sonnet",
+            "openrouter-sonnet" in cfg_text,
+        )
+        check(
+            f"{cfg_name} expone el alias openrouter-haiku (CP-OR · tareas baratas)",
+            "openrouter-haiku" in cfg_text,
+        )
+        check(
+            f"{cfg_name}: los alias de OpenRouter usan os.environ/OPENROUTER_API_KEY",
+            cfg_text.count("os.environ/OPENROUTER_API_KEY") >= 2,
+        )
+
     # 9 · bind loopback (correccion de seguridad): el CLI de litellm bindea en
     #     0.0.0.0 por defecto -- el gateway de modelos (reenvia prompts
     #     juridicos con las llaves de API de la firma) debe quedar SOLO en

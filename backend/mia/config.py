@@ -82,8 +82,10 @@ MIA_MODEL = os.getenv("MIA_MODEL", "claude-sonnet")
 MIA_CONTEXT_WINDOW = int(os.getenv("MIA_CONTEXT_WINDOW", "200000"))
 # Política de modelo POR DEFECTO (CP2 · decisión #27). Valores: "suscripcion" (CLI de
 # Claude Code del abogado, sin billing por API) · "nube" (API Anthropic vía proxy) ·
-# "soberano" (todo local en Ollama). El default aplica cuando el tenant no configuró
-# `tenant_settings.config['model_policy']`; agent/llm.py la resuelve por request/job.
+# "soberano" (todo local en Ollama) · "openrouter" (CP-OR: la propia cuenta de OpenRouter
+# del abogado como motor principal, con su clave/crédito; exige OPENROUTER_API_KEY). El
+# default aplica cuando el tenant no configuró `tenant_settings.config['model_policy']`;
+# agent/llm.py la resuelve por request/job.
 MIA_MODEL_POLICY = os.getenv("MIA_MODEL_POLICY", "suscripcion").strip().lower()
 # Modelo que el CLI de la suscripción usa por defecto cuando la tarea no trae hint.
 # "sonnet": calidad alta y mucho más rápido escribiendo documentos extensos que el
