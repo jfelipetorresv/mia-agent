@@ -134,6 +134,95 @@ def _backing_source(citation: str, index: list[tuple[str, dict]]) -> Optional[di
     return None
 
 
+# ── Guardián de referencias al expediente ([doc n] fantasma) ─────────────────
+# Los documentos del expediente se sellan como <<<DOC 1>>> … <<<DOC N>>>
+# (ver agents/untrusted.render_documents) y el modelo los cita como [doc n]. El
+# rango válido es 1..N, con N = documentos recuperados en el turno. Una cita
+# [doc k] con k FUERA de ese rango es una referencia FANTASMA: el modelo inventó
+# un documento que nunca se le entregó (el equivalente a citar un identificador
+# inexistente). Hoy esa cita pasa como si estuviera respaldada — nadie valida que
+# el número exista. Este guardián la trata como toda cita sin respaldo: le AÑADE
+# [VERIFICAR] al lado (nunca borra ni bloquea — sobre-marcar es inofensivo, la
+# misma filosofía de annotate_draft).
+#
+# El patrón es deliberadamente estrecho para no generar falsos positivos: exige
+# que el corchete contenga SOLO uno o varios enteros ("[doc 3]", "[doc. 2]",
+# "[documento 4]", "[docs 1, 2 y 3]"). Un corchete con texto no numérico
+# ("[doc 2023-cv-1]") NO coincide y queda intacto.
+# Limitación conocida (falso negativo, dirección segura): un rango con guion
+# ("[docs 3-9]") no se descompone — solo se evalúa el primer entero.
+_DOC_REF_RE = re.compile(
+    r"\[\s*doc(?:umento)?s?\.?\s*(\d+(?:\s*(?:,|y)\s*\d+)*)\s*\]", re.IGNORECASE
+)
+_INT_RE = re.compile(r"\d+")
+
+
+_SEALED_DOC_RE = re.compile(r"<<<\s*DOC\s+(\d+)", re.IGNORECASE)
+
+
+def highest_sealed_doc_index(text: str) -> int:
+    """Mayor índice n de un sello `<<<DOC n>>>` presente en `text` (0 si no hay).
+
+    Un turno puede sellar documentos por DOS vías con numeración propia desde 1:
+    los recuperados por RRF (agents/untrusted.render_documents) y los adjuntos por
+    `@expediente` (agents/context_references, mismo label "DOC"). Ambos conviven en
+    el mismo prompt. Para no marcar como fantasma una cita legítima a un adjunto,
+    el rango válido de [doc n] debe cubrir el MAYOR índice sellado que vio el
+    modelo — no solo el conteo de `state["documents"]`. Solo un [doc k] por encima
+    de TODO lo sellado es fantasma con certeza. (`@carpeta` usa el label "ARCHIVO",
+    no "DOC": no entra aquí y por eso no colisiona.)
+    """
+    idxs = [int(m.group(1)) for m in _SEALED_DOC_RE.finditer(text or "")]
+    return max(idxs) if idxs else 0
+
+
+def flag_phantom_doc_citations(text: str, num_documents: int) -> tuple[str, dict]:
+    """Marca [VERIFICAR] junto a cada referencia [doc n] cuyo número no exista.
+
+    `num_documents` = documentos recuperados en el turno (el rango válido es
+    1..num_documents). Determinista y sin efectos (sin red, sin DB): nunca borra
+    texto, solo INSERTA " [VERIFICAR]" tras las referencias a documentos fantasma.
+
+    Devuelve (texto_anotado, informe):
+      {"refs_doc": total, "fantasmas": n, "documentos_disponibles": N,
+       "detalle": [{"cita", "numeros", "fuera_de_rango"}...]}
+    """
+    src = text or ""
+    n = max(0, int(num_documents or 0))
+    inserts: list[int] = []
+    detalle: list[dict] = []
+    fantasmas = 0
+    total = 0
+    for m in _DOC_REF_RE.finditer(src):
+        total += 1
+        nums = [int(x) for x in _INT_RE.findall(m.group(1))]
+        fuera = [k for k in nums if k < 1 or k > n]
+        # ya marcada = la marca va ADYACENTE al corchete (ventana estrecha, no los 160
+        # chars del escáner legal). El guardián siempre inserta pegado al `]`, así que
+        # detectar la adyacencia basta para ser idempotente; usar la ventana ancha
+        # provocaría diafonía con un [VERIFICAR] de una cita legal cercana.
+        tail = src[m.end():m.end() + len(VERIFY_MARK) + 2]
+        already = VERIFY_MARK[:-1] in tail
+        if fuera and not already:
+            fantasmas += 1
+            inserts.append(m.end())
+            if len(detalle) < 50:
+                detalle.append({
+                    "cita": m.group(0).strip(),
+                    "numeros": nums,
+                    "fuera_de_rango": fuera,
+                })
+    # insertar de atrás hacia adelante para no desplazar los offsets pendientes
+    for pos in sorted(inserts, reverse=True):
+        src = src[:pos] + " " + VERIFY_MARK + src[pos:]
+    return src, {
+        "refs_doc": total,
+        "fantasmas": fantasmas,
+        "documentos_disponibles": n,
+        "detalle": detalle,
+    }
+
+
 def scan_citations(text: str, patterns: Optional[list[re.Pattern]] = None) -> list[dict]:
     """Todas las citas detectadas, sin solaparse (gana la más temprana/larga).
 
@@ -173,6 +262,7 @@ def annotate_draft(
     draft: str,
     sources: Optional[list[dict]] = None,
     extra_patterns: Optional[list[str]] = None,
+    num_documents: Optional[int] = None,
 ) -> tuple[str, dict]:
     """Anota el borrador y produce el informe del especialista de verificación.
 
@@ -183,8 +273,14 @@ def annotate_draft(
     `fuente` solo aparece en las respaldadas: {"tipo", "referencia", "titulo"} — la
     fuente compacta del corpus que dio el respaldo (Fase 1b: citas en línea).
 
+    Si se pasa `num_documents` (documentos del expediente recuperados en el turno),
+    corre ADEMÁS el guardián de referencias [doc n] fantasma y añade su informe bajo
+    la clave "docs_fantasma". Sin ese parámetro el comportamiento es idéntico al de
+    antes (retrocompatible: los llamadores que solo verifican citas legales no cambian).
+
     Determinista y sin efectos: nunca borra texto, solo INSERTA " [VERIFICAR]" tras
-    las citas sin marca ni respaldo en el corpus.
+    las citas sin marca ni respaldo en el corpus (y tras las referencias a documentos
+    inexistentes cuando se conoce `num_documents`).
     """
     text = draft or ""
     citations = scan_citations(text, compile_patterns(extra_patterns))
@@ -227,4 +323,10 @@ def annotate_draft(
         "anotadas": anotadas,
         "detalle": detalle,
     }
+    # Guardián de referencias [doc n] fantasma DESPUÉS del escáner legal: así el
+    # escáner de citas legales evalúa su ventana de marcado sobre el borrador crudo
+    # (sin ver las marcas del guardián) y no hay diafonía entre ambos tipos de marca.
+    if num_documents is not None:
+        text, docs_fantasma = flag_phantom_doc_citations(text, num_documents)
+        report["docs_fantasma"] = docs_fantasma
     return text, report

@@ -813,9 +813,22 @@ class MatterGraphBuilder:
         sobre texto que puede venir de documentos de terceros — nunca debe ocupar el
         event loop del servidor."""
         extra = await research.citation_patterns_for(state["tenant_id"])  # fail-soft
+        # num_documents = rango válido de referencias [doc n] que vio el modelo. Habilita el
+        # guardián de [doc n] fantasma (un [doc k] fuera de rango es un documento inventado):
+        # se marca [VERIFICAR] como cualquier cita sin respaldo. El rango es el MAYOR de:
+        #  - los documentos recuperados por RRF (state["documents"]), y
+        #  - el mayor índice <<<DOC n>>> adjunto por @expediente en el mensaje del turno
+        #    (CP-E2: misma numeración desde 1 en el mismo prompt). Así no se marca como
+        #    fantasma una cita legítima a un adjunto; solo un [doc k] por encima de TODO
+        #    lo sellado es fantasma seguro (fail-safe: sub-marcar antes que falso positivo).
+        num_documents = max(
+            len(state.get("documents") or []),
+            verification.highest_sealed_doc_index(_last_user_message(state)),
+        )
         annotated, report = await asyncio.to_thread(
             verification.annotate_draft, text,
-            sources=md.get("research_sources"), extra_patterns=extra)
+            sources=md.get("research_sources"), extra_patterns=extra,
+            num_documents=num_documents)
         md["verification"] = report
         return annotated
 
