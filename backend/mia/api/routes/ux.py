@@ -23,12 +23,16 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, Response, Up
 from psycopg.types.json import Json
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
+from sse_starlette.sse import EventSourceResponse
 
 from ... import embeddings
 from ...agent.prompt_builder import strip_diagnosis_closing
 from ...agents.checkpointer import open_checkpointer
-from ...agents.graph import build_matter_graph
-from ...agents.state import HITL_OUTCOME, thread_id_for
+from ...agents.graph import build_matter_graph, MatterGraphBuilder
+from ...agents.personas import persona_service
+from ...agents.state import HITL_OUTCOME, initial_state, thread_id_for
+from ...agents.warroom import WarRoomError, build_panel, propose_panel, run_warroom
+from ...agents import retrieval
 from ... import config
 from ...connectors import ObsidianSync, PineconeConnector
 from ...security import assert_no_stray_secret
@@ -42,13 +46,15 @@ from ...memory.playbook_manager import Playbook, PlaybookManager
 from ...memory.profile_manager import ProfileManager
 from ...memory.trace_capture import TraceCapture
 from ...memory.wiki_manager import WikiManager
+from ...observability import audit
 from ...onboarding.soul_interview import (
     SoulInterview, build_summary, derive_firm_profile, load_responses, soul_status,
 )
 from ...output.docx_export import draft_to_docx
-from ._common import assert_owns_matter, MAX_UPLOAD_BYTES, _is_uuid
+from ...policy import budget as policy_budget
+from ._common import assert_owns_matter, load_profile_snapshot, MAX_UPLOAD_BYTES, _is_uuid, sse
 from .hitl import _resume
-from .stream import stream_matter
+from .stream import SSE_PING_SECONDS, stream_matter
 
 router = APIRouter(prefix="/api", tags=["ux"])
 
@@ -1622,3 +1628,345 @@ async def dashboard_stats(request: Request):
             "last_report": latest_report[0] if latest_report else None,
         },
     }
+
+
+# ── Sala de estrategia (warroom) · panel + streaming SSE + persistencia ───────
+# La "Sala de estrategia" (nombre interno: warroom) reúne un panel de counsel con posturas
+# OPUESTAS que debaten el asunto citando el expediente; un moderador sintetiza un dictamen.
+# Solo ASUNTOS. §G: al abogado NUNCA se le muestra "agente", "war room", "LLM" ni "panel"
+# como jerga — el copy visible vive en el frontend; aquí los textos SSE ya vienen en llano
+# desde el motor (agents/warroom.py).
+#
+# El motor NO toca DB (persiste el resultado en el estado en memoria). Esta capa cablea el
+# retrieval del expediente (intake_node, el MISMO RRF/RLS del grafo), corre el motor y
+# persiste el último dictamen por asunto en `warroom_results` (migración 033, RLS fail-closed).
+
+
+async def save_warroom_result(tenant_id: str, matter_id: str, result: dict) -> None:
+    """Guarda (upsert) el último dictamen de la Sala del asunto bajo RLS. Una fila por
+    asunto: la nueva convocatoria PISA la anterior (clave única tenant_id+matter_id)."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        await conn.execute(
+            "INSERT INTO warroom_results (tenant_id, matter_id, result) "
+            "VALUES (%s::uuid, %s::uuid, %s) "
+            "ON CONFLICT (tenant_id, matter_id) DO UPDATE SET "
+            "  result = EXCLUDED.result, created_at = now()",
+            (tenant_id, matter_id, Json(result)))
+
+
+async def get_warroom_result(tenant_id: str, matter_id: str) -> dict | None:
+    """El último dictamen (WarRoomResult) del asunto, o None si nunca se convocó (RLS)."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT result FROM warroom_results WHERE matter_id = %s::uuid", (matter_id,))).fetchone()
+    return row[0] if row and row[0] else None
+
+
+async def _assert_warroom_matter(tid: str, matter_id: str) -> None:
+    """La Sala de estrategia solo existe en un ASUNTO (no en un proyecto)."""
+    if await _matter_kind(tid, matter_id) != "asunto":
+        raise HTTPException(status_code=422,
+                            detail="La sala de estrategia solo existe dentro de un asunto.")
+
+
+async def _warroom_state(tenant_id: str, matter_id: str, question: str) -> tuple[dict, MatterGraphBuilder]:
+    """Arma el `state` del asunto con el retrieval del expediente (mismo intake_node/RRF/RLS
+    del grafo) para correr la Sala. Devuelve (state, builder). El área del especialista se
+    deriva SIN LLM del state (metadata del asunto → default 'derecho procesal' si hay
+    expediente), como en el grafo."""
+    profile_snapshot = await load_profile_snapshot(tenant_id)
+    state = initial_state(tenant_id, matter_id, question, profile_snapshot=profile_snapshot)
+    builder = MatterGraphBuilder()
+    intake = await builder.intake_node(state)
+    state["documents"] = intake.get("documents") or []
+    state["knowledge"] = intake.get("knowledge") or []
+    state["metadata"] = intake.get("metadata") or {}
+    return state, builder
+
+
+async def _available_personas(tenant_id: str) -> list:
+    """Agentes jurídicos del despacho para AJUSTAR el panel (fail-open: [] si algo falla —
+    la propuesta base es sintética y no depende de que el despacho haya creado personas)."""
+    try:
+        return await persona_service.list_personas(tenant_id)
+    except Exception:  # noqa: BLE001 — §G: listar agentes jamás tumba la Sala
+        logger.warning("warroom: no se pudieron listar los agentes del despacho (tenant=%s)",
+                       tenant_id, exc_info=True)
+        return []
+
+
+@router.get("/matters/{matter_id}/warroom/panel")
+async def warroom_panel(matter_id: str, request: Request):
+    """PanelProposal: los 3-4 counsel que MIA propone (posturas sintéticas) + los Agentes
+    del despacho disponibles para ajustar. El área del especialista se deriva sin LLM (state
+    mínimo: si el asunto tiene expediente, se incluye el especialista con el área por defecto)."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    await _assert_warroom_matter(tid, matter_id)
+    # State mínimo para propose_panel: basta saber si el asunto YA tiene expediente indexado
+    # (para incluir el especialista). No se corre retrieval ni LLM — es una lectura barata.
+    has_docs = await retrieval.matter_has_chunks(tid, matter_id)
+    state = {"documents": [{"placeholder": True}] if has_docs else [], "metadata": {}}
+    personas = await _available_personas(tid)
+    proposed = [p.to_public() for p in propose_panel(state, personas)]
+    available = [{"persona_id": p.id, "name": p.name, "title": p.title,
+                  "focus_areas": list(p.focus_areas)} for p in personas if p.enabled]
+    return {"proposed": proposed, "available": available}
+
+
+class WarroomPanelSpec(BaseModel):
+    """Una selección del abogado en el modal. `persona_id` None = counsel sintético de la
+    postura; si no es None, un Agente real del despacho ocupa esa silla."""
+    persona_id: str | None = None
+    stance: str = "defensor"
+
+
+class WarroomStartBody(BaseModel):
+    """Body de POST /warroom: el panel ajustado por el abogado + una pregunta opcional. El
+    frontend manda el Panelist completo; los campos extra (name/stance_label/focus) se ignoran."""
+    panel: list[WarroomPanelSpec] = []
+    question: str | None = None
+
+
+# Tope defensivo de counsel por sesión (el motor degrada solo por presupuesto; esto acota el
+# abuso desde el cliente antes de correr N llamadas LLM en paralelo).
+_WARROOM_MAX_PANEL = 6
+_WARROOM_MIN_PANEL = 2
+
+# Consulta por defecto cuando el abogado no escribe nada puntual en el modal: da al retrieval
+# del expediente y a los panelistas un foco general (mismo espíritu que el default del motor).
+_WARROOM_DEFAULT_QUESTION = (
+    "Analiza integralmente el expediente para contrastar posturas y definir la estrategia.")
+
+
+@router.post("/matters/{matter_id}/warroom")
+async def warroom_start(matter_id: str, request: Request, body: WarroomStartBody):
+    """Handshake: valida el panel y devuelve la URL del SSE (calca POST /chat). El panel
+    (solo persona_id+stance) y la pregunta viajan en el query del stream."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    await _assert_warroom_matter(tid, matter_id)
+    if len(body.panel) < _WARROOM_MIN_PANEL:
+        raise HTTPException(status_code=422,
+                            detail="Suma al menos dos counsel para convocar la sala de estrategia.")
+    if len(body.panel) > _WARROOM_MAX_PANEL:
+        raise HTTPException(status_code=422,
+                            detail=f"La sala admite hasta {_WARROOM_MAX_PANEL} counsel. Quita alguno.")
+    specs = [{"persona_id": p.persona_id, "stance": p.stance} for p in body.panel]
+    panel_q = quote(json.dumps(specs, ensure_ascii=False))
+    question_q = quote(body.question or "")
+    return {"stream_url":
+            f"/api/matters/{matter_id}/warroom/stream?panel={panel_q}&question={question_q}"}
+
+
+def _warroom_sse(event: str, payload: dict) -> dict:
+    """Traduce un evento del motor al contrato SSE §G. 'thinking'/'error' llevan su texto en
+    `message`; 'counsel_turn'/'conclusions_ready' llevan su payload estructurado tal cual."""
+    if event in ("thinking", "error"):
+        return sse(event, str(payload.get("message") or ""))
+    return sse(event, "", **payload)
+
+
+@router.get("/matters/{matter_id}/warroom/stream")
+async def warroom_stream(matter_id: str, request: Request,
+                         panel: str = Query(""), question: str = Query("")):
+    """SSE de la Sala (calca stream_matter): arma el state con el retrieval del expediente,
+    resuelve el panel, corre el motor y reenvía sus eventos ('thinking', 'counsel_turn',
+    'conclusions_ready'). WarRoomError → evento 'error' en llano. Al terminar, persiste el
+    dictamen. Respeta el tope de gasto (402 ANTES de abrir el stream) y corta al desconectarse."""
+    tenant_id = _tenant(request)
+    await assert_owns_matter(tenant_id, matter_id)
+    await _assert_warroom_matter(tenant_id, matter_id)
+
+    # CP-E1: tope de gasto del despacho ANTES de abrir el SSE (el turno es GET → el bloqueo
+    # debe ser HTTP, no un evento). Fail-open: un fallo de lectura permite la sesión.
+    try:
+        await policy_budget.enforce_budget(tenant_id)
+    except policy_budget.BudgetExceeded as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
+    await audit.record(
+        "warroom_session", tenant_id=tenant_id,
+        user_email=getattr(request.state, "email", None),
+        entity_type="matter", entity_id=matter_id,
+    )
+
+    # Panel seleccionado por el abogado (persona_id+stance). Un query malformado cae a []
+    # → build_panel propone el panel completo (fail-safe, nunca 500).
+    try:
+        specs = json.loads(panel) if panel else []
+        if not isinstance(specs, list):
+            specs = []
+    except (ValueError, TypeError):
+        specs = []
+
+    # MENOR 4 · el POST valida 2..6, pero el stream (GET) es invocable directo → re-valida
+    # aquí el mismo clamp. Por encima del máximo se trunca (guarda anti-costo antes de abrir N
+    # llamadas LLM); por debajo del mínimo cae a [] → build_panel propone el panel completo
+    # (fail-safe, nunca corre con menos de dos counsel).
+    if len(specs) > _WARROOM_MAX_PANEL:
+        specs = specs[:_WARROOM_MAX_PANEL]
+    if len(specs) < _WARROOM_MIN_PANEL:
+        specs = []
+
+    async def gen():
+        yield sse("thinking", "Mia está reuniendo la sala de estrategia…")
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        DONE = object()
+
+        async def emit(event: str, payload: dict) -> None:
+            await queue.put((event, payload))
+
+        async def runner():
+            try:
+                effective_q = (question or "").strip() or _WARROOM_DEFAULT_QUESTION
+                state, builder = await _warroom_state(tenant_id, matter_id, effective_q)
+                personas = await _available_personas(tenant_id)
+                panel_objs = build_panel(state, specs, personas)
+                await run_warroom(builder, state, panel_objs, question=effective_q, emit=emit)
+                result = state.get("warroom_result")
+                if result:
+                    await save_warroom_result(tenant_id, matter_id, result)
+            except WarRoomError as e:
+                # Mensaje del motor YA en llano (§G).
+                await queue.put(("error", {"message": str(e)}))
+            except Exception:  # noqa: BLE001 — nada técnico llega al abogado (§G)
+                logger.exception("warroom: la sesión falló (tenant=%s matter=%s)",
+                                 tenant_id, matter_id)
+                await queue.put(("error", {"message":
+                    "Mia no pudo completar la sala de estrategia. Intenta de nuevo."}))
+            finally:
+                await queue.put(DONE)
+
+        task = loop.create_task(runner())
+        try:
+            while True:
+                # Kill-on-disconnect (como _stream_turn_events): sin consumidor no se sigue
+                # gastando minutos de razonamiento ni el costo del modelo.
+                if await request.is_disconnected():
+                    logger.info("warroom: navegador desconectado; se corta la sesión "
+                                "(tenant=%s matter=%s)", tenant_id, matter_id)
+                    task.cancel()
+                    break
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                if item is DONE:
+                    break
+                event, payload = item
+                yield _warroom_sse(event, payload)
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return EventSourceResponse(gen(), ping=SSE_PING_SECONDS)
+
+
+@router.get("/matters/{matter_id}/warroom")
+async def warroom_get(matter_id: str, request: Request):
+    """El último dictamen de la Sala del asunto, o `{result: null}` si nunca se convocó.
+    Encaja con parseWarroomGet del frontend."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    await _assert_warroom_matter(tid, matter_id)
+    return {"result": await get_warroom_result(tid, matter_id)}
+
+
+def _warroom_to_markdown(result: dict) -> str:
+    """Formatea el dictamen (conclusiones + debate) a markdown ligero para draft_to_docx
+    (mismo markdown que emiten los nodos del grafo: #/##, **negrilla**, - viñetas)."""
+    conc = (result or {}).get("conclusions") or {}
+    lines: list[str] = ["# Dictamen de la sala de estrategia", ""]
+    tesis = conc.get("tesis_viable")
+    if tesis:
+        lines += [f"**Tesis viable:** {tesis}", ""]
+
+    def _section(title: str, items) -> None:
+        vals = [str(x).strip() for x in (items or []) if str(x).strip()]
+        if not vals:
+            return
+        lines.append(f"## {title}")
+        lines.extend(f"- {v}" for v in vals)
+        lines.append("")
+
+    _section("Fortalezas", conc.get("fortalezas"))
+    _section("Riesgos", conc.get("riesgos"))
+    _section("Puntos ciegos", conc.get("puntos_ciegos"))
+    if (conc.get("estrategia") or "").strip():
+        lines += ["## Estrategia", conc["estrategia"].strip(), ""]
+    if (conc.get("proximo_paso") or "").strip():
+        lines += ["## Próximo paso", conc["proximo_paso"].strip(), ""]
+
+    debate = (result or {}).get("debate") or []
+    if debate:
+        lines += ["## Debate del panel", ""]
+        for t in debate:
+            if not isinstance(t, dict):
+                continue
+            header = f"### Ronda {t.get('round', 1)} — {t.get('stance_label') or ''} ({t.get('name') or ''})"
+            lines += [header, str(t.get("text") or "").strip(), ""]
+    return "\n".join(lines)
+
+
+@router.get("/matters/{matter_id}/warroom.docx")
+async def download_warroom_docx(matter_id: str, request: Request):
+    """El dictamen de la Sala como .docx (calca download_draft_docx: markdown → draft_to_docx,
+    Content-Disposition ASCII-safe + filename* UTF-8). 404 si el asunto aún no tiene dictamen."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    await _assert_warroom_matter(tid, matter_id)
+    result = await get_warroom_result(tid, matter_id)
+    if not result:
+        raise HTTPException(status_code=404,
+                            detail="La sala de estrategia aún no tiene un dictamen.")
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT title FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
+    base = (row[0] if row and row[0] else "Dictamen")
+    title = f"Dictamen — {base}"
+    data = draft_to_docx(_warroom_to_markdown(result), title=title, author="Mia")
+    # filename ASCII-safe + variante UTF-8 (RFC 5987) para títulos con tildes (mismo bugfix
+    # que download_draft_docx: el header filename= sin * no tolera un carácter no-ASCII crudo).
+    safe = "".join(c if c.isascii() and (c.isalnum() or c in "-_ ") else ""
+                   for c in title).strip() or "dictamen"
+    headers = {
+        "Content-Disposition":
+            f'attachment; filename="{safe[:60]}.docx"; '
+            f"filename*=UTF-8''{quote(title[:60], safe='')}.docx"
+    }
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=headers,
+    )
+
+
+@router.post("/matters/{matter_id}/warroom/to-draft")
+async def warroom_to_draft(matter_id: str, request: Request):
+    """Convierte el dictamen en un borrador: siembra un mensaje con la estrategia acordada y
+    arranca el GRAFO DE ASUNTO normal (build_matter_graph vía /stream) para que el borrador
+    pase por el gate de citas y el flujo HITL habitual. Devuelve `{stream_url}` (calca /chat)."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    await _assert_warroom_matter(tid, matter_id)
+    result = await get_warroom_result(tid, matter_id)
+    if not result:
+        raise HTTPException(status_code=404,
+                            detail="La sala de estrategia aún no tiene un dictamen que convertir.")
+    conc = (result.get("conclusions") or {})
+    estrategia = (conc.get("estrategia") or "").strip()
+    if not estrategia:
+        raise HTTPException(status_code=422,
+                            detail="El dictamen no tiene una estrategia que convertir en borrador.")
+    proximo = (conc.get("proximo_paso") or "").strip()
+    partes = [
+        "Redacta un borrador siguiendo esta estrategia acordada en la sala de estrategia:",
+        "",
+        estrategia,
+    ]
+    if proximo:
+        partes += ["", f"Próximo paso definido por la sala: {proximo}"]
+    message = "\n".join(partes)
+    return {"stream_url": f"/api/matters/{matter_id}/stream?message={quote(message)}"}

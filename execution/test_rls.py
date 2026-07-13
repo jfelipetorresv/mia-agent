@@ -53,7 +53,11 @@ def seed() -> dict:
         db_ = s.execute("INSERT INTO documents(tenant_id,matter_id,filename) VALUES (%s,%s,'b.txt') RETURNING id", (b, mb)).fetchone()[0]
         s.execute("INSERT INTO chunks(tenant_id,document_id,ord,content) VALUES (%s,%s,0,'contenido A')", (a, da))
         s.execute("INSERT INTO chunks(tenant_id,document_id,ord,content) VALUES (%s,%s,0,'contenido B')", (b, db_))
-    return {"a": a, "b": b, "ma": ma, "mb": mb, "db_": db_}
+        # Sala de estrategia (033_warroom_results): un dictamen persistido por asunto — misma
+        # RLS fail-closed por tenant que el resto de tablas por-despacho.
+        wa = s.execute("INSERT INTO warroom_results(tenant_id,matter_id,result) VALUES (%s,%s,'{}'::jsonb) RETURNING id", (a, ma)).fetchone()[0]
+        wb = s.execute("INSERT INTO warroom_results(tenant_id,matter_id,result) VALUES (%s,%s,'{}'::jsonb) RETURNING id", (b, mb)).fetchone()[0]
+    return {"a": a, "b": b, "ma": ma, "mb": mb, "db_": db_, "wa": wa, "wb": wb}
 
 
 def cleanup() -> None:
@@ -63,6 +67,7 @@ def cleanup() -> None:
 
 def run_assertions(ids: dict) -> None:
     a, b, ma, mb, db_ = ids["a"], ids["b"], ids["ma"], ids["mb"], ids["db_"]
+    wa, wb = ids["wa"], ids["wb"]
     with psycopg.connect(**_kw("mia_app", APP_PW)) as app:
         # 0) Fail-closed: sin GUC no se ve nada.
         with app.transaction(force_rollback=True):
@@ -80,6 +85,15 @@ def run_assertions(ids: dict) -> None:
                   app.execute("SELECT count(*) FROM matters WHERE id=%s", (mb,)).fetchone()[0] == 0)
             check("A no ve documents de B (0)",
                   app.execute("SELECT count(*) FROM documents WHERE id=%s", (db_,)).fetchone()[0] == 0)
+            # warroom_results: A ve el suyo, no el de B; no puede modificar ni borrar el de B.
+            check("A ve su propio warroom_results (1)",
+                  app.execute("SELECT count(*) FROM warroom_results WHERE id=%s", (wa,)).fetchone()[0] == 1)
+            check("A no ve warroom_results de B (0)",
+                  app.execute("SELECT count(*) FROM warroom_results WHERE id=%s", (wb,)).fetchone()[0] == 0)
+            check("UPDATE del warroom_results de B bajo GUC=A afecta 0 filas",
+                  app.execute("UPDATE warroom_results SET result=result WHERE id=%s", (wb,)).rowcount == 0)
+            check("DELETE del warroom_results de B afecta 0 filas",
+                  app.execute("DELETE FROM warroom_results WHERE id=%s", (wb,)).rowcount == 0)
             check("UPDATE masivo (sin WHERE de tenant) solo toca filas de A (rowcount==1)",
                   app.execute("UPDATE matters SET title=title").rowcount == 1)
             check("DELETE del chunk de B afecta 0 filas",
@@ -92,6 +106,15 @@ def run_assertions(ids: dict) -> None:
             except psycopg.Error:
                 violated = True
             check("INSERT con tenant_id=B bajo GUC=A es rechazado (WITH CHECK)", violated)
+            # warroom_results: INSERT con tenant ajeno bajo GUC=A => WITH CHECK violation.
+            violated_wr = False
+            try:
+                with app.transaction():
+                    app.execute("INSERT INTO warroom_results(tenant_id,matter_id,result) VALUES (%s,%s,'{}'::jsonb)", (b, mb))
+            except psycopg.Error:
+                violated_wr = True
+            check("INSERT en warroom_results con tenant_id=B bajo GUC=A es rechazado (WITH CHECK)",
+                  violated_wr)
 
         # 2) Contexto tenant B: ve lo suyo, no lo de A.
         with app.transaction(force_rollback=True):
@@ -100,6 +123,10 @@ def run_assertions(ids: dict) -> None:
                   app.execute("SELECT count(*) FROM matters").fetchone()[0] == 1)
             check("B no puede SELECT el matter de A por id (0)",
                   app.execute("SELECT count(*) FROM matters WHERE id=%s", (ma,)).fetchone()[0] == 0)
+            check("B ve su propio warroom_results (1)",
+                  app.execute("SELECT count(*) FROM warroom_results WHERE id=%s", (wb,)).fetchone()[0] == 1)
+            check("B no ve warroom_results de A (0)",
+                  app.execute("SELECT count(*) FROM warroom_results WHERE id=%s", (wa,)).fetchone()[0] == 0)
 
 
 def main() -> int:

@@ -11,6 +11,7 @@ import {
   Scale,
   Send,
   Sparkles,
+  Swords,
 } from "lucide-react";
 import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
@@ -19,8 +20,23 @@ import MissionBoard from "../../_components/MissionBoard";
 import CitationReview, { type Verification } from "../../_components/CitationReview";
 import FuentesPanel from "../../_components/FuentesPanel";
 import GuideInterviewWizard from "../../_components/GuideInterviewWizard";
+import SalaEstrategiaDialog from "./_components/SalaEstrategiaDialog";
+import SalaEstrategiaResult from "./_components/SalaEstrategiaResult";
+import type { DebateTurn, Panelist, WarRoomResult } from "./_components/warroom-types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+// GET /api/matters/{id}/warroom devuelve, según el contrato, el último
+// WarRoomResult "plano" o `{ result: null }` cuando aún no hay uno — se
+// tolera cualquiera de las dos formas (y cualquier respuesta inesperada del
+// backend, todavía en construcción en paralelo) sin romper la pantalla.
+function parseWarroomGet(res: unknown): WarRoomResult | null {
+  if (!res || typeof res !== "object") return null;
+  const r = res as Record<string, unknown>;
+  if (r.conclusions && typeof r.conclusions === "object") return r as unknown as WarRoomResult;
+  if (r.result && typeof r.result === "object") return r.result as WarRoomResult;
+  return null;
+}
 
 type Doc = { id: string; name: string; type?: string; created_at?: string };
 type Msg = { role: "user" | "mia"; text: string };
@@ -75,6 +91,18 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const [missionsSummary, setMissionsSummary] = useState<MissionsSummary | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
 
+  // Sala de estrategia (nombre interno: warroom) — §G: sin jerga visible.
+  const [warroomDialogOpen, setWarroomDialogOpen] = useState(false);
+  const [warroomStarting, setWarroomStarting] = useState(false);
+  const [warroomStreaming, setWarroomStreaming] = useState(false);
+  const [warroomStatus, setWarroomStatus] = useState("");
+  // Error en llano de la sala (asunto sin expediente, fallo antes del primer turno, etc.):
+  // se muestra aunque no haya debate ni dictamen (MAYOR 2).
+  const [warroomError, setWarroomError] = useState("");
+  const [warroomDebate, setWarroomDebate] = useState<DebateTurn[]>([]);
+  const [warroomResult, setWarroomResult] = useState<WarRoomResult | null>(null);
+  const [convertingToDraft, setConvertingToDraft] = useState(false);
+
   const dictation = useDictation(
     (text) => {
       setDictationNotice("");
@@ -128,6 +156,19 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       .catch(() => {
         /* sin borrador todavia */
       });
+    // Recupera el último resultado de la sala de estrategia, si lo hay, para
+    // que sobreviva recargas de la página.
+    apiGet<unknown>(`/api/matters/${matterId}/warroom`)
+      .then((res) => {
+        const result = parseWarroomGet(res);
+        if (result) {
+          setWarroomResult(result);
+          setWarroomDebate(result.debate || []);
+        }
+      })
+      .catch(() => {
+        /* sin sala de estrategia todavia */
+      });
     return () => {
       streamAbortRef.current?.abort();
     };
@@ -174,6 +215,51 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     if (fileRef.current) fileRef.current.value = "";
   }
 
+  // Maneja los eventos del turno normal del asunto (chat y, tras "Convertir en
+  // borrador" desde la sala de estrategia, el mismo flujo de redacción con
+  // gate de citas). Extraído de `send()` para reusarlo en ambos casos.
+  function handleChatEvent(event: string, data: unknown) {
+    const payload = data as {
+      message?: string;
+      draft?: string;
+      diagnosis?: string;
+      diagnosis_summary?: DiagnosisSummary | null;
+      verification?: Verification | null;
+    };
+    if (event === "thinking") setStatus(payload.message || "Mia esta analizando...");
+    else if (event === "draft_ready") setStatus("Mia esta redactando...");
+    else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
+    else if (event === "awaiting_review") {
+      setStatus("Tienes un borrador listo");
+      setHasDraft(true);
+      if (payload.diagnosis) setDiagnosis(payload.diagnosis);
+      if (payload.diagnosis_summary) setSummary(payload.diagnosis_summary);
+      if (payload.verification) setVerification(payload.verification);
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = {
+          role: "mia",
+          text: payload.draft || "He preparado un borrador para tu revision.",
+        };
+        return copy;
+      });
+    }
+  }
+
+  async function runChatStream(stream_url: string) {
+    setStreaming(true);
+    streamAbortRef.current?.abort();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    try {
+      await streamTurn(stream_url, handleChatEvent, controller.signal);
+    } catch {
+      setStatus("No se pudo completar la consulta.");
+    } finally {
+      setStreaming(false);
+    }
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || streaming) return;
@@ -181,51 +267,96 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     setMessages((m) => [...m, { role: "user", text }, { role: "mia", text: "" }]);
     setStatus("Mia esta analizando...");
     setHasDraft(false);
-    setStreaming(true);
-    streamAbortRef.current?.abort();
-    const controller = new AbortController();
-    streamAbortRef.current = controller;
     try {
       const { stream_url } = await apiSend<{ stream_url: string }>(
         "POST",
         `/api/matters/${matterId}/chat`,
         { message: text },
       );
-      await streamTurn(
-        stream_url,
-        (event, data) => {
-          const payload = data as {
-            message?: string;
-            draft?: string;
-            diagnosis?: string;
-            diagnosis_summary?: DiagnosisSummary | null;
-            verification?: Verification | null;
-          };
-          if (event === "thinking") setStatus(payload.message || "Mia esta analizando...");
-          else if (event === "draft_ready") setStatus("Mia esta redactando...");
-          else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
-          else if (event === "awaiting_review") {
-            setStatus("Tienes un borrador listo");
-            setHasDraft(true);
-            if (payload.diagnosis) setDiagnosis(payload.diagnosis);
-            if (payload.diagnosis_summary) setSummary(payload.diagnosis_summary);
-            if (payload.verification) setVerification(payload.verification);
-            setMessages((m) => {
-              const copy = [...m];
-              copy[copy.length - 1] = {
-                role: "mia",
-                text: payload.draft || "He preparado un borrador para tu revision.",
-              };
-              return copy;
-            });
-          }
-        },
-        controller.signal,
-      );
+      await runChatStream(stream_url);
     } catch {
       setStatus("No se pudo completar la consulta.");
+    }
+  }
+
+  // Sala de estrategia: arranca la sesión con el panel ajustado por el
+  // abogado en el modal. El debate se va poblando en vivo (counsel_turn) y el
+  // dictamen se fija al final (conclusions_ready).
+  async function startWarroom(panel: Panelist[], question: string) {
+    setWarroomStarting(true);
+    try {
+      const { stream_url } = await apiSend<{ stream_url: string }>(
+        "POST",
+        `/api/matters/${matterId}/warroom`,
+        { panel, question: question || undefined },
+      );
+      setWarroomDialogOpen(false);
+      setWarroomDebate([]);
+      setWarroomResult(null);
+      setWarroomError("");
+      setWarroomStatus("Mia esta reuniendo la sala de estrategia...");
+      setWarroomStreaming(true);
+      await streamTurn(stream_url, (event, data) => {
+        const payload = data as {
+          message?: string;
+          round?: number;
+          persona_id?: string | null;
+          name?: string;
+          stance_label?: string;
+          text?: string;
+          result?: WarRoomResult;
+        };
+        if (event === "thinking") {
+          setWarroomStatus(payload.message || "Mia esta trabajando...");
+        } else if (event === "counsel_turn") {
+          setWarroomDebate((d) => [
+            ...d,
+            {
+              round: payload.round ?? 1,
+              persona_id: payload.persona_id ?? null,
+              name: payload.name || "",
+              stance_label: payload.stance_label || "",
+              text: payload.text || "",
+            },
+          ]);
+        } else if (event === "conclusions_ready") {
+          if (payload.result) setWarroomResult(payload.result);
+          setWarroomStatus("");
+        } else if (event === "error") {
+          const msg = payload.message || "No se pudo completar la sala de estrategia.";
+          setWarroomStatus(msg);
+          setWarroomError(msg);
+        }
+      });
+    } catch {
+      const msg = "No se pudo convocar la sala de estrategia. Intenta de nuevo.";
+      setWarroomStatus(msg);
+      setWarroomError(msg);
     } finally {
-      setStreaming(false);
+      setWarroomStarting(false);
+      setWarroomStreaming(false);
+    }
+  }
+
+  // "Convertir en borrador": toma el dictamen de la sala de estrategia y
+  // arranca el flujo de redacción normal — el borrador resultante pasa por el
+  // mismo gate de citas que cualquier otro (revisar/page.tsx).
+  async function convertWarroomToDraft() {
+    if (convertingToDraft || streaming) return;
+    setConvertingToDraft(true);
+    setStatus("Mia esta preparando tu borrador...");
+    setHasDraft(false);
+    setMessages((m) => [...m, { role: "mia", text: "" }]);
+    try {
+      const { stream_url } = await apiSend<{ stream_url: string }>(
+        "POST",
+        `/api/matters/${matterId}/warroom/to-draft`,
+      );
+      await runChatStream(stream_url);
+    } catch {
+      setStatus("No se pudo preparar el borrador. Intenta de nuevo.");
+    } finally {
+      setConvertingToDraft(false);
     }
   }
 
@@ -358,11 +489,31 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
               </div>
             ))
           )}
+          <SalaEstrategiaResult
+            matterId={matterId}
+            streaming={warroomStreaming}
+            statusMessage={warroomStatus}
+            error={warroomError}
+            debate={warroomDebate}
+            result={warroomResult}
+            convertingToDraft={convertingToDraft}
+            onConvertToDraft={convertWarroomToDraft}
+          />
         </div>
         <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
           <div className="mb-2 flex min-h-5 items-center justify-between text-sm">
             <span className="text-muted-foreground">{status}</span>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setWarroomDialogOpen(true)}
+                disabled={streaming || warroomStreaming || warroomStarting}
+                className="gap-1.5"
+              >
+                <Swords className="h-3.5 w-3.5" />
+                Convocar Sala de estrategia
+              </Button>
               {draftApproved && !hasDraft ? (
                 <Button
                   variant="outline"
@@ -483,6 +634,15 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         onOpenChange={setGuideWizardOpen}
         kind="guia"
         matterId={matterId}
+      />
+
+      <SalaEstrategiaDialog
+        open={warroomDialogOpen}
+        onOpenChange={setWarroomDialogOpen}
+        matterId={matterId}
+        hasDocuments={docs.length > 0}
+        starting={warroomStarting}
+        onStart={startWarroom}
       />
     </div>
   );

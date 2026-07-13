@@ -66,6 +66,14 @@ class MatterState(TypedDict, total=False):
     # sin el campo siguen válidos; los nodos leen state.get("persona") or {}.
     persona: Optional[dict]
 
+    # Sala de estrategia (warroom): panel de counsel con posturas opuestas que debaten el
+    # asunto + dictamen del moderador. `panel` = lista de panelistas resueltos (shape
+    # Panelist del contrato); `warroom_result` = último WarRoomResult (dict) para el GET
+    # .../warroom. total=False → checkpoints viejos sin estos campos siguen válidos; los
+    # nodos/servicios leen state.get("panel")/state.get("warroom_result") con default.
+    panel: list
+    warroom_result: Optional[dict]
+
     # H6 (Bloque A · memoria conversacional CORTA del PROYECTO): turnos previos del chat
     # de un proyecto, cada uno {"role": "abogado"|"mia", "text": str}. SOLO la usa
     # build_project_graph/work_node — el flujo de asunto (HITL) no la toca ni la necesita

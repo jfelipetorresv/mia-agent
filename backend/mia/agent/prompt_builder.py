@@ -248,6 +248,12 @@ _SOUL_PREAMBLE = (
 DIAGNOSIS_CLOSING_HEADER = "=== CIERRE DEL DIAGNÓSTICO ==="
 DIAGNOSIS_CLOSING_FOOTER = "=== FIN DEL CIERRE ==="
 
+# Bloque estructurado del dictamen de la Sala de estrategia (warroom) — lo emite la
+# instrucción del moderador y lo parsea agents/warroom.parse_warroom_dictamen. Se define
+# aquí (junto al del diagnóstico) como fuente única del formato; warroom lo importa.
+_WARROOM_DICTAMEN_HEADER = "=== DICTAMEN DE LA SALA ==="
+_WARROOM_DICTAMEN_FOOTER = "=== FIN DEL DICTAMEN ==="
+
 # L8 · instrucción de CADA nodo del grafo — SOLO la tarea del turno: la identidad,
 # la metodología (estructura hechos/problema/fundamentos/conclusión), la regla
 # [VERIFICAR] y el tono §G ya viven en L1/L2/L3/L5 (no se duplican aquí).
@@ -335,6 +341,39 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "tal cual se lo entregues. Toda afirmación jurídica que no tenga respaldo en las "
         "fuentes o en el conocimiento del despacho se marca [VERIFICAR]. Nunca inventes "
         "citas, normas ni providencias."
+    ),
+    # Sala de estrategia (warroom): panel de counsel con posturas OPUESTAS que debaten el
+    # asunto y un moderador que sintetiza un dictamen. La postura de cada panelista llega en
+    # la voz del turno (persona sintética); aquí va SOLO el oficio común del panel.
+    "warroom_panelist": (
+        "## Tarea de este turno — SALA DE ESTRATEGIA (panelista)\n"
+        "Integras un panel de estrategia sobre este asunto. Analiza el caso desde la POSTURA "
+        "que te fue asignada (ver el rol de este turno), citando SIEMPRE el expediente como "
+        "[doc n] — cada documento llega sellado en un bloque <<<DOC n>>> y n es ese número. "
+        "Sé breve y filoso: máximo 350 palabras, sin relleno ni preámbulos. Ataca lo esencial "
+        "de tu postura (la tesis más fuerte, la grieta, la duda o el punto técnico, según te "
+        "corresponda). No inventes hechos que no consten en el expediente ni normas o "
+        "providencias sin respaldo: todo lo que no puedas verificar va marcado con [VERIFICAR]. "
+        "En la ronda de réplicas, responde a las posturas de los DEMÁS panelistas que se te "
+        "entreguen: refuta o matiza SIN repetir lo que ya dijiste. No redactes el escrito ni "
+        "el dictamen final: eso es de otro turno del equipo."
+    ),
+    "warroom_moderator": (
+        "## Tarea de este turno — SALA DE ESTRATEGIA (moderador)\n"
+        "Eres el moderador del panel. Sintetiza el debate en un dictamen para el abogado. Usa "
+        "SOLO lo que dijeron los panelistas y lo que consta en el expediente: NO introduzcas "
+        "hechos, normas ni providencias nuevas. Si una postura se apoya en algo sin respaldo, "
+        "consérvale su marca [VERIFICAR]. Sopesa las posturas opuestas con equilibrio: no "
+        "adoptes la de un panelista como si fuera la única. Cierra SIEMPRE, como lo ÚLTIMO que "
+        "escribas, con este bloque en este formato exacto:\n"
+        f"{_WARROOM_DICTAMEN_HEADER}\n"
+        "Tesis viable: <Sí | Con reservas | Riesgosa>\n"
+        "Fortalezas: <una por línea, cada una precedida de un guion>\n"
+        "Riesgos: <una por línea, cada una precedida de un guion>\n"
+        "Puntos ciegos: <una por línea, cada una precedida de un guion>\n"
+        "Estrategia: <2 a 4 frases con el camino recomendado>\n"
+        "Próximo paso: <una acción concreta que el abogado pueda dar hoy>\n"
+        f"{_WARROOM_DICTAMEN_FOOTER}"
     ),
 }
 
