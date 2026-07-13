@@ -71,6 +71,37 @@ def write_completion_marker(app_dir: Path) -> Path:
     return marker_path
 
 
+def restrict_env_permissions(env_path: Path) -> None:
+    """Blindaje de ACL del `.env` en Windows: quita la herencia de permisos y
+    deja SOLO al usuario actual con control total. El `.env` guarda secretos
+    (JWT_SECRET, contraseñas de Postgres, LITELLM_MASTER_KEY): sin esto, otras
+    cuentas de la máquina podrían leerlo por permisos heredados de la carpeta.
+
+    FAIL-SOFT por contrato: si icacls no está, falla o el entorno no es Windows,
+    se registra en stderr y se continúa — NUNCA se tumba el arranque por esto
+    (un `.env` un poco más expuesto es peor que MIA que no abre)."""
+    if os.name != "nt":
+        return
+    user = os.environ.get("USERNAME", "").strip()
+    if not user:
+        print("AVISO: no pude blindar el .env (sin USERNAME en el entorno).", file=sys.stderr)
+        return
+    domain = os.environ.get("USERDOMAIN", "").strip()
+    # DOMAIN\user resuelve mejor tanto cuentas locales como de dominio; si no hay
+    # USERDOMAIN, el nombre a secas también lo resuelve icacls en la mayoría de casos.
+    principal = f"{domain}\\{user}" if domain else user
+    try:
+        subprocess.run(
+            ["icacls", str(env_path), "/inheritance:r", "/grant:r", f"{principal}:F"],
+            check=True, capture_output=True, text=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-soft: el arranque no depende de esto
+        print(
+            f"AVISO: no pude restringir los permisos del .env ({type(exc).__name__}): {exc}",
+            file=sys.stderr,
+        )
+
+
 def resolve_app_dir(cli_app_dir: str | None) -> Path:
     """--app-dir > env MIA_APP_DIR > la lógica de config.PROJECT_ROOT (importada,
     no duplicada). Se revisan primero el argumento y el env DIRECTAMENTE (no vía
@@ -297,6 +328,10 @@ def main(argv: list[str] | None = None) -> int:
         _progress("Generando la configuración inicial...")
         env_path, created = ensure_seed_env(app_dir, pg_port)
         _progress(".env creado." if created else "La configuración ya existía, se conserva.")
+        # Blindaje de ACL del .env (Windows): tras escribirlo, restringe su
+        # lectura al usuario actual. Idempotente y fail-soft: se aplica corra o
+        # no se haya recién creado, por si una corrida anterior lo dejó sin ACL.
+        restrict_env_permissions(env_path)
 
         env_values = dotenv_values(env_path)
         super_pw = env_values.get("PG_PASSWORD") or ""

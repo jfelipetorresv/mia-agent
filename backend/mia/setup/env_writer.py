@@ -96,7 +96,17 @@ def upsert_env_keys(env_path: Path, updates: dict[str, str]) -> None:
 
     Todo el read-modify-write está serializado por `_WRITE_LOCK` y termina en una
     escritura atómica: nunca hay un estado a medio escribir en disco.
+
+    Defensa en profundidad: un valor con salto de línea (`\\n`/`\\r`) inyectaría
+    una variable extra en el `.env` (una línea por variable). El llamador actual
+    (welcome.py) ya lo valida antes, pero se rechaza aquí también con ValueError
+    por si un futuro llamador no lo hace.
     """
+    for key, value in updates.items():
+        if "\n" in value or "\r" in value:
+            raise ValueError(
+                f"El valor de {key} contiene un salto de línea; no se puede escribir en el .env."
+            )
     with _WRITE_LOCK:
         # Lee en binario y decodifica con utf-8-sig: tolera BOM sin perder claves y
         # NO traduce finales de línea (los preservamos exactamente).

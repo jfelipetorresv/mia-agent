@@ -1252,7 +1252,7 @@ incluyendo `welcome.py` (rutas de activación), la migración `031_welcome_boots
 - Además F4 halló y cerró en capa 2: frontend expuesto en 0.0.0.0 → atado a 127.0.0.1; pgAdmin 4
   (~700 MB) sacado del pgsql empaquetado; WebView2 `offlineInstaller` para instalar sin internet.
 
-## 🟡 Riesgo #60 — El motor que depende del proxy LiteLLM no queda activo hasta reabrir MIA (2026-07-11, sesión 44 · SIGUE ABIERTO tras F4/sesión 45: el reinicio automático por IPC de Tauri NO se implementó en F4; la mitigación de F3 —clave obligatoria + aviso de reabrir— sigue vigente; queda para una ola futura)
+## 🟢 Riesgo #60 — El motor que depende del proxy LiteLLM no queda activo hasta reabrir MIA [RESUELTO 2026-07-12, sesión 46 — reinicio automático por IPC de Tauri implementado; resta solo la confirmación visual en la capa 3 de Pipe]
 
 **Contexto:** F3 (wizard de bienvenida) añadió `POST /api/welcome/keys` para activar llaves
 sin volver a la terminal. La clave de BÚSQUEDA (VOYAGE) se recarga EN CALIENTE porque
@@ -1274,3 +1274,56 @@ aviso necesario.
 **Acción (F4 o una ola futura):** el reinicio automático del proxy LiteLLM tras guardar la
 clave requiere el mismo IPC remoto que el Riesgo #59 punto 2 deja pendiente de verificación
 visual — cerrar ambos juntos cuando F4 monte la cáscara real con Tauri IPC probado en vivo.
+
+**RESUELTO (sesión 46, 2026-07-12):** se implementó el reinicio automático en caliente.
+- Cáscara Tauri (`desktop/src-tauri/src/lib.rs`): nuevo comando `#[tauri::command] restart_litellm`
+  (registrado en `invoke_handler`), la config del proxy + `app_dir` se RETIENEN en `Shared`
+  (`litellm: Mutex<Option<(LiteLlmCfg, Option<String>)>>`) para poder re-lanzarlo, un flag
+  `restarting: AtomicBool` con guard que lo limpia en todos los caminos serializa el reinicio, y
+  el arranque de litellm se factorizó a `spawn_litellm` (reutilizada por el arranque y el reinicio;
+  re-asigna al Job Object anti-huérfanos, mata el proxy viejo con taskkill /T /F y espera a que el
+  puerto quede libre antes de re-lanzar). Caminos NO-APLICA seguros: dev sin bloque litellm, litellm
+  ADOPTADO (`litellm_pid=None`, no mata proceso ajeno) y cáscara cerrando.
+- Frontend (`frontend/app/activar/page.tsx`): tras guardar la clave, si corre dentro de la cáscara
+  (`window.__TAURI__`) invoca `restart_litellm`; solo si devuelve "reiniciado" quita el aviso de
+  "cierra y reabre". En dev (navegador) `__TAURI__` es undefined → conserva el aviso, sin romper.
+  Esto EJERCE el IPC remoto que el Riesgo #59 pt 2 dejaba pendiente (la confirmación VISUAL en vivo
+  sigue siendo de la capa 3 de Pipe).
+- Verificación: `cargo build` exit 0; `test_shell_hardening` 84/84 (7 checks nuevos del reinicio);
+  `test_packaging` 23/23, `test_litellm_packaging` 60/60, `test_first_run` 68/68. Capa 2: revisor
+  adversarial independiente de concurrencia/ciclo de vida — 0 bloqueantes, 0 mayores (sin deadlocks,
+  ningún Mutex cruza `await`, flag sin fuga, Job re-asignado). `test_welcome_keys` y `test_rls` NO
+  se re-corrieron esta sesión (la DB dev de mia no estaba encendida — puerto 55432); el único cambio
+  en esa ruta (validación `\n`/`\r` en `env_writer.upsert_env_keys`) se micro-probó aparte. Correrlos
+  en el próximo arranque con la DB arriba.
+- Pre-flight resuelto de paso (era el punto MAYOR del bug-hunter): se lanzó el `mia-litellm.exe`
+  empaquetado con CERO llaves de proveedor (estado del arranque en frío) → arrancó en ~1 s,
+  `/health/liveliness` 200, `/v1/models` listó los 5 modelos. LiteLLM tolera `os.environ/X` ausente.
+
+## 🟡 Riesgo #61 — Deuda consciente de la auditoría final pre-prueba (sesión 46, 2026-07-12)
+
+Antes de la prueba en frío de Pipe se corrieron 3 auditorías adversariales independientes
+(seguridad, corrección/E2E, y revisión del diff del #60): **0 bloqueantes en todo**. Se corrigió lo
+barato (ver #60: validación anti-inyección en `env_writer`, ACL restrictiva del `.env` vía `icacls`
+fail-soft en `first_run.py`). Estos 3 puntos se dejaron ANOTADOS como deuda a propósito — cambiarlos
+justo antes del E2E en frío es más riesgoso que el problema que resuelven:
+
+1. **Identidad de backend/frontend falsificable localmente (seguridad, MENOR).** La cáscara adopta un
+   proceso en sus puertos si presenta señales públicas (claves en `/health`, cabeceras CSP). Un
+   proceso local hostil que YA escuche en el puerto exacto ANTES de abrir MIA podría hacerse adoptar
+   (phishing de la ventana). Precondición fuerte e irreal en una máquina mono-abogado recién
+   instalada; el mecanismo está pensado para colisiones ACCIDENTALES (voicebox, "Intelligence Sura"),
+   no para un atacante local decidido. Litellm SÍ exige firma con `LITELLM_MASTER_KEY` (fuerte). Si se
+   quisiera cerrar del todo: firmar también la señal de backend/frontend con el secreto del `.env`.
+   **Aceptado** para el modelo de amenaza local-first (un abogado = un equipo).
+2. **Carpeta de datos = carpeta de programa (corrección, MENOR).** El instalador fija
+   `INSTDIR = $LOCALAPPDATA\Mia` y `app_dir = ${local_app_data}/Mia` — los datos del abogado (pgdata,
+   `.env`, logs) caen DENTRO de la carpeta del programa. Funciona en frío y el desinstalador usa
+   `RMDir` NO recursivo → los datos SOBREVIVEN al desinstalar (bien). Es sucio pero no rompe nada;
+   moverlo a `.../Mia/data` es cambio de layout con riesgo de regresión → **aplazado** (mejor con el
+   E2E de Pipe como red).
+3. **El setup nunca vuelve a correr tras el primer éxito (corrección, MENOR / deuda de "update").**
+   El triple gatillo (marcador + PG_VERSION + `.env`) apaga el setup para siempre; las migraciones
+   solo corren dentro del setup → en una ACTUALIZACIÓN futura de versión (032+) las migraciones nuevas
+   NO se aplicarían solas. No afecta el E2E en frío de hoy; **es la historia de "actualizar una MIA ya
+   instalada", pendiente para cuando se aborde el flujo de updates.**

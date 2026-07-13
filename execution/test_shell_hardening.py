@@ -477,7 +477,11 @@ def main() -> int:
         lib_rs_code.count("child_died(shared,") == 3,
     )
     litellm_child_died_idx = lib_rs_code.find('child_died(shared, "litellm")')
-    litellm_health_wait_idx = lib_rs_code.find("litellm_health(&client")
+    # El arranque de litellm (spawn + espera) vive en la fn reutilizable
+    # spawn_litellm, que recibe `client: &reqwest::Client` y por eso llama
+    # `litellm_health(client, ...)` (sin `&`). La aserción de ORDEN
+    # (child_died ANTES del health-check) se mantiene igual.
+    litellm_health_wait_idx = lib_rs_code.find("litellm_health(client")
     check(
         "bucle de espera de LiteLLM: child_died se evalúa ANTES del health-check (liveliness)",
         litellm_child_died_idx != -1
@@ -508,6 +512,38 @@ def main() -> int:
         "el apagado hace taskkill de litellm (litellm_pid en la lista de cierre)",
         "litellm_pid" in lib_rs_code
         and re.search(r'\("litellm"\s*,\s*o\.litellm_pid\)', lib_rs_code) is not None,
+    )
+
+    # 6j · Riesgo #60: reinicio EN CALIENTE del proxy LiteLLM (comando Tauri).
+    # Tras guardar una clave diferida el frontend puede reiniciar el motor sin
+    # pedirle al abogado "cierra y reabre". Todos los checks sobre CÓDIGO real.
+    check(
+        "lib.rs define el comando restart_litellm (#[tauri::command])",
+        "async fn restart_litellm" in lib_rs_code,
+    )
+    check(
+        "lib.rs registra restart_litellm en el invoke_handler del builder",
+        "generate_handler!" in lib_rs_code and "restart_litellm" in lib_rs_code,
+    )
+    check(
+        "el arranque de litellm se factoriza en spawn_litellm (reutilizado por orchestrate y el reinicio)",
+        "async fn spawn_litellm" in lib_rs_code and lib_rs_code.count("spawn_litellm(") >= 2,
+    )
+    check(
+        "Shared RETIENE el bloque litellm + app_dir para poder re-lanzar (campo litellm: Mutex<Option<(LiteLlmCfg, ...)>>)",
+        re.search(r"litellm\s*:\s*Mutex\s*<\s*Option\s*<\s*\(\s*LiteLlmCfg", lib_rs_code) is not None,
+    )
+    check(
+        "el reinicio serializa con un flag restarting (AtomicBool)",
+        "restarting" in lib_rs_code and "AtomicBool" in lib_rs_code,
+    )
+    check(
+        "el reinicio NO mata un proxy ajeno/adoptado (devuelve no-aplica si litellm_pid es None o no hay bloque retenido)",
+        '"no-aplica"' in lib_rs_code,
+    )
+    check(
+        "el reinicio ESPERA a que el puerto quede libre antes de re-lanzar (evita colisión de bind)",
+        "port_open(port)" in lib_rs_code,
     )
 
     # 6h · plantilla del instalador estática con tokens + --first-run

@@ -13,6 +13,7 @@ use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -224,6 +225,13 @@ struct Shared {
     owned: Mutex<Owned>,
     log_dir: PathBuf,
     job: Option<Job>,
+    /// Config + app_dir del motor de modelos, RETENIDOS para poder re-lanzarlo
+    /// en caliente (comando `restart_litellm`). Se rellena al inicio de
+    /// `orchestrate` (antes de que `cfg` se consuma). `None` = no hay bloque
+    /// litellm en el config (dev, 3 servicios) → el reinicio no aplica.
+    litellm: Mutex<Option<(LiteLlmCfg, Option<String>)>>,
+    /// Serializa un reinicio de litellm en curso (evita dos reinicios a la vez).
+    restarting: AtomicBool,
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +509,195 @@ async fn run_setup(
 }
 
 // ---------------------------------------------------------------------------
+// Arranque del motor de modelos (LiteLLM) — reutilizable
+// ---------------------------------------------------------------------------
+
+/// Lanza el proceso de LiteLLM (el puerto debe estar YA libre), lo mete al Job
+/// Object, lo registra como hijo propio (reemplazando pid/child en `Owned`) y
+/// ESPERA a su salud (liveliness). Devuelve el pid. Lo usan tanto el arranque
+/// en frío (`orchestrate`, puerto libre) como el reinicio en caliente
+/// (`restart_litellm`): así la lógica de lanzamiento + Job + espera vive en un
+/// solo lugar y no puede divergir.
+async fn spawn_litellm(
+    app: &AppHandle,
+    client: &reqwest::Client,
+    shared: &Shared,
+    litellm: &LiteLlmCfg,
+    app_dir: &Option<String>,
+) -> Result<u32, String> {
+    let log_dir = shared.log_dir.clone();
+    log_line(&log_dir, "LiteLLM: lo enciendo.");
+    let (prog, rest) = litellm
+        .cmd
+        .split_first()
+        .ok_or("Mia no pudo encender el motor de modelos")?;
+    let mut command = Command::new(prog);
+    command
+        .args(rest)
+        .current_dir(&litellm.cwd)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(child_log(&log_dir, "litellm"))
+        .stderr(child_log(&log_dir, "litellm"));
+    for (k, v) in &litellm.env {
+        command.env(k, v);
+    }
+    if let Some(app_dir) = app_dir {
+        command.env("MIA_APP_DIR", app_dir);
+    }
+    let child = command.spawn().map_err(|e| {
+        log_line(&log_dir, &format!("ERROR técnico: spawn litellm: {e}"));
+        "Mia no pudo encender el motor de modelos".to_string()
+    })?;
+    if let Some(job) = &shared.job {
+        if !job.assign(&child) {
+            log_line(&log_dir, "AVISO: no pude asignar litellm al Job Object.");
+        }
+    }
+    let pid = register_child(shared, "litellm", child)?;
+    log_line(&log_dir, &format!("LiteLLM: lanzado (PID {pid}). Esperando su salud (liveliness)…"));
+    // Hijo propio: basta liveliness (2xx en health_url). Falla rápida si el
+    // proceso muere; latido visible tras 8 s.
+    let wait_start = Instant::now();
+    let deadline = wait_start + Duration::from_secs(180);
+    loop {
+        // child_died PRIMERO: si el hijo murió y un squatter rápido ya ocupó el
+        // puerto, un health-check hecho antes podría leer ese squatter como
+        // "vivo" y nunca reportar la muerte real.
+        if let Some(status) = child_died(shared, "litellm") {
+            log_line(&log_dir, &format!("ERROR técnico: litellm terminó solo ({status})."));
+            return Err("Mia no pudo encender el motor de modelos".into());
+        }
+        if let Identity::Mia = identity::litellm_health(client, &litellm.health_url).await {
+            break;
+        }
+        if closing(shared) {
+            return Err("la ventana se cerró durante el arranque".into());
+        }
+        if Instant::now() > deadline {
+            return Err("el motor de modelos tardó demasiado en encender".into());
+        }
+        let secs = wait_start.elapsed().as_secs();
+        if secs >= 8 {
+            emit(app, "litellm", &format!("Encendiendo el motor de modelos… ({secs} s)"));
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    log_line(&log_dir, "LiteLLM: salud OK (liveliness).");
+    Ok(pid)
+}
+
+// ---------------------------------------------------------------------------
+// Reinicio en caliente del motor de modelos (comando Tauri) — Riesgo #60
+// ---------------------------------------------------------------------------
+
+/// Guard que limpia el flag `restarting` en TODOS los caminos de retorno del
+/// reinicio (early-return, `?`, panic): pone el flag en `false` al soltarse.
+struct RestartGuard<'a>(&'a AtomicBool);
+impl Drop for RestartGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Reinicia el proxy LiteLLM que ESTA cáscara arrancó, sin cerrar la app.
+///
+/// Lo llama el frontend tras guardar una clave DIFERIDA (respaldo/openrouter)
+/// que solo el proxy lee al arrancar: en vez de pedirle al abogado "cierra y
+/// reabre Mia", se reinicia el motor en caliente para que la clave quede activa
+/// de una vez.
+///
+/// Devuelve `"reiniciado"` si el proxy se reinició, o `"no-aplica"`/`"en-curso"`
+/// cuando no procede (cáscara cerrando, litellm adoptado/ajeno, sin bloque
+/// retenido, o ya hay un reinicio en curso). NUNCA mata un proxy que no sea
+/// nuestro.
+#[tauri::command]
+async fn restart_litellm(app: AppHandle) -> Result<String, String> {
+    let shared = app.state::<Shared>();
+    let log_dir = shared.log_dir.clone();
+
+    // (a) NO-APLICA sin tocar nada: cáscara cerrando, sin bloque litellm
+    // retenido (dev / 3 servicios), o litellm ADOPTADO (litellm_pid None = no
+    // es nuestro proceso; jamás matamos un proxy ajeno).
+    if closing(&shared) {
+        return Ok("no-aplica".into());
+    }
+    let retained = shared.litellm.lock().unwrap().clone();
+    let (litellm_cfg, app_dir) = match retained {
+        Some(v) => v,
+        None => {
+            log_line(&log_dir, "LiteLLM: reinicio no aplica (sin bloque litellm retenido).");
+            return Ok("no-aplica".into());
+        }
+    };
+    let old_pid = { shared.owned.lock().unwrap().litellm_pid };
+    let old_pid = match old_pid {
+        Some(p) => p,
+        None => {
+            log_line(&log_dir, "LiteLLM: reinicio no aplica (el motor fue adoptado, no es nuestro).");
+            return Ok("no-aplica".into());
+        }
+    };
+
+    // (b) serializar: si ya hay un reinicio en curso, salir sin tocar el flag
+    // que otro reinicio ya posee (por eso el guard se crea DESPUÉS de este if).
+    if shared.restarting.swap(true, Ordering::SeqCst) {
+        log_line(&log_dir, "LiteLLM: ya hay un reinicio en curso — omito.");
+        return Ok("en-curso".into());
+    }
+    let _guard = RestartGuard(&shared.restarting);
+
+    log_line(&log_dir, &format!("LiteLLM: reiniciando — mato el proxy viejo (PID {old_pid})."));
+    // (c) matar el árbol del proxy viejo y hacer reap del Child para no dejar
+    // zombie; deja litellm_pid en None hasta que spawn_litellm lo reemplace.
+    let _ = Command::new("taskkill")
+        .args(["/PID", &old_pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    {
+        let mut o = shared.owned.lock().unwrap();
+        if let Some(mut child) = o.litellm_child.take() {
+            let _ = child.try_wait();
+        }
+        o.litellm_pid = None;
+    }
+
+    // (d) esperar a que el puerto quede LIBRE antes de re-lanzar (evita que el
+    // nuevo proceso choque al hacer bind mientras el viejo aún lo suelta).
+    let port = litellm_cfg.port;
+    let free_deadline = Instant::now() + Duration::from_secs(10);
+    while port_open(port) {
+        if Instant::now() > free_deadline {
+            log_line(
+                &log_dir,
+                &format!("ERROR: el puerto {port} no quedó libre tras matar el proxy — abandono el reinicio."),
+            );
+            return Err("no pude reiniciar el motor de modelos (el puerto siguió ocupado)".into());
+        }
+        if closing(&shared) {
+            return Ok("no-aplica".into());
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    if closing(&shared) {
+        return Ok("no-aplica".into());
+    }
+
+    // (e/f) re-lanzar (re-asigna al Job, register_child reemplaza pid/child) y
+    // esperar su salud (liveliness) — misma ruta que el arranque en frío.
+    let client = reqwest::Client::builder().no_proxy().build().map_err(|e| {
+        log_line(&log_dir, &format!("ERROR técnico: cliente HTTP (reinicio litellm): {e}"));
+        "no pude reiniciar el motor de modelos".to_string()
+    })?;
+    spawn_litellm(&app, &client, &shared, &litellm_cfg, &app_dir).await?;
+
+    log_line(&log_dir, "LiteLLM: reiniciado");
+    Ok("reiniciado".into())
+    // _guard limpia `restarting` al salir por CUALQUIER camino (aquí, en `?`,
+    // o en los early-return de arriba tras crearse).
+}
+
+// ---------------------------------------------------------------------------
 // Secuencia de arranque
 // ---------------------------------------------------------------------------
 
@@ -508,6 +705,14 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
     let log_dir = shared.log_dir.clone();
     let started = Instant::now();
     log_line(&log_dir, "=== Arranque de Mia (cáscara) ===");
+
+    // Retener el bloque litellm + app_dir ANTES de que `cfg` se consuma: sin
+    // esto, `restart_litellm` no tendría con qué re-lanzar el motor de modelos
+    // en caliente. Si no hay bloque litellm (dev), queda None y el reinicio no
+    // aplica.
+    if let Some(l) = &cfg.litellm {
+        *shared.litellm.lock().unwrap() = Some((l.clone(), cfg.app_dir.clone()));
+    }
 
     let client = reqwest::Client::builder().no_proxy().build().map_err(|e| {
         log_line(&log_dir, &format!("ERROR técnico: cliente HTTP: {e}"));
@@ -702,63 +907,10 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
                 &format!("LiteLLM: puerto {} responde y es Mia (/v1/models con alias propios) — lo adopto, no lo apagaré.", litellm.port),
             );
         } else {
-            log_line(&log_dir, "LiteLLM: lo enciendo.");
-            let (prog, rest) = litellm
-                .cmd
-                .split_first()
-                .ok_or("Mia no pudo encender el motor de modelos")?;
-            let mut command = Command::new(prog);
-            command
-                .args(rest)
-                .current_dir(&litellm.cwd)
-                .creation_flags(CREATE_NO_WINDOW)
-                .stdout(child_log(&log_dir, "litellm"))
-                .stderr(child_log(&log_dir, "litellm"));
-            for (k, v) in &litellm.env {
-                command.env(k, v);
-            }
-            if let Some(app_dir) = &cfg.app_dir {
-                command.env("MIA_APP_DIR", app_dir);
-            }
-            let child = command.spawn().map_err(|e| {
-                log_line(&log_dir, &format!("ERROR técnico: spawn litellm: {e}"));
-                "Mia no pudo encender el motor de modelos".to_string()
-            })?;
-            if let Some(job) = &shared.job {
-                if !job.assign(&child) {
-                    log_line(&log_dir, "AVISO: no pude asignar litellm al Job Object.");
-                }
-            }
-            let pid = register_child(shared, "litellm", child)?;
-            log_line(&log_dir, &format!("LiteLLM: lanzado (PID {pid}). Esperando su salud (liveliness)…"));
-            // Hijo propio: basta liveliness (2xx en health_url). Falla rápida
-            // si el proceso muere; latido visible tras 8 s.
-            let wait_start = Instant::now();
-            let deadline = wait_start + Duration::from_secs(180);
-            loop {
-                // child_died PRIMERO: si el hijo murió y un squatter rápido
-                // ya ocupó el puerto, un health-check hecho antes podría leer
-                // ese squatter como "vivo" y nunca reportar la muerte real.
-                if let Some(status) = child_died(shared, "litellm") {
-                    log_line(&log_dir, &format!("ERROR técnico: litellm terminó solo ({status})."));
-                    return Err("Mia no pudo encender el motor de modelos".into());
-                }
-                if let Identity::Mia = identity::litellm_health(&client, &litellm.health_url).await {
-                    break;
-                }
-                if closing(shared) {
-                    return Err("la ventana se cerró durante el arranque".into());
-                }
-                if Instant::now() > deadline {
-                    return Err("el motor de modelos tardó demasiado en encender".into());
-                }
-                let secs = wait_start.elapsed().as_secs();
-                if secs >= 8 {
-                    emit(&app, "litellm", &format!("Encendiendo el motor de modelos… ({secs} s)"));
-                }
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-            log_line(&log_dir, "LiteLLM: salud OK (liveliness).");
+            // Puerto libre: lanzar hijo propio y esperar su salud. La lógica de
+            // lanzamiento + Job + espera vive en spawn_litellm (reutilizada por
+            // el reinicio en caliente).
+            spawn_litellm(&app, &client, shared, litellm, &cfg.app_dir).await?;
         }
     }
 
@@ -1099,6 +1251,8 @@ pub fn run() {
                 owned: Mutex::new(Owned::default()),
                 log_dir: log_dir.clone(),
                 job,
+                litellm: Mutex::new(None),
+                restarting: AtomicBool::new(false),
             });
 
             let handle = app.handle().clone();
@@ -1186,6 +1340,10 @@ pub fn run() {
             }
             Ok(())
         })
+        // Comando invocable desde el frontend (window.__TAURI__.core.invoke):
+        // reinicia el motor de modelos en caliente tras guardar una clave
+        // diferida, sin pedirle al abogado que cierre y reabra Mia.
+        .invoke_handler(tauri::generate_handler![restart_litellm])
         .build(tauri::generate_context!())
         .expect("error al iniciar la cáscara de Mia")
         .run(|app_handle, event| {

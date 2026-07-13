@@ -1,5 +1,19 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-12 — Sesión 46 · PULIDO PRE-PRUEBA — Riesgo #60 cerrado + auditoría final de seguridad/bugs
+TL;DR: antes del E2E en frío de Pipe, 3 auditorías adversariales independientes (seguridad, corrección/E2E, diff) dieron 0 bloqueantes; se cerró el Riesgo #60 (reinicio en caliente del motor de modelos tras guardar la clave, sin reabrir MIA), se eliminó la única incógnita real (pre-flight del motor sin llaves) y se endureció el manejo del `.env`.
+Qué construimos:
+- `desktop/src-tauri/src/lib.rs`: comando Tauri `restart_litellm` (registrado en `invoke_handler`), config del proxy + `app_dir` retenidos en `Shared` para re-lanzar, flag `restarting: AtomicBool` con guard, arranque de litellm factorizado a `spawn_litellm` (reusado por arranque y reinicio; re-asigna al Job Object, taskkill viejo + espera de puerto libre antes de re-lanzar). Caminos NO-APLICA seguros (dev / adoptado / cerrando).
+- `frontend/app/activar/page.tsx`: tras guardar la clave, si `window.__TAURI__` invoca `restart_litellm` y quita el aviso solo si el motor confirma "reiniciado"; en navegador (dev) conserva el aviso.
+- Endurecimientos: `env_writer.upsert_env_keys` rechaza `\n`/`\r` (defensa en profundidad); `first_run.py` aplica ACL restrictiva al `.env` con `icacls` (fail-soft, solo Windows).
+Qué decidimos:
+- Capa 1: `cargo build` exit 0; `test_shell_hardening` 84/84 (7 checks nuevos), `test_packaging` 23/23, `test_litellm_packaging` 60/60, `test_first_run` 68/68. `test_welcome_keys` + `test_rls` NO re-corridos (DB dev apagada, puerto 55432) → diferidos al próximo arranque; el cambio de `env_writer` se micro-probó.
+- Capa 2: revisor adversarial de concurrencia/ciclo de vida del diff → 0 bloqueantes, 0 mayores (sin deadlocks, ningún Mutex cruza await, flag sin fuga, Job re-asignado). Capa 3 (E2E en frío) sigue siendo de Pipe.
+- Pre-flight del motor sin llaves: `mia-litellm.exe` empaquetado arranca con 0 llaves de proveedor (salud 200, 5 modelos) — el estado del arranque en frío ya no es incógnita.
+- Deuda documentada (Riesgo #61, no bloquea): identidad de cáscara falsificable solo por atacante local (aceptado mono-abogado), carpeta datos=programa (aplazado), setup no re-corre migraciones en updates (deuda de "update").
+Qué sigue:
+- Capa 3 de Pipe (E2E en frío; para probar el #60 hay que RE-ENSAMBLAR el instalador con la cáscara de esta sesión) + correr los 2 gates diferidos con la DB arriba. Acciones de Pipe sin cambio (firma digital + OAuth).
+
 ## 2026-07-11 — Sesión 45 · BLOQUE INSTALADOR F4 — instalador de doble clic ensamblado
 TL;DR: se ensambló el instalador NSIS de doble clic que un abogado instala sin Python/Node/Postgres; la incógnita crítica (dónde caen los payloads) se resolvió empíricamente a favor y la capa 2 cerró 5 hallazgos antes del sello.
 Qué construimos:

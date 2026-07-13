@@ -399,7 +399,24 @@ export default function ActivarPage() {
 
       if (payload.busqueda || payload.respaldo) {
         const res = await apiSend<KeysResult>("POST", "/api/welcome/keys", payload);
-        setResult({ mensaje: res.mensaje, aviso: res.aviso });
+        // Si el backend devolvió `aviso` (se guardó una clave DIFERIDA que solo
+        // el proxy lee al arrancar) Y estamos dentro de la cáscara de escritorio,
+        // reinicia el motor EN CALIENTE para que la clave quede activa de una vez
+        // — así el abogado no tiene que "cerrar y reabrir". Solo se quita el aviso
+        // si el motor de verdad se reinició ("reiniciado"); "no-aplica"/"en-curso"
+        // o un fallo conservan el aviso. En dev (navegador) __TAURI__ es undefined
+        // → nunca se invoca y el aviso se conserva.
+        let aviso = res.aviso;
+        const tauri = (window as unknown as { __TAURI__?: { core?: { invoke?: (cmd: string) => Promise<unknown> } } }).__TAURI__;
+        if (aviso && tauri?.core?.invoke) {
+          try {
+            const r = await tauri.core.invoke("restart_litellm");
+            if (r === "reiniciado") aviso = null;
+          } catch {
+            /* dev/navegador o fallo del reinicio: conserva el aviso "cierra y reabre" */
+          }
+        }
+        setResult({ mensaje: res.mensaje, aviso });
         setPhase("listo");
       } else {
         // No hay claves que guardar: continúa directo (la política ya se persistió).
