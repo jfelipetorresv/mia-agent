@@ -55,7 +55,7 @@ from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
 from ..policy import budget as policy_budget
-from . import context_recovery, delegation, research, retrieval, untrusted, verification
+from . import context_recovery, delegation, reasoning_filter, research, retrieval, untrusted, verification
 from .state import HITL_OUTCOME, MatterState
 
 logger = logging.getLogger("mia.agents.graph")
@@ -426,6 +426,31 @@ class MatterGraphBuilder:
                            "recortado por el nodo" if shrink is not None else "comprimido")
             resp = await asyncio.to_thread(llm.call_llm, reduced, task=task, model=model)
         content = resp.choices[0].message.content or ""
+        # Filtro del "razonamiento en voz alta" (agents/reasoning_filter): los modelos de
+        # razonamiento LOCALES (Ollama / mia-local) anteponen su cadena de pensamiento en
+        # bloques <think>…</think>. Se elimina AQUÍ —el único cuello de botella por el que
+        # pasa la salida cruda de TODOS los especialistas (facts/research/analysis/draft/
+        # work/edit/synth), del grafo de asunto Y del de proyecto— ANTES de que el texto
+        # llegue al escáner de citas (verification.annotate_draft) y al ensamblado del
+        # borrador.
+        #
+        # FIX 2 (gate por modelo, defensa en profundidad): el filtro corre SOLO cuando el
+        # modelo que respondió es LOCAL de razonamiento. Para Claude/nube —que jamás emite
+        # estas etiquetas— es un NO-OP INCONDICIONAL (ni siquiera se ejecuta el filtro), de
+        # modo que un `<think>` CITADO en un escrito jurídico (peritaje de IA, código como
+        # prueba) nunca corre riesgo. Señal primaria: el modelo REAL que respondió
+        # (`resp.model`, que refleja el fallback si sonnet cayó a mia-local); respaldo: el
+        # primer alias de la cadena resuelta para este task/override. El FIX 1 (anclaje al
+        # inicio dentro de strip_reasoning) es la garantía DURA que protege el texto
+        # legítimo aunque este gate no aplicara.
+        raw_model = getattr(resp, "model", "") or ""
+        try:
+            chain_model = llm.resolve_model(task, model)
+        except Exception:  # noqa: BLE001 — resolver el alias jamás debe tumbar el turno
+            chain_model = model or ""
+        if (reasoning_filter.is_reasoning_model(raw_model)
+                or reasoning_filter.is_reasoning_model(chain_model)):
+            content = reasoning_filter.strip_reasoning(content)
         return content, getattr(resp, "usage", None)
 
     # ── 1 · intake ──────────────────────────────────────────────────────────
