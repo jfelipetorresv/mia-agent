@@ -1327,3 +1327,32 @@ justo antes del E2E en frío es más riesgoso que el problema que resuelven:
    solo corren dentro del setup → en una ACTUALIZACIÓN futura de versión (032+) las migraciones nuevas
    NO se aplicarían solas. No afecta el E2E en frío de hoy; **es la historia de "actualizar una MIA ya
    instalada", pendiente para cuando se aborde el flujo de updates.**
+
+## 🟡 Riesgo #62 — Banco de oro: residuales de anonimización + gate de confidencialidad antes de Fase 2 (sesión 46, 2026-07-12)
+
+Fase 1 (backend) del banco de oro construida y verificada (`test_gold_cases` 37/37 offline; capa 2
+adversarial de confidencialidad corrida: encontró 1 BLOQUEANTE —título con PII cruda— + 4 grietas,
+TODAS corregidas y re-probadas con los ataques exactos del revisor en el gate). Ver diseño en
+`memory/plan-banco-de-oro.md`. Arquitectura de no-fuga verificada sólida: el `anon_map` en claro nunca
+se persiste (solo su hash), el juez solo ve texto anonimizado, la Pasada 2 (NER) fuerza modelo LOCAL
+(nunca nube), `status='confirmed'` solo por el endpoint confirm (revisión humana), RLS FORCE patrón 015.
+
+**Residuales ACEPTADOS (todos del lado seguro — ocultar de más o cubiertos por la revisión humana):**
+1. **El NER local (nombres de personas/empresas) puede omitir entidades** — qwen-7B no es perfecto y
+   puede no estar instalado. Mitigación: heurística de SOSPECHA (`scan_suspects`) marca candidatos sin
+   ocultar + aviso SIEMPRE cauteloso cuando hay sospechas o el NER no corrió; `spans_pii_restantes`
+   vacío = "nada detectado", NUNCA "garantizado limpio". La **revisión humana obligatoria** es la única
+   red real contra reidentificación (apodos, hechos únicos que reidentifican por contexto).
+2. **Número pelado de 10 díg que empiece en 3** y sea cuantía legítima podría enmascararse como teléfono
+   (over-masking, lado seguro). Cédula pelada sin separador ni palabra clave NO se oculta a propósito
+   (ambigüedad con cuantías) → cae como `sospecha_id` si no matchea un valor ya mapeado.
+3. **Título explícito con un NOMBRE** (no PII estructurada) no lo bloquea `contains_pii` → queda a la
+   revisión humana, igual que el cuerpo (decisión: rechazar título con PII estructurada, no anonimizar
+   en silencio lo que el abogado escribió literal).
+
+**GATE PENDIENTE (importante):** la Fase 1 NO tiene UI todavía → hoy NADIE puede guardar un caso real
+(los endpoints existen pero no están cableados a pantalla). **ANTES de que la Fase 2 (botón "Guardar
+como caso de oro" + pantalla) se pueda usar con datos reales, hacer una ÚLTIMA revisión de
+confidencialidad end-to-end** (que la UI muestre los spans de sospecha resaltados y obligue la revisión
+antes de confirmar). **VERIFICACIÓN DIFERIDA:** la parte RLS de `test_gold_cases` (sección 3) NO se
+corrió (DB dev apagada, puerto 55432) — correr con la DB encendida; patrón idéntico a 015.

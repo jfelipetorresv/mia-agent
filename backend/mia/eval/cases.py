@@ -43,6 +43,11 @@ class GoldenCase:
     # correcta" (eso exigiría un LLM-juez, fuera de v1).
     expect_reaches_draft: bool = True
     synthetic: bool = True  # candado: v1 solo corre casos declarados sintéticos
+    # Rúbrica de calificación SUSTANTIVA (Banco de oro, Fase 1): las claves que el abogado
+    # confirmó — {citas_clave:[...], conclusiones_clave:[...]}. Vacía para los casos sintéticos
+    # (que solo miden DISCIPLINA vía score_turn); presente en los casos de oro por-despacho, y
+    # entonces el harness añade el `substantive_score` sobre la respuesta nueva.
+    rubric: dict = field(default_factory=dict)
 
 
 # ── set canónico (SINTÉTICO) ──────────────────────────────────────────────────
@@ -114,3 +119,45 @@ def load_golden_cases() -> list[GoldenCase]:
     """El set canónico de casos de oro (sintéticos). Copia defensiva no hace falta:
     los GoldenCase son frozen."""
     return list(GOLDEN_CASES)
+
+
+def _rows_to_cases(rows: list[tuple]) -> list[GoldenCase]:
+    """Hidrata filas de `gold_cases` (id, title, message, documents, gold_answer, rubric) a
+    los mismos `GoldenCase` que el harness ya consume. Puro (sin DB) — testeable aparte."""
+    cases: list[GoldenCase] = []
+    for (cid, title, message, documents, gold_answer, rubric) in rows:
+        docs: list[GoldenCaseDoc] = []
+        for d in (documents or []):
+            if not isinstance(d, dict):
+                continue
+            docs.append(GoldenCaseDoc(
+                filename=str(d.get("filename") or ""),
+                chunks=tuple(str(c) for c in (d.get("chunks") or [])),
+            ))
+        cases.append(GoldenCase(
+            id=str(cid),
+            title=str(title or ""),
+            message=str(message or ""),
+            documents=tuple(docs),
+            # `gold_answer` (borrador aprobado anonimizado) viaja en el perfil para que quede
+            # disponible en el resultado sin cambiar la firma del grafo; no lo consume el grafo.
+            profile={"gold_answer": str(gold_answer or "")},
+            # Un caso de oro guardado YA está anonimizado → corre sin fricción como los sintéticos
+            # (el candado de datos reales protege los expedientes crudos, no estos casos anónimos).
+            synthetic=True,
+            rubric=dict(rubric or {}),
+        ))
+    return cases
+
+
+async def load_tenant_gold_cases(tenant_id: str) -> list[GoldenCase]:
+    """Casos de oro CONFIRMADOS del despacho (RLS), hidratados como GoldenCase con su rúbrica.
+    Import de `pool` diferido: `cases.py` se importa en muchos sitios sin DB (gates offline)."""
+    from ..db import pool  # diferido: no arrastrar la DB al import del módulo
+
+    async with pool.tenant_connection(tenant_id) as conn:
+        rows = await (await conn.execute(
+            "SELECT id, title, message, documents, gold_answer, rubric "
+            "FROM gold_cases WHERE status = 'confirmed' ORDER BY updated_at DESC"
+        )).fetchall()
+    return _rows_to_cases(list(rows))

@@ -18,9 +18,9 @@ from ..cron import build_scheduler
 from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, auth, automations, curator, folders, guides, hitl, learning,
-                     mailbox, matter_folders, matter_mail, matter_sources, mcp, missions,
-                     personas, policy, remote_drive, settings, setup, sources, speech,
+from .routes import (assistant, auth, automations, curator, folders, gold_cases, guides, hitl,
+                     learning, mailbox, matter_folders, matter_mail, matter_sources, mcp,
+                     missions, personas, policy, remote_drive, settings, setup, sources, speech,
                      stream, traces, ux, value, welcome)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
@@ -197,6 +197,8 @@ app.include_router(sources.router, prefix="/api")
 # F3 (bienvenida + activación) · estado de la primera vez y llaves mínimas de
 # instalación (búsqueda documental / respaldo del motor) → /api/welcome/*.
 app.include_router(welcome.router, prefix="/api")
+# Banco de oro (gold-set de calidad por-despacho) · captura anonimizada + rúbrica → /api/gold-cases/*.
+app.include_router(gold_cases.router, prefix="/api")
 
 
 @app.get("/health")

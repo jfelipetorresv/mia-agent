@@ -30,7 +30,7 @@ from ..agents.graph import build_matter_graph
 from ..agents.state import initial_state, thread_id_for
 from ..db import pool
 from .cases import GoldenCase, load_golden_cases
-from .scoring import score_turn
+from .scoring import score_turn, substantive_score
 
 logger = logging.getLogger("mia.eval.harness")
 
@@ -98,11 +98,17 @@ async def _seed_case_matter(tenant_id: str, case: GoldenCase) -> str:
 
 
 # ── correr UN caso por el grafo completo ──────────────────────────────────────
-async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optional[bool] = None) -> dict:
+async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optional[bool] = None,
+                   substantive_judge: Optional[callable] = None) -> dict:
     """Corre un caso de oro por el grafo y devuelve su resultado puntuado.
 
     Candado: un caso NO sintético exige `allow_eval_real_data` del despacho. Se puede pasar
     `tenant_allow_real` ya resuelto (para no releer la política por caso); si es None, se lee.
+
+    Si el caso trae `rubric` (caso de oro por-despacho), se añade `result["substantive"]` con la
+    calificación sustantiva (cobertura de citas/conclusiones clave). `substantive_judge` es un
+    CALLBACK opcional (efecto de red — el juez LLM que ve SOLO texto anonimizado); default None
+    mantiene la corrida determinista y sin red.
     """
     if not case.synthetic:
         allow = tenant_allow_real
@@ -139,7 +145,7 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
     score = score_turn(draft, diagnosis, md, sources=sources,
                        verification_report=md.get("verification"))
 
-    return {
+    result = {
         "case_id": case.id,
         "title": case.title,
         "matter_id": matter_id,
@@ -153,19 +159,29 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         "reached_draft": score["reached_draft"],
     }
 
+    # Hook sustantivo: si el caso trae rúbrica confirmada, calificar la respuesta nueva contra
+    # ella. El juez corre FUERA de la ruta pura (callback); sin rúbrica, no se toca nada.
+    if getattr(case, "rubric", None):
+        result["substantive"] = substantive_score(
+            draft, diagnosis, case.rubric, judge=substantive_judge)
+
+    return result
+
 
 # ── correr una SUITE + reporte ────────────────────────────────────────────────
 async def run_suite(tenant_id: str, cases: Optional[list[GoldenCase]] = None,
-                    *, run_id: str) -> dict:
+                    *, run_id: str, substantive_judge: Optional[callable] = None) -> dict:
     """Corre una lista de casos (por defecto los canónicos sintéticos) y arma el reporte.
-    Resuelve la política de datos reales UNA vez. `run_id` lo fija el llamador (con fecha)."""
+    Resuelve la política de datos reales UNA vez. `run_id` lo fija el llamador (con fecha).
+    `substantive_judge` (opcional) se pasa a los casos con rúbrica (juez advisory anonimizado)."""
     cases = cases if cases is not None else load_golden_cases()
     allow_real = (await read_eval_policy(tenant_id))["allow_real_data"]
 
     results: list[dict] = []
     for case in cases:
         try:
-            results.append(await run_case(tenant_id, case, tenant_allow_real=allow_real))
+            results.append(await run_case(tenant_id, case, tenant_allow_real=allow_real,
+                                          substantive_judge=substantive_judge))
         except EvalConsentError:
             raise  # el candado de consentimiento NO se traga: sube claro al llamador
         except Exception as exc:  # noqa: BLE001 — un caso que falla no tumba la suite

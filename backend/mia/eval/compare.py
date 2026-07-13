@@ -8,7 +8,9 @@ Criterios de REGRESIÓN (duros — bajan la calidad jurídica verificable):
   · aparecen citas sin respaldo que antes no estaban (o aumentan);
   · el diagnóstico pierde su bloque de cierre estructurado;
   · un caso que antes llegaba a borrador ahora no;
-  · el borrador se encoge drásticamente (< mitad) — señal de contenido perdido.
+  · el borrador se encoge drásticamente (< mitad) — señal de contenido perdido;
+  · (Banco de oro) un caso CONFIRMADO pierde cobertura de una cita/conclusión clave que antes
+    tenía — la regresión de calidad jurídica que el gold-set existe para atrapar.
 Criterios de MEJORA: los inversos (menos citas sin respaldo, gana cierre/borrador).
 """
 from __future__ import annotations
@@ -54,6 +56,25 @@ def _compare_case(before: dict, after: dict) -> dict:
     a_chars = int(a.get("draft_chars", 0) or 0)
     if b_chars > 0 and a_chars < b_chars * DRAFT_SHRINK_REGRESSION_FRACTION:
         regressions.append("el borrador se encogió a menos de la mitad")
+
+    # Regresión SUSTANTIVA (Banco de oro): un caso confirmado perdió cobertura de una cita o
+    # conclusión clave que ANTES tenía. Es la regresión de calidad jurídica que el banco existe
+    # para atrapar; encaja en el fail-safe (una sola regresión manda el veredicto agregado).
+    b_sub = before.get("substantive") or {}
+    a_sub = after.get("substantive") or {}
+    perdidas_citas = set(b_sub.get("citas_cubiertas", []) or []) - set(a_sub.get("citas_cubiertas", []) or [])
+    perdidas_concl = (set(b_sub.get("conclusiones_cubiertas", []) or [])
+                      - set(a_sub.get("conclusiones_cubiertas", []) or []))
+    if perdidas_citas:
+        regressions.append("perdió cobertura de una cita clave que antes tenía")
+    if perdidas_concl:
+        regressions.append("perdió cobertura de una conclusión clave que antes tenía")
+    # Mejora sustantiva: ganó cobertura de claves que antes faltaban.
+    if set(a_sub.get("citas_cubiertas", []) or []) - set(b_sub.get("citas_cubiertas", []) or []):
+        improvements.append("ganó cobertura de una cita clave")
+    if (set(a_sub.get("conclusiones_cubiertas", []) or [])
+            - set(b_sub.get("conclusiones_cubiertas", []) or [])):
+        improvements.append("ganó cobertura de una conclusión clave")
 
     if regressions:
         verdict = "regresion"
