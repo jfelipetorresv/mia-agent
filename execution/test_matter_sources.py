@@ -49,6 +49,7 @@ import init_local_folders                              # noqa: E402  (migración
 import init_matter_folders                             # noqa: E402  (migración 025)
 import init_remote_sources                             # noqa: E402  (migración 027)
 import init_projects_multifolder                       # noqa: E402  (migración 028)
+import init_durable_jobs                               # noqa: E402  (migración 034)
 from mia import config, embeddings                     # noqa: E402
 from mia.db import pool                                # noqa: E402
 from mia.connectors import local_folders as lf         # noqa: E402
@@ -301,6 +302,7 @@ def main() -> int:
     init_matter_folders.apply()         # idempotente: expediente vinculado (025)
     init_remote_sources.apply()         # idempotente: fuentes remotas OneDrive (027)
     init_projects_multifolder.apply()   # idempotente: matters.kind + documents.source_id (028)
+    init_durable_jobs.apply()           # idempotente: estado durable de carpetas (034)
 
     (ROOT / ".tmp").mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="mattersources_", dir=str(ROOT / ".tmp")))

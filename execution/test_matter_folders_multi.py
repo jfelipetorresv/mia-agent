@@ -62,6 +62,7 @@ except Exception:
 import init_local_folders                              # noqa: E402  (migración 016)
 import init_matter_folders                             # noqa: E402  (migración 025)
 import init_projects_multifolder                       # noqa: E402  (migración 028)
+import init_durable_jobs                               # noqa: E402  (migración 034)
 from mia import config, embeddings                     # noqa: E402
 from mia.db import pool                                # noqa: E402
 from mia.connectors import local_folders as lf         # noqa: E402
@@ -273,6 +274,7 @@ async def connector_checks(a: str, b: str, matter_a: str, work: Path) -> None:
 
         # Re-aplica el backfill de la 028 (idempotente, mismo SQL que corrió en producción).
         init_projects_multifolder.apply()
+        init_durable_jobs.apply()
 
         check("backfill H3: expediente con historial AMBIGUO (A desvinculada + B activa) "
               "conserva su documento viejo con source_id NULL — no se colapsa bajo B",

@@ -32,6 +32,7 @@ import random
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import psycopg
@@ -53,6 +54,7 @@ except Exception:
 
 import init_local_folders                              # noqa: E402  (migración 016)
 import init_matter_folders                             # noqa: E402  (migración 025)
+import init_durable_jobs                              # noqa: E402  (migración 034)
 from mia import config, embeddings                     # noqa: E402
 from mia.db import pool                                # noqa: E402
 from mia.connectors import local_folders as lf         # noqa: E402
@@ -353,6 +355,7 @@ def api_checks(tid: str, matter_id: str, folder: Path) -> None:
             files_indexed = r.json().get("files_indexed", 0)
             if files_indexed >= 2:
                 break
+            time.sleep(0.05)
         check("GET /folder -> linked con files_indexed de la carpeta (md+txt)",
               r.status_code == 200 and r.json().get("linked") is True and files_indexed >= 2)
         visible.append(r.text)
@@ -411,6 +414,7 @@ def main() -> int:
 
     init_local_folders.apply()    # idempotente: tablas de la allowlist (016)
     init_matter_folders.apply()   # idempotente: columnas del expediente vinculado (025)
+    init_durable_jobs.apply()     # idempotente: revisiones recuperables (034)
 
     (ROOT / ".tmp").mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="matterfolder_", dir=str(ROOT / ".tmp")))

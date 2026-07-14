@@ -42,6 +42,13 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     scheduler_task = asyncio.create_task(scheduler.start())
 
+    # Trabajos largos recuperables (PostgreSQL local, sin Redis/nube).
+    from ..jobs import DurableWorker
+
+    durable_worker = DurableWorker(concurrency=2)
+    app.state.durable_worker = durable_worker
+    durable_task = asyncio.create_task(durable_worker.start())
+
     # CP-V1 (Ola 4): flusher periódico del uso real del LLM (metrics/usage bufferiza
     # en memoria desde call_llm; aquí se persiste a turn_usage cada 15s y al apagar).
     from ..metrics import usage as usage_metrics
@@ -58,6 +65,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await durable_worker.stop()
+        durable_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await durable_task
         scheduler.stop()
         scheduler_task.cancel()
         with suppress(asyncio.CancelledError):
