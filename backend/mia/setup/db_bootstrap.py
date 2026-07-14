@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import sys
 from pathlib import Path
+from typing import Callable
 
 import psycopg
 from psycopg import sql
@@ -121,7 +122,13 @@ def apply_extensions_and_schema(
 
 
 def apply_migrations(
-    host: str, port: str | int, db: str, super_pw: str, migrations: list[Path]
+    host: str,
+    port: str | int,
+    db: str,
+    super_pw: str,
+    migrations: list[Path],
+    *,
+    before_first_pending: Callable[[], None] | None = None,
 ) -> list[str]:
     """Aplica solo migraciones pendientes, de forma reanudable y verificable.
 
@@ -142,14 +149,21 @@ def apply_migrations(
     with psycopg.connect(**_super_kw(host, port, db, super_pw)) as c:
         c.execute("SELECT pg_advisory_lock(%s)", (_MIGRATION_LOCK_KEY,))
         try:
-            c.execute(_MIGRATIONS_TABLE_SQL)
-            c.commit()
+            ledger_exists = c.execute(
+                "SELECT to_regclass('public.mia_schema_migrations')"
+            ).fetchone()[0]
+            if ledger_exists:
+                rows = c.execute(
+                    "SELECT filename, sha256 FROM public.mia_schema_migrations"
+                ).fetchall()
+                recorded = {str(row[0]): str(row[1]) for row in rows}
+            else:
+                recorded = {}
 
-            rows = c.execute(
-                "SELECT filename, sha256 FROM public.mia_schema_migrations"
-            ).fetchall()
-            recorded = {str(row[0]): str(row[1]) for row in rows}
-
+            # Preflight COMPLETO antes de tocar el esquema: primero valida todos
+            # los checksums históricos y construye la lista pendiente. Así una
+            # inconsistencia tardía no aparece después de aplicar otra migración.
+            pending: list[tuple[Path, str, str]] = []
             for path in migrations:
                 digest = migration_sha256(path)
                 previous = recorded.get(path.name)
@@ -159,15 +173,28 @@ def apply_migrations(
                             f"La actualización histórica {path.name} cambió después "
                             "de aplicarse. Crea una migración nueva; no modifiques la anterior."
                         )
-                    continue
-
-                try:
+                else:
                     migration_sql = path.read_text(encoding="utf-8")
                     if "CONCURRENTLY" in migration_sql.upper():
                         raise ValueError(
                             f"{path.name}: CONCURRENTLY no es compatible con "
                             "el modelo atómico de una transacción por archivo."
                         )
+                    pending.append((path, digest, migration_sql))
+
+            # El backup/verificación sucede bajo el MISMO advisory lock y antes
+            # de la primera mutación. El callback usa pg_dump en otra conexión;
+            # no intenta adquirir este candado y por tanto no se auto-bloquea.
+            if pending and before_first_pending is not None:
+                before_first_pending()
+
+            # Incluso sin pendientes, una instalación nueva termina con ledger;
+            # cuando sí hay pendientes esto ocurre solo DESPUÉS del backup.
+            c.execute(_MIGRATIONS_TABLE_SQL)
+            c.commit()
+
+            for path, digest, migration_sql in pending:
+                try:
                     c.execute(migration_sql)
                     c.execute(
                         "INSERT INTO public.mia_schema_migrations (filename, sha256) "
@@ -181,9 +208,14 @@ def apply_migrations(
                 applied.append(path.name)
         finally:
             # El unlock explícito facilita pruebas/reutilización de conexiones;
-            # PostgreSQL también lo liberaría al cerrar la sesión.
-            c.execute("SELECT pg_advisory_unlock(%s)", (_MIGRATION_LOCK_KEY,))
-            c.commit()
+            # PostgreSQL también lo liberaría al cerrar la sesión. Un error
+            # de unlock nunca debe ocultar la causa original de una migración.
+            try:
+                c.rollback()
+                c.execute("SELECT pg_advisory_unlock(%s)", (_MIGRATION_LOCK_KEY,))
+                c.commit()
+            except Exception:
+                c.rollback()
     return applied
 
 

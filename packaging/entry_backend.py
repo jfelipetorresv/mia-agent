@@ -114,6 +114,12 @@ if __name__ == "__main__":
         rest = [a for a in sys.argv[1:] if a != "--first-run"]
         sys.exit(first_run_main(rest))
 
+    if "--maintenance" in sys.argv:
+        from mia.setup.maintenance import main as maintenance_main
+
+        rest = [a for a in sys.argv[1:] if a != "--maintenance"]
+        sys.exit(maintenance_main(rest))
+
     if "--ocr-smoke-test" in sys.argv:
         sys.exit(_ocr_smoke_test())
     main()

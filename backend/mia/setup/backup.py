@@ -360,6 +360,38 @@ def create_database_backup(
         error_log.unlink(missing_ok=True)
 
 
+def verify_database_backup(*, backup_path: Path, app_dir: Path, pg_bin: Path) -> dict:
+    """Autentica el cifrado y exige que pg_restore reconozca el archivo."""
+    pg_restore = _validated_pg_dump(pg_bin).with_name("pg_restore.exe")
+    with decrypted_backup_temp(backup_path, app_dir) as (dump_path, header):
+        result = subprocess.run(
+            [str(pg_restore), "--list", str(dump_path)],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            shell=False,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            raise BackupError("PostgreSQL no reconoce el contenido del respaldo.")
+    return header
+
+
+def create_verified_database_backup(**kwargs) -> Path:
+    """Crea y verifica; si la verificación falla no publica una copia inútil."""
+    path = create_database_backup(**kwargs)
+    try:
+        verify_database_backup(
+            backup_path=path,
+            app_dir=Path(kwargs["app_dir"]),
+            pg_bin=Path(kwargs["pg_bin"]),
+        )
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return path
+
+
 def _save_failure_log(app_dir: Path, detail: str) -> None:
     """Conserva solo el último diagnóstico técnico, nunca el dump parcial."""
     log_path = app_dir / "logs" / "backup-last-error.log"

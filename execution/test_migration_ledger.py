@@ -52,12 +52,34 @@ try:
         m1.write_text("CREATE TABLE gate_alpha (id integer PRIMARY KEY);\n", encoding="utf-8")
         m2.write_text("CREATE TABLE gate_beta (id integer PRIMARY KEY);\n", encoding="utf-8")
 
-        # Se entrega adrede en orden inverso: el migrador debe ordenar por nombre.
-        first = db_bootstrap.apply_migrations(host, port, db_name, password, [m2, m1])
-        check("primera corrida aplica ambas migraciones", first == [m1.name, m2.name])
+        callback_state = {"calls": 0, "before_any_mutation": False}
 
-        second = db_bootstrap.apply_migrations(host, port, db_name, password, [m1, m2])
+        def before_first() -> None:
+            callback_state["calls"] += 1
+            with psycopg.connect(host=host, port=port, dbname=db_name,
+                                 user="postgres", password=password) as conn:
+                callback_state["before_any_mutation"] = (
+                    conn.execute(
+                        "SELECT to_regclass('public.mia_schema_migrations'), "
+                        "to_regclass('public.gate_alpha')"
+                    ).fetchone() == (None, None)
+                )
+
+        # Se entrega adrede en orden inverso: el migrador debe ordenar por nombre.
+        first = db_bootstrap.apply_migrations(
+            host, port, db_name, password, [m2, m1],
+            before_first_pending=before_first,
+        )
+        check("primera corrida aplica ambas migraciones", first == [m1.name, m2.name])
+        check("backup-hook corre una sola vez antes de cualquier mutación",
+              callback_state == {"calls": 1, "before_any_mutation": True})
+
+        second = db_bootstrap.apply_migrations(
+            host, port, db_name, password, [m1, m2],
+            before_first_pending=before_first,
+        )
         check("segunda corrida no reejecuta migraciones", second == [])
+        check("sin pendientes no crea otro backup", callback_state["calls"] == 1)
 
         with psycopg.connect(host=host, port=port, dbname=db_name,
                              user="postgres", password=password) as conn:
@@ -117,6 +139,31 @@ try:
         except ValueError as exc:
             concurrently_blocked = "CONCURRENTLY" in str(exc)
         check("DDL no transaccional se bloquea con explicación", concurrently_blocked)
+
+        guarded = folder / "905_gate_backup_required.sql"
+        guarded.write_text("CREATE TABLE gate_backup_required (id integer);\n", encoding="utf-8")
+
+        def backup_failed() -> None:
+            raise RuntimeError("backup simulado falló")
+
+        try:
+            db_bootstrap.apply_migrations(
+                host, port, db_name, password, [m1, m2, broken, guarded],
+                before_first_pending=backup_failed,
+            )
+            backup_failure_blocked = False
+        except RuntimeError as exc:
+            backup_failure_blocked = "backup simulado" in str(exc)
+        with psycopg.connect(host=host, port=port, dbname=db_name,
+                             user="postgres", password=password) as conn:
+            guarded_table = conn.execute(
+                "SELECT to_regclass('public.gate_backup_required')"
+            ).fetchone()[0]
+            guarded_ledger = conn.execute(
+                "SELECT 1 FROM mia_schema_migrations WHERE filename=%s", (guarded.name,)
+            ).fetchone()
+        check("si el backup falla no comienza la migración",
+              backup_failure_blocked and guarded_table is None and guarded_ledger is None)
 finally:
     try:
         with psycopg.connect(autocommit=True, **admin) as conn:
