@@ -61,7 +61,13 @@ ENTRY_SCRIPT = os.path.join(PACKAGING_DIR, "entry_backend.py")
 
 datas = []
 binaries = []
-hiddenimports = ["tiktoken_ext", "tiktoken_ext.openai_public"]
+hiddenimports = [
+    "tiktoken_ext",
+    "tiktoken_ext.openai_public",
+    # Backup cifrado F1: el hook oficial de PyInstaller cubre cryptography,
+    # y este hidden import deja explícito el binding nativo que debe viajar.
+    "cryptography.hazmat.bindings._rust",
+]
 
 # F2 (sesión 43): schema.sql + migrations/*.sql, para que mia.setup.first_run
 # los resuelva dentro del bundle (mia/db/... bajo sys._MEIPASS) igual que en

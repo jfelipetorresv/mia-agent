@@ -30,6 +30,7 @@ EXPECTED: dict[str, str] = {
     "psycopg": "3.3.4",
     "psycopg-pool": "3.3.1",
     "litellm": "1.74.8",
+    "cryptography": "43.0.3",
 }
 
 _results: list[tuple[str, bool]] = []
