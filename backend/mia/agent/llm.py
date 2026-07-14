@@ -478,16 +478,55 @@ def call_llm(
     last: _FallbackNeeded | None = None
     for i, alias in enumerate(chain):
         next_alias = chain[i + 1] if i + 1 < len(chain) else None
+        hold_id: str | None = None
+        budget_tenant: str | None = None
         try:
+            from ..metrics import usage as usage_metrics
+            from ..policy import budget as policy_budget
+
+            scope = usage_metrics.current_scope()
+            estimate = usage_metrics.estimated_call_cost(
+                alias, messages, max_tokens, task=task, tools=tools)
+            if scope is not None and estimate > 0:
+                budget_tenant = scope[0]
+                try:
+                    hold_id = policy_budget.reserve_call_sync(
+                        budget_tenant, estimate, model=alias, task=task)
+                except (policy_budget.BudgetExceeded,
+                        policy_budget.BudgetControlUnavailable):
+                    free_fallback = any(
+                        usage_metrics.estimated_call_cost(a, [], 1, task=task) == 0
+                        for a in chain[i + 1:]
+                    )
+                    if free_fallback:
+                        logger.warning("se omite alias pagado %s para proteger el tope; "
+                                       "se usa respaldo gratuito", alias)
+                        continue
+                    raise
             resp = _call_with_retries(
                 client, {**base_kwargs, "model": alias}, MAX_RETRIES,
                 task=task, alias=alias, next_alias=next_alias,
             )
+            if hold_id and budget_tenant:
+                resp_usage = getattr(resp, "usage", None)
+                actual = usage_metrics.cost_usd(
+                    alias,
+                    int(getattr(resp_usage, "prompt_tokens", 0) or 0),
+                    int(getattr(resp_usage, "completion_tokens", 0) or 0),
+                )
+                policy_budget.finish_call_sync(budget_tenant, hold_id, actual)
+                hold_id = None
             _record_usage(alias, task, resp)   # CP-V1: tokens reales → turn_usage
             return resp
         except _FallbackNeeded as fn:
+            if hold_id and budget_tenant:
+                policy_budget.finish_call_sync(budget_tenant, hold_id, None)
             last = fn                          # sigue con el próximo alias de la cadena
             continue
+        except BaseException:
+            if hold_id and budget_tenant:
+                policy_budget.finish_call_sync(budget_tenant, hold_id, None)
+            raise
 
     # Cadena entera agotada: todos los proveedores fallaron con errores saltables.
     kind = last.kind if last else LLMErrorKind.UNKNOWN

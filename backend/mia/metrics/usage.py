@@ -19,6 +19,7 @@ se reintenta de forma acotada y luego se descarta con log (nunca romper un turno
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from contextvars import ContextVar, Token
@@ -37,10 +38,14 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet": (3.00, 15.00),
     "claude-haiku": (1.00, 5.00),
     "openrouter-sonnet": (3.00, 15.00),
+    "openrouter-haiku": (1.00, 5.00),
     "cli-claude": (0.0, 0.0),
     "cli-claude-haiku": (0.0, 0.0),
     "mia-local": (0.0, 0.0),
 }
+
+FREE_ALIASES = frozenset({"cli-claude", "cli-claude-haiku", "mia-local"})
+UNKNOWN_ALIAS_RATES = (3.00, 15.00)
 
 _scope: ContextVar[tuple[str, str | None, str] | None] = ContextVar(
     "mia_usage_scope", default=None
@@ -76,11 +81,29 @@ def cost_usd(alias: str, prompt_tokens: int, completion_tokens: int) -> float:
     if rates is None:
         if alias not in _warned_unknown_alias:
             _warned_unknown_alias.add(alias)
-            logger.warning("alias sin precio en PRICES_PER_MTOK: '%s' → costo 0 "
-                           "(agregarlo si es un modelo de pago)", alias)
-        return 0.0
+            logger.warning("alias sin precio en PRICES_PER_MTOK: '%s' → se usa tarifa "
+                           "conservadora de Sonnet", alias)
+        rates = UNKNOWN_ALIAS_RATES
     in_rate, out_rate = rates
     return (prompt_tokens * in_rate + completion_tokens * out_rate) / 1_000_000.0
+
+
+def estimated_call_cost(alias: str, messages: list[dict], max_tokens: int | None,
+                        *, task: str | None = None, tools: list | None = None) -> float:
+    """Reserva conservadora antes de una llamada pagada; los aliases gratis dan cero."""
+    if alias in FREE_ALIASES:
+        return 0.0
+    rates = PRICES_PER_MTOK.get(alias, UNKNOWN_ALIAS_RATES)
+    try:
+        payload = json.dumps({"messages": messages, "tools": tools or []}, ensure_ascii=False,
+                             default=str)
+        prompt_tokens = max(1, (len(payload) + 3) // 4)
+    except Exception:  # pragma: no cover
+        prompt_tokens = 32_000
+    completion_tokens = int(max_tokens or (8_192 if task in (None, "main", "curator") else 4_096))
+    completion_tokens = max(1, min(completion_tokens, 64_000))
+    in_rate, out_rate = rates
+    return round((prompt_tokens * in_rate + completion_tokens * out_rate) / 1_000_000.0, 6)
 
 
 # ── Registro (sync, nunca lanza) ────────────────────────────────────────────────
