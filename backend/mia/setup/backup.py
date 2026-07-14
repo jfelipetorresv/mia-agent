@@ -13,6 +13,11 @@ import json
 import os
 import struct
 import subprocess
+import sys
+import threading
+import time
+import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
@@ -26,6 +31,8 @@ KEY_FILE_NAME = ".mia-backup-key.dpapi"
 RECOVERY_MARKER_NAME = ".mia-backup-recovery-confirmed"
 RECOVERY_PREFIX = "MIA-RECOVERY-V1:"
 _CHUNK_SIZE = 1024 * 1024
+PG_MANIFEST_NAME = "mia-pg-tools.sha256.json"
+_RESTORE_LOCK = threading.Lock()
 
 
 class BackupError(RuntimeError):
@@ -34,12 +41,15 @@ class BackupError(RuntimeError):
 
 def _atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + ".tmp")
-    with open(temp, "wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp, path)
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(temp, "xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _restrict_windows_file(path: Path) -> None:
@@ -50,8 +60,12 @@ def _restrict_windows_file(path: Path) -> None:
         raise BackupError("Windows no informó el usuario actual para proteger la llave.")
     domain = os.environ.get("USERDOMAIN", "").strip()
     principal = f"{domain}\\{user}" if domain else user
+    system_root = Path(os.environ.get("SYSTEMROOT") or r"C:\Windows")
+    icacls = system_root / "System32" / "icacls.exe"
+    if not icacls.is_file():
+        raise BackupError("Windows no encontró su herramienta segura de permisos.")
     result = subprocess.run(
-        ["icacls", str(path), "/inheritance:r", "/grant:r", f"{principal}:F"],
+        [str(icacls), str(path), "/inheritance:r", "/grant:r", f"{principal}:F"],
         capture_output=True,
         text=True,
     )
@@ -59,13 +73,40 @@ def _restrict_windows_file(path: Path) -> None:
         raise BackupError("Windows no pudo restringir el archivo de recuperación.")
 
 
+def _restrict_or_remove(path: Path) -> None:
+    """Nunca deja una llave en claro si Windows no logra proteger su ACL."""
+    try:
+        _restrict_windows_file(path)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_write_private(path: Path, data: bytes) -> None:
+    """Protege el temporal ANTES de publicar; conserva el destino viejo si falla."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.private")
+    try:
+        # El archivo nace VACÍO; se restringe antes de que contenga un solo
+        # byte sensible. Así no existe una ventana entre escritura e icacls.
+        with open(temp, "xb"):
+            pass
+        _restrict_windows_file(temp)
+        with open(temp, "r+b") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 def store_recovery_key(app_dir: Path, key: bytes) -> Path:
     if len(key) != 32:
         raise ValueError("La llave de backup debe tener exactamente 32 bytes.")
     protected = dpapi.protect(key, description="Mia backup recovery key")
     key_path = app_dir / KEY_FILE_NAME
-    _atomic_write(key_path, base64.b64encode(protected) + b"\n")
-    _restrict_windows_file(key_path)
+    _atomic_write_private(key_path, base64.b64encode(protected) + b"\n")
     return key_path
 
 
@@ -89,12 +130,32 @@ def load_or_create_recovery_key(app_dir: Path) -> bytes:
     return key
 
 
+def load_recovery_key(app_dir: Path) -> bytes:
+    """Carga una llave existente sin mutar estado si falta o está dañada."""
+    key_path = app_dir / KEY_FILE_NAME
+    if not key_path.is_file():
+        raise BackupError(
+            "No encuentro la llave local. Importa tu llave de recuperación antes de continuar."
+        )
+    try:
+        protected = base64.b64decode(key_path.read_bytes().strip(), validate=True)
+        key = dpapi.unprotect(protected)
+    except Exception as exc:
+        raise BackupError(
+            "No pude abrir la llave local. Importa tu llave de recuperación."
+        ) from exc
+    if len(key) != 32:
+        raise BackupError("La llave local de respaldos tiene un formato inválido.")
+    return key
+
+
 def export_recovery_key(app_dir: Path, destination: Path) -> Path:
     """Exporta la llave portable. El llamador debe pedir confirmación visible."""
     key = load_or_create_recovery_key(app_dir)
     payload = (RECOVERY_PREFIX + base64.urlsafe_b64encode(key).decode("ascii") + "\n").encode()
-    _atomic_write(destination, payload)
-    _restrict_windows_file(destination)
+    # El helper conserva cualquier destino anterior si la ACL del temporal
+    # falla; no debe borrarse aquí una copia válida preexistente.
+    _atomic_write_private(destination, payload)
     _write_recovery_marker(app_dir, key)
     return destination
 
@@ -117,8 +178,7 @@ def import_recovery_key(app_dir: Path, recovery_text: str) -> Path:
 def _write_recovery_marker(app_dir: Path, key: bytes) -> Path:
     marker = app_dir / RECOVERY_MARKER_NAME
     digest = hashlib.sha256(key).hexdigest().encode("ascii") + b"\n"
-    _atomic_write(marker, digest)
-    _restrict_windows_file(marker)
+    _atomic_write_private(marker, digest)
     return marker
 
 
@@ -137,6 +197,53 @@ def default_backup_dir() -> Path:
     return documents / "Mia Backups"
 
 
+def _validated_pg_dump(pg_bin: Path) -> Path:
+    """Acepta solo el bundle PostgreSQL de Mia y verifica su manifiesto instalado."""
+    pg_bin = pg_bin.resolve()
+    pg_dump = (pg_bin / "pg_dump.exe").resolve()
+    required = ("pg_dump.exe", "pg_restore.exe", "pg_ctl.exe", "pg_isready.exe")
+    if (
+        not pg_bin.is_absolute()
+        or not pg_bin.is_dir()
+        or pg_dump.parent != pg_bin
+        or any(not (pg_bin / name).is_file() for name in required)
+    ):
+        raise BackupError(f"La carpeta de PostgreSQL de Mia está incompleta: {pg_bin}")
+
+    # En el bundle instalado no se confía en una ruta tomada del entorno o de
+    # un JSON alterado: PostgreSQL debe ser exactamente el hermano que viajó
+    # junto al ejecutable (`<instalación>/pgsql/bin`). Program Files protege
+    # ese árbol con ACL de administrador.
+    if getattr(sys, "frozen", False):
+        expected_bin = (Path(sys.executable).resolve().parents[1] / "pgsql" / "bin").resolve()
+        if pg_bin != expected_bin:
+            raise BackupError("La herramienta de respaldo no pertenece a esta instalación de Mia.")
+
+    manifest_path = pg_bin.parent / PG_MANIFEST_NAME
+    require_manifest = bool(getattr(sys, "frozen", False)) or os.getenv(
+        "MIA_REQUIRE_PG_MANIFEST", ""
+    ).strip() == "1"
+    if not manifest_path.is_file():
+        if require_manifest:
+            raise BackupError("No puedo comprobar la integridad de PostgreSQL de Mia.")
+        return pg_dump
+    try:
+        # Windows PowerShell 5 puede escribir JSON UTF-8 con BOM.
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+        expected = manifest["sha256"]
+        for name in required:
+            digest = hashlib.sha256((pg_bin / name).read_bytes()).hexdigest()
+            if digest.lower() != str(expected[name]).lower():
+                raise BackupError(
+                    f"La herramienta {name} no coincide con la instalación original de Mia."
+                )
+    except BackupError:
+        raise
+    except Exception as exc:
+        raise BackupError("El manifiesto de PostgreSQL de Mia está dañado.") from exc
+    return pg_dump
+
+
 def _header_bytes(*, db: str, nonce: bytes) -> bytes:
     header = {
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -152,18 +259,17 @@ def _header_bytes(*, db: str, nonce: bytes) -> bytes:
 
 def create_database_backup(
     *,
-    pg_dump: Path,
+    pg_bin: Path,
     app_dir: Path,
     host: str,
     port: int,
     db: str,
     password: str,
     destination_dir: Path | None = None,
+    inactivity_timeout_seconds: float = 300.0,
 ) -> Path:
     """Crea un dump custom cifrado y atómico; devuelve el archivo final."""
-    pg_dump = pg_dump.resolve()
-    if not pg_dump.is_absolute() or pg_dump.name.lower() != "pg_dump.exe" or not pg_dump.is_file():
-        raise BackupError(f"No encuentro la herramienta de respaldo: {pg_dump}")
+    pg_dump = _validated_pg_dump(pg_bin)
     key = load_or_create_recovery_key(app_dir)
     if not recovery_key_confirmed(app_dir, key):
         raise BackupError(
@@ -177,7 +283,8 @@ def create_database_backup(
     folder = destination_dir or default_backup_dir()
     folder.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    final_path = folder / f"mia-{stamp}.mia-backup"
+    unique = uuid.uuid4().hex[:12]
+    final_path = folder / f"mia-{stamp}-{unique}.mia-backup"
     partial = final_path.with_name(final_path.name + ".partial")
     error_log = folder / f".{final_path.name}.pgdump-error"
 
@@ -192,6 +299,16 @@ def create_database_backup(
     ]
     process: subprocess.Popen[bytes] | None = None
     plaintext_size = 0
+    last_progress = time.monotonic()
+    watchdog_stop = threading.Event()
+
+    def _watchdog() -> None:
+        while not watchdog_stop.wait(1.0):
+            if process is not None and time.monotonic() - last_progress > inactivity_timeout_seconds:
+                process.kill()
+                return
+
+    watchdog = threading.Thread(target=_watchdog, name="mia-backup-watchdog", daemon=True)
     try:
         with open(error_log, "wb") as errors, open(partial, "wb") as output:
             output.write(header)
@@ -203,17 +320,24 @@ def create_database_backup(
                 env=child_env,
                 shell=False,
             )
+            watchdog.start()
             assert process.stdout is not None
             while True:
-                chunk = process.stdout.read(_CHUNK_SIZE)
+                # read1 devuelve lo que ya está disponible sin esperar a llenar
+                # 1 MiB; el watchdog mide actividad real y no mata un dump lento
+                # que siga produciendo bloques pequeños.
+                chunk = process.stdout.read1(_CHUNK_SIZE)
                 if not chunk:
                     break
+                last_progress = time.monotonic()
                 plaintext_size += len(chunk)
                 output.write(encryptor.update(chunk))
             code = process.wait()
             if code != 0:
                 detail = error_log.read_text(encoding="utf-8", errors="replace")[-1200:]
                 _save_failure_log(app_dir, detail)
+                if time.monotonic() - last_progress > inactivity_timeout_seconds:
+                    raise BackupError("El respaldo se detuvo sin responder y fue cancelado.")
                 raise BackupError(f"PostgreSQL no pudo crear el respaldo. {detail}".strip())
             if plaintext_size == 0:
                 raise BackupError("PostgreSQL produjo un respaldo vacío.")
@@ -230,6 +354,9 @@ def create_database_backup(
         partial.unlink(missing_ok=True)
         raise
     finally:
+        watchdog_stop.set()
+        if watchdog.is_alive():
+            watchdog.join(timeout=2)
         error_log.unlink(missing_ok=True)
 
 
@@ -263,9 +390,9 @@ def _read_header(source: BinaryIO) -> tuple[dict, bytes]:
     return header, magic + raw_length + encoded
 
 
-def decrypt_backup_to_file(backup_path: Path, app_dir: Path, destination: Path) -> dict:
+def _decrypt_backup_to_file(backup_path: Path, app_dir: Path, destination: Path) -> dict:
     """Descifra y autentica un backup a un dump temporal para verificación/restore."""
-    key = load_or_create_recovery_key(app_dir)
+    key = load_recovery_key(app_dir)
     total = backup_path.stat().st_size
     if total < len(MAGIC) + 4 + 16:
         raise BackupError("El respaldo está vacío o truncado.")
@@ -295,9 +422,103 @@ def decrypt_backup_to_file(backup_path: Path, app_dir: Path, destination: Path) 
                 output.flush()
                 os.fsync(output.fileno())
         os.replace(temp, destination)
+        _restrict_or_remove(destination)
         return header
     except Exception as exc:
         temp.unlink(missing_ok=True)
         if isinstance(exc, BackupError):
             raise
         raise BackupError("El respaldo está dañado o la llave no corresponde.") from exc
+
+
+@contextmanager
+def decrypted_backup_temp(backup_path: Path, app_dir: Path):
+    """Entrega un dump privado solo durante el bloque y siempre lo elimina.
+
+    Esta es la única superficie pública para materializar el dump. La futura
+    restauración usa este contexto, ejecuta ``pg_restore`` dentro del bloque y
+    no puede olvidar el expediente descifrado en disco.
+    """
+    with _RESTORE_LOCK, _restore_process_lock(app_dir):
+        _cleanup_decrypted_temps_unlocked(app_dir)
+        private_dir = app_dir / ".maintenance"
+        private_dir.mkdir(parents=True, exist_ok=True)
+        _restrict_windows_file(private_dir)
+        destination = private_dir / f"restore-{uuid.uuid4().hex}.dump"
+        header = _decrypt_backup_to_file(backup_path, app_dir, destination)
+        try:
+            yield destination, header
+        finally:
+            destination.unlink(missing_ok=True)
+            destination.with_name(destination.name + ".partial").unlink(missing_ok=True)
+
+
+@contextmanager
+def _restore_process_lock(app_dir: Path, timeout_seconds: float = 60.0):
+    """Candado interproceso para que dos mantenimientos no borren sus dumps."""
+    private_dir = app_dir / ".maintenance"
+    private_dir.mkdir(parents=True, exist_ok=True)
+    _restrict_windows_file(private_dir)
+    lock_path = private_dir / "restore.lock"
+    handle = open(lock_path, "a+b")
+    if handle.tell() == 0:
+        handle.write(b"\0")
+        handle.flush()
+    deadline = time.monotonic() + timeout_seconds
+    locked = False
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            while not locked:
+                try:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    locked = True
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise BackupError("Otra recuperación de Mia sigue en curso.")
+                    time.sleep(0.1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            locked = True
+        yield
+    finally:
+        if locked:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def _cleanup_decrypted_temps_unlocked(app_dir: Path) -> int:
+    """Borra restos descifrados de una terminación forzada anterior.
+
+    Debe llamarse al inicio del mantenimiento en cada apertura. También se
+    ejecuta antes de cada verificación/restauración, de modo que un corte de
+    energía no deja el dump más allá del siguiente arranque.
+    """
+    private_dir = app_dir / ".maintenance"
+    if not private_dir.exists():
+        return 0
+    removed = 0
+    for pattern in ("restore-*.dump", "restore-*.dump.partial"):
+        for path in private_dir.glob(pattern):
+            if path.is_file():
+                path.unlink(missing_ok=True)
+                removed += 1
+    return removed
+
+
+def cleanup_decrypted_temps(app_dir: Path) -> int:
+    """Limpieza pública serializada entre hilos y procesos de Mia."""
+    with _RESTORE_LOCK, _restore_process_lock(app_dir):
+        return _cleanup_decrypted_temps_unlocked(app_dir)

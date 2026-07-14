@@ -67,7 +67,7 @@ try:
         backup_dir = work / "backups"
         try:
             backup.create_database_backup(
-                pg_dump=pg_dump, app_dir=app_dir, host=host, port=port,
+                pg_bin=pg_bin, app_dir=app_dir, host=host, port=port,
                 db=source_db, password=password, destination_dir=backup_dir,
             )
             recovery_required = False
@@ -78,7 +78,7 @@ try:
         recovery_file = work / "llave-recuperacion.txt"
         backup.export_recovery_key(app_dir, recovery_file)
         backup_path = backup.create_database_backup(
-            pg_dump=pg_dump,
+            pg_bin=pg_bin,
             app_dir=app_dir,
             host=host,
             port=port,
@@ -94,28 +94,74 @@ try:
         recovery_text = recovery_file.read_text(encoding="utf-8").strip()
         check("la llave portable usa formato versionado", recovery_text.startswith(backup.RECOVERY_PREFIX))
 
-        dump_path = work / "source.dump"
-        header = backup.decrypt_backup_to_file(backup_path, app_dir, dump_path)
-        check("el respaldo autentica y descifra", dump_path.is_file() and dump_path.stat().st_size > 0)
-        check("el manifiesto identifica la base", header.get("database") == source_db)
+        # La exportación nunca puede dejar la llave si Windows no logra fijar ACL.
+        unsafe_export = work / "llave-insegura.txt"
+        original_restrict = backup._restrict_windows_file
+        try:
+            backup._restrict_windows_file = lambda _path: (_ for _ in ()).throw(
+                backup.BackupError("fallo ACL simulado")
+            )
+            try:
+                backup.export_recovery_key(app_dir, unsafe_export)
+            except backup.BackupError:
+                pass
+        finally:
+            backup._restrict_windows_file = original_restrict
+        check("un fallo de permisos no deja la llave exportada", not unsafe_export.exists())
 
-        list_result = subprocess.run(
-            [str(pg_restore), "--list", str(dump_path)], capture_output=True, text=True
-        )
-        check("pg_restore reconoce el dump", list_result.returncode == 0)
+        existing_export = work / "llave-existente.txt"
+        existing_export.write_text("copia-anterior", encoding="utf-8")
+        original_restrict = backup._restrict_windows_file
+        try:
+            backup._restrict_windows_file = lambda _path: (_ for _ in ()).throw(
+                backup.BackupError("fallo ACL simulado")
+            )
+            try:
+                backup.export_recovery_key(app_dir, existing_export)
+            except backup.BackupError:
+                pass
+        finally:
+            backup._restrict_windows_file = original_restrict
+        check("un fallo de permisos conserva una exportación anterior",
+              existing_export.read_text(encoding="utf-8") == "copia-anterior")
+
+        # Si falla la ACL al importar/rotar, se conserva la llave local anterior.
+        old_blob = (app_dir / backup.KEY_FILE_NAME).read_bytes()
+        original_restrict = backup._restrict_windows_file
+        try:
+            backup._restrict_windows_file = lambda _path: (_ for _ in ()).throw(
+                backup.BackupError("fallo ACL simulado")
+            )
+            try:
+                backup.import_recovery_key(app_dir, recovery_text)
+            except backup.BackupError:
+                pass
+        finally:
+            backup._restrict_windows_file = original_restrict
+        check("un fallo de permisos conserva la llave local anterior",
+              (app_dir / backup.KEY_FILE_NAME).read_bytes() == old_blob)
 
         restore_env = {**os.environ, "PGPASSWORD": password}
-        restore_result = subprocess.run(
-            [
-                str(pg_restore), "--exit-on-error", "--single-transaction",
-                "--no-owner", "--no-acl", "--host", host, "--port", str(port),
-                "--username", "postgres", "--dbname", restored_db, str(dump_path),
-            ],
-            capture_output=True,
-            text=True,
-            env=restore_env,
-        )
-        check("restore real termina sin errores", restore_result.returncode == 0)
+        with backup.decrypted_backup_temp(backup_path, app_dir) as (dump_path, header):
+            check("el respaldo autentica y descifra", dump_path.is_file() and dump_path.stat().st_size > 0)
+            check("el manifiesto identifica la base", header.get("database") == source_db)
+            original_dump = dump_path.read_bytes()
+            list_result = subprocess.run(
+                [str(pg_restore), "--list", str(dump_path)], capture_output=True, text=True
+            )
+            check("pg_restore reconoce el dump", list_result.returncode == 0)
+            restore_result = subprocess.run(
+                [
+                    str(pg_restore), "--exit-on-error", "--single-transaction",
+                    "--no-owner", "--no-acl", "--host", host, "--port", str(port),
+                    "--username", "postgres", "--dbname", restored_db, str(dump_path),
+                ],
+                capture_output=True,
+                text=True,
+                env=restore_env,
+            )
+            check("restore real termina sin errores", restore_result.returncode == 0)
+        check("el dump descifrado siempre se elimina", not dump_path.exists())
         with psycopg.connect(host=host, port=port, dbname=restored_db,
                              user="postgres", password=password) as conn:
             restored = conn.execute(
@@ -126,9 +172,8 @@ try:
         # Simula equipo nuevo: importa la llave exportada y abre el mismo backup.
         app_dir_b = work / "app-b"
         backup.import_recovery_key(app_dir_b, recovery_text)
-        dump_b = work / "source-b.dump"
-        backup.decrypt_backup_to_file(backup_path, app_dir_b, dump_b)
-        check("la llave exportada permite recuperar en otra instalación", dump_b.read_bytes() == dump_path.read_bytes())
+        with backup.decrypted_backup_temp(backup_path, app_dir_b) as (dump_b, _):
+            check("la llave exportada permite recuperar en otra instalación", dump_b.read_bytes() == original_dump)
 
         tampered = work / "tampered.mia-backup"
         shutil.copy2(backup_path, tampered)
@@ -136,12 +181,49 @@ try:
         tampered_bytes[len(tampered_bytes) // 2] ^= 0x01
         tampered.write_bytes(tampered_bytes)
         try:
-            backup.decrypt_backup_to_file(tampered, app_dir, work / "tampered.dump")
+            with backup.decrypted_backup_temp(tampered, app_dir):
+                pass
             tamper_blocked = False
         except backup.BackupError:
             tamper_blocked = True
         check("una alteración del backup se detecta", tamper_blocked)
-        check("un backup alterado no deja dump parcial", not (work / "tampered.dump.partial").exists())
+        check("un backup alterado no deja dump parcial", not list((app_dir / ".maintenance").glob("*.partial")))
+
+        # Restaurar no debe inventar una llave nueva ni mutar una instalación vacía.
+        empty_app = work / "sin-llave"
+        try:
+            with backup.decrypted_backup_temp(backup_path, empty_app):
+                pass
+        except backup.BackupError:
+            pass
+        check("verificar sin llave no crea una llave nueva", not (empty_app / backup.KEY_FILE_NAME).exists())
+
+        stale = app_dir / ".maintenance" / "restore-corte.dump"
+        stale.write_bytes(marker.encode())
+        check("el siguiente mantenimiento limpia dumps de una caída anterior",
+              backup.cleanup_decrypted_temps(app_dir) == 1 and not stale.exists())
+
+        # En modo instalado un binario sustituido no recibe PGPASSWORD.
+        fake_pg = work / "pgsql-falso"
+        fake_bin = fake_pg / "bin"
+        fake_bin.mkdir(parents=True)
+        for tool in ("pg_dump.exe", "pg_restore.exe", "pg_ctl.exe", "pg_isready.exe"):
+            (fake_bin / tool).write_bytes(b"no-es-postgresql")
+        (fake_pg / backup.PG_MANIFEST_NAME).write_text(
+            json.dumps({"version": 1, "sha256": {
+                tool: "0" * 64 for tool in
+                ("pg_dump.exe", "pg_restore.exe", "pg_ctl.exe", "pg_isready.exe")
+            }}), encoding="utf-8"
+        )
+        try:
+            backup.create_database_backup(
+                pg_bin=fake_bin, app_dir=app_dir, host=host, port=port,
+                db=source_db, password=password, destination_dir=backup_dir,
+            )
+            substituted_blocked = False
+        except backup.BackupError as exc:
+            substituted_blocked = "no coincide" in str(exc)
+        check("una herramienta PostgreSQL sustituida se bloquea", substituted_blocked)
 finally:
     try:
         with psycopg.connect(autocommit=True, **admin) as conn:

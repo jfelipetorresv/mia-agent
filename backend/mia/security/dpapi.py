@@ -42,8 +42,11 @@ def _require_windows() -> tuple[ctypes.WinDLL, ctypes.WinDLL]:
         raise DPAPIUnavailableError(
             "La protección local de secretos requiere Windows DPAPI en este modo."
         )
-    crypt32 = ctypes.windll.crypt32
-    kernel32 = ctypes.windll.kernel32
+    # ``use_last_error=True`` mantiene el código de error de Win32 asociado a
+    # cada llamada ctypes. ``ctypes.windll`` no lo garantiza y podía reportar 0
+    # o un error viejo cuando DPAPI fallaba.
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     crypt32.CryptProtectData.argtypes = [
         ctypes.POINTER(_DATA_BLOB), wintypes.LPCWSTR, ctypes.POINTER(_DATA_BLOB),
         ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_DATA_BLOB),

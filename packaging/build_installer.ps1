@@ -117,6 +117,18 @@ if (-not (Test-Path (Join-Path $PgDest 'bin\initdb.exe'))) { throw "pgsql copiad
 if (-not (Test-Path (Join-Path $PgDest 'lib\vector.dll'))) { throw "pgsql copiado sin lib\vector.dll (pgvector)" }
 if (Test-Path (Join-Path $PgDest 'pgAdmin 4')) { throw "pgAdmin 4 no se excluyo del pgsql copiado" }
 
+# Manifiesto de integridad consumido por el backend empaquetado antes de entregar
+# PGPASSWORD a pg_dump. Si un ejecutable del bundle cambia, Mia bloquea el backup
+# en vez de ejecutar una herramienta sustituida.
+$PgToolHashes = [ordered]@{}
+foreach ($tool in @('pg_dump.exe', 'pg_restore.exe', 'pg_ctl.exe', 'pg_isready.exe')) {
+    $toolPath = Join-Path $PgDest "bin\$tool"
+    if (-not (Test-Path $toolPath)) { throw "pgsql copiado sin bin\$tool" }
+    $PgToolHashes[$tool] = (Get-FileHash -Algorithm SHA256 -LiteralPath $toolPath).Hash.ToLowerInvariant()
+}
+$PgManifest = [ordered]@{ version = 1; sha256 = $PgToolHashes } | ConvertTo-Json -Depth 3
+Set-Content -LiteralPath (Join-Path $PgDest 'mia-pg-tools.sha256.json') -Value $PgManifest -Encoding UTF8
+
 # --------------------------------------------------------------------------
 # 3. Verificar que las 6 fuentes de bundle.resources existan antes del bundler
 #    (Tauri aborta si una fuente de resource no existe; fallar aqui es mas claro).
