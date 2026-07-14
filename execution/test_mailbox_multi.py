@@ -306,6 +306,16 @@ async def db_checks() -> None:
         check("mxdb1 · store: Microsoft Y Google conectados A LA VEZ para el mismo tenant",
               got_ms is not None and got_ms.access_token == "AT-ms"
               and got_gg is not None and got_gg.access_token == "AT-gg")
+        with _sb() as c:
+            raw_tokens = c.execute(
+                "SELECT access_token, refresh_token FROM tenant_oauth_tokens "
+                "WHERE tenant_id=%s ORDER BY provider", (ta,)
+            ).fetchall()
+        check("mxdb1b · PostgreSQL no guarda los tokens OAuth en claro",
+              len(raw_tokens) == 2
+              and all(str(a).startswith("MIA-ENC-V1:") for a, _ in raw_tokens)
+              and all(str(r).startswith("MIA-ENC-V1:") for _, r in raw_tokens)
+              and "AT-ms" not in repr(raw_tokens) and "RT-gg" not in repr(raw_tokens))
 
         conexiones = await store.list_connections(ta)
         providers = {c["provider"] for c in conexiones}

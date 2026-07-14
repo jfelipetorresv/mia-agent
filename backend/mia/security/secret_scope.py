@@ -83,7 +83,9 @@ def get_tenant_secret(name: str, default: Optional[str] = None) -> Optional[str]
     return value if value else default
 
 
-def secrets_from_tenant_config(config_json: Optional[Mapping]) -> dict[str, str]:
+def secrets_from_tenant_config(
+    config_json: Optional[Mapping], *, tenant_id: str
+) -> dict[str, str]:
     """Extrae los secretos por tenant de la fila `tenant_settings.config` (JSONB).
 
     El llamador ya leyó esa fila bajo RLS (su conexión de tenant): aquí solo se
@@ -94,7 +96,17 @@ def secrets_from_tenant_config(config_json: Optional[Mapping]) -> dict[str, str]
     pinecone = dict(cfg.get("pinecone") or {})
     out: dict[str, str] = {}
     if pinecone.get("api_key"):
-        out["pinecone_api_key"] = str(pinecone["api_key"])
+        value = str(pinecone["api_key"])
+        from .at_rest import decrypt_secret, is_encrypted
+
+        if is_encrypted(value) and not tenant_id:
+            raise UnscopedSecretError(
+                "Una credencial cifrada de Pinecone exige tenant_id explícito."
+            )
+        out["pinecone_api_key"] = (
+            decrypt_secret(value, tenant_id=tenant_id, purpose="pinecone:api_key")
+            if is_encrypted(value) else value
+        )
     if pinecone.get("index_name"):
         out["pinecone_index_name"] = str(pinecone["index_name"])
     return out

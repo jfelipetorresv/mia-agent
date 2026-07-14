@@ -1,4 +1,7 @@
 .env
+.mia-backup-key.dpapi
+.mia-backup-recovery-confirmed
+.maintenance/
 mia-data/
 .tmp/
 .venv/

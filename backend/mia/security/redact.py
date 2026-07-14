@@ -45,6 +45,7 @@ def mask_secret(value: str, head: int = _MASK_HEAD, tail: int = _MASK_TAIL,
 # Google AIza, Telegram) y el resto del catálogo de Hermes: redactar de más es
 # gratis, redactar de menos es una fuga.
 _PREFIX_PATTERNS = [
+    r"MIA-RECOVERY-V1:[A-Za-z0-9_=-]{30,}",  # llave portable de recuperación
     r"sk-[A-Za-z0-9_-]{10,}",            # OpenAI / Anthropic / LiteLLM / OpenRouter
     r"sk_live_[A-Za-z0-9]{10,}",         # Stripe live
     r"sk_test_[A-Za-z0-9]{10,}",         # Stripe test

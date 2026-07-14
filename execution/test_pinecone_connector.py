@@ -106,7 +106,7 @@ def main() -> int:
 
         # === CP-S2 · la clave GLOBAL del entorno ya no activa el conector ===
         os.environ["PINECONE_API_KEY"] = "clave-global-de-la-instalacion"
-        with tenant_secret_scope("t-1", secrets_from_tenant_config({})):
+        with tenant_secret_scope("t-1", secrets_from_tenant_config({}, tenant_id="t-1")):
             c_env = get_pinecone_connector()
         check("CP-S2: PINECONE_API_KEY del entorno NO activa el conector del tenant",
               isinstance(c_env, NoopPineconeConnector))
@@ -147,7 +147,7 @@ def main() -> int:
 
         # === factory con la clave DEL TENANT (de su tenant_settings) -> real ===
         cfg = {"pinecone": {"api_key": "fake-key-en-test", "index_name": "mia-legal"}}
-        with tenant_secret_scope("t-1", secrets_from_tenant_config(cfg)):
+        with tenant_secret_scope("t-1", secrets_from_tenant_config(cfg, tenant_id="t-1")):
             c_real = get_pinecone_connector()
         check("con la clave del despacho en el scope -> PineconeConnector",
               isinstance(c_real, PineconeConnector) and c_real.is_configured is True

@@ -18,6 +18,7 @@ import logging
 from typing import Optional
 
 from ...db import pool
+from ...security.at_rest import decrypt_secret, encrypt_secret
 from .base import OAuthCreds
 
 logger = logging.getLogger("mia.connectors.mailbox.store")
@@ -29,6 +30,12 @@ async def save_tokens(tenant_id: str, creds: OAuthCreds) -> None:
     Desde la 027, un tenant puede tener varias filas (una por proveedor): el UPSERT es
     sobre (tenant_id, provider), así conectar Google no pisa la conexión de Microsoft."""
     scopes = " ".join(creds.scopes or ())
+    access_token = encrypt_secret(
+        creds.access_token, tenant_id=tenant_id, purpose=f"oauth:{creds.provider}:access"
+    )
+    refresh_token = encrypt_secret(
+        creds.refresh_token, tenant_id=tenant_id, purpose=f"oauth:{creds.provider}:refresh"
+    )
     async with pool.tenant_connection(tenant_id) as conn:
         await conn.execute(
             "INSERT INTO tenant_oauth_tokens "
@@ -41,7 +48,7 @@ async def save_tokens(tenant_id: str, creds: OAuthCreds) -> None:
             "                       ELSE tenant_oauth_tokens.refresh_token END, "
             "  expires_at = EXCLUDED.expires_at, scopes = EXCLUDED.scopes, "
             "  updated_at = now()",
-            (tenant_id, creds.provider, creds.access_token, creds.refresh_token,
+            (tenant_id, creds.provider, access_token, refresh_token,
              creds.expires_at, scopes),
         )
 
@@ -69,9 +76,15 @@ async def load_tokens(tenant_id: str, provider: Optional[str] = None) -> Optiona
             )).fetchone()
     if not row:
         return None
+    saved_provider = str(row[0])
     return OAuthCreds(
-        provider=str(row[0]), access_token=str(row[1] or ""),
-        refresh_token=str(row[2] or ""), expires_at=row[3],
+        provider=saved_provider,
+        access_token=decrypt_secret(
+            row[1], tenant_id=tenant_id, purpose=f"oauth:{saved_provider}:access"
+        ),
+        refresh_token=decrypt_secret(
+            row[2], tenant_id=tenant_id, purpose=f"oauth:{saved_provider}:refresh"
+        ), expires_at=row[3],
         scopes=tuple((row[4] or "").split()),
     )
 

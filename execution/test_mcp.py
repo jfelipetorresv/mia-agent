@@ -239,6 +239,13 @@ async def db_checks() -> None:
         blob = repr(st)
         check("e6-db4 · el status no filtra el valor del secreto del despacho",
               "TOKEN-A-secreto" not in blob)
+        with _sb() as c:
+            raw_mcp = c.execute(
+                "SELECT config->'mcp'->'servers'->%s->'secrets'->>'dms_api_token' "
+                "FROM tenant_settings WHERE tenant_id=%s", (slug, ta)
+            ).fetchone()[0]
+        check("e6-db4b · PostgreSQL no guarda el secreto MCP en claro",
+              str(raw_mcp).startswith("MIA-ENC-V1:") and "TOKEN-A-secreto" not in str(raw_mcp))
 
         # resolve produce el spec seguro: secreto resuelto, sin claves de instalación
         os.environ["ANTHROPIC_API_KEY"] = "sk-ant-secretaXYZ"

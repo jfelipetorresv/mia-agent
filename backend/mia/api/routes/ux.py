@@ -36,6 +36,7 @@ from ...agents import retrieval
 from ... import config
 from ...connectors import ObsidianSync, PineconeConnector
 from ...security import assert_no_stray_secret
+from ...security.at_rest import encrypt_secret
 from ...cron import build_scheduler
 from ...db import pool
 from ...ingest.extract import extract_text_async, extract_text_detailed_async
@@ -1243,13 +1244,18 @@ async def configure_pinecone(request: Request, body: PineconeConfigBody):
     except Exception as exc:
         status = "inactive"
         stats = {"error": str(exc)}
+    encrypted_api_key = encrypt_secret(
+        body.api_key, tenant_id=tid, purpose="pinecone:api_key"
+    )
     async with pool.tenant_connection(tid) as conn:
         await conn.execute(
             "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
             "ON CONFLICT (tenant_id) DO UPDATE SET "
             "config = jsonb_set(tenant_settings.config, '{pinecone}', %s::jsonb, true), updated_at = now()",
-            (tid, Json({"pinecone": {"api_key": body.api_key, "index_name": body.index_name, "status": status}}),
-             Json({"api_key": body.api_key, "index_name": body.index_name, "status": status, "stats": stats})),
+            (tid, Json({"pinecone": {"api_key": encrypted_api_key,
+                                     "index_name": body.index_name, "status": status}}),
+             Json({"api_key": encrypted_api_key, "index_name": body.index_name,
+                   "status": status, "stats": stats})),
         )
     return {"status": status, "vectors_count": vectors_count}
 

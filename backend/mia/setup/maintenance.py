@@ -14,9 +14,12 @@ import traceback
 from pathlib import Path
 
 from dotenv import dotenv_values
+import psycopg
+from psycopg.types.json import Json
 
 from . import backup, db_bootstrap, paths
 from .first_run import HOST, resolve_app_dir
+from ..security.at_rest import encrypt_secret, is_encrypted
 
 
 def _settings(app_dir: Path, port_override: int | None = None) -> dict:
@@ -56,17 +59,139 @@ def _verified_backup(app_dir: Path, pg_bin: Path, settings: dict) -> Path:
     )
 
 
+def _secret_rows(
+    settings: dict, tenant_id: str | None = None
+) -> tuple[list[tuple], list[tuple]]:
+    kw = dict(
+        host=settings["host"], port=settings["port"], dbname=settings["db"],
+        user="postgres", password=settings["password"],
+    )
+    with psycopg.connect(**kw) as conn:
+        oauth_exists = conn.execute(
+            "SELECT to_regclass('public.tenant_oauth_tokens')"
+        ).fetchone()[0]
+        settings_exists = conn.execute(
+            "SELECT to_regclass('public.tenant_settings')"
+        ).fetchone()[0]
+        where = " WHERE tenant_id=%s::uuid" if tenant_id else ""
+        params = (tenant_id,) if tenant_id else ()
+        oauth = conn.execute(
+            "SELECT tenant_id::text, provider, access_token, refresh_token "
+            "FROM tenant_oauth_tokens" + where,
+            params,
+        ).fetchall() if oauth_exists else []
+        configs = conn.execute(
+            "SELECT tenant_id::text, config FROM tenant_settings" + where,
+            params,
+        ).fetchall() if settings_exists else []
+    return oauth, configs
+
+
+def has_unprotected_secrets(settings: dict, tenant_id: str | None = None) -> bool:
+    oauth, configs = _secret_rows(settings, tenant_id)
+    for _, _, access, refresh in oauth:
+        if (access and not is_encrypted(str(access))) or (refresh and not is_encrypted(str(refresh))):
+            return True
+    for _, raw in configs:
+        cfg = raw if isinstance(raw, dict) else {}
+        pinecone = cfg.get("pinecone") or {}
+        if pinecone.get("api_key") and not is_encrypted(str(pinecone["api_key"])):
+            return True
+        servers = ((cfg.get("mcp") or {}).get("servers") or {})
+        for entry in servers.values():
+            if any(value and not is_encrypted(str(value))
+                   for value in (entry.get("secrets") or {}).values()):
+                return True
+    return False
+
+
+def protect_existing_secrets(
+    app_dir: Path, settings: dict, tenant_id: str | None = None
+) -> int:
+    """Convierte secretos legacy en una transacción; devuelve valores protegidos."""
+    oauth, configs = _secret_rows(settings, tenant_id)
+    changed = 0
+    kw = dict(
+        host=settings["host"], port=settings["port"], dbname=settings["db"],
+        user="postgres", password=settings["password"],
+    )
+    with psycopg.connect(**kw) as conn:
+        for row_tenant_id, provider, access, refresh in oauth:
+            new_access = (
+                encrypt_secret(
+                    access, tenant_id=row_tenant_id,
+                    purpose=f"oauth:{provider}:access", app_dir=app_dir,
+                ) if access else access
+            )
+            new_refresh = (
+                encrypt_secret(
+                    refresh, tenant_id=row_tenant_id,
+                    purpose=f"oauth:{provider}:refresh", app_dir=app_dir,
+                ) if refresh else refresh
+            )
+            access_changed = new_access != access
+            refresh_changed = new_refresh != refresh
+            if access_changed or refresh_changed:
+                conn.execute(
+                    "UPDATE tenant_oauth_tokens SET access_token=%s, refresh_token=%s "
+                    "WHERE tenant_id=%s::uuid AND provider=%s",
+                    (new_access, new_refresh, row_tenant_id, provider),
+                )
+                changed += int(access_changed) + int(refresh_changed)
+
+        for row_tenant_id, raw in configs:
+            cfg = raw if isinstance(raw, dict) else {}
+            tenant_changed = 0
+            pinecone = cfg.get("pinecone") or {}
+            if pinecone.get("api_key") and not is_encrypted(str(pinecone["api_key"])):
+                pinecone["api_key"] = encrypt_secret(
+                    pinecone["api_key"], tenant_id=row_tenant_id,
+                    purpose="pinecone:api_key", app_dir=app_dir,
+                )
+                cfg["pinecone"] = pinecone
+                tenant_changed += 1
+            servers = ((cfg.get("mcp") or {}).get("servers") or {})
+            for slug, entry in servers.items():
+                secrets = entry.get("secrets") or {}
+                for key, value in list(secrets.items()):
+                    if value and not is_encrypted(str(value)):
+                        secrets[key] = encrypt_secret(
+                            value, tenant_id=row_tenant_id, purpose=f"mcp:{slug}:{key}",
+                            app_dir=app_dir,
+                        )
+                        tenant_changed += 1
+                entry["secrets"] = secrets
+            if tenant_changed:
+                conn.execute(
+                    "UPDATE tenant_settings SET config=%s, updated_at=now() "
+                    "WHERE tenant_id=%s::uuid", (Json(cfg), row_tenant_id),
+                )
+                changed += tenant_changed
+        conn.commit()
+    return changed
+
+
 def startup(app_dir: Path, pg_bin: Path, port: int | None = None) -> list[str]:
     backup.cleanup_decrypted_temps(app_dir)
     settings = _settings(app_dir, port)
 
-    def before_migrations() -> None:
-        _verified_backup(app_dir, pg_bin, settings)
+    backup_done = False
 
-    return db_bootstrap.apply_migrations(
+    def before_mutation() -> None:
+        nonlocal backup_done
+        if not backup_done:
+            _verified_backup(app_dir, pg_bin, settings)
+            backup_done = True
+
+    needs_secret_upgrade = has_unprotected_secrets(settings)
+    applied = db_bootstrap.apply_migrations(
         settings["host"], settings["port"], settings["db"], settings["password"],
-        paths.migration_paths(), before_first_pending=before_migrations,
+        paths.migration_paths(), before_first_pending=before_mutation,
     )
+    if needs_secret_upgrade:
+        before_mutation()
+        protect_existing_secrets(app_dir, settings)
+    return applied
 
 
 def protection_status(app_dir: Path) -> dict:
