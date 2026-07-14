@@ -13,6 +13,7 @@ app_dir). Todas son idempotentes — se pueden re-ejecutar sin efecto adicional.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import sys
 from pathlib import Path
 
@@ -31,6 +32,32 @@ BEGIN
   END LOOP;
 END $$;
 """
+
+_MIGRATIONS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS public.mia_schema_migrations (
+  filename    text PRIMARY KEY,
+  sha256      text NOT NULL,
+  applied_at  timestamptz NOT NULL DEFAULT now()
+)
+"""
+
+# Candado de sesión: impide que dos arranques intenten actualizar el mismo
+# esquema a la vez. El valor es propio de Mia y estable entre versiones.
+_MIGRATION_LOCK_KEY = 0x4D49414D494752  # "MIAMIGR"
+
+
+class MigrationChecksumError(RuntimeError):
+    """Una migración aplicada cambió de contenido.
+
+    Alterar un archivo histórico vuelve imposible saber qué estructura tiene una
+    instalación existente. La salida segura es crear una migración nueva, no
+    volver a ejecutar silenciosamente la anterior.
+    """
+
+
+def migration_sha256(path: Path) -> str:
+    """Hash estable del archivo exacto que se aplicará a PostgreSQL."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _super_kw(host: str, port: str | int, dbname: str, password: str) -> dict:
@@ -96,15 +123,67 @@ def apply_extensions_and_schema(
 def apply_migrations(
     host: str, port: str | int, db: str, super_pw: str, migrations: list[Path]
 ) -> list[str]:
-    """Aplica cada .sql de `migrations`, EN ORDEN, en una sola conexión autocommit
-    como superusuario (mia_app no tiene CREATE). Cada archivo ya es idempotente
-    (CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE) — no hay tabla de control,
-    se re-ejecutan todas siempre (mismo patrón que los init_XXX.py existentes)."""
+    """Aplica solo migraciones pendientes, de forma reanudable y verificable.
+
+    Cada archivo SQL y su registro en ``mia_schema_migrations`` viven en UNA
+    transacción. Si el SQL falla o el proceso se corta, ese archivo queda sin
+    aplicar y el siguiente arranque puede reintentarlo. Un advisory lock evita
+    dos migradores simultáneos. Los archivos ya aplicados deben conservar el
+    mismo SHA-256; si cambian, se bloquea el arranque en vez de improvisar.
+
+    Compatibilidad: instalaciones anteriores no tienen ledger. En la primera
+    adopción se vuelven a ejecutar los SQL históricos (todos son idempotentes,
+    que era también el contrato anterior) y quedan registrados.
+    """
+    # Defensa en profundidad: paths.migration_paths() ya ordena, pero este
+    # helper también lo garantiza para cualquier llamador futuro.
+    migrations = sorted(migrations, key=lambda path: path.name)
     applied: list[str] = []
-    with psycopg.connect(autocommit=True, **_super_kw(host, port, db, super_pw)) as c:
-        for path in migrations:
-            c.execute(path.read_text(encoding="utf-8"))
-            applied.append(path.name)
+    with psycopg.connect(**_super_kw(host, port, db, super_pw)) as c:
+        c.execute("SELECT pg_advisory_lock(%s)", (_MIGRATION_LOCK_KEY,))
+        try:
+            c.execute(_MIGRATIONS_TABLE_SQL)
+            c.commit()
+
+            rows = c.execute(
+                "SELECT filename, sha256 FROM public.mia_schema_migrations"
+            ).fetchall()
+            recorded = {str(row[0]): str(row[1]) for row in rows}
+
+            for path in migrations:
+                digest = migration_sha256(path)
+                previous = recorded.get(path.name)
+                if previous is not None:
+                    if previous != digest:
+                        raise MigrationChecksumError(
+                            f"La actualización histórica {path.name} cambió después "
+                            "de aplicarse. Crea una migración nueva; no modifiques la anterior."
+                        )
+                    continue
+
+                try:
+                    migration_sql = path.read_text(encoding="utf-8")
+                    if "CONCURRENTLY" in migration_sql.upper():
+                        raise ValueError(
+                            f"{path.name}: CONCURRENTLY no es compatible con "
+                            "el modelo atómico de una transacción por archivo."
+                        )
+                    c.execute(migration_sql)
+                    c.execute(
+                        "INSERT INTO public.mia_schema_migrations (filename, sha256) "
+                        "VALUES (%s, %s)",
+                        (path.name, digest),
+                    )
+                    c.commit()
+                except Exception:
+                    c.rollback()
+                    raise
+                applied.append(path.name)
+        finally:
+            # El unlock explícito facilita pruebas/reutilización de conexiones;
+            # PostgreSQL también lo liberaría al cerrar la sesión.
+            c.execute("SELECT pg_advisory_unlock(%s)", (_MIGRATION_LOCK_KEY,))
+            c.commit()
     return applied
 
 
