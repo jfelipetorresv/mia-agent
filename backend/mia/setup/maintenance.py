@@ -48,7 +48,13 @@ def resolve_pg_bin(value: str | Path | None = None) -> Path:
     raise RuntimeError("Mia no recibió la ubicación de su base de datos.")
 
 
-def _verified_backup(app_dir: Path, pg_bin: Path, settings: dict) -> Path:
+def _verified_backup(
+    app_dir: Path,
+    pg_bin: Path,
+    settings: dict,
+    *,
+    require_recovery_confirmation: bool = True,
+) -> Path:
     return backup.create_verified_database_backup(
         pg_bin=pg_bin,
         app_dir=app_dir,
@@ -56,6 +62,7 @@ def _verified_backup(app_dir: Path, pg_bin: Path, settings: dict) -> Path:
         port=settings["port"],
         db=settings["db"],
         password=settings["password"],
+        require_recovery_confirmation=require_recovery_confirmation,
     )
 
 
@@ -180,7 +187,14 @@ def startup(app_dir: Path, pg_bin: Path, port: int | None = None) -> list[str]:
     def before_mutation() -> None:
         nonlocal backup_done
         if not backup_done:
-            _verified_backup(app_dir, pg_bin, settings)
+            # El upgrade automático corre antes de que exista una UI donde un
+            # usuario antiguo pueda exportar su llave. La copia sigue cifrada,
+            # verificada y recuperable en este perfil de Windows (DPAPI); solo
+            # se relaja la confirmación portable para romper ese círculo.
+            _verified_backup(
+                app_dir, pg_bin, settings,
+                require_recovery_confirmation=False,
+            )
             backup_done = True
 
     needs_secret_upgrade = has_unprotected_secrets(settings)

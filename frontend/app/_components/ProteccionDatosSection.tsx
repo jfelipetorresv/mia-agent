@@ -65,6 +65,7 @@ export default function ProteccionDatosSection() {
     setError("");
     try {
       await invokeLocal("maintenance_confirm_key");
+      window.dispatchEvent(new Event("mia:recovery-key-confirmed"));
       setAwaitingConfirmation(false);
       setMessage("Listo. Mia ya puede crear copias recuperables.");
       await load();

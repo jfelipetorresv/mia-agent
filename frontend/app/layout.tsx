@@ -5,6 +5,7 @@ import Sidebar from "./_components/Sidebar";
 import AuthGate from "./_components/AuthGate";
 import OnboardingGate from "./_components/OnboardingGate";
 import CommandPalette from "./_components/CommandPalette";
+import ProtectionReminder from "./_components/ProtectionReminder";
 import { cn } from "@/lib/utils";
 
 // Cuerpo de texto — aproximación web de Hind Guntur del manual de marca Lexia.
@@ -40,7 +41,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <CommandPalette />
           <div className="flex min-h-screen flex-col md:flex-row">
             <Sidebar />
-            <main className="min-w-0 flex-1 bg-background">{children}</main>
+            <main className="min-w-0 flex-1 bg-background">
+              <ProtectionReminder />
+              {children}
+            </main>
           </div>
         </AuthGate>
       </body>

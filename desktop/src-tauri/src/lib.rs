@@ -252,7 +252,7 @@ struct Shared {
 
 #[derive(Debug, Clone, Serialize)]
 struct Progress {
-    /// "setup" | "db" | "litellm" | "backend" | "frontend" | "ready" | "error"
+    /// "setup" | "db" | "maintenance" | "litellm" | "backend" | "frontend" | "ready" | "error"
     stage: String,
     /// Texto en español llano listo para pintar.
     text: String,
@@ -852,6 +852,20 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
         log_line(&log_dir, "DB: encendida por la cáscara (la apagaré al salir).");
+    }
+
+    // --- a1) Protección y actualizaciones locales -----------------------
+    // La DB ya responde y el backend aún no arrancó: es la única ventana
+    // segura para respaldar, migrar y cifrar credenciales antiguas sin que
+    // una petición concurrente observe un estado intermedio.
+    if cfg.maintenance.is_some() {
+        if closing(shared) {
+            return Err("la ventana se cerró durante el arranque".into());
+        }
+        emit(&app, "maintenance", "Protegiendo y comprobando tus datos…");
+        log_line(&log_dir, "Maintenance: inicio automático antes de servicios.");
+        let result = run_maintenance_action(app.clone(), "startup", vec![]).await?;
+        log_line(&log_dir, &format!("Maintenance: {result}"));
     }
 
     // --- a2) Motor de modelos (LiteLLM) — opcional, entre DB y backend ----

@@ -278,11 +278,12 @@ def create_database_backup(
     password: str,
     destination_dir: Path | None = None,
     inactivity_timeout_seconds: float = 300.0,
+    require_recovery_confirmation: bool = True,
 ) -> Path:
     """Crea un dump custom cifrado y atómico; devuelve el archivo final."""
     pg_dump = _validated_pg_dump(pg_bin)
     key = load_or_create_recovery_key(app_dir)
-    if not recovery_key_confirmed(app_dir, key):
+    if require_recovery_confirmation and not recovery_key_confirmed(app_dir, key):
         raise BackupError(
             "Antes del primer respaldo, guarda la llave de recuperación en un lugar seguro."
         )

@@ -75,6 +75,16 @@ try:
             recovery_required = "llave de recuperación" in str(exc)
         check("el primer backup exige guardar la llave de recuperación", recovery_required)
 
+        startup_backup = backup.create_verified_database_backup(
+            pg_bin=pg_bin, app_dir=app_dir, host=host, port=port,
+            db=source_db, password=password, destination_dir=backup_dir,
+            require_recovery_confirmation=False,
+        )
+        check("el upgrade automático puede crear una copia local comprobada",
+              startup_backup.is_file())
+        check("el upgrade no finge que la llave portable ya fue guardada",
+              not backup.recovery_key_confirmed(app_dir))
+
         recovery_file = work / "llave-recuperacion.txt"
         backup.export_recovery_key(app_dir, recovery_file)
         check("exportar no finge que la llave ya fue guardada",
