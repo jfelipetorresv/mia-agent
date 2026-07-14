@@ -1,5 +1,17 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-13/14 — Sesión 47 · Sala de estrategia (War Room) + OpenRouter motor propio/respaldo
+TL;DR: sesión que retomó tras un "error del computador" (el repo de MIA estaba intacto y sincronizado; lo dañado era un `.git` fantasma vacío en la carpeta contenedora, se limpió). Se construyeron y pushearon DOS features en paralelo con orquestación multi-agente y verificación de 3 capas (capa 3 visual queda para Pipe).
+Qué construimos:
+- **Sala de estrategia (`e8bcc51`):** panel de 3-4 counsel con posturas opuestas (defensor/contraparte/juez/especialista) que debaten un ASUNTO citando el expediente `[doc n]`, ronda de réplicas, y moderador que sintetiza dictamen (fortalezas/riesgos/puntos ciegos/estrategia/próximo paso). `backend/mia/agents/warroom.py` (motor, reutiliza personas.Persona + delegation.run_parallel patrón research_swarm + untrusted.render_documents + verification.annotate_draft en cada intervención y síntesis), 6 rutas en `api/routes/ux.py`, migración `033_warroom_results` (RLS), campos `panel`/`warroom_result` en state, instrucciones L8 `warroom_panelist`/`warroom_moderator` en prompt_builder, frontend `asuntos/[id]/_components/SalaEstrategia*`. Cierre = dictamen + "convertir en borrador" (gate de citas + HITL normales) + descarga Word.
+- **OpenRouter motor propio + respaldo (`b582541`):** política nueva "openrouter" (motor principal para despacho sin suscripción del equipo) + overflow en suscripción/nube con opt-in `allow_openrouter`; validación en vivo de la clave en `/activar` (4ª opción de motor); helper `_openrouter_key_present()` (cache 5s lee el .env) para activar el respaldo en caliente sin reabrir; salto AUTH/402→mia-local. `llm.py`, `config.py`, `welcome.py`, `settings.py`, `activar/page.tsx`, ambos yaml, `core.py` (AgentCore.model default None).
+Qué decidimos:
+- Decisiones de producto de Pipe: nombre "Sala de estrategia" (§G); panel propuesto por MIA y ajustable; conclusiones + debate colapsable; cierre con "convertir en borrador"; solo ASUNTOS. OpenRouter: "Ambas" (motor principal + respaldo), en paralelo.
+- Capa 1 verde (test_warroom 52/52, test_rls 19/19 HALT con +7 de warroom_results, check_env_pins 9/9, doc_citation_guard 19/19, CP9 45/45, openrouter_policy 16/16, welcome_keys 41/41, litellm_packaging 66/66, model_policy 40/40, llm_fallback 25/25, agent_core 26/26; tsc verde). Capa 2: 2 auditorías adversariales, 0 bloqueantes, 3 mayores + 8 menores corregidos y re-verificados; muralla de confidencialidad intacta (soberano nunca a la nube); aislamiento entre despachos OK.
+- "War Room" de ClaudeClaw NO existe (verificado): solo delegación 1-a-1; la Sala es diseño propio.
+Qué sigue:
+- Capa 3 de Pipe (recorrido visual de ambas features; DB dev ya arriba en 55432). DEUDA de Pipe: confirmar los slugs exactos de OpenRouter en openrouter.ai/models (slug errado → degrada a local sin romper). Apuesta #3 NotebookLM (transformaciones al ingerir) sigue diferida. Acciones de Pipe sin cambio (firma Azure + OAuth + E2E en frío del instalador).
+
 ## 2026-07-12 — Sesión 46 · PULIDO PRE-PRUEBA — Riesgo #60 cerrado + auditoría final de seguridad/bugs
 TL;DR: antes del E2E en frío de Pipe, 3 auditorías adversariales independientes (seguridad, corrección/E2E, diff) dieron 0 bloqueantes; se cerró el Riesgo #60 (reinicio en caliente del motor de modelos tras guardar la clave, sin reabrir MIA), se eliminó la única incógnita real (pre-flight del motor sin llaves) y se endureció el manejo del `.env`.
 Qué construimos:

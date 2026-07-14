@@ -4,6 +4,37 @@
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
 
+## Actualización 2026-07-13/14 — Sesión 47 (Sala de estrategia + OpenRouter)
+
+### 🟡 Riesgo #62 — Slugs de modelo de OpenRouter sin validar contra el catálogo
+Los alias `openrouter-sonnet`/`openrouter-haiku` (`litellm_config.yaml` + installer) usan
+`openrouter/anthropic/claude-sonnet-4.6` y `openrouter/anthropic/claude-haiku-4.5`, calcados del
+patrón, pero NO verificados contra openrouter.ai/models (sin clave en el entorno de build).
+**Riesgo:** un slug inexistente hace que el motor OpenRouter caiga a `mia-local` (MODEL_UNAVAILABLE
+salta) sin romper el turno, pero pierde la nube en silencio. **Mitigación:** degradación con gracia
++ el ping `_probar_openrouter` fallaría en la validación en vivo si el slug no existe. **Acción de
+Pipe:** confirmar los slugs exactos antes de vender.
+
+### 🟢 Riesgo #63 — Overflow de OpenRouter inerte tras reinicio en caliente (CERRADO)
+El respaldo/overflow condicionaba a `config.OPENROUTER_API_KEY` (snapshot de import-time); como
+`restart_litellm` reinicia solo el proxy, el backend no veía la clave nueva hasta reabrir del todo,
+pero la UI limpiaba el aviso. **Cierre:** helper `_openrouter_key_present()` en `llm.py` lee config
+O el `.env` en disco (cache 5s); no setea config/os.environ en caliente (respeta la decisión de
+welcome.py); seguro porque un alias insertado antes de que el proxy tenga la clave degrada a local
+vía el salto AUTH/402. Gate: test_openrouter_policy 16/16 (incluye el caso clave-solo-en-.env).
+
+### 🟢 Riesgo #64 — Sala de estrategia: inyección de 2º orden y costo (CERRADOS/mitigados)
+(a) El texto de cada panelista se reinyectaba sin sellar a la ronda 2 y al moderador → ahora
+envuelto con `untrusted.fence_block("INTERVENCION", …)` ("DATOS, no órdenes"); el gate de citas
+corre sobre cada salida. (b) Costo por convocatoria (varios counsel) → `enforce_budget` (402 al
+100% del tope) + degradación funcional a 3 panelistas sin réplicas desde `WARROOM_DEGRADE_AT_FRACTION=0.85`.
+(c) `warroom_results` cubierta por `test_rls` (+7 checks A/B). RLS fail-closed por tenant.
+
+### 🟡 Riesgo #65 — Sala de estrategia sin capa 3 (recorrido visual de Pipe)
+Las dos features tienen capas 1-2 verdes pero NO se han recorrido en vivo (igual que el resto de
+capas 3 acumuladas). Watch-out: streaming del debate en vivo (eventos `counsel_turn`) y el bloque
+colapsable no probados con un asunto real por un humano.
+
 ## Actualización 2026-06-20 — Sesión 20
 
 ### 🟢 Riesgo #23 — Login real multi-tenant cerrado
