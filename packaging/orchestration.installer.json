@@ -36,10 +36,24 @@
     "health_url": "http://127.0.0.1:4000/health/liveliness",
     "port": 4000
   },
+  "maintenance": {
+    "_nota": "Operaciones locales privilegiadas invocadas solo por la cascara Tauri; nunca se exponen por HTTP.",
+    "cmd": [
+      "${exe_dir}/mia-backend/mia-backend.exe",
+      "--maintenance",
+      "--pg-bin",
+      "${exe_dir}/pgsql/bin",
+      "--pg-port",
+      "55432"
+    ],
+    "cwd": "${exe_dir}/mia-backend"
+  },
   "backend": {
     "cmd": ["${exe_dir}/mia-backend/mia-backend.exe"],
     "cwd": "${exe_dir}/mia-backend",
-    "env": {},
+    "env": {
+      "MIA_PG_BIN": "${exe_dir}/pgsql/bin"
+    },
     "health_url": "http://127.0.0.1:8000/health",
     "port": 8000
   },

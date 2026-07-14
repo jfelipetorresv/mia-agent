@@ -7,6 +7,8 @@ pendientes, crea y verifica una copia antes de aplicar el primer cambio.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -33,6 +35,16 @@ def _settings(app_dir: Path, port_override: int | None = None) -> dict:
     }
 
 
+def resolve_pg_bin(value: str | Path | None = None) -> Path:
+    """Ruta entregada por el supervisor; en bundle queda además anclada al exe."""
+    raw = str(value or os.getenv("MIA_PG_BIN") or "").strip()
+    if raw:
+        return Path(raw)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parents[1] / "pgsql" / "bin"
+    raise RuntimeError("Mia no recibió la ubicación de su base de datos.")
+
+
 def _verified_backup(app_dir: Path, pg_bin: Path, settings: dict) -> Path:
     return backup.create_verified_database_backup(
         pg_bin=pg_bin,
@@ -57,9 +69,39 @@ def startup(app_dir: Path, pg_bin: Path, port: int | None = None) -> list[str]:
     )
 
 
+def protection_status(app_dir: Path) -> dict:
+    files: list[Path] = []
+    try:
+        files = sorted(
+            backup.default_backup_dir().glob("*.mia-backup"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        files = []
+    latest = files[0] if files else None
+    last_at = None
+    if latest is not None:
+        try:
+            from datetime import datetime, timezone
+
+            last_at = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc).isoformat()
+        except OSError:
+            latest = None
+    return {
+        "recovery_key_created": (app_dir / backup.KEY_FILE_NAME).is_file(),
+        "recovery_key_saved": backup.recovery_key_confirmed(app_dir),
+        "last_backup_name": latest.name if latest else None,
+        "last_backup_at": last_at,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mia-backend --maintenance")
-    parser.add_argument("action", choices=("startup", "backup", "verify", "export-key", "import-key"))
+    parser.add_argument(
+        "action",
+        choices=("status", "startup", "backup", "verify", "export-key", "confirm-key", "import-key"),
+    )
     parser.add_argument("--pg-bin", required=True)
     parser.add_argument("--pg-port", type=int, default=None)
     parser.add_argument("--app-dir", default=None)
@@ -68,9 +110,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     app_dir = resolve_app_dir(args.app_dir)
-    pg_bin = Path(args.pg_bin)
+    pg_bin = resolve_pg_bin(args.pg_bin)
     try:
-        if args.action == "startup":
+        if args.action == "status":
+            print("MIA-MAINTENANCE-JSON:" + json.dumps(protection_status(app_dir)))
+        elif args.action == "startup":
             applied = startup(app_dir, pg_bin, args.pg_port)
             print(f"MIA-MAINTENANCE: lista; {len(applied)} actualizaciones aplicadas.")
         elif args.action == "backup":
@@ -88,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise RuntimeError("Selecciona dónde guardar la llave de recuperación.")
             backup.export_recovery_key(app_dir, Path(args.destination))
             print("MIA-MAINTENANCE: llave de recuperación guardada.")
+        elif args.action == "confirm-key":
+            backup.confirm_recovery_key_saved(app_dir)
+            print("MIA-MAINTENANCE: llave de recuperación confirmada.")
         else:
             if not args.source:
                 raise RuntimeError("Selecciona tu llave de recuperación.")

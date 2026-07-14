@@ -33,6 +33,7 @@ import {
   PartyPopper,
   PiggyBank,
   Repeat,
+  ShieldCheck,
   Settings2,
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
@@ -44,6 +45,7 @@ import AutomationsSection from "@/app/_components/AutomationsSection";
 import ConexionesSection from "@/app/_components/ConexionesSection";
 import CarpetasSection from "@/app/_components/CarpetasSection";
 import ValorGastoSection from "@/app/_components/ValorGastoSection";
+import ProteccionDatosSection from "@/app/_components/ProteccionDatosSection";
 import { SectionTitle, StatCard, fmt } from "@/app/_components/PanelUI";
 
 type Guia = {
@@ -113,7 +115,7 @@ const ESTADO_TEXTO: Record<Paso["estado"], string> = {
 // Los 5 subtabs de la página. Los ids coinciden con los anclas históricos
 // (#conexiones, #carpetas, #automatizaciones, #valor) para que ningún enlace
 // externo (setup.py, dashboard, FuentesPanel, OneDriveFolderPicker) se rompa.
-type TabId = "primeros-pasos" | "conexiones" | "carpetas" | "automatizaciones" | "valor";
+type TabId = "primeros-pasos" | "conexiones" | "carpetas" | "automatizaciones" | "valor" | "proteccion";
 
 const HASH_TO_TAB: Record<string, TabId> = {
   "#primeros-pasos": "primeros-pasos",
@@ -121,6 +123,7 @@ const HASH_TO_TAB: Record<string, TabId> = {
   "#carpetas": "carpetas",
   "#automatizaciones": "automatizaciones",
   "#valor": "valor",
+  "#proteccion": "proteccion",
 };
 
 function tabFromHash(): TabId | null {
@@ -366,6 +369,10 @@ export default function ConfigurarPage() {
             <PiggyBank className="h-4 w-4" />
             Valor y gasto
           </TabsTrigger>
+          <TabsTrigger value="proteccion" className="gap-1.5">
+            <ShieldCheck className="h-4 w-4" />
+            Protección
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Primeros pasos ────────────────────────────────────────── */}
@@ -506,6 +513,10 @@ export default function ConfigurarPage() {
               ) : null}
             </div>
           </details>
+        </TabsContent>
+
+        <TabsContent value="proteccion" className="animate-fade-in">
+          <ProteccionDatosSection />
         </TabsContent>
       </Tabs>
     </div>

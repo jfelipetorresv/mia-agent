@@ -147,6 +147,8 @@ struct OrchCfg {
     app_dir: Option<String>,
     #[serde(default)]
     setup: Option<SetupCfg>,
+    #[serde(default)]
+    maintenance: Option<SetupCfg>,
     db: DbCfg,
     #[serde(default)]
     litellm: Option<LiteLlmCfg>,
@@ -174,6 +176,12 @@ impl OrchCfg {
                 *c = ex(c);
             }
             s.cwd = ex(&s.cwd);
+        }
+        if let Some(m) = &mut self.maintenance {
+            for c in m.cmd.iter_mut() {
+                *c = ex(c);
+            }
+            m.cwd = ex(&m.cwd);
         }
         self.db.pg_bin = ex(&self.db.pg_bin);
         self.db.data_dir = ex(&self.db.data_dir);
@@ -230,6 +238,10 @@ struct Shared {
     /// `orchestrate` (antes de que `cfg` se consuma). `None` = no hay bloque
     /// litellm en el config (dev, 3 servicios) → el reinicio no aplica.
     litellm: Mutex<Option<(LiteLlmCfg, Option<String>)>>,
+    /// Comando local privilegiado (backup/llave). Solo lo invoca Tauri; no HTTP.
+    maintenance: Mutex<Option<(SetupCfg, Option<String>)>>,
+    /// Serializa exportación/confirmación/backup invocados desde la interfaz.
+    maintenance_running: AtomicBool,
     /// Serializa un reinicio de litellm en curso (evita dos reinicios a la vez).
     restarting: AtomicBool,
 }
@@ -713,6 +725,10 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
     if let Some(l) = &cfg.litellm {
         *shared.litellm.lock().unwrap() = Some((l.clone(), cfg.app_dir.clone()));
     }
+    *shared.maintenance.lock().unwrap() = cfg
+        .maintenance
+        .clone()
+        .map(|m| (m, cfg.app_dir.clone()));
 
     let client = reqwest::Client::builder().no_proxy().build().map_err(|e| {
         log_line(&log_dir, &format!("ERROR técnico: cliente HTTP: {e}"));
@@ -1216,6 +1232,110 @@ fn shutdown(app: &AppHandle) {
 }
 
 // ---------------------------------------------------------------------------
+// Protección de datos (comandos locales Tauri, nunca expuestos por HTTP)
+// ---------------------------------------------------------------------------
+
+async fn run_maintenance_action(
+    app: AppHandle,
+    action: &'static str,
+    extra: Vec<String>,
+) -> Result<String, String> {
+    let shared = app.state::<Shared>();
+    let _guard = if action != "status" {
+        if shared.maintenance_running.swap(true, Ordering::SeqCst) {
+            return Err("Mia ya está completando otra operación de protección.".into());
+        }
+        Some(RestartGuard(&shared.maintenance_running))
+    } else {
+        None
+    };
+    let retained = shared.maintenance.lock().unwrap().clone();
+    let (cfg, app_dir) = retained.ok_or_else(|| {
+        "La protección de datos solo está disponible en la aplicación de escritorio.".to_string()
+    })?;
+    let log_dir = shared.log_dir.clone();
+
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        let (program, base_args) = cfg
+            .cmd
+            .split_first()
+            .ok_or_else(|| "El comando de mantenimiento está vacío.".to_string())?;
+        let mut command = Command::new(program);
+        command
+            .args(base_args)
+            .arg(action)
+            .args(extra)
+            .current_dir(&cfg.cwd)
+            .creation_flags(CREATE_NO_WINDOW);
+        if let Some(dir) = app_dir {
+            command.env("MIA_APP_DIR", dir);
+        }
+        command
+            .output()
+            .map_err(|_| "Mia no pudo abrir su herramienta de protección.".to_string())
+    })
+    .await
+    .map_err(|_| "La operación de protección se interrumpió.".to_string())??;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !output.status.success() {
+        log_line(
+            &log_dir,
+            &format!("Maintenance {action}: terminó con error ({}).", output.status),
+        );
+        return Err(if last.starts_with("MIA-MAINTENANCE:") {
+            last.trim_start_matches("MIA-MAINTENANCE:").trim().to_string()
+        } else {
+            "Mia no pudo completar la operación de protección.".to_string()
+        });
+    }
+    Ok(last)
+}
+
+#[tauri::command]
+async fn maintenance_status(app: AppHandle) -> Result<String, String> {
+    let line = run_maintenance_action(app, "status", vec![]).await?;
+    line.strip_prefix("MIA-MAINTENANCE-JSON:")
+        .map(str::to_string)
+        .ok_or_else(|| "Mia no pudo leer el estado de protección.".to_string())
+}
+
+#[tauri::command]
+async fn maintenance_export_key(app: AppHandle) -> Result<String, String> {
+    let documents = std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|p| p.join("Documents"))
+        .map_err(|_| "Windows no encontró la carpeta Documentos.".to_string())?;
+    let destination = documents.join("Llave-de-recuperacion-Mia.txt");
+    run_maintenance_action(
+        app,
+        "export-key",
+        vec!["--destination".into(), destination.to_string_lossy().into_owned()],
+    )
+    .await?;
+    Ok("Documentos > Llave-de-recuperacion-Mia.txt".into())
+}
+
+#[tauri::command]
+async fn maintenance_confirm_key(app: AppHandle) -> Result<String, String> {
+    run_maintenance_action(app, "confirm-key", vec![]).await?;
+    Ok("confirmada".into())
+}
+
+#[tauri::command]
+async fn maintenance_create_backup(app: AppHandle) -> Result<String, String> {
+    run_maintenance_action(app, "backup", vec![]).await?;
+    Ok("creada".into())
+}
+
+// ---------------------------------------------------------------------------
 // Entrada
 // ---------------------------------------------------------------------------
 
@@ -1252,6 +1372,8 @@ pub fn run() {
                 log_dir: log_dir.clone(),
                 job,
                 litellm: Mutex::new(None),
+                maintenance: Mutex::new(None),
+                maintenance_running: AtomicBool::new(false),
                 restarting: AtomicBool::new(false),
             });
 
@@ -1343,7 +1465,13 @@ pub fn run() {
         // Comando invocable desde el frontend (window.__TAURI__.core.invoke):
         // reinicia el motor de modelos en caliente tras guardar una clave
         // diferida, sin pedirle al abogado que cierre y reabra Mia.
-        .invoke_handler(tauri::generate_handler![restart_litellm])
+        .invoke_handler(tauri::generate_handler![
+            restart_litellm,
+            maintenance_status,
+            maintenance_export_key,
+            maintenance_confirm_key,
+            maintenance_create_backup
+        ])
         .build(tauri::generate_context!())
         .expect("error al iniciar la cáscara de Mia")
         .run(|app_handle, event| {

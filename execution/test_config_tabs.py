@@ -9,7 +9,7 @@ comportamiento en runtime (eso lo cubre Playwright/QA manual).
 
 Cubre:
   1. configurar/page.tsx importa Tabs/TabsList/TabsTrigger/TabsContent de shadcn.
-  2. Los 5 subtabs (primeros-pasos, conexiones, carpetas, automatizaciones, valor)
+  2. Los 6 subtabs (incluida protección de datos)
      y el mapa hash→tab con los 4 anclas históricos.
   3. Sincronía con hash viva: 'hashchange' + 'replaceState'.
   4. 'La salud de Mia' se conserva; 'Primeros pasos' presente; contador en el trigger.
@@ -54,17 +54,17 @@ def main() -> int:
         and '@/components/ui/tabs"' in configurar,
     )
 
-    # 2. Los 5 ids de tab + mapa hash→tab con los 4 anclas históricos
+    # 2. Los 6 ids de tab + mapa hash→tab con los anclas históricos
     check(
-        "los 5 subtabs están presentes (value=)",
+        "los 6 subtabs están presentes (value=)",
         all(
             f'value="{tid}"' in configurar
-            for tid in ["primeros-pasos", "conexiones", "carpetas", "automatizaciones", "valor"]
+            for tid in ["primeros-pasos", "conexiones", "carpetas", "automatizaciones", "valor", "proteccion"]
         ),
     )
     check(
         "el mapa hash→tab conserva los anclas históricos",
-        all(h in configurar for h in ["#conexiones", "#carpetas", "#automatizaciones", "#valor"]),
+        all(h in configurar for h in ["#conexiones", "#carpetas", "#automatizaciones", "#valor", "#proteccion"]),
     )
 
     # 3. Deep-link vivo (sincronía con hash, no solo al montar)

@@ -6,11 +6,24 @@
     "data_dir": "D:/Inteligencia Artificial/Mia-Super Agent/tools/pgdata-portable",
     "port": 55432
   },
+  "maintenance": {
+    "cmd": [
+      "D:/Inteligencia Artificial/Mia-Super Agent/mia/.venv/Scripts/python.exe",
+      "-m",
+      "mia.setup.maintenance",
+      "--pg-bin",
+      "D:/Inteligencia Artificial/Mia-Super Agent/tools/postgres16-portable-full/pgsql/bin",
+      "--pg-port",
+      "55432"
+    ],
+    "cwd": "D:/Inteligencia Artificial/Mia-Super Agent/mia"
+  },
   "backend": {
     "cmd": ["D:/Inteligencia Artificial/Mia-Super Agent/mia/.venv/Scripts/python.exe", "-m", "mia.api.run"],
     "cwd": "D:/Inteligencia Artificial/Mia-Super Agent/mia",
     "env": {
       "PYTHONPATH": "D:/Inteligencia Artificial/Mia-Super Agent/mia/backend",
+      "MIA_PG_BIN": "D:/Inteligencia Artificial/Mia-Super Agent/tools/postgres16-portable-full/pgsql/bin",
       "LITELLM_LOCAL_MODEL_COST_MAP": "True"
     },
     "health_url": "http://localhost:8000/health",

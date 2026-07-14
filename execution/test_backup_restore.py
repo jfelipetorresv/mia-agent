@@ -77,6 +77,9 @@ try:
 
         recovery_file = work / "llave-recuperacion.txt"
         backup.export_recovery_key(app_dir, recovery_file)
+        check("exportar no finge que la llave ya fue guardada",
+              not backup.recovery_key_confirmed(app_dir))
+        backup.confirm_recovery_key_saved(app_dir)
         backup_path = backup.create_database_backup(
             pg_bin=pg_bin,
             app_dir=app_dir,

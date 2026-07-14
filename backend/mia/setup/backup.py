@@ -150,13 +150,12 @@ def load_recovery_key(app_dir: Path) -> bytes:
 
 
 def export_recovery_key(app_dir: Path, destination: Path) -> Path:
-    """Exporta la llave portable. El llamador debe pedir confirmación visible."""
+    """Exporta la llave portable SIN asumir que el usuario la conservó."""
     key = load_or_create_recovery_key(app_dir)
     payload = (RECOVERY_PREFIX + base64.urlsafe_b64encode(key).decode("ascii") + "\n").encode()
     # El helper conserva cualquier destino anterior si la ACL del temporal
     # falla; no debe borrarse aquí una copia válida preexistente.
     _atomic_write_private(destination, payload)
-    _write_recovery_marker(app_dir, key)
     return destination
 
 
@@ -185,11 +184,23 @@ def _write_recovery_marker(app_dir: Path, key: bytes) -> Path:
 def recovery_key_confirmed(app_dir: Path, key: bytes | None = None) -> bool:
     """La llave portable fue exportada/importada y corresponde a la llave activa."""
     try:
-        active = key or load_or_create_recovery_key(app_dir)
+        # Consultar estado nunca crea una llave como efecto secundario.
+        active = key or load_recovery_key(app_dir)
         expected = hashlib.sha256(active).hexdigest()
         return (app_dir / RECOVERY_MARKER_NAME).read_text(encoding="ascii").strip() == expected
     except Exception:
         return False
+
+
+def recovery_key_text(app_dir: Path) -> str:
+    """Texto portable para descargar; no confirma que el usuario lo guardó."""
+    key = load_or_create_recovery_key(app_dir)
+    return RECOVERY_PREFIX + base64.urlsafe_b64encode(key).decode("ascii") + "\n"
+
+
+def confirm_recovery_key_saved(app_dir: Path) -> None:
+    """Marca confirmada solo una llave local existente."""
+    _write_recovery_marker(app_dir, load_recovery_key(app_dir))
 
 
 def default_backup_dir() -> Path:
