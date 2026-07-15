@@ -55,7 +55,7 @@ async def main() -> None:
                 c.execute("INSERT INTO tenants(id,name) VALUES (%s::uuid,%s)", (tid, name))
                 c.execute(
                     "INSERT INTO tenant_settings(tenant_id,config) VALUES "
-                    "(%s::uuid,jsonb_build_object('policy',jsonb_build_object(" 
+                    "(%s::uuid,jsonb_build_object('policy',jsonb_build_object("
                     "'monthly_budget_usd',1.0)))",
                     (tid,),
                 )
