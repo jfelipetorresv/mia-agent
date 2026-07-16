@@ -62,6 +62,78 @@ Regla propagada a `TRASPASO-MODELO.md` (visión) para Claude/Codex/Antigravity.
 - **Cursor:** revisión frontend/UX + jurisdicción-neutral + jerga (instrucción entregada a Pipe).
 - **Antigravity:** revisión estética/visual del producto renderizado (instrucción entregada a Pipe).
 
+### NOTA PARA ANTIGRAVITY — implementación de diseño (frontend)
+Antigravity ya entregó su auditoría estética; ESTOS son los 6 arreglos que debe **implementar**
+(su ventaja: puede renderizar y VERIFICAR visualmente). **Reglas:** trabaja sobre el commit más
+reciente y LIMPIO (no edites si otro agente está escribiendo el repo — un escritor a la vez);
+NO toques el backend; verifica en tema CLARO y OSCURO; mantén todo jurisdiction-neutral y sin
+jerga técnica; commitea al terminar. Los items de config por-despacho (moneda USD, "tarjeta
+profesional") NO son tuyos — los lleva Claude en el backend.
+
+1. **Contraste del CTA en modo claro (Alta · WCAG).** `frontend/app/globals.css:29` (`--cta: 160 100% 42%`);
+   usos `app/page.tsx:142`, `app/dashboard/page.tsx:182` (`bg-cta/15 text-cta`). En claro, `text-cta`
+   sobre fondo claro da ~1.90:1 (ilegible). Arreglo: en tema CLARO usa un verde oscuro para
+   texto/bordes (p. ej. `hsl(160 100% 25%)` / `#008050`) — idealmente un token aparte
+   (`--cta-strong`/foreground) para no dañar `bg-cta/15`; reserva el neón para fondos oscuros.
+   **Resultado esperado:** texto/insignias CTA ≥ 4.5:1 en claro; modo oscuro intacto.
+2. **Tildes faltantes (Media · pulido).** `frontend/app/asuntos/[id]/page.tsx` líneas 229, 243, 297, 347:
+   "Mia esta analizando/redactando/preparando" → "está"; "revision" → "revisión"; etc. **Resultado:**
+   mismos textos de streaming con ortografía correcta, como ya lo hace `proyectos/[id]/page.tsx`.
+3. **Locale `es-CO` → neutro (Media · agnosticismo).** `app/page.tsx:34`, `app/asuntos/[id]/page.tsx:51`,
+   `app/memoria/page.tsx:258`, `app/proyectos/page.tsx:37`, `app/proyectos/[id]/page.tsx:43`,
+   `_components/MailSearchDialog.tsx:43`, `_components/PanelUI.tsx:12,22`. Reemplaza `"es-CO"` por
+   `undefined` en `toLocale*String(...)` para usar el locale del navegador. **Resultado:** fechas
+   según el equipo del abogado; sin literal `es-CO`.
+4. **Ejemplo con jerga colombiana (Baja · agnosticismo).** `app/dashboard/page.tsx:259`: «recuérdame
+   radicar la tutela mañana a las 9» → ejemplo pan-hispano neutro, p. ej. «recuérdame presentar la
+   contestación mañana a las 9». **Resultado:** sin modismos procesales de un solo país.
+5. **Animación del menú móvil (Baja · premium).** `_components/Sidebar.tsx:113` (`DialogContent`).
+   Añade deslizamiento: `data-[state=open]:animate-in data-[state=closed]:animate-out
+   data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left duration-250`.
+   **Resultado:** el drawer entra/sale deslizando, coherente con la bienvenida.
+6. **Errores sin estilo en `FuentesPanel` (Baja · estados).** `_components/FuentesPanel.tsx:158`.
+   Envuelve el error de carga en un contenedor con estilo de alerta suave (borde sutil, fondo
+   desaturado, ícono de aviso pequeño), coherente con las tarjetas del sistema. **Resultado:** el
+   error se ve cuidado, no texto plano.
+
+Cierre: `npx tsc --noEmit` limpio y revisión visual en claro+oscuro antes de commitear.
+
+### HALLAZGOS DE CURSOR (capa 3, 2026-07-15) — backlog para la terminal nueva
+Cursor hizo revisión read-only de frontend/UX. Los 3 audits (Cursor, Antigravity, Claude)
+COINCIDEN en el sesgo de jurisdicción. Prioridad:
+
+**CRÍTICO — bug funcional (arreglar primero, es pequeño):**
+- `frontend/app/activar/page.tsx` hace `PUT /api/settings/model-policy`, pero el backend expone
+  `PUT /settings/model-policy` (SIN `/api`; `ConexionesSection.tsx` sí usa la ruta buena). En el
+  viaje de bienvenida, elegir motor / opt-in OpenRouter **falla en silencio** (catch vacío) → el
+  abogado cree que quedó "Todo en tu equipo"/OpenRouter y Mia sigue con otra política. OJO: es el
+  MISMO endpoint que extendí para `allow_notebooklm` → desde Activar tampoco se podría fijar el
+  opt-in de NotebookLM (Configuración sí). Arreglo: corregir la ruta + no tragar el error.
+
+**ALTO — promesas/UX que dañan confianza:**
+- Promesas contradictorias: "Notas del despacho" marcado *Próximamente* en onboarding pero Obsidian
+  YA se instala/sincroniza en Conexiones; Telegram ofrecido como checkbox "normal" pero su activación
+  real es un wizard @BotFather + `.env`, no OAuth. Alinear expectativa.
+- Deep-links de borrador: "Para tu decisión" y el badge llevan a `/asuntos/{id}`, no a
+  `/asuntos/{id}/revisar`; y `?sin_borrador=true` no se consume (el abogado vuelve al chat sin
+  explicación). Añadir CTA "Revisar borrador" + leer el query.
+- Fallos tragados: `memoria/page.tsx::act()` con `.catch(()=>{})`; detección de drift del curator por
+  `message.includes("409")` es frágil → usar `err.status === 409`.
+
+**MEDIO — sesgo de jurisdicción en frontend (se suma al backlog de "des-colombianizar"):**
+- Placeholders CO: "Fajardo & Asociados S.A.S." (forma societaria), "tarjeta profesional",
+  "Lexia Abogados" (register). Empty state "radicar la tutela". Detonador `SMLMV/SMMLV`
+  (`revisar/page.tsx`). Copy "Rama Judicial" en el MCP de consulta de procesos. `es-CO` en fechas
+  (ya listado). Moneda fija USD (Panel/Configuración) → moneda por despacho. CountrySelector pone
+  Colombia primero (deliberado, no bug). Solo el pack `co` instalado en backend.
+- Jerga técnica que se filtra: placeholder "Nombre del índice" (Pinecone) — el abogado no sabe qué
+  es; fallback de automatizaciones muestra `clave: valor` crudo.
+- Capacidades muertas: `/settings/agents` (Agent Hub) y `gold-cases` tienen backend pero NO UI →
+  orquestar o esconder hasta que haya pantalla.
+- `AuthGate` renderiza `null` mientras valida el token → pantalla en blanco (poner un loader).
+
+Nota: Cursor confirma que §G se cumple en general (no hay "MCP/HITL/tenant/pgvector" en el copy).
+
 ---
 
 ## Checkpoint: instalador de aceptación del robustecimiento (2026-07-14)
