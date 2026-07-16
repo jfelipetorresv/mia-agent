@@ -87,13 +87,21 @@ def _policy_options() -> list[dict]:
 
 @router.get("/settings/model-policy")
 async def get_model_policy(request: Request):
-    """Política efectiva del tenant + las 3 opciones (etiquetas en español, sin jerga)."""
+    """Política efectiva del tenant + las 3 opciones (etiquetas en español, sin jerga).
+
+    CP-NLM: incluye el estado de la consulta a NotebookLM (opt-in + notebook elegido) para
+    que la UI de Conexiones pinte el toggle. `notebooklm_disponible` es True solo si la
+    política NO es 'soberano' (en soberano la consulta está bloqueada de raíz)."""
     tenant_id = _tenant(request)
     policy = await llm.model_policy_for(tenant_id)
+    from ...connectors import notebooklm  # import diferido (evita ciclos al cargar rutas)
     return {
         "politica": policy,
         "nombre": _POLICY_LABELS[policy],
         "opciones": _policy_options(),
+        "allow_notebooklm": await llm.notebooklm_allowed_for(tenant_id),
+        "notebooklm_notebook": await notebooklm.configured_notebook(tenant_id) or "",
+        "notebooklm_disponible": policy != "soberano",
     }
 
 
@@ -130,6 +138,24 @@ async def put_model_policy(request: Request):
                 detail="allow_openrouter debe ser verdadero o falso.",
             )
         merge["allow_openrouter"] = allow_or_raw
+    # CP-NLM: opt-in de consulta a NotebookLM + notebook elegido, en el MISMO merge jsonb
+    # atómico (una sola escritura, sin pisar otras claves del config). Ambos opcionales.
+    allow_nlm_raw = (body or {}).get("allow_notebooklm") if isinstance(body, dict) else None
+    if allow_nlm_raw is not None:
+        if not isinstance(allow_nlm_raw, bool):
+            raise HTTPException(
+                status_code=422,
+                detail="allow_notebooklm debe ser verdadero o falso.",
+            )
+        merge["allow_notebooklm"] = allow_nlm_raw
+    nlm_notebook_raw = (body or {}).get("notebooklm_notebook") if isinstance(body, dict) else None
+    if nlm_notebook_raw is not None:
+        if not isinstance(nlm_notebook_raw, str):
+            raise HTTPException(
+                status_code=422,
+                detail="notebooklm_notebook debe ser un texto (id del notebook).",
+            )
+        merge["notebooklm_notebook"] = nlm_notebook_raw.strip()
     async with pool.tenant_connection(tenant_id) as conn:
         # Upsert con merge jsonb: `config || {claves nuevas}` en el propio UPDATE —
         # atómico, last-write-wins SOLO sobre las claves de `merge`, el resto del
@@ -142,4 +168,14 @@ async def put_model_policy(request: Request):
             (tenant_id, Json(merge)),
         )
     invalidate_policy_cache(tenant_id)
-    return {"politica": policy, "nombre": _POLICY_LABELS[policy], "opciones": _policy_options()}
+    # Devuelve la MISMA forma enriquecida que el GET para que la UI (motor + NotebookLM)
+    # quede consistente tras cualquier PUT sin re-consultar (CP-NLM).
+    from ...connectors import notebooklm  # import diferido (evita ciclos al cargar rutas)
+    return {
+        "politica": policy,
+        "nombre": _POLICY_LABELS[policy],
+        "opciones": _policy_options(),
+        "allow_notebooklm": await llm.notebooklm_allowed_for(tenant_id),
+        "notebooklm_notebook": await notebooklm.configured_notebook(tenant_id) or "",
+        "notebooklm_disponible": policy != "soberano",
+    }

@@ -556,6 +556,30 @@ class MatterGraphBuilder:
         facts = str(md.get("facts") or "")
         return msg, research.build_fts_query(msg, facts)
 
+    async def _notebooklm_context(self, state: MatterState, question: str) -> Optional[str]:
+        """CP-NLM: bloque de contexto (sellado) del NotebookLM del abogado, o None.
+
+        Fail-soft TOTAL: cualquier fallo o bloqueo del candado → None (el turno sigue solo
+        con el corpus local). El bloque lleva un encabezado que ORDENA tratar su contenido
+        como pista externa SIN verificar: toda norma/jurisprudencia/afirmación jurídica que
+        salga de aquí debe ir a la memoria con [VERIFICAR] (no es corpus respaldado)."""
+        try:
+            from ..connectors import notebooklm  # import diferido (fail-soft, sin ciclos)
+
+            sealed = await notebooklm.consult_notebook(state["tenant_id"], question)
+        except Exception:  # noqa: BLE001 — un enriquecimiento nunca tumba el turno
+            logger.warning("research: consulta a NotebookLM falló (tenant=%s); se sigue sin ella",
+                           state.get("tenant_id"), exc_info=True)
+            return None
+        if not sealed:
+            return None
+        return (
+            "Material de apoyo traído del NotebookLM del abogado (fuente externa, NO es "
+            "corpus verificado del sistema): úsalo solo como PISTA. Toda norma, "
+            "jurisprudencia o afirmación jurídica que tomes de aquí va a la memoria con "
+            "[VERIFICAR] — no la cites como respaldada.\n" + sealed
+        )
+
     async def _research_single(
         self, state: MatterState, md: dict, jurisdictions: list[str],
     ) -> dict:
@@ -565,11 +589,20 @@ class MatterGraphBuilder:
         sources_txt, sources, jurisdictions = await research.gather_sources(
             state["tenant_id"], query, jurisdictions=jurisdictions)
 
+        # CP-NLM: consulta OPCIONAL al NotebookLM del abogado (nube de Google). Pasa por
+        # el candado de confidencialidad (política≠soberano + opt-in del despacho); None si
+        # no autorizada/instalada/falla — nunca tumba el turno. La respuesta llega YA SELLADA
+        # como contexto externo NO confiable: informa, pero NO entra a `sources` (no cuenta
+        # como respaldo de citas) ni a `documents` (no obtiene numeración [doc n]).
+        nb_context = await self._notebooklm_context(state, msg)
+
         def _messages(facts_txt: str) -> list[dict]:
             parts = [f"Consulta del abogado:\n{msg}"]
             if facts_txt:
                 parts.append("Hechos establecidos por el especialista de hechos:\n" + facts_txt)
             parts.append(sources_txt if sources_txt else research.NO_SOURCES_NOTE)
+            if nb_context:
+                parts.append(nb_context)
             parts.append("Elabora la memoria de investigación.")
             return [
                 {"role": "system", "content": prompt_builder.build_graph_system(

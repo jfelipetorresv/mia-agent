@@ -11,6 +11,59 @@ quede trazabilidad de ambas revisiones.
 
 ---
 
+## Checkpoint: conector NotebookLM + regla de agnosticismo de jurisdicción (2026-07-15)
+
+**Rama:** `feature/robustecimiento-sin-aws` (sin commitear a `main`). **Entorno de la sesión:**
+Postgres apagado → los tests que dependen de DB no se corrieron aquí (dan PoolTimeout, NO es
+regresión); los tests-script sin DB sí corrieron y pasan.
+
+### A · Conector NotebookLM (CP-NLM) — nuevo
+Cada despacho puede conectar SU propio NotebookLM como fuente (jurisdiction-neutral). Piezas:
+- **Consulta viva gated** (`backend/mia/connectors/notebooklm/{__init__,gate,client}.py`): MIA
+  consulta el NotebookLM del abogado durante la investigación (`agents/graph.py::_notebooklm_context`
+  en `_research_single`). Pasa por candado de confidencialidad `gate.query_allowed` (bloquea en
+  política `soberano`, exige opt-in `allow_notebooklm`, fail-closed). La respuesta entra SELLADA
+  como contexto no confiable con `[VERIFICAR]`, NUNCA como cita respaldada.
+- **Instalador in-app** (`connectors/notebooklm/setup.py` + `api/routes/notebooklm.py`, registrado
+  en `api/main.py`): instalar (venv aislado 3.12/3.11 + `notebooklm-py[browser]` + chromium),
+  conectar (login de Google, navegador visible) y selector de notebooks. Verificación REAL de
+  sesión con `notebooklm auth check` analizando el TEXTO (no el exit code) + `list --json`.
+- **UI** (`frontend/app/_components/ConexionesSection.tsx`): tarjeta "Consultar mi NotebookLM"
+  multi-estado (instalar → conectar → elegir notebook → activar) con aviso "cada pregunta viaja a
+  Google" y bloqueo en modo soberano.
+- **Verificación:** `execution/test_notebooklm_gate.py` **33/33** (gate + client + instalador +
+  auth por texto). Frontend `tsc --noEmit` limpio. Dos revisiones independientes (consulta viva +
+  instalador): 0 bloqueantes; 2 MAYORES del instalador YA corregidos (instalación parcial disfrazada
+  de "instalado" → marcador `installed.ok`; subprocess del CLI de terceros heredaba secretos → saneado).
+- **PENDIENTE:** (1) capa 3 de Pipe = E2E en vivo en su Windows (instalar/login reales + confirmar
+  flags `[VERIFICAR]` del CLII contra el `--help`). (2) **Siguiente terminal:** capacidades restantes
+  del spec (sources_list, notebook_create, source_add con COMPUERTA de confidencialidad para datos de
+  cliente, artifacts_list, generate, download a carpeta segura) + gobernanza + auditoría (solo
+  acción/fecha/tipo/cuaderno, sin contenido). Se acordó construir el envoltorio MCP stdio SOLO cuando
+  exista el consumidor (el chat/agente principal), que está diferido.
+
+### B · MIA es AGNÓSTICA DE JURISDICCIÓN (regla dura — los tres agentes)
+Corrección de Pipe: MIA NO es colombiana; se adapta al despacho que la instala (Colombia, México,
+España…). La jurisdicción se resuelve por despacho (packs de `jurisdiction/`, default `generic`).
+Regla propagada a `TRASPASO-MODELO.md` (visión) para Claude/Codex/Antigravity.
+- **Hecho (seguro):** `memory/profile_manager.py:150` y `missions/decompose.py:58` — quitado el
+  default `'colombia'` y el "Español de Colombia".
+- **BACKLOG "des-colombianizar" (necesita DB viva; NO tocar a ciegas):** raíz = el pack tiene
+  `id_formats`/`doc_markers`/`holidays` diseñados pero SIN cablear. Puntos: defaults `'co'` en
+  `rag/sat_graph.py:171,209` + migración para `DEFAULT` de columna (`003/007/011`); anonimizador
+  `security/anonymize.py` (cédula/NIT/teléfono/dirección CO → riesgo de confidencialidad, mover al
+  pack); remitentes `.gov.co` y léxico "tutela/desacato" en `connectors/mailbox/base.py`; seed de
+  corpus CO en `rag/ingest_corpus.py` → opt-in del pack; cosméticos (`es-CO`, voz TTS, `SMLMV`, FTS
+  `spanish`). Inventario completo en la auditoría de Claude de esta sesión.
+- **Auditorías:** Claude entregó inventario completo; **Codex** corre en su runtime (task
+  `task-mrmuhgo0-3utkp8`) — su cross-check se folará la próxima sesión (sacar con `/codex:result`).
+
+### C · Revisiones pendientes (read-only, correr DESPUÉS de este commit, sin escribir el repo a la vez)
+- **Cursor:** revisión frontend/UX + jurisdicción-neutral + jerga (instrucción entregada a Pipe).
+- **Antigravity:** revisión estética/visual del producto renderizado (instrucción entregada a Pipe).
+
+---
+
 ## Checkpoint: instalador de aceptación del robustecimiento (2026-07-14)
 
 - Se reconstruyó desde cero el instalador NSIS de la rama

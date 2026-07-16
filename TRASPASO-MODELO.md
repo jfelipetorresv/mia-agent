@@ -30,9 +30,23 @@ persistente de Claude Code + `git log` + `memory/progress.md`, en ese orden.
 ## La visión que no se negocia
 
 - **Qué es Mia:** un agente legal cognitivo que aprende la metodología de CADA despacho,
-  comercializable a firmas del Civil Law hispanoamericano. "Terminado" = un abogado sin
+  comercializable a firmas de CUALQUIER jurisdicción. "Terminado" = un abogado sin
   background técnico abre Mia, sube un expediente, pregunta, y recibe diagnóstico
   verificado + borrador para aprobar en 10 minutos.
+- **Agnóstica de jurisdicción (REGLA DURA — para los tres agentes: Claude, Codex,
+  Antigravity):** Mia NO es colombiana ni de ninguna jurisdicción fija. Se adapta a la
+  persona/firma que la instala y a cómo quiera operarla: un despacho en México la adapta a
+  México, uno en Colombia a Colombia, uno en España a España. La jurisdicción se resuelve
+  POR DESPACHO (packs de `jurisdiction/`, default `generic`) — NUNCA se asume Colombia por
+  defecto. Colombia es solo la jurisdicción con la que Pipe validará el diseño cuando el
+  producto esté completo (un test, no el alcance). Todo default rígido a Colombia en código,
+  SQL o prompts (p. ej. `COALESCE(jurisdiction,'colombia')`, "Español de Colombia",
+  anonimizador o voz colombianos por defecto) es un BUG de framing a corregir hacia lo
+  configurable/`generic`. No describir ni construir Mia como producto de una jurisdicción.
+- **Conectores curados, adaptables por despacho:** Mia puede conectarse a distintos sistemas
+  (NotebookLM del despacho, y a futuro fuentes judiciales/registrales de la jurisdicción que
+  sea) CON reglas de juego claras y lista curada (estar en el catálogo = aprobado, patrón
+  `mcp/`), no como puerta abierta a "conectar a lo que sea". Cada firma conecta SUS fuentes.
 - **El usuario es un abogado, no un técnico.** Cero jerga en el frontend: no "HITL", no
   "vault", no "tenant", no "pgvector". El abogado ve "asunto", "revisar borrador",
   "Mia está investigando". Todo mensaje de error llega en lenguaje llano.

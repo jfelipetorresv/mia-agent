@@ -292,6 +292,31 @@ async def openrouter_allowed_for(tenant_id: str) -> bool:
         return False
 
 
+async def notebooklm_allowed_for(tenant_id: str) -> bool:
+    """Opt-in de consulta a NotebookLM (nube de Google) del tenant, de
+    `tenant_settings.config['allow_notebooklm']` (RLS). Sin fila, valor ausente o error
+    → False (fail-closed: la pregunta que Mia le hace a NotebookLM VIAJA a Google, y ese
+    texto puede llevar contexto del caso — solo sale con autorización explícita del
+    despacho, misma regla dura que OpenRouter y el análisis de correo).
+
+    OJO: este opt-in es NECESARIO pero NO suficiente. La decisión completa vive en
+    `connectors.notebooklm.gate.query_allowed`, que además bloquea del todo la política
+    'soberano' (cero salida del equipo) leyéndola con `model_policy_for_strict`."""
+    try:
+        from ..db import pool  # import diferido (mismo criterio que openrouter_allowed_for)
+
+        async with pool.tenant_connection(tenant_id) as conn:
+            row = await (await conn.execute(
+                "SELECT config->>'allow_notebooklm' FROM tenant_settings WHERE tenant_id = %s::uuid",
+                (tenant_id,),
+            )).fetchone()
+        return bool(row and str(row[0] or "").strip().lower() in ("true", "1", "yes", "on"))
+    except Exception:  # noqa: BLE001 — un fallo de DB no habilita salida a la nube: default False
+        logger.exception("notebooklm_allowed_for: no se pudo leer el opt-in del tenant %s",
+                         tenant_id)
+        return False
+
+
 async def model_policy_for(tenant_id: str) -> str:
     """Política del tenant leída de `tenant_settings.config['model_policy']` (RLS).
 

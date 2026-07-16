@@ -20,8 +20,8 @@ from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
 from .routes import (assistant, auth, automations, curator, folders, gold_cases, guides, hitl,
                      learning, mailbox, matter_folders, matter_mail, matter_sources, mcp,
-                     missions, personas, policy, remote_drive, settings, setup, sources, speech,
-                     stream, traces, ux, value, welcome)
+                     missions, notebooklm, personas, policy, remote_drive, settings, setup,
+                     sources, speech, stream, traces, ux, value, welcome)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -197,6 +197,8 @@ app.include_router(automations.router, prefix="/api")
 app.include_router(value.router, prefix="/api")
 # CP-Z1 (Ola 3) · dictado local (Silero VAD + Parakeet v3, 100% en el servidor del despacho).
 app.include_router(speech.router, prefix="/api")
+# CP-NLM · instalar/conectar NotebookLM desde Conexiones (la consulta viva pasa por su gate).
+app.include_router(notebooklm.router, prefix="/api")
 app.include_router(policy.router, prefix="/api")
 app.include_router(personas.router, prefix="/api")
 # CP-E5 (Ola 5) · tablero de misión por expediente (objetivo grande → hitos visibles).
