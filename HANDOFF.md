@@ -85,11 +85,50 @@ La línea base de "84 suites ALL PASS" **no era cierta**; conviene desconfiar de
   el control atómico del gasto lo cambió a tarifa conservadora de Sonnet — correcto: con 0 el
   tope mensual no frena y el abogado cree que no gastó.
 
-### D · Decisiones que quedan para PIPE (no las tomó Claude)
+### D · Agent Hub y Banco de oro: CONSTRUIDOS (`65e521d` backend, `84a059b` UI)
+Pipe pidió pantalla para ambos. **Las dos tenían API pero estaban muertas por dentro**;
+montar la UI encima habría sido prometer lo que no se cumple, así que se cablearon primero
+(decisión de Pipe: "cablearlo de verdad y luego la pantalla").
+
+**Agent Hub — la delegación no existía.** `graph.py` leía `metadata['delegate']` y NADIE lo
+escribía. Ahora MIA delega SOLO si el abogado nombra al ayudante en su mensaje con un verbo
+de orden (`agents/delegate_intent.py`, determinista, sin LLM). **Se descartó el tool-calling
+a propósito:** darle el gatillo al modelo convierte una inyección indirecta desde un
+documento del propio expediente en una fuga. Candado en `gateway/hub_gate.py` (hermano de
+`notebooklm/gate.py`): con `soberano` NO se delega aunque esté habilitado; la política se lee
+con `model_policy_for_strict`, que LANZA si la DB falla — un error de infra jamás abre la
+salida. Verificado a mano: soberano→bloquea, nube→permite, DB caída→bloquea. Sale solo el
+mensaje del abogado (ni documentos, ni hechos, ni perfil, ni historial). **No pasa por
+`anonymize` a propósito** (rompería el encargo — "busca el radicado RADICADO_1" no se puede
+buscar — y daría falsa seguridad sobre prosa libre). Bug de raíz cerrado: `set_enabled` hacía
+read-modify-write y activar un ayudante podía **revertir un cambio simultáneo de
+`model_policy`, resucitando una política que el despacho acababa de endurecer**.
+
+**Banco de oro — tenía TRES bloqueos, no uno:**
+1. `allow_eval_real_data` solo se LEÍA: no había forma de concederlo y el 403 mandaba "a
+   Configuración", donde no había nada → `GET|PUT /settings/eval-consent`, fail-closed. Ojo:
+   el merge `||` de jsonb es superficial y habría borrado el resto de `config['eval']`.
+2. No se podía releer un caso → `GET /api/gold-cases/{id}`. Nunca devuelve `anon_map`.
+3. **La UI no podía armar el caso:** los documentos solo exponen metadatos y el borrador se
+   borra del checkpoint al terminar el turno, justo cuando se captura. Ahora `:draft` lo arma
+   **server-side** desde el `matter_id` → el material sin anonimizar NUNCA pasa por el
+   navegador. Fuentes: `traces.input/output` del último turno approved|edited (rejected
+   fuera); `chunks ⋈ documents`. Topes explícitos (20 docs / 60 fragmentos) avisados con
+   números, nunca recorte silencioso.
+
+**Deuda conocida de esto:** (a) **D3 sigue abierto** — los flags de los CLI nunca se han
+confirmado contra un `--help` real, así que la salida del ayudante va a `metadata` y NO entra
+en la cadena de razonamiento jurídico; la primera invocación real puede fallar (degrada
+limpio y avisa, pero "funciona" está SIN verificar en vivo). (b) **El diagnóstico del turno
+no se persiste en ninguna parte** (vive en el checkpoint y se borra): por eso las
+conclusiones clave llegan vacías y las escribe el abogado. Es dato de valor que se tira cada
+turno — hilo abierto si Pipe quiere conservarlo. (c) `index_trace` es best-effort: si esa
+fila falla, el asunto queda incapturable y el 409 dirá "aprueba el borrador primero" a quien
+sí lo aprobó.
+
+### D2 · Decisión que queda para PIPE
 - **Moneda por despacho:** los importes vienen del backend en campos `*_usd`; poner otra
   etiqueta sin conversión real haría que MIA mienta sobre dinero. Necesita diseño aparte.
-- **Agent Hub (`/settings/agents`) y `gold-cases`:** tienen backend pero NINGUNA UI. No hay
-  nada engañoso frente al abogado (no se ven); construir la pantalla es feature nueva.
 
 ### E · Pendiente técnico (reportado, no tocado — con su razón)
 - **FTS `'spanish'`**: vive en columnas `GENERATED ALWAYS AS ... STORED` + triggers (003/004/013
