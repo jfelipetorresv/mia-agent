@@ -110,7 +110,7 @@ export default function Sidebar() {
                 <Menu className="h-4 w-4" />
               </Button>
             </DialogTrigger>
-            <DialogContent className="dark left-0 top-0 h-full max-w-[17rem] translate-x-0 translate-y-0 rounded-none border-r bg-background sm:rounded-none">
+            <DialogContent className="dark left-0 top-0 h-full max-w-[17rem] translate-x-0 translate-y-0 rounded-none border-r bg-background duration-200 data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left sm:rounded-none">
               <DialogTitle className="sr-only">Menú de navegación</DialogTitle>
               <div className="flex h-full flex-col">
                 <div className="pb-4">

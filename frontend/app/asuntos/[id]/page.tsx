@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
+  CheckCircle2,
   ChevronRight,
   FileText,
   Paperclip,
@@ -12,6 +14,7 @@ import {
   Send,
   Sparkles,
   Swords,
+  X,
 } from "lucide-react";
 import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
@@ -48,15 +51,33 @@ type MissionsSummary = { count: number; milestonesDone: number; milestonesTotal:
 function fmtDate(s?: string): string {
   if (!s) return "";
   try {
-    return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+    return new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short" });
   } catch {
     return "";
   }
 }
 
+// useSearchParams() exige un límite <Suspense> en App Router (si no, rompe el
+// prerender). El contenido real vive en WorkspacePageContent; este export solo
+// monta el límite.
 export default function WorkspacePage({ params }: { params: { id: string } }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[100dvh] items-center justify-center text-sm text-muted-foreground">
+          Cargando…
+        </div>
+      }
+    >
+      <WorkspacePageContent params={params} />
+    </Suspense>
+  );
+}
+
+function WorkspacePageContent({ params }: { params: { id: string } }) {
   const matterId = params.id;
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [matter, setMatter] = useState<{ name?: string } | null>(null);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -86,6 +107,27 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   // CP-Z1b: dictado por voz — el texto transcrito se agrega al campo sin borrar
   // lo ya escrito; los avisos ("no se escuchó voz") van en ámbar bajo el input.
   const [dictationNotice, setDictationNotice] = useState("");
+
+  // Avisos en llano cuando se llega desde /revisar con una señal en la URL
+  // (§G: nada de "sin_borrador=true" visible). Se leen una sola vez y se
+  // limpia el query para que un refresco de la página no repita el aviso.
+  const [notice, setNotice] = useState<{ type: "warning" | "success"; text: string } | null>(null);
+  useEffect(() => {
+    const sinBorrador = searchParams.get("sin_borrador") === "true";
+    const confirmed = searchParams.get("confirmed") === "true";
+    if (sinBorrador) {
+      setNotice({
+        type: "warning",
+        text: "Ese borrador ya no está disponible para revisión. Puede que ya se haya resuelto o que se haya reemplazado por uno nuevo — pídele a Mia que lo retome si lo necesitas.",
+      });
+    } else if (confirmed) {
+      setNotice({ type: "success", text: "El borrador quedó aprobado. Mia guardó tu decisión." });
+    }
+    if (sinBorrador || confirmed) {
+      router.replace(`/asuntos/${matterId}`, { scroll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Fase 3.1(B) · Plan de trabajo (aside): contador liviano para el header de la card.
   const [missionsSummary, setMissionsSummary] = useState<MissionsSummary | null>(null);
@@ -226,8 +268,8 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       diagnosis_summary?: DiagnosisSummary | null;
       verification?: Verification | null;
     };
-    if (event === "thinking") setStatus(payload.message || "Mia esta analizando...");
-    else if (event === "draft_ready") setStatus("Mia esta redactando...");
+    if (event === "thinking") setStatus(payload.message || "Mia está analizando...");
+    else if (event === "draft_ready") setStatus("Mia está redactando...");
     else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
     else if (event === "awaiting_review") {
       setStatus("Tienes un borrador listo");
@@ -239,7 +281,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         const copy = [...m];
         copy[copy.length - 1] = {
           role: "mia",
-          text: payload.draft || "He preparado un borrador para tu revision.",
+          text: payload.draft || "He preparado un borrador para tu revisión.",
         };
         return copy;
       });
@@ -265,7 +307,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     if (!text || streaming) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", text }, { role: "mia", text: "" }]);
-    setStatus("Mia esta analizando...");
+    setStatus("Mia está analizando...");
     setHasDraft(false);
     try {
       const { stream_url } = await apiSend<{ stream_url: string }>(
@@ -294,7 +336,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       setWarroomDebate([]);
       setWarroomResult(null);
       setWarroomError("");
-      setWarroomStatus("Mia esta reuniendo la sala de estrategia...");
+      setWarroomStatus("Mia está reuniendo la sala de estrategia...");
       setWarroomStreaming(true);
       await streamTurn(stream_url, (event, data) => {
         const payload = data as {
@@ -307,7 +349,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           result?: WarRoomResult;
         };
         if (event === "thinking") {
-          setWarroomStatus(payload.message || "Mia esta trabajando...");
+          setWarroomStatus(payload.message || "Mia está trabajando...");
         } else if (event === "counsel_turn") {
           setWarroomDebate((d) => [
             ...d,
@@ -344,7 +386,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   async function convertWarroomToDraft() {
     if (convertingToDraft || streaming) return;
     setConvertingToDraft(true);
-    setStatus("Mia esta preparando tu borrador...");
+    setStatus("Mia está preparando tu borrador...");
     setHasDraft(false);
     setMessages((m) => [...m, { role: "mia", text: "" }]);
     try {
@@ -453,6 +495,31 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       {/* Consulta: espacio único de conversación (el plan vive en el aside derecho) */}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex-1 space-y-5 overflow-auto px-6 py-6">
+          {notice ? (
+            <div
+              role={notice.type === "warning" ? "alert" : "status"}
+              className={cn(
+                "flex items-start gap-3 rounded-xl border px-5 py-4 animate-slide-up",
+                notice.type === "warning"
+                  ? "border-warning/30 bg-warning/5 text-warning"
+                  : "border-success/30 bg-success/10 text-success",
+              )}
+            >
+              {notice.type === "warning" ? (
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              ) : (
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+              )}
+              <p className="flex-1 text-sm">{notice.text}</p>
+              <button
+                onClick={() => setNotice(null)}
+                aria-label="Cerrar aviso"
+                className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
           {messages.length === 0 ? (
             <div className="mt-20 text-center animate-slide-up">
               <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">

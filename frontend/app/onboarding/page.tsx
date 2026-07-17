@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { CountrySelector, COUNTRY_NAME_BY_CODE } from "../_components/CountrySelector";
+import { TOOL_OPTIONS } from "../_components/toolOptions";
 import {
   WelcomeShell,
   WelcomeProgress,
@@ -91,17 +92,8 @@ const REQUIRED_IDS = new Set(["p1", "p2"]);
 const TEXT_IDS = new Set(["p4", "p8", "p9"]);
 const TAG_IDS = new Set(["p3", "p6", "p7"]);
 
-const TOOL_OPTIONS: { name: string; description: string; comingSoon?: boolean }[] = [
-  { name: "Correo", description: "Mia vigila tus correos urgentes y te avisa." },
-  { name: "Calendario", description: "Mia te recuerda tus eventos y audiencias próximas." },
-  { name: "Gestor documental", description: "Mia consulta los documentos del despacho para responder." },
-  { name: "Mensajería (Telegram)", description: "Habla con Mia desde tu celular, por texto o por voz." },
-  {
-    name: "Carpetas en la nube (OneDrive/Google Drive)",
-    description: "Mia conoce las carpetas donde guardas tu trabajo.",
-  },
-  { name: "Notas del despacho", description: "Mia guarda y consulta tus notas.", comingSoon: true },
-];
+// TOOL_OPTIONS vive en ../_components/toolOptions.ts — compartida con MiDespachoSection
+// (C2: una sola fuente para que las dos pantallas nunca se contradigan entre sí).
 
 // Sugerencias genéricas (no jurisdicción, ramas del derecho ni tribunales).
 const VOICE_SUGGESTIONS = ["Técnico", "Argumentativo", "Conciso", "Formal", "Directo", "Analítico", "Detallado", "Estratégico"];
@@ -671,7 +663,7 @@ function QuestionInput({
             <Input
               value={n.firm}
               onChange={(e) => onChange({ ...n, firm: e.target.value })}
-              placeholder="Ej: Fajardo & Asociados S.A.S."
+              placeholder="Ej: Fajardo & Asociados"
               autoFocus
             />
           </Field>
@@ -679,7 +671,7 @@ function QuestionInput({
             <Input
               value={n.lawyer}
               onChange={(e) => onChange({ ...n, lawyer: e.target.value })}
-              placeholder="Ej: Nombre Apellido · tarjeta profesional 000.000"
+              placeholder="Ej: Nombre Apellido · número de registro profesional 000.000"
             />
           </Field>
         </div>

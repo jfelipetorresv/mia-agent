@@ -9,7 +9,7 @@ import type { ComponentType, ReactNode } from "react";
 export function fmt(s?: string | null): string {
   if (!s) return "—";
   try {
-    return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+    return new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
   } catch {
     return "—";
   }
@@ -19,7 +19,7 @@ export function fmt(s?: string | null): string {
 export function fmtHora(s?: string | null): string {
   if (!s) return "—";
   try {
-    return new Date(s).toLocaleString("es-CO", {
+    return new Date(s).toLocaleString(undefined, {
       day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
     });
   } catch {

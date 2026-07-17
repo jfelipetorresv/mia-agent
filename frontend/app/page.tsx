@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, FolderOpen, ChevronRight, FileClock } from "lucide-react";
+import Link from "next/link";
+import { Plus, FolderOpen, ChevronRight, FileClock, ArrowRight } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +32,7 @@ type Matter = {
 function fmtDate(s?: string): string {
   if (!s) return "";
   try {
-    return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+    return new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
   } catch {
     return "";
   }
@@ -128,18 +129,24 @@ export default function AsuntosPage() {
         <ul className="space-y-3">
           {matters.map((m, i) => (
             <li key={m.id} className="animate-slide-up" style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}>
-              <button
-                onClick={() => router.push(`/asuntos/${m.id}`)}
-                className="group flex w-full items-center gap-4 rounded-xl border border-border bg-card px-5 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md"
-              >
+              {/* La fila es un enlace nativo "extendido" (el ::after cubre la tarjeta):
+                  así el abogado conserva teclado, foco y "abrir en pestaña nueva", y
+                  el botón de revisar puede ser un hermano real —sin anidar controles—
+                  aunque visualmente viva dentro de la tarjeta. */}
+              <div className="group relative flex w-full items-center gap-4 rounded-xl border border-border bg-card px-5 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform duration-200 group-hover:scale-105">
                   <FolderOpen className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate font-medium">{m.name}</span>
+                    <Link
+                      href={`/asuntos/${m.id}`}
+                      className="truncate rounded-sm font-medium after:absolute after:inset-0 after:rounded-xl after:content-['']"
+                    >
+                      {m.name}
+                    </Link>
                     {m.pending_review ? (
-                      <Badge className="gap-1 border-transparent bg-cta/15 text-cta hover:bg-cta/20">
+                      <Badge className="gap-1 border-transparent bg-cta/15 text-cta-strong hover:bg-cta/20">
                         <FileClock className="h-3 w-3" />
                         Borrador por revisar
                       </Badge>
@@ -149,9 +156,22 @@ export default function AsuntosPage() {
                     <div className="mt-0.5 truncate text-sm text-muted-foreground">{m.description}</div>
                   ) : null}
                 </div>
+                {m.pending_review ? (
+                  <Button
+                    asChild
+                    size="sm"
+                    variant="cta"
+                    className="relative z-10 shrink-0 gap-1.5"
+                  >
+                    <Link href={`/asuntos/${m.id}/revisar`}>
+                      Revisar borrador
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                ) : null}
                 <div className="shrink-0 text-xs text-muted-foreground">{fmtDate(m.created_at)}</div>
                 <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-primary" />
-              </button>
+              </div>
             </li>
           ))}
         </ul>

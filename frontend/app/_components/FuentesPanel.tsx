@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Cloud, Folder, Loader2, Mail, MoreVertical, Plus, Search } from "lucide-react";
+import { AlertTriangle, Cloud, Folder, Loader2, Mail, MoreVertical, Plus, Search } from "lucide-react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -282,16 +282,19 @@ export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
 
       {sources === null ? (
         loadError ? (
-          <div className="mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-            {loadError.text}
-            {loadError.showConnect ? (
-              <>
-                {" · "}
-                <Link href="/configurar#conexiones" className="underline">
-                  Ir a Configuración
-                </Link>
-              </>
-            ) : null}
+          <div className="mb-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>
+              {loadError.text}
+              {loadError.showConnect ? (
+                <>
+                  {" · "}
+                  <Link href="/configurar#conexiones" className="underline">
+                    Ir a Configuración
+                  </Link>
+                </>
+              ) : null}
+            </span>
           </div>
         ) : (
           <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">

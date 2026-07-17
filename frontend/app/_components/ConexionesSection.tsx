@@ -634,8 +634,8 @@ export default function ConexionesSection({
             <Input
               value={pineconeIndex}
               onChange={(e) => setPineconeIndex(e.target.value)}
-              placeholder="Nombre del índice"
-              aria-label="Nombre del índice"
+              placeholder="Nombre de tu colección de documentos"
+              aria-label="Nombre de tu colección de documentos"
             />
             <Button onClick={connectPinecone}>Conectar</Button>
           </div>

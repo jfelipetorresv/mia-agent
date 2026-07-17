@@ -209,9 +209,14 @@ def main() -> int:
                       r.status_code == 200 and isinstance(r.json(), list))
                 r = client.get("/settings/model-policy", headers=auth)
                 pol = r.json() if r.status_code == 200 else {}
-                check("GET /settings/model-policy trae política + 3 opciones con nombre",
+                # El test fijaba 3 opciones; la sesión 47 sumó OpenRouter como motor
+                # propio/respaldo y quedaron 4 (_POLICY_LABELS en routes/settings.py).
+                # Se comprueba contra la fuente, no contra un número escrito a mano,
+                # para que sumar un motor no vuelva a dar un falso rojo.
+                from mia.api.routes.settings import _POLICY_LABELS
+                check("GET /settings/model-policy trae política + todas las opciones con nombre",
                       r.status_code == 200 and pol.get("politica")
-                      and len(pol.get("opciones", [])) == 3
+                      and len(pol.get("opciones", [])) == len(_POLICY_LABELS)
                       and all("nombre" in o for o in pol["opciones"]))
                 r = client.put("/settings/model-policy", headers=auth, json={"politica": "soberano"})
                 check("PUT /settings/model-policy persiste el cambio (el selector escribe)",

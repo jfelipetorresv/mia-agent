@@ -179,7 +179,7 @@ export default function DashboardPage() {
       {decisiones > 0 ? (
         <section className="mt-8 animate-slide-up rounded-xl border border-cta/30 bg-cta/5 p-6 shadow-sm">
           <div className="flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-cta/15 text-cta">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-cta/15 text-cta-strong">
               <ListChecks className="h-4 w-4" />
             </span>
             <div className="min-w-0 flex-1">
@@ -195,7 +195,7 @@ export default function DashboardPage() {
                     {pendingMatters.slice(0, 5).map((m) => (
                       <li key={m.id}>
                         <Link
-                          href={`/asuntos/${m.id}`}
+                          href={`/asuntos/${m.id}/revisar`}
                           className="group flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-primary"
                         >
                           {m.name}
@@ -256,7 +256,7 @@ export default function DashboardPage() {
         {reminderMsg ? <p className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{reminderMsg}</p> : null}
         {reminders.length === 0 ? (
           <EmptyHint icon={BellRing}>
-            No tienes recordatorios pendientes. Pídelos en el chat: «recuérdame radicar la tutela mañana a las 9».
+            No tienes recordatorios pendientes. Pídelos en el chat: «recuérdame presentar la contestación mañana a las 9».
           </EmptyHint>
         ) : (
           <ul className="space-y-2">

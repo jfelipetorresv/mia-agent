@@ -28,6 +28,11 @@
 
     --cta: 160 100% 42%; /* verde vibrante de marca — legible en claro */
     --cta-foreground: 0 0% 4%;
+    /* Verde oscuro SOLO para texto/bordes de CTA en tema claro. El 23% no es
+       arbitrario: la insignia no se pinta sobre blanco sino sobre bg-cta/15, que
+       aclara el fondo. Medido sobre ese fondo compuesto da 5.10:1 en reposo y
+       4.91:1 con hover:bg-cta/20 — AA (≥4.5:1) en ambos estados. */
+    --cta-strong: 160 100% 23%;
 
     --destructive: 4 55% 47%;
     --destructive-foreground: 0 0% 100%;
@@ -70,6 +75,7 @@
 
     --cta: 160 100% 48%; /* #00F5A2 — brilla sobre negro */
     --cta-foreground: 0 0% 4%;
+    --cta-strong: 160 100% 48%; /* en oscuro el neón ya tiene contraste de sobra */
 
     --destructive: 4 60% 56%;
     --destructive-foreground: 0 0% 100%;
@@ -143,6 +149,12 @@
      verde de marca con texto negro encima, sea cual sea el tema. */
   .bg-gradient-cta {
     background-image: linear-gradient(135deg, #98e4bf, #00f5a2);
+  }
+  /* Texto/insignias de CTA sobre fondo tenue (bg-cta/15): en claro usa el verde
+     oscuro --cta-strong para cumplir WCAG AA (≥4.5:1); en oscuro es el mismo
+     neón de --cta, que ya contrasta de sobra sobre negro. No tocar bg-cta/15. */
+  .text-cta-strong {
+    color: hsl(var(--cta-strong));
   }
   /* Halo teal sutil para el ítem activo del nav y hovers de hero. */
   .glow-teal {

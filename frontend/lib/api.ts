@@ -16,6 +16,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Mensaje mostrable al abogado (§G). Solo devuelve el texto del backend cuando
+ * viene redactado en llano: si la respuesta no traía `detail`, el constructor de
+ * ApiError arma "Error 500" como mensaje, y eso es jerga técnica que nunca debe
+ * llegar a la pantalla. En ese caso —y ante un error de red— cae al fallback.
+ */
+export function plainMessage(err: unknown, fallback: string): string {
+  const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+  return msg || fallback;
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem("mia_token");

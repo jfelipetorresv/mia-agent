@@ -82,7 +82,7 @@ export default function RegisterPage() {
               id="firm"
               value={firmName}
               onChange={(e) => setFirmName(e.target.value)}
-              placeholder="Lexia Abogados"
+              placeholder="Ej: Fajardo & Asociados"
               autoFocus
               required
             />

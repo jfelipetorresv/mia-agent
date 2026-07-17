@@ -40,7 +40,7 @@ const SAVE_THRESHOLD = 600;
 function fmtDate(s?: string): string {
   if (!s) return "";
   try {
-    return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+    return new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short" });
   } catch {
     return "";
   }

@@ -68,10 +68,20 @@ type DetonadorCategoria = "plazos" | "prescripcion" | "cuantia";
 // prescrit-, caduc-): "vence el 5 de marzo" o "el término caducó" también deben
 // disparar la señal. Falsos negativos residuales son aceptables (señalización
 // best-effort); falsos positivos solo cuestan un aviso de más.
+// "plazos" y "prescripcion" ya son neutrales de jurisdicción (ningún término
+// es exclusivo de un país). "cuantia" sí lo era: SMLMV/SMMLV es la sigla
+// colombiana del salario mínimo. Se mantiene (sigue siendo válida para un
+// despacho colombiano) pero se suma UMA (México), IPREM/SMI (España) y
+// "unidad(es) tributaria(s)" (UVT, UIT y equivalentes en otras jurisdicciones)
+// para que un despacho no colombiano no pierda la señal solo porque su unidad
+// de referencia tiene otro nombre — un falso negativo aquí (el detonador NO
+// dispara cuando debía) es el riesgo grave, así que se prefiere sumar
+// variantes a recortarlas.
 const DETONADOR_REGEX: Record<DetonadorCategoria, RegExp> = {
   plazos: /\b(plazos?|t[ée]rminos? (de|para)|d[íi]as (h[áa]biles|calendario)|venc\w+|dentro de los?\s+\d+)\b/i,
   prescripcion: /\b(prescripci[óo]n|prescrib\w+|prescrit\w+|caduc\w+)\b/i,
-  cuantia: /\b(cuant[íi]as?|salarios? m[íi]nimos?|SMLMV|SMMLV)\b|\$\s?[\d][\d.,]*/i,
+  cuantia:
+    /\b(cuant[íi]as?|salarios? m[íi]nimos?|SMLMV|SMMLV|UVT|UIT|UMA|IPREM|SMI|unidad(?:es)? (?:tributarias?|de valor tributario))\b|[$€]\s?[\d][\d.,]*/i,
 };
 
 const DETONADOR_LABEL: Record<DetonadorCategoria, string> = {

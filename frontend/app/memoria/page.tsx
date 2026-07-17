@@ -21,7 +21,7 @@ import {
   Sparkles,
   Upload,
 } from "lucide-react";
-import { apiGet, apiSend, apiUploadMany, ApiError } from "@/lib/api";
+import { apiGet, apiSend, apiUploadMany, ApiError, plainMessage } from "@/lib/api";
 import GuideInterviewWizard from "../_components/GuideInterviewWizard";
 import MiDespachoSection from "../_components/MiDespachoSection";
 import { Button } from "@/components/ui/button";
@@ -255,7 +255,7 @@ function originLabel(origin?: string): string {
 function fmtDateTime(s?: string): string {
   if (!s) return "";
   try {
-    return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
+    return new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
   } catch {
     return "";
   }
@@ -280,6 +280,7 @@ function Saber() {
   const [historyFor, setHistoryFor] = useState<Playbook | null>(null);
   const [versions, setVersions] = useState<PlaybookVersion[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -386,7 +387,7 @@ function Saber() {
       setEditing(null);
       await load();
     } catch (e) {
-      setEditError(e instanceof ApiError ? e.message : "No se pudo guardar la guía. Intenta de nuevo.");
+      setEditError(plainMessage(e, "No se pudo guardar la guía. Intenta de nuevo."));
     } finally {
       setEditSaving(false);
     }
@@ -416,6 +417,7 @@ function Saber() {
 
   async function openHistory(p: Playbook) {
     setHistoryFor(p);
+    setRestoreError(null);
     setHistoryLoading(true);
     try {
       const res = await apiGet<{ versions: PlaybookVersion[] }>(`/api/playbooks/${p.id}/versions`);
@@ -436,9 +438,14 @@ function Saber() {
     ) {
       return;
     }
-    await apiSend("POST", `/api/playbooks/${historyFor.id}/versions/${versionId}/restore`).catch(() => {});
-    setHistoryFor(null);
-    await load();
+    setRestoreError(null);
+    try {
+      await apiSend("POST", `/api/playbooks/${historyFor.id}/versions/${versionId}/restore`);
+      setHistoryFor(null);
+      await load();
+    } catch (e) {
+      setRestoreError(plainMessage(e, "No se pudo restaurar esta versión. Intenta de nuevo."));
+    }
   }
 
   return (
@@ -718,6 +725,7 @@ function Saber() {
               ))}
             </ul>
           )}
+          {restoreError ? <p className="text-sm text-destructive">{restoreError}</p> : null}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setHistoryFor(null)}>
               Cerrar
@@ -776,7 +784,12 @@ function Sugerencias() {
   }, []);
 
   async function act(id: string, action: "apply" | "ignore") {
-    await apiSend("POST", `/api/proposals/${id}/${action}`).catch(() => {});
+    setMsg(null);
+    try {
+      await apiSend("POST", `/api/proposals/${id}/${action}`);
+    } catch (e) {
+      setMsg(plainMessage(e, "No se pudo procesar la propuesta. Intenta de nuevo."));
+    }
     await load();
   }
 
@@ -809,7 +822,7 @@ function Sugerencias() {
       await apiSend("POST", `/api/curator/proposals/${id}/${action}`);
     } catch (e) {
       // 409 = el conocimiento cambió desde que se generó (drift); otro error = genérico.
-      const drift = e instanceof Error && e.message.includes("409");
+      const drift = e instanceof ApiError && e.status === 409;
       setMsg(drift
         ? "El conocimiento cambió desde que se generó esta propuesta y ya no se puede aplicar tal cual. Recházala: Mia generará una nueva actualizada en su próxima revisión."
         : "No se pudo procesar la propuesta. Intenta de nuevo.");
@@ -891,6 +904,9 @@ function Sugerencias() {
   return (
     <div className="space-y-3">
       {reviewBar}
+      {msg ? (
+        <p className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{msg}</p>
+      ) : null}
       {report ? (
         <div className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
@@ -975,9 +991,6 @@ function Sugerencias() {
           <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Orden del conocimiento
           </h3>
-          {msg ? (
-            <p className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{msg}</p>
-          ) : null}
           <ul className="space-y-3">
             {curator.map((c, i) => {
               const merges = c.merges || c.proposed_merges || [];

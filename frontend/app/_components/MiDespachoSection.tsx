@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CountrySelector, COUNTRY_NAME_BY_CODE } from "./CountrySelector";
+import { TOOL_OPTIONS } from "./toolOptions";
 
 type AnswerValue =
   | string
@@ -31,19 +32,9 @@ type FullProfile = {
 
 type JurisdictionOption = { code: string; name: string; verified: boolean };
 
-// Copiado de onboarding/page.tsx (p18 — misma curaduría y descripciones): el abogado
-// edita después de la entrevista con exactamente las mismas opciones.
-const TOOL_OPTIONS: { name: string; description: string; comingSoon?: boolean }[] = [
-  { name: "Correo", description: "Mia vigila tus correos urgentes y te avisa." },
-  { name: "Calendario", description: "Mia te recuerda tus eventos y audiencias próximas." },
-  { name: "Gestor documental", description: "Mia consulta los documentos del despacho para responder." },
-  { name: "Mensajería (Telegram)", description: "Habla con Mia desde tu celular, por texto o por voz." },
-  {
-    name: "Carpetas en la nube (OneDrive/Google Drive)",
-    description: "Mia conoce las carpetas donde guardas tu trabajo.",
-  },
-  { name: "Notas del despacho", description: "Mia guarda y consulta tus notas.", comingSoon: true },
-];
+// TOOL_OPTIONS vive en ./toolOptions.ts — compartida con onboarding/page.tsx (p18): el
+// abogado edita después de la entrevista con exactamente las mismas opciones, desde la
+// MISMA fuente (C2: una sola lista, para que las dos pantallas nunca se contradigan).
 
 // ── Conversores tolerantes (mismo criterio que onboarding/page.tsx) ─────────────────
 function asNamePair(value: AnswerValue): { firm: string; lawyer: string } {
