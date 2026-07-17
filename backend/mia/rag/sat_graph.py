@@ -12,9 +12,26 @@ crudo reventaría). Los pesos del `fts_vector` (A/B/C/D) los pone el trigger en 
 Vigencia temporal: `get_norm_at_date` resuelve qué norma estaba vigente en una fecha
 (`effective_date <= fecha < expiry_date`). `get_norm_chain` sigue `modifica_a`/`deroga_a`
 recursivamente (CTE recursivo con guardia de ciclos).
+
+JURISDICCIÓN AL ESCRIBIR (agnosticismo · Decisión #24/#25): la escritura NUNCA supone un
+país. Antes el INSERT hacía `COALESCE(%(jurisdiction)s, 'co')` y la columna tenía
+`DEFAULT 'co'`: un despacho español que ingiriera sin jurisdicción explícita quedaba
+marcado COLOMBIANO en el corpus compartido — contaminación silenciosa, porque las
+búsquedas filtran por jurisdicción (ese material desaparecía de sus resultados y ensuciaba
+los de otro). Ahora `_resolve_jurisdiction` decide en Python, en este orden:
+
+  1. `data['jurisdiction']` explícito — manda siempre (el llamador sabe).
+  2. `tenant_id` (opcional) → primera jurisdicción del despacho (`resolve_jurisdictions`).
+  3. `GENERIC_CODE` ('generic') — NUNCA 'co'.
+
+El default NEUTRO es la postura correcta aquí: marcar 'generic' deja el material sin
+adscripción (visible solo a quien lo pida explícitamente o en curaduría admin), mientras
+que marcar 'co' AFIRMA una autoridad jurídica falsa. Los datos ya existentes marcados 'co'
+(el despacho fundador) NO se re-marcan: siguen encontrándose igual.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any, Optional
 from uuid import UUID
@@ -23,6 +40,9 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from ..db import pool
+from ..jurisdiction.pack import GENERIC_CODE
+
+logger = logging.getLogger("mia.rag.sat_graph")
 
 # Campos devueltos en los dicts. Se excluye `fts_vector` a propósito (es ruido para el
 # consumidor; el tsvector solo sirve para el índice/búsqueda en la DB).
@@ -155,12 +175,42 @@ class SATGraph:
                 await cur.execute(sql, params)
                 return await cur.fetchall()
 
+    # ── resolución de jurisdicción al escribir ──────────────────────────────
+    @staticmethod
+    async def _resolve_jurisdiction(data: dict, tenant_id: Optional[Any]) -> str:
+        """Jurisdicción con la que se marca lo que se escribe. Ver la cabecera del módulo.
+
+        Orden: `data['jurisdiction']` → pack del `tenant_id` → `GENERIC_CODE`. Nunca 'co'.
+        Un despacho con varias jurisdicciones (p. ej. ['co','pa']) usa la PRIMERA como
+        principal; si eso no es lo que quiere el llamador, que la pase explícita.
+        FAIL-SOFT: si el resolver falla (DB caída, tenant sin settings) se cae a 'generic'
+        y se registra — jamás a un país supuesto.
+        """
+        explicit = str(data.get("jurisdiction") or "").strip().lower()
+        if explicit:
+            return explicit
+        if tenant_id:
+            try:
+                from ..jurisdiction.resolver import resolve_jurisdictions
+                codes = await resolve_jurisdictions(str(tenant_id))
+            except Exception:  # noqa: BLE001 — ver docstring
+                logger.exception(
+                    "sat_graph: no se pudo resolver la jurisdicción del tenant %s; "
+                    "se marca '%s' (nunca un país supuesto)", tenant_id, GENERIC_CODE)
+                codes = []
+            if codes:
+                return codes[0]
+        return GENERIC_CODE
+
     # ── curaduría (escritura) ───────────────────────────────────────────────
-    async def add_norm(self, data: dict) -> UUID:
+    async def add_norm(self, data: dict, *, tenant_id: Optional[Any] = None) -> UUID:
         """Upsert de una norma por (jurisdiction, norm_number, issuing_body, effective_date).
         Incluir `effective_date` en la clave permite el VERSIONADO TEMPORAL: cargar la misma
         norma con otra `effective_date` INSERTA una versión nueva en vez de sobrescribir la
-        vigente a la fecha de los hechos (antes el upsert destruía la historia). Devuelve el id."""
+        vigente a la fecha de los hechos (antes el upsert destruía la historia). Devuelve el id.
+
+        `tenant_id` (opcional): si `data` no trae `jurisdiction`, se resuelve la del despacho
+        que ingiere (ver `_resolve_jurisdiction`). Sin ninguna de las dos → 'generic'."""
         sql = """
         INSERT INTO legal_norms
           (norm_type, norm_number, issuing_body, title, summary, full_text,
@@ -168,7 +218,7 @@ class SATGraph:
         VALUES
           (%(norm_type)s, %(norm_number)s, %(issuing_body)s, %(title)s, %(summary)s,
            %(full_text)s, %(effective_date)s, %(expiry_date)s,
-           COALESCE(%(jurisdiction)s, 'co'), %(practice_areas)s, %(metadata)s)
+           %(jurisdiction)s, %(practice_areas)s, %(metadata)s)
         ON CONFLICT (jurisdiction, norm_number, issuing_body, effective_date) DO UPDATE SET
            norm_type      = EXCLUDED.norm_type,
            title          = EXCLUDED.title,
@@ -191,22 +241,23 @@ class SATGraph:
             "full_text": data.get("full_text"),
             "effective_date": data["effective_date"],
             "expiry_date": data.get("expiry_date"),
-            "jurisdiction": data.get("jurisdiction"),
+            "jurisdiction": await self._resolve_jurisdiction(data, tenant_id),
             "practice_areas": data.get("practice_areas"),
             "metadata": Json(data.get("metadata") or {}),
         }
         return await self._insert_returning_id(sql, params)
 
-    async def add_jurisprudence(self, data: dict) -> UUID:
+    async def add_jurisprudence(self, data: dict, *, tenant_id: Optional[Any] = None) -> UUID:
         """Upsert de una providencia por (jurisdiction, decision_number, court). La
         jurisdicción evita colisión de homónimos entre países (dos países pueden tener una
-        'Sentencia C-123'). Por defecto 'co'. Devuelve el id."""
+        'Sentencia C-123'). Se resuelve como en `add_norm` (explícita → pack del tenant →
+        'generic'); NUNCA se supone un país. Devuelve el id."""
         sql = """
         INSERT INTO jurisprudence
           (norm_id, jurisdiction, court, sala, decision_number, radicado, magistrado_ponente,
            decision_date, topic, ratio_decidendi, obiter_dicta, keywords, metadata)
         VALUES
-          (%(norm_id)s, COALESCE(%(jurisdiction)s, 'co'), %(court)s, %(sala)s,
+          (%(norm_id)s, %(jurisdiction)s, %(court)s, %(sala)s,
            %(decision_number)s, %(radicado)s, %(magistrado_ponente)s, %(decision_date)s,
            %(topic)s, %(ratio_decidendi)s, %(obiter_dicta)s, %(keywords)s, %(metadata)s)
         ON CONFLICT (jurisdiction, decision_number, court) DO UPDATE SET
@@ -224,7 +275,7 @@ class SATGraph:
         """
         params = {
             "norm_id": str(data["norm_id"]) if data.get("norm_id") else None,
-            "jurisdiction": data.get("jurisdiction"),
+            "jurisdiction": await self._resolve_jurisdiction(data, tenant_id),
             "court": data.get("court"),
             "sala": data.get("sala"),
             "decision_number": data.get("decision_number"),

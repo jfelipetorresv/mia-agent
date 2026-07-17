@@ -33,7 +33,7 @@ from typing import Any, Optional
 
 from bs4 import BeautifulSoup
 
-from ..jurisdiction.pack import PACKS_DIR
+from ..jurisdiction.pack import GENERIC_CODE, PACKS_DIR
 from .sat_graph import SATGraph
 
 logger = logging.getLogger(__name__)
@@ -181,9 +181,15 @@ def _identity_confirmed(source_label: str, entry: dict, page_title: str, full_te
     return True
 
 
-def _build_norm_record(entry: dict, *, full_text: str, source: str, url: str, raw: bytes) -> dict:
+def _build_norm_record(entry: dict, *, full_text: str, source: str, url: str, raw: bytes,
+                       jurisdiction: str = GENERIC_CODE) -> dict:
     """Dict listo para `add_norm`, compartido entre adaptadores de norma (solo cambia
-    `metadata.source` y la URL/bytes de origen)."""
+    `metadata.source` y la URL/bytes de origen).
+
+    `jurisdiction` = la del PACK que se está ingiriendo (la sabe `ingest_catalog`; la
+    inyecta `build_adapter`). Antes era `entry.get("jurisdiction", "co")`: ingerir el
+    catálogo del pack español marcaba sus normas como COLOMBIANAS. Una entrada del catálogo
+    puede seguir declarando la suya (un pack puede catalogar derecho comunitario)."""
     eff = entry.get("effective_date")
     if isinstance(eff, str):
         eff = date.fromisoformat(eff)
@@ -197,7 +203,7 @@ def _build_norm_record(entry: dict, *, full_text: str, source: str, url: str, ra
         "full_text": full_text,
         "effective_date": eff,
         "expiry_date": entry.get("expiry_date"),
-        "jurisdiction": entry.get("jurisdiction", "co"),
+        "jurisdiction": entry.get("jurisdiction") or jurisdiction,
         "practice_areas": entry.get("practice_areas"),
         "metadata": {
             "source": source,
@@ -214,10 +220,11 @@ def _build_norm_record(entry: dict, *, full_text: str, source: str, url: str, ra
 class FuncionPublicaAdapter:
     """Gestor Normativo de Función Pública: leyes y decretos (texto oficial)."""
 
-    def __init__(self, cfg: dict, *, http) -> None:
+    def __init__(self, cfg: dict, *, http, jurisdiction: str = GENERIC_CODE) -> None:
         self._cfg = cfg
         self._http = http
         self._base = cfg.get("base_url", "")
+        self._jurisdiction = jurisdiction
 
     async def fetch_norm(self, entry: dict) -> Optional[dict]:
         """Descarga y parsea una norma. Devuelve el dict listo para `add_norm`, o None si la
@@ -236,7 +243,8 @@ class FuncionPublicaAdapter:
 
         if not _identity_confirmed("funcionpublica", entry, page_title, full_text, url):
             return None
-        return _build_norm_record(entry, full_text=full_text, source="funcionpublica", url=url, raw=raw)
+        return _build_norm_record(entry, full_text=full_text, source="funcionpublica", url=url,
+                                  raw=raw, jurisdiction=self._jurisdiction)
 
 
 class SuinJuriscolAdapter:
@@ -257,10 +265,11 @@ class SuinJuriscolAdapter:
     contenido sería detectado por el mismatch de identidad, no por TLS.
     """
 
-    def __init__(self, cfg: dict, *, http) -> None:
+    def __init__(self, cfg: dict, *, http, jurisdiction: str = GENERIC_CODE) -> None:
         self._cfg = cfg
         self._http = http
         self._base = cfg.get("base_url", "")
+        self._jurisdiction = jurisdiction
 
     async def fetch_norm(self, entry: dict) -> Optional[dict]:
         """Descarga y parsea una norma. Devuelve el dict listo para `add_norm`, o None si la
@@ -284,7 +293,8 @@ class SuinJuriscolAdapter:
 
         if not _identity_confirmed("suin", entry, page_title, full_text, url):
             return None
-        return _build_norm_record(entry, full_text=full_text, source="suin", url=url, raw=raw)
+        return _build_norm_record(entry, full_text=full_text, source="suin", url=url, raw=raw,
+                                  jurisdiction=self._jurisdiction)
 
 
 class CorteConstitucionalAdapter:
@@ -292,10 +302,11 @@ class CorteConstitucionalAdapter:
 
     _RELATORIA = "https://www.corteconstitucional.gov.co/relatoria"
 
-    def __init__(self, cfg: dict, *, http) -> None:
+    def __init__(self, cfg: dict, *, http, jurisdiction: str = GENERIC_CODE) -> None:
         self._cfg = cfg
         self._http = http
         self._base = cfg.get("base_url") or self._RELATORIA
+        self._jurisdiction = jurisdiction
 
     def _build_url(self, tipo: str, numero: str, anio: int) -> str:
         aa = f"{anio % 100:02d}"
@@ -379,7 +390,9 @@ class CorteConstitucionalAdapter:
             metadata["decision_date_approx"] = True
 
         return {
-            "jurisdiction": entry.get("jurisdiction", "co"),
+            # Igual que en `_build_norm_record`: la del pack que se ingiere, no un país
+            # supuesto. La entrada del catálogo puede declarar la suya.
+            "jurisdiction": entry.get("jurisdiction") or self._jurisdiction,
             "court": "Corte Constitucional",
             "sala": entry.get("sala"),
             "decision_number": f"{tipo.upper()}-{numero} de {anio}",
@@ -417,15 +430,18 @@ class CorteConstitucionalAdapter:
         return stripped[:300] or None
 
 
-def build_adapter(source_cfg: dict, *, http):
-    """Fabrica el adaptador de una fuente por su `code`. None (con warning) si no se reconoce."""
+def build_adapter(source_cfg: dict, *, http, jurisdiction: str = GENERIC_CODE):
+    """Fabrica el adaptador de una fuente por su `code`. None (con warning) si no se reconoce.
+
+    `jurisdiction`: la del pack que se ingiere; el adaptador marca con ella lo que produce
+    (ver `_build_norm_record`). Por defecto 'generic' — nunca un país supuesto."""
     code = source_cfg.get("code")
     if code == "funcionpublica":
-        return FuncionPublicaAdapter(source_cfg, http=http)
+        return FuncionPublicaAdapter(source_cfg, http=http, jurisdiction=jurisdiction)
     if code == "corteconstitucional":
-        return CorteConstitucionalAdapter(source_cfg, http=http)
+        return CorteConstitucionalAdapter(source_cfg, http=http, jurisdiction=jurisdiction)
     if code == "suin":
-        return SuinJuriscolAdapter(source_cfg, http=http)
+        return SuinJuriscolAdapter(source_cfg, http=http, jurisdiction=jurisdiction)
     logger.warning("fuente de corpus desconocida: %s", code)
     return None
 
@@ -444,10 +460,14 @@ def _load_sources(jurisdiction: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-async def ingest_catalog(jurisdiction: str = "co", *, http=None, pool=None,
+async def ingest_catalog(jurisdiction: str, *, http=None, pool=None,
                          only: Optional[str] = None, limit: Optional[int] = None,
                          dry_run: bool = False, pause: float = 1.0) -> dict:
     """Recorre el catálogo declarativo y lo ingiere al SAT-Graph. Fail-soft por entrada.
+
+    `jurisdiction` es OBLIGATORIA (antes: `= "co"`). Dice de qué pack se lee el catálogo Y
+    con qué jurisdicción se marca lo ingerido: llamar sin decirlo no puede significar
+    "Colombia" en un producto agnóstico de jurisdicción.
 
     `http`: cliente async con `get(url, ...)` (se inyecta para tests sin red; si es None se
     crea un httpx.AsyncClient POR FUENTE, respetando `ssl_verify` de cada una — algunos
@@ -461,7 +481,11 @@ async def ingest_catalog(jurisdiction: str = "co", *, http=None, pool=None,
     """
     import asyncio
 
-    cfg = _load_sources(jurisdiction)
+    # Código canónico del pack: es lo que se le inyecta a cada adaptador para marcar lo que
+    # ingiere. Vacío → 'generic' (neutro), nunca un país supuesto.
+    jur = str(jurisdiction or "").strip().lower() or GENERIC_CODE
+
+    cfg = _load_sources(jur)
     sources_by_code = {s.get("code"): s for s in cfg.get("sources", [])}
     catalog = cfg.get("catalog", {}) or {}
 
@@ -478,12 +502,12 @@ async def ingest_catalog(jurisdiction: str = "co", *, http=None, pool=None,
             client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0),
                                        verify=s.get("ssl_verify", True))
             owned_clients.append(client)
-            a = build_adapter(s, http=client)
+            a = build_adapter(s, http=client, jurisdiction=jur)
             if a is not None:
                 adapters[code] = a
     else:
         # Adaptadores solo para fuentes que pasan el GATE ToS.
-        adapters = {code: build_adapter(s, http=http)
+        adapters = {code: build_adapter(s, http=http, jurisdiction=jur)
                     for code, s in sources_by_code.items() if _tos_ok(s)}
         adapters = {code: a for code, a in adapters.items() if a is not None}
 
@@ -574,15 +598,19 @@ async def ingest_catalog(jurisdiction: str = "co", *, http=None, pool=None,
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
-async def _run(only: Optional[str], limit: Optional[int], dry_run: bool) -> None:
+async def _run(jurisdiction: str, only: Optional[str], limit: Optional[int],
+               dry_run: bool) -> None:
+    """La jurisdicción es EXPLÍCITA (antes se caía al default 'co' de `ingest_catalog`):
+    ingerir el corpus de un país es una decisión, no un efecto colateral de correr un
+    script — mismo criterio que el CLI de `ingest_corpus`."""
     from ..db import pool
     await pool.open_pool()
     try:
-        stats = await ingest_catalog(only=only, limit=limit, dry_run=dry_run)
+        stats = await ingest_catalog(jurisdiction, only=only, limit=limit, dry_run=dry_run)
     finally:
         await pool.close_pool()
 
-    print("== Data Factory del corpus jurídico ==")
+    print(f"== Data Factory del corpus jurídico · jurisdicción '{jurisdiction}' ==")
     print(f"Normas ingeridas:        {stats['norms']}  (segmentos: {stats['segments']})")
     print(f"Providencias ingeridas:  {stats['jurisprudence']}")
     print(f"Descartadas por identidad no confirmada: {stats['rejected_identity']}")
@@ -596,7 +624,8 @@ async def _run(only: Optional[str], limit: Optional[int], dry_run: bool) -> None
 
 
 if __name__ == "__main__":
-    # Ejecutar como módulo:  python -m mia.rag.corpus_factory [--only ...] [--limit N] [--dry-run]
+    # Ejecutar como módulo:
+    #   python -m mia.rag.corpus_factory <jurisdiccion> [--only ...] [--limit N] [--dry-run]
     import argparse
     import asyncio
     import sys
@@ -610,6 +639,10 @@ if __name__ == "__main__":
         pass
 
     parser = argparse.ArgumentParser(description="Data Factory del corpus jurídico de Mia.")
+    parser.add_argument("jurisdiction",
+                        help="código del pack cuyo catálogo se ingiere (p. ej. 'co'). "
+                             "Obligatorio: marca la jurisdicción de lo ingerido y MIA no "
+                             "supone un país.")
     parser.add_argument("--only", choices=["norms", "jurisprudence"], default=None,
                         help="ingerir solo normas o solo jurisprudencia (por defecto ambos)")
     parser.add_argument("--limit", type=int, default=None,
@@ -617,4 +650,4 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true",
                         help="no escribe en la base; solo reporta lo que haría")
     args = parser.parse_args()
-    asyncio.run(_run(args.only, args.limit, args.dry_run))
+    asyncio.run(_run(args.jurisdiction, args.only, args.limit, args.dry_run))

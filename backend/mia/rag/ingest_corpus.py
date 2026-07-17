@@ -177,12 +177,17 @@ async def ingest_baseline_corpus(pool=None, jurisdiction: str | None = None) -> 
                             "este corpus semilla es de Colombia y no se siembra en otra "
                             "jurisdicción")}
 
+    # La jurisdicción va EXPLÍCITA en cada fila: antes estos dicts no la traían y quedaban
+    # marcados por el `COALESCE(..., 'co')` del INSERT. Ese default ya no existe (sat_graph
+    # marca 'generic' cuando no se dice), así que sembrar sin decirlo dejaría el corpus
+    # semilla sin adscripción — y además duplicaría las filas 'co' ya cargadas, porque la
+    # jurisdicción es parte de la clave del upsert.
     sat = SATGraph()
     ids: dict[str, object] = {}
     for n in _NORMS:
-        ids[n["norm_number"]] = await sat.add_norm(n)
+        ids[n["norm_number"]] = await sat.add_norm({**n, "jurisdiction": pack.code})
     for j in _JURIS:
-        await sat.add_jurisprudence(j)
+        await sat.add_jurisprudence({**j, "jurisdiction": pack.code})
     rel = 0
     for src, tgt, rtype in _RELATIONS:
         await sat.add_relation(ids[src], ids[tgt], rtype)

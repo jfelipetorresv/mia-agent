@@ -72,11 +72,14 @@ def clean_markers() -> None:
 
 
 def _norm(num: str, *, eff: date, exp: date | None = None, title: str = "") -> dict:
+    # `jurisdiction` EXPLÍCITA: este gate ejercita el corpus colombiano (busca con
+    # jurisdictions=['co']). Antes se apoyaba en el `COALESCE(..., 'co')` del INSERT, que ya
+    # no existe — sin default de país, no decirlo significaría 'generic' (ver migración 036).
     return {
         "norm_type": "ley", "norm_number": num, "issuing_body": ISSUING_TEST,
         "title": title or f"Norma de prueba {num}", "summary": "", "full_text": "",
-        "effective_date": eff, "expiry_date": exp, "practice_areas": ["prueba"],
-        "metadata": {"test": True},
+        "effective_date": eff, "expiry_date": exp, "jurisdiction": "co",
+        "practice_areas": ["prueba"], "metadata": {"test": True},
     }
 
 
@@ -127,7 +130,8 @@ async def run_gate() -> None:
 
         # === 5 · add_jurisprudence + retrieve (vía FTS más abajo; aquí inserta sin error) ===
         jid = await sat.add_jurisprudence({
-            "norm_id": str(temp_id), "court": COURT_TEST, "sala": "Sala de prueba",
+            "norm_id": str(temp_id), "jurisdiction": "co",
+            "court": COURT_TEST, "sala": "Sala de prueba",
             "decision_number": "TEST_J1", "radicado": None, "magistrado_ponente": None,
             "decision_date": date(2024, 5, 1), "topic": "Tema de prueba SATJURISUNICO",
             "ratio_decidendi": "Ratio de prueba.", "obiter_dicta": None,
@@ -202,7 +206,7 @@ async def run_gate() -> None:
 
         # === 18 · upsert idempotente de jurisprudencia ===
         j2 = await sat.add_jurisprudence({
-            "norm_id": None, "court": COURT_TEST, "sala": None,
+            "norm_id": None, "jurisdiction": "co", "court": COURT_TEST, "sala": None,
             "decision_number": "TEST_J1", "radicado": None, "magistrado_ponente": None,
             "decision_date": date(2024, 5, 1), "topic": "Tema de prueba SATJURISUNICO",
             "ratio_decidendi": "Ratio de prueba.", "obiter_dicta": None,
