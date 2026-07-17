@@ -102,7 +102,10 @@ Cierre: `npx tsc --noEmit` limpio y revisión visual en claro+oscuro antes de co
 Cursor hizo revisión read-only de frontend/UX. Los 3 audits (Cursor, Antigravity, Claude)
 COINCIDEN en el sesgo de jurisdicción. Prioridad:
 
-**CRÍTICO — bug funcional (arreglar primero, es pequeño):**
+**CRÍTICO — ✅ RESUELTO (2026-07-16, commit `ca7cd74`).** Ruta corregida a `/settings/model-policy`
+y el fallo dejó de ser silencioso: si la elección de motor no se persiste, la bienvenida se detiene
+con un motivo en llano en vez de decir "listo". Test de regresión en `test_second_brain_ui.py`
+(frontend 14/14); `tsc --noEmit` limpio. Descripción original abajo:
 - `frontend/app/activar/page.tsx` hace `PUT /api/settings/model-policy`, pero el backend expone
   `PUT /settings/model-policy` (SIN `/api`; `ConexionesSection.tsx` sí usa la ruta buena). En el
   viaje de bienvenida, elegir motor / opt-in OpenRouter **falla en silencio** (catch vacío) → el
