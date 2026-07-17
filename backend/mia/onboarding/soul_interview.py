@@ -56,7 +56,8 @@ QUESTIONS: list[dict] = [
      "example": "Fajardo & Asociados · María Fajardo"},
     {"id": "p2", "block": "identity", "field": "identity.location",
      "question": "¿En qué ciudad y país operas principalmente?",
-     "example": "Bogotá, Colombia"},
+     # El ejemplo enseña el FORMATO, no una plaza: MIA no es de ningún país.
+     "example": "Ciudad, País"},
     {"id": "p3", "block": "identity", "field": "identity.voice",
      "question": "¿Cómo describirías en 3 adjetivos el estilo de escritura de tu despacho?",
      "example": "Técnico, argumentativo, conciso"},
@@ -83,7 +84,7 @@ QUESTIONS: list[dict] = [
      "question": "¿Quieres habilitar el modo de análisis profundo para asuntos de alta "
                  "complejidad? Tres modelos distintos en ciclo cerrado: más tiempo y costo, "
                  "mayor calidad.",
-     "example": "Sí — imputaciones fiscales >$1.000M COP y arbitrajes"},
+     "example": "Sí — casos de alta cuantía y arbitrajes"},
 ]
 
 # Orden canónico de los bloques (para el progreso del frontend).
