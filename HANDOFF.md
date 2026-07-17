@@ -11,6 +11,96 @@ quede trazabilidad de ambas revisiones.
 
 ---
 
+## Checkpoint MÁS RECIENTE: sesión 48 (2026-07-16) — backlog de las tres auditorías CERRADO
+
+**Rama:** `feature/robustecimiento-sin-aws`, repo limpio, sin push. Commits: `ca7cd74`
+(ruta del motor), `960553b` (frontend), `902bd90` (agnosticismo backend), `c4b57f5`
+(ejemplos del onboarding), `16e9eec` + `9a93341` (dos gates en rojo), `09d00c7`
+(defaults del grafo).
+
+**LA DB PORTABLE YA ARRANCA** (llevaba sesiones caída, lo que mantenía gates diferidos).
+Cómo: `tools/postgres16-portable/pgsql/bin/pg_ctl.exe -D tools/pgdata-portable -o "-p 55432"`.
+Trampas: el clúster es `tools/pgdata-portable`; a la copia mínima le faltaba `share/*` (se
+copió del `-full` SIN machacar `share/extension/`, que es donde vive **pgvector 0.8.2**, que
+el `-full` no trae); arrancar el clúster con los binarios del `-full` levanta el postmaster
+pero **sus backends mueren con `0xC0000142`** (parece vivo y da ConnectionTimeout). El 5432
+lo ocupa un PostgreSQL de sistema SIN pgvector — no confundirlos.
+
+**Gates que estaban diferidos y hoy están VERDES:** `test_rls` 19/19 (HALT), `test_welcome_keys`
+41/41, `test_setup_wizard` 28/28, `test_second_brain_ui` 27/27.
+
+### A · Frontend (`960553b`) — confianza, agnosticismo, legibilidad
+Cerrado TODO el backlog de Cursor + los 6 arreglos que Antigravity nunca llegó a implementar.
+Deep-link al borrador (`/asuntos/{id}/revisar`) desde panel y lista; se consumen
+`?sin_borrador`/`?confirmed` (antes se escribían y nadie los leía); fin de los fallos
+silenciosos en `memoria` (drift por `status===409`, no por buscar "409" en el texto);
+`AuthGate` con loader; fechas con el locale del abogado (cero `es-CO`); placeholders y
+ejemplos sin sesgo de país; detonador de cuantía con UVT/UIT/UMA/IPREM/SMI/€ conservando
+SMLMV; "Notas del despacho" ya no miente con "Próximamente"; Telegram avisa de sus pasos
+guiados; token `--cta-strong` medido sobre el fondo REAL (`bg-cta/15`, no blanco): 5.10:1
+reposo / 4.91:1 hover. Verificado: `tsc` limpio + `next build` completo (14 rutas).
+**Revisión adversarial: 6 hallazgos, todos corregidos** — dos invalidaban objetivos que se
+daban por cerrados (el botón "Revisar borrador" no funcionaba con TECLADO; el contraste se
+había medido contra blanco y daba 4.46).
+
+### B · Agnosticismo de jurisdicción (`902bd90`, `c4b57f5`, `09d00c7`) — REGLA DURA aplicada
+La raíz estaba bien diagnosticada: el pack tenía `id_formats`/`doc_markers` **sin cablear**.
+Movido al pack: formatos de ID (cédula/NIT/radicado/+57), pistas de dirección y stop-words
+(`pii_hints.json`), léxico del buzón (`mail_signals.json`), seed de corpus como opt-in
+(`baseline_corpus_seed`). Los 7 patrones CO se movieron a JSON **sin alterar un carácter**
+(verificado contra HEAD): cero regresión para el fundador.
+
+**DECISIÓN DE PIPE — anonimizador: "enmascarar todo, siempre".** Aplica TODOS los packs
+instalados + base universal + respaldos por rol, **sin mirar la jurisdicción del despacho**;
+por eso `jurisdictions` **desapareció de su API pública** (un llamador viejo revienta con
+TypeError, no se le ignora en silencio). Sobre-enmascarar es aceptable; filtrar un dato por
+ser de otro país, no. **Efecto conocido y aceptado:** `artículos 1494-1495` se enmascara como
+teléfono y las cuantías las muerde el patrón de cédula (preexistente). Si el ruido pesa, ese
+es el hilo — NO reintroducir una perilla por jurisdicción.
+
+**Cuatro fugas de confidencialidad cerradas** (todas confirmadas ejecutando):
+1. Un pack podía APAGAR la red pan-hispana con solo declarar un `role` → salían cédulas y DNI
+   en crudo. Bastaba un typo, sin malicia. (La encontró la revisión adversarial; el test del
+   agente probaba el camino que SÍ funcionaba: regex inválido.)
+2. Preexistente: un despacho colombiano dejaba salir el DNI de un cliente español.
+3. El respaldo de teléfono no cubría separadores: `615 55 12 34` salía crudo.
+4. `resolve_jurisdictions` no distingue "eligió generic" de "nunca lo configuró" → un despacho
+   sin configurar habría perdido cédula/NIT.
+
+**El conocimiento ya no nace colombiano** (`09d00c7`): la jurisdicción al escribir se decide
+en Python (explícita → pack del tenant → `'generic'`, nunca `'co'`); migración **036** deja el
+DEFAULT en `'generic'` para `legal_norms`, `jurisprudence` y `firm_profiles`. Sin un solo
+UPDATE: el material del fundador no se re-marca (verificado: co=26, co=13, colombia=6,
+idénticos). **El peor defecto no estaba en el inventario:** `firm_profiles` tenía DEFAULT
+`'colombia'` y `auth.py` inserta sin jurisdicción → **todo despacho nuevo nacía colombiano**.
+También `corpus_factory` marcaba como colombiano el catálogo del pack español.
+
+### C · DOS GATES LLEVABAN SESIONES EN ROJO sin que constara (`16e9eec`, `9a93341`)
+Ambos sobre DINERO, y en ambos el código era correcto: el test se quedó con una regla anterior.
+La línea base de "84 suites ALL PASS" **no era cierta**; conviene desconfiar de ella.
+- `test_connector_hardening` (35/36 desde la sesión 47): exigía que 'suscripcion' NUNCA usara
+  OpenRouter, pero `b582541` extendió el overflow por decisión de Pipe ("Ambas"). Se conserva
+  lo que sí protege ('soberano' jamás) y se añade el caso que faltaba (sin opt-in tampoco).
+- `test_value_delivered` (26/27 desde `f147fb9`): exigía costo 0 para un alias sin precio, pero
+  el control atómico del gasto lo cambió a tarifa conservadora de Sonnet — correcto: con 0 el
+  tope mensual no frena y el abogado cree que no gastó.
+
+### D · Decisiones que quedan para PIPE (no las tomó Claude)
+- **Moneda por despacho:** los importes vienen del backend en campos `*_usd`; poner otra
+  etiqueta sin conversión real haría que MIA mienta sobre dinero. Necesita diseño aparte.
+- **Agent Hub (`/settings/agents`) y `gold-cases`:** tienen backend pero NINGUNA UI. No hay
+  nada engañoso frente al abogado (no se ven); construir la pantalla es feature nueva.
+
+### E · Pendiente técnico (reportado, no tocado — con su razón)
+- **FTS `'spanish'`**: vive en columnas `GENERATED ALWAYS AS ... STORED` + triggers (003/004/013
+  + schema.sql); cambiarlo exige migración de índices y reindexado. No es cosmético.
+- **Voz TTS `es_MX`**: el asset lo eligió Pipe de oído y lo baja `install.py`; voz por despacho
+  exige empaquetar una voz por variante.
+- **Capa 3 de Pipe (lo que él pidió reservarse):** E2E del instalador en máquina limpia y el
+  recorrido visual; login/registro reales del NotebookLM.
+
+---
+
 ## Checkpoint: conector NotebookLM + regla de agnosticismo de jurisdicción (2026-07-15)
 
 **Rama:** `feature/robustecimiento-sin-aws` (sin commitear a `main`). **Entorno de la sesión:**
