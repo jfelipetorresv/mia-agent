@@ -5,6 +5,30 @@ Escanea un vault de Obsidian, detecta archivos nuevos/cambiados/borrados por has
 markdown, embebe (voyage-law-2) y los persiste en `knowledge_chunks` (decisión #17): tabla
 SEPARADA de documents/chunks porque el conocimiento del despacho no pertenece a un asunto.
 
+INGESTA CONSCIENTE DE LA ESTRUCTURA (migración 039). Un vault no es una carpeta de PDFs: es
+un segundo cerebro donde la ESTRUCTURA carga tanta información como el texto. Se parsea:
+
+  1) el frontmatter YAML → metadatos consultables (`frontmatter` jsonb) + dos campos
+     normalizados que la recuperación puede filtrar (`doc_status`, `doc_type`). Antes de 039
+     el YAML entraba como texto literal dentro del primer chunk: basura para el embedding.
+  2) los `[[wikilinks]]` → `links` jsonb POR CHUNK, con el motivo del vínculo cuando el vault
+     lo declara (campos inline de Dataview `clave:: [[destino]]`, o claves del frontmatter).
+     No se construye un grafo: el enlace se guarda donde aparece y se consulta con `@>`.
+
+DEGRADAR CON GRACIA ES EL REQUISITO, NO EL EXTRA. El vault que se conecta es el que el
+despacho YA tiene — no uno que van a rehacer para Mia. Aquí no hay esquema obligatorio:
+  · sin frontmatter        → se ingiere EXACTAMENTE igual que antes de 039 (cero regresión);
+  · campos desconocidos    → se conservan crudos en `frontmatter`, no rompen nada;
+  · YAML mal formado       → el documento se ingiere como texto plano (comportamiento previo)
+                             y se registra; JAMÁS tumba la sincronización del vault entero;
+  · sin PyYAML instalado   → todo el vault degrada al comportamiento previo, sin excepción.
+Los nombres de campo de un vault concreto NO son un estándar: se aceptan variantes razonables
+(ver `_FIELD_ALIASES`) y lo que no se entiende se conserva sin interpretarse.
+
+Agnosticismo (regla dura): frontmatter y wikilinks son de Obsidian, no de una jurisdicción.
+Nada en este módulo conoce un país. Las variantes de `_FIELD_ALIASES` son de IDIOMA (es/en),
+que es el idioma del dueño del vault, no su jurisdicción.
+
 Aislamiento: TODA operación de DB por-tenant pasa por `pool.tenant_connection(tenant_id)`
 (RLS activo, fail-closed). Embeddings vía `embeddings.embed_texts` (librería LiteLLM, NO el
 proxy chat — decisión #17 C2 / Riesgo #4).
@@ -12,20 +36,75 @@ proxy chat — decisión #17 C2 / Riesgo #4).
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import re
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Iterable
+
+try:                     # PyYAML llega con el runtime del API; si faltara, el vault se
+    import yaml          # ingiere como texto plano (comportamiento previo a 039) en vez
+except ImportError:      # de romper la sincronización. Fail-soft, no fail-hard.
+    yaml = None          # type: ignore[assignment]
 
 from .. import embeddings
 from ..db import pool
 from ..memory.tokens import estimate_tokens
 
+logger = logging.getLogger("mia.connectors.obsidian_sync")
+
 SOURCE = "obsidian"
 MAX_CHUNK_TOKENS = 512        # tamaño máx por chunk (estimado ~4 chars/token)
 EMBED_BATCH = 128             # máx chunks por llamada de embedding
 
+MAX_FRONTMATTER_BYTES = 8192  # tope del frontmatter serializado por documento (ver _sanitize)
+MAX_LINKS_PER_CHUNK = 200     # tope de enlaces por chunk: un MOC gigante no infla la fila
+MAX_FIELD_CHARS = 2000        # tope por valor de frontmatter (una nota no es un almacén)
+
 _HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
 _PARA_SPLIT = re.compile(r"\n\s*\n")
+
+# ── frontmatter ──────────────────────────────────────────────────────────────
+# Obsidian solo reconoce frontmatter si el archivo ARRANCA con '---' en su primera línea;
+# se cierra con '---' o '...' (YAML). Un '---' más abajo es una regla horizontal, no metadatos.
+_FM_OPEN = re.compile(r"^---[ \t]*$")
+_FM_CLOSE = re.compile(r"^(?:---|\.\.\.)[ \t]*$")
+
+# Variantes de nombre que SÍ interpretamos. No es un esquema obligatorio: es un diccionario de
+# sinónimos observados en vaults reales (es/en). Lo que no está aquí NO se pierde — se conserva
+# crudo en `frontmatter` y sigue siendo consultable con `frontmatter @> '{...}'`.
+_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "doc_status": ("status", "estado", "state", "stage", "etapa", "madurez", "maturity"),
+    "doc_type": ("type", "tipo", "kind", "clase", "category", "categoria", "categoría"),
+}
+
+# Vocabulario CERRADO de estado. Solo se normaliza lo que se entiende SIN adivinar; cualquier
+# otra palabra deja doc_status en NULL (= "no sé"), que NO es lo mismo que 'borrador'. Incluye
+# la convención de jardín digital (seedling/budding/evergreen), muy común en vaults reales.
+_STATUS_VERIFICADO = frozenset({
+    "verificado", "verificada", "verified", "final", "finalizado", "aprobado", "approved",
+    "publicado", "published", "done", "listo", "revisado", "reviewed", "evergreen", "maduro",
+})
+_STATUS_BORRADOR = frozenset({
+    "borrador", "draft", "wip", "work-in-progress", "in-progress", "en progreso",
+    "en-progreso", "incompleto", "incomplete", "idea", "seedling", "budding", "semilla",
+    "pendiente", "todo", "sin revisar", "unreviewed",
+})
+
+# ── wikilinks ────────────────────────────────────────────────────────────────
+# Captura [[destino]], [[destino|alias]], [[destino#sección]] y el embed ![[destino]].
+_WIKILINK = re.compile(r"!?\[\[([^\[\]\n]+?)\]\]")
+# Campo inline de Dataview: `clave:: valor` (con o sin viñeta/negrita). Es la ÚNICA convención
+# de Obsidian en la que el vault DECLARA por qué dos notas se tocan; de ahí sale `rel`.
+_INLINE_FIELD = re.compile(r"^\s*(?:[-*+]\s+)?\*{0,2}([^:\n\[\]|]{1,40}?)\*{0,2}\s*::\s*(.+)$")
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
+# Adjuntos: `![[diagrama.png]]` es una imagen incrustada, no una relación entre ideas.
+_MEDIA_EXT = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".pdf", ".mp3", ".mp4",
+    ".wav", ".m4a", ".mov", ".webm", ".ogg", ".excalidraw", ".canvas", ".zip",
+})
 
 
 class ObsidianSync:
@@ -96,10 +175,19 @@ class ObsidianSync:
     def _chunk_document(self, content: str, filepath: str) -> list[dict]:
         """Trocea respetando H1/H2/H3: cada encabezado inicia un chunk nuevo. Si el bloque
         bajo un encabezado supera MAX_CHUNK_TOKENS, se divide por párrafos (overlap 0).
-        Cada chunk: {text, heading_path, position, source_file}."""
+
+        Antes de trocear separa el frontmatter (039): el YAML deja de ser texto del chunk y
+        pasa a metadatos. Un documento SIN frontmatter recorre exactamente el mismo camino que
+        antes de 039 y produce los mismos chunks — esa es la garantía de cero regresión.
+
+        Cada chunk: {text, heading_path, position, source_file, frontmatter, doc_status,
+        doc_type, links}. `heading_path` (la miga de pan) se conserva intacto."""
+        meta, body_text = self._parse_frontmatter(content, filepath)
+        fm_links = self._links_from_frontmatter(meta)
+
         chunks: list[dict] = []
         pos = 0
-        for heading_path, body in self._split_by_headings(content):
+        for heading_path, body in self._split_by_headings(body_text):
             body = body.strip()
             if not body:
                 continue
@@ -109,9 +197,263 @@ class ObsidianSync:
                     "heading_path": heading_path or None,
                     "position": pos,
                     "source_file": filepath,
+                    "frontmatter": meta,
+                    "doc_status": self._normalize_status(meta),
+                    "doc_type": self._normalize_type(meta),
+                    # Los enlaces se guardan DONDE APARECEN, que es donde se recuperan.
+                    "links": self._links_from_text(piece),
                 })
                 pos += 1
+
+        # Los enlaces declarados en el frontmatter no viven en ningún cuerpo: van al primer
+        # chunk del documento, que es el que lo representa. Si el documento no tiene cuerpo
+        # (solo frontmatter) no hay chunk donde ponerlos y se pierden: correcto — un documento
+        # sin texto no aporta nada que recuperar.
+        if chunks and fm_links:
+            chunks[0]["links"] = self._dedupe_links(fm_links + chunks[0]["links"])
         return chunks
+
+    # ── frontmatter (039) ────────────────────────────────────────────────────
+    def _parse_frontmatter(self, content: str, filepath: str = "") -> tuple[dict, str]:
+        """Separa el frontmatter YAML del cuerpo. Devuelve (metadatos, cuerpo).
+
+        Fail-soft por documento y en TODOS los caminos: si no hay frontmatter, si el YAML está
+        roto, si no es un mapa (`- una: lista` al inicio) o si PyYAML no está instalado, se
+        devuelve ({}, content) — es decir, EXACTAMENTE lo que hacía el indexador antes de 039:
+        el documento se ingiere como texto plano. Un vault con una nota rota se sincroniza
+        entero; solo esa nota pierde sus metadatos, y queda registrado."""
+        raw = self._split_frontmatter_block(content)
+        if raw is None:
+            return {}, content                      # sin frontmatter: camino previo a 039
+        yaml_text, body = raw
+        if yaml is None:
+            logger.warning("obsidian: PyYAML no está disponible; %s se ingiere como texto "
+                           "plano (sin metadatos)", filepath or "<nota>")
+            return {}, content
+        try:
+            data = yaml.safe_load(yaml_text)
+        except Exception as exc:                    # YAMLError y cualquier sorpresa del loader
+            logger.warning("obsidian: frontmatter mal formado en %s (%s); la nota se ingiere "
+                           "como texto plano, la sincronización continúa",
+                           filepath or "<nota>", exc.__class__.__name__)
+            return {}, content
+        if not isinstance(data, dict):
+            # `---\n- a\n- b\n---` es YAML VÁLIDO pero no son metadatos de nota. No inventamos
+            # un esquema: se trata como texto, igual que antes.
+            logger.info("obsidian: el frontmatter de %s no es un mapa de campos; se ingiere "
+                        "como texto plano", filepath or "<nota>")
+            return {}, content
+        return self._sanitize_frontmatter(data, filepath), body
+
+    @staticmethod
+    def _split_frontmatter_block(content: str) -> tuple[str, str] | None:
+        """(yaml_text, cuerpo) si el documento abre con un bloque '---' cerrado; None si no.
+
+        Solo cuenta el '---' de la PRIMERA línea (regla de Obsidian). Sin línea de cierre no
+        hay frontmatter: un documento que empieza con una regla horizontal se queda intacto."""
+        if not content.startswith("---"):
+            return None                             # atajo barato: el 99% de las notas
+        lines = content.splitlines(keepends=True)
+        if not lines or not _FM_OPEN.match(lines[0].rstrip("\r\n")):
+            return None
+        for i in range(1, len(lines)):
+            if _FM_CLOSE.match(lines[i].rstrip("\r\n")):
+                return "".join(lines[1:i]), "".join(lines[i + 1:])
+        return None                                 # abre y nunca cierra → no es frontmatter
+
+    def _sanitize_frontmatter(self, data: dict, filepath: str = "") -> dict:
+        """Convierte el YAML a JSON guardable: claves str, fechas a ISO, tipos raros a texto.
+
+        Se conserva TODO el frontmatter, no solo los campos que entendemos — los campos
+        desconocidos de hoy son las consultas de mañana, y descartarlos sería volver a decidir
+        por el despacho qué estructura le vale. Solo se aplican topes de tamaño (una nota no
+        es un almacén) y, si aun así no cabe, se descarta el frontmatter completo antes que
+        guardar un jsonb desbocado."""
+        out: dict = {}
+        for key, value in data.items():
+            k = str(key).strip()
+            if k:
+                out[k] = self._json_safe(value)
+        if len(json.dumps(out, ensure_ascii=False).encode("utf-8")) > MAX_FRONTMATTER_BYTES:
+            logger.warning("obsidian: frontmatter de %s supera %d bytes; se ingiere sin "
+                           "metadatos", filepath or "<nota>", MAX_FRONTMATTER_BYTES)
+            return {}
+        return out
+
+    def _json_safe(self, value, depth: int = 0):
+        """Valor YAML → valor JSON. Las fechas (que YAML sí tipa) van a ISO; lo que no sepamos
+        representar va a str, nunca a excepción."""
+        if value is None or isinstance(value, bool) or isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return value if value == value and abs(value) != float("inf") else str(value)
+        if isinstance(value, str):
+            return value[:MAX_FIELD_CHARS]
+        if isinstance(value, (datetime, date, time)):
+            return value.isoformat()
+        if depth >= 4:                              # frontmatter anidado hasta el absurdo
+            return str(value)[:MAX_FIELD_CHARS]
+        if isinstance(value, (list, tuple, set)):
+            return [self._json_safe(v, depth + 1) for v in list(value)[:100]]
+        if isinstance(value, dict):
+            return {str(k).strip(): self._json_safe(v, depth + 1)
+                    for k, v in list(value.items())[:100] if str(k).strip()}
+        return str(value)[:MAX_FIELD_CHARS]
+
+    @staticmethod
+    def _field(meta: dict, canonical: str):
+        """Primer valor del frontmatter cuyo nombre coincide con alguna variante conocida.
+        La comparación ignora mayúsculas, guiones y guiones bajos: `Doc-Type`, `doc_type` y
+        `tipo` llegan al mismo sitio. El nombre canónico cuenta como variante de sí mismo."""
+        def norm(s: str) -> str:
+            return re.sub(r"[\s_\-]+", "", str(s)).strip().lower()
+
+        wanted = {norm(a) for a in (canonical, *_FIELD_ALIASES[canonical])}
+        for key, value in meta.items():
+            if norm(key) in wanted and value not in (None, "", [], {}):
+                return value
+        return None
+
+    def _normalize_status(self, meta: dict) -> str | None:
+        """'verificado' | 'borrador' | None. None = el vault no lo dice o lo dice con una
+        palabra que no sabemos mapear.
+
+        NO ADIVINAR ES LA FUNCIÓN. Mapear un estado desconocido a 'borrador' descartaría en
+        silencio criterio bueno del despacho; mapearlo a 'verificado' le daría el peso del
+        criterio verificado a una nota a medias. Ante la duda, None: que decida quien recupere
+        (el valor crudo sigue en `frontmatter` para el que quiera hilar más fino)."""
+        value = self._field(meta, "doc_status")
+        if isinstance(value, (list, tuple)):        # `estado: [borrador]`
+            value = value[0] if value else None
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            return None
+        word = re.sub(r"[\s_\-]+", " ", str(value)).strip().lower().lstrip("#")
+        if word in _STATUS_VERIFICADO:
+            return "verificado"
+        if word in _STATUS_BORRADOR:
+            return "borrador"
+        return None
+
+    def _normalize_type(self, meta: dict) -> str | None:
+        """Tipo declarado, en minúsculas. Sin vocabulario cerrado: cada vault nombra sus
+        tipos y no nos toca a nosotros decirle cuáles valen."""
+        value = self._field(meta, "doc_type")
+        if isinstance(value, (list, tuple)):
+            value = value[0] if value else None
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            return None
+        word = str(value).strip().lstrip("#").strip()
+        return word.lower()[:100] or None
+
+    # ── wikilinks (039) ──────────────────────────────────────────────────────
+    def _links_from_text(self, text: str) -> list[dict]:
+        """`[[wikilinks]]` de un fragmento, con el motivo del vínculo cuando se declara.
+
+        Cada enlace: {"to", "to_key", "rel"}.
+          · to     — el destino tal como lo escribió el autor (sin '#sección' ni '|alias').
+          · to_key — clave de unión normalizada (nombre de la nota, minúsculas, sin '.md' ni
+                     carpetas) para casar el enlace con `source_path` sin que quien recupere
+                     tenga que reimplementar esta normalización.
+          · rel    — POR QUÉ se tocan las dos notas, si el vault lo declara con un campo
+                     inline de Dataview (`fundamenta:: [[X]]`). None si es un enlace suelto:
+                     no se inventa un motivo que el autor no escribió.
+
+        Lo que se ignora A PROPÓSITO: el alias de `[[nota|alias]]` (es texto de presentación,
+        no dice nada de la relación), el '#sección' del destino (el enlace es a la nota), los
+        enlaces dentro de bloques de código (son ejemplos, no relaciones) y los adjuntos de
+        medios (`![[diagrama.png]]` es una imagen, no una idea)."""
+        out: list[dict] = []
+        for line in self._strip_code(text).splitlines():
+            m = _INLINE_FIELD.match(line)
+            rel, scan = (None, line)
+            if m:
+                candidate = m.group(1).strip().lower()
+                # Un campo inline sin destino enlazado no es una relación; y una clave vacía
+                # tampoco. `rel` solo existe si acompaña a wikilinks en la misma línea.
+                if candidate and _WIKILINK.search(m.group(2)):
+                    rel, scan = candidate[:60], m.group(2)
+            for raw in _WIKILINK.findall(scan):
+                link = self._make_link(raw, rel)
+                if link:
+                    out.append(link)
+        return self._dedupe_links(out)
+
+    def _links_from_frontmatter(self, meta: dict) -> list[dict]:
+        """Enlaces declarados en el frontmatter (`fundamento: "[[X]]"`, `related: [[[A]], [[B]]]`).
+        La CLAVE del campo es el motivo del vínculo — es la otra forma en que un vault declara
+        por qué dos notas se tocan, y sale gratis."""
+        out: list[dict] = []
+        for key, value in meta.items():
+            rel = str(key).strip().lower()[:60] or None
+            for text in self._flatten_strings(value):
+                for raw in _WIKILINK.findall(text):
+                    link = self._make_link(raw, rel)
+                    if link:
+                        out.append(link)
+        return self._dedupe_links(out)
+
+    def _flatten_strings(self, value, depth: int = 0) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if depth >= 3:
+            return []
+        if isinstance(value, (list, tuple)):
+            return [s for v in value for s in self._flatten_strings(v, depth + 1)]
+        if isinstance(value, dict):
+            return [s for v in value.values() for s in self._flatten_strings(v, depth + 1)]
+        return []
+
+    @staticmethod
+    def _make_link(raw: str, rel: str | None) -> dict | None:
+        """'carpeta/Nota Uno#Sección|alias' → {"to": "carpeta/Nota Uno", "to_key": "nota uno",
+        "rel": rel}. None si el destino no es una nota (adjunto) o queda vacío.
+
+        Un destino inexistente ('[[Nota Que No Existe]]') se conserva igual: el enlace roto ES
+        información sobre el vault, y resolverlo no es trabajo de la ingesta."""
+        target = raw.split("|", 1)[0]          # se descarta el alias: es presentación
+        target = target.split("#", 1)[0]       # el enlace es a la nota, no a la sección
+        target = target.split("^", 1)[0].strip()
+        if not target:
+            return None                        # '[[|solo alias]]' o '[[#solo sección]]'
+        key = target.replace("\\", "/").rsplit("/", 1)[-1].strip()
+        suffix = Path(key).suffix.lower()
+        if suffix in _MEDIA_EXT:
+            return None                        # adjunto, no una nota
+        if suffix == ".md":
+            key = key[:-3]
+        key = key.strip().lower()
+        if not key:
+            return None
+        return {"to": target[:300], "to_key": key[:300], "rel": rel}
+
+    @staticmethod
+    def _dedupe_links(links: list[dict]) -> list[dict]:
+        """Sin repetidos (mismo destino + mismo motivo), en orden de aparición y con tope."""
+        seen: set[tuple[str, str | None]] = set()
+        out: list[dict] = []
+        for link in links:
+            k = (link["to_key"], link["rel"])
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(link)
+            if len(out) >= MAX_LINKS_PER_CHUNK:
+                break
+        return out
+
+    @staticmethod
+    def _strip_code(text: str) -> str:
+        """Quita bloques cercados y código inline ANTES de buscar enlaces. Un `[[ejemplo]]`
+        dentro de un bloque de código es documentación, no una relación del vault. Solo afecta
+        a la extracción de enlaces: el texto del chunk se guarda completo, sin tocar."""
+        out: list[str] = []
+        fenced = False
+        for line in text.splitlines():
+            if _FENCE.match(line):
+                fenced = not fenced
+                continue
+            out.append("" if fenced else _INLINE_CODE.sub(" ", line))
+        return "\n".join(out)
 
     def _split_by_headings(self, content: str) -> list[tuple[str, str]]:
         """Parte el documento en segmentos (heading_path, cuerpo). Un encabezado H1/H2/H3
@@ -193,18 +535,29 @@ class ObsidianSync:
     async def _upsert_chunks(self, tenant_id: str, filepath: str,
                              chunks: list[dict], vectors: list[list[float]]) -> None:
         """Upsert de los chunks de un archivo en knowledge_chunks. Re-indexa en sitio
-        (ON CONFLICT) y borra los chunks sobrantes si el archivo encogió."""
+        (ON CONFLICT) y borra los chunks sobrantes si el archivo encogió.
+
+        Los campos de estructura (039) se escriben SIEMPRE, también en el UPDATE: si una nota
+        pasa de 'borrador' a 'verificado', o se le quita un enlace, la fila re-indexada tiene
+        que reflejarlo. Un chunk sin frontmatter escribe '{}' / '[]' — los mismos valores que
+        el DEFAULT de la migración, así que un vault de texto plano queda idéntico a antes."""
         async with pool.tenant_connection(tenant_id) as conn:
             for chunk, vec in zip(chunks, vectors):
                 await conn.execute(
                     "INSERT INTO knowledge_chunks "
-                    "  (tenant_id, source, source_path, chunk_index, heading_path, content, embedding) "
-                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s) "
+                    "  (tenant_id, source, source_path, chunk_index, heading_path, content, "
+                    "   embedding, frontmatter, links, doc_status, doc_type) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s) "
                     "ON CONFLICT (tenant_id, source, source_path, chunk_index) DO UPDATE SET "
                     "  heading_path = EXCLUDED.heading_path, content = EXCLUDED.content, "
-                    "  embedding = EXCLUDED.embedding, updated_at = now()",
+                    "  embedding = EXCLUDED.embedding, frontmatter = EXCLUDED.frontmatter, "
+                    "  links = EXCLUDED.links, doc_status = EXCLUDED.doc_status, "
+                    "  doc_type = EXCLUDED.doc_type, updated_at = now()",
                     (tenant_id, SOURCE, filepath, chunk["position"],
-                     chunk["heading_path"], chunk["text"], vec),
+                     chunk["heading_path"], chunk["text"], vec,
+                     json.dumps(chunk.get("frontmatter") or {}, ensure_ascii=False),
+                     json.dumps(chunk.get("links") or [], ensure_ascii=False),
+                     chunk.get("doc_status"), chunk.get("doc_type")),
                 )
             # el archivo pudo encoger: elimina los chunks con índice >= nuevos.
             await conn.execute(

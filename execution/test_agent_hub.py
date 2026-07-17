@@ -217,10 +217,15 @@ async def db_tests(a, b):
         obs["coexist"] = cfg.get("codex") is True and cfg.get("hermes") is False
 
         # Seam de delegación del grafo (CP-HUB). El gate completo — candado 'soberano',
-        # degradación, sellado — se ejercita en test_delegation_wiring.py; aquí solo se
+        # degradación, sellado — se ejercita en test_delegation_wiring.py, y la iniciativa
+        # de Mia + su pausa de aprobación en test_delegation_decide.py; aquí solo se
         # comprueba que el seam del Hub sigue enganchado al grafo.
         from mia.agents.graph import MatterGraphBuilder
         set_policy(a, "suscripcion")  # explícita: el gate no debe depender del env
+        # CP-HUB2: el seam se mide en "solo si lo pido" — así este gate ejercita la
+        # invocación explícita sin que Mia proponga nada por su cuenta (eso tiene su
+        # propio gate) ni gaste una llamada al modelo aquí.
+        await hub_config.set_delegation_mode(a, hub_config.MODE_ONLY_EXPLICIT)
 
         class FakeHub:
             def __init__(self):
@@ -230,22 +235,28 @@ async def db_tests(a, b):
                 self.calls.append((key, prompt))
                 return ah.InvokeResult(ah.STATUS_OK, f"DELEGADO:{key}:{prompt}")
 
+        async def delegate(gb, st):
+            """CP-HUB2: planificar (intake) → ejecutar (nodo `delegation`)."""
+            st["delegation_request"] = await gb._plan_delegation(st)
+            out = await gb.delegation_node(st)
+            return (out.get("metadata") or {}).get("delegation")
+
         # Sin petición explícita del abogado → no-op silencioso (el caso normal).
         hub_a = FakeHub()
         gb = MatterGraphBuilder(agent_hub=hub_a)
-        obs["delegate_noop"] = (await gb._maybe_delegate(
-            {"tenant_id": a, "metadata": {}, "messages": []})) is None
+        obs["delegate_noop"] = (await delegate(
+            gb, {"tenant_id": a, "metadata": {}, "messages": []})) is None
 
         # Petición explícita pero el ayudante NO está habilitado → bloqueado, sin invocar.
         msg = "usa el asistente de investigación jurídica para buscar la sentencia"
         st = {"tenant_id": a, "metadata": {}, "messages": [{"role": "user", "content": msg}]}
-        deleg = await gb._maybe_delegate(st)
+        deleg = await delegate(gb, dict(st))
         obs["delegate_gated"] = (deleg or {}).get("estado") == "bloqueado" and hub_a.calls == []
 
         await hub_config.set_enabled(a, "hermes", True)
         hub_b = FakeHub()
         gb2 = MatterGraphBuilder(agent_hub=hub_b)
-        deleg = await gb2._maybe_delegate(st)
+        deleg = await delegate(gb2, dict(st))
         obs["delegate_fires"] = ((deleg or {}).get("estado") == "ok"
                                  and (deleg or {}).get("salida") == f"DELEGADO:hermes:{msg}"
                                  and hub_b.calls == [("hermes", msg)])

@@ -7,9 +7,15 @@ grafo y nadie lo escribía nunca):
   A · delegate_intent (puro): detecta la orden explícita; falla al lado SEGURO.
   B · hub_gate (DB real): el candado. 'soberano' BLOQUEA aunque esté habilitado;
       sin habilitar bloquea; error de DB bloquea (fail-closed).
-  C · graph._maybe_delegate (DB real): delega cuando debe, NO delega con 'soberano',
+  C · el cableado del grafo (DB real): delega cuando debe, NO delega con 'soberano',
       degrada limpio si el CLI no está o falla, y la salida sigue SELLADA.
   D · hub_config.set_enabled: el merge jsonb atómico no pisa otras claves del config.
+
+CP-HUB2 · la delegación pasó de UNA función (`_maybe_delegate` en intake) a DOS pasos:
+`_plan_delegation` (planifica, no saca un byte) + `delegation_node` (pregunta si hace falta,
+y ejecuta). Este gate cubre el camino de la INVOCACIÓN EXPLÍCITA, que no pregunta nada y
+debe seguir comportándose byte a byte como antes — la iniciativa de Mia y su pausa HITL las
+cubre `test_delegation_decide.py`.
 
 Salida: exit 0 = PASS · exit 1 = FAIL.
 
@@ -90,6 +96,21 @@ class FakeHub:
         self.calls.append((key, prompt))
         return self.result
 
+    def list_available(self):
+        return {k: {"installed": True} for k in agent_hub.CONNECTORS}
+
+
+async def _delegate(gb: MatterGraphBuilder, state: dict) -> dict | None:
+    """El turno completo de delegación SIN pausa: planificar → ejecutar.
+
+    CP-HUB2: reproduce lo que hacen `intake_node` (guardar el plan en el estado) y el nodo
+    `delegation` (leerlo y ejecutarlo) en el camino de la invocación explícita, que es el que
+    cubre este gate — ahí el plan sale PLAN_READY y `delegation_node` no pregunta nada.
+    Devuelve el bloque `metadata['delegation']` (o None), el mismo contrato que la UI ve."""
+    state["delegation_request"] = await gb._plan_delegation(state)
+    out = await gb.delegation_node(state)
+    return (out.get("metadata") or {}).get("delegation")
+
 
 def _ok_hub(stdout: str = "el radicado está al despacho") -> FakeHub:
     return FakeHub(agent_hub.InvokeResult(
@@ -158,9 +179,18 @@ async def db_tests(t: str) -> dict:
         # ── C · el cableado del grafo ─────────────────────────────────────
         msg = "usa el asistente de navegación web para buscar el estado del radicado"
 
+        # CP-HUB2: este bloque cubre la INVOCACIÓN EXPLÍCITA aislada, así que el despacho se
+        # pone en "solo si lo pido" — el modo que reproduce el comportamiento previo a
+        # CP-HUB2. Sin esto, Mia podría PROPONER por su cuenta (modo "pregúntame", el
+        # defecto) y el gate estaría midiendo dos cosas a la vez. La iniciativa y su pausa
+        # se prueban en test_delegation_decide.py.
+        await hub_config.set_delegation_mode(t, hub_config.MODE_ONLY_EXPLICIT)
+        obs["mode_persisted"] = await hub_config.get_delegation_mode(t) == \
+            hub_config.MODE_ONLY_EXPLICIT
+
         # C.1 · soberano → NO delega, NO invoca el CLI, y se lo dice al abogado.
         hub = _ok_hub()
-        deleg = await MatterGraphBuilder(agent_hub=hub)._maybe_delegate(_state(t, msg))
+        deleg = await _delegate(MatterGraphBuilder(agent_hub=hub), _state(t, msg))
         obs["sob_no_invoke"] = hub.calls == []          # ← cero bytes salieron del equipo
         obs["sob_blocked"] = (deleg or {}).get("estado") == "bloqueado"
         obs["sob_reason"] = (deleg or {}).get("motivo_interno") == hub_gate.REASON_SOBERANO
@@ -171,13 +201,13 @@ async def db_tests(t: str) -> dict:
         set_policy(t, "suscripcion")
         hub = _ok_hub()
         gb = MatterGraphBuilder(agent_hub=hub)
-        obs["no_intent_none"] = (await gb._maybe_delegate(
-            _state(t, "resume los hechos del expediente"))) is None
+        obs["no_intent_none"] = (await _delegate(
+            gb, _state(t, "resume los hechos del expediente"))) is None
         obs["no_intent_no_invoke"] = hub.calls == []
 
         # C.3 · pedido + habilitado + política OK → DELEGA.
         hub = _ok_hub()
-        deleg = await MatterGraphBuilder(agent_hub=hub)._maybe_delegate(_state(t, msg))
+        deleg = await _delegate(MatterGraphBuilder(agent_hub=hub), _state(t, msg))
         obs["fires_status"] = (deleg or {}).get("estado") == "ok"
         obs["fires_agent"] = (deleg or {}).get("agente") == "navegacion"  # slug neutro (§G)
         obs["fires_invoked"] = len(hub.calls) == 1 and hub.calls[0][0] == "openclaw"
@@ -189,11 +219,25 @@ async def db_tests(t: str) -> dict:
         obs["fires_sealed"] = (salida.lstrip().startswith(untrusted.UNTRUSTED_NOTICE[:40])
                                and f"<<<{untrusted.GENERIC_LABEL}" in salida
                                and "<<<FIN" in salida)
+        obs["fires_aviso_orden"] = (deleg or {}).get("autorizacion") == hub_gate.AUTH_ORDER
+
+        # C.3b · LA FUGA QUE ESTABA ABIERTA (CP-HUB2). Cuando el abogado adjunta con
+        # @expediente, CP-E2 PEGA el contenido de los documentos dentro del mensaje del
+        # estado. `_maybe_delegate` leía ese mensaje crudo → el expediente entero salía hacia
+        # el CLI de un tercero, justo lo que el módulo prometía no hacer. Ahora se usa
+        # `retrieval_query` (las palabras del abogado sin los adjuntos).
+        hub = _ok_hub()
+        st = _state(t, msg + "\n\n<<<DOC 1>>>\nEL CLIENTE CONFESÓ QUE FALSIFICÓ LA FIRMA"
+                             "\n<<<FIN DOC 1>>>")
+        st["retrieval_query"] = msg  # lo que deja CP-E2 cuando expande referencias
+        await _delegate(MatterGraphBuilder(agent_hub=hub), st)
+        obs["clean_only"] = bool(hub.calls) and hub.calls[0][1] == msg
+        obs["no_docs_out"] = bool(hub.calls) and "FALSIFICÓ" not in hub.calls[0][1]
 
         # C.4 · pedido pero el despacho NO lo habilitó → no sale nada.
         await hub_config.set_enabled(t, "openclaw", False)
         hub = _ok_hub()
-        deleg = await MatterGraphBuilder(agent_hub=hub)._maybe_delegate(_state(t, msg))
+        deleg = await _delegate(MatterGraphBuilder(agent_hub=hub), _state(t, msg))
         obs["off_no_invoke"] = hub.calls == []
         obs["off_blocked"] = (deleg or {}).get("estado") == "bloqueado"
         obs["off_reason"] = (deleg or {}).get("motivo_interno") == hub_gate.REASON_NO_OPTIN
@@ -205,7 +249,7 @@ async def db_tests(t: str) -> dict:
             "«Asistente de navegación web» no está instalado en este equipo. Puedes seguir "
             "sin él: Mia responde igual con el expediente y el corpus del despacho.",
             detail="binario no encontrado"))
-        deleg = await MatterGraphBuilder(agent_hub=hub)._maybe_delegate(_state(t, msg))
+        deleg = await _delegate(MatterGraphBuilder(agent_hub=hub), _state(t, msg))
         obs["ni_status"] = (deleg or {}).get("estado") == agent_hub.STATUS_NOT_INSTALLED
         obs["ni_plain"] = "no está instalado" in ((deleg or {}).get("mensaje") or "")
         obs["ni_no_jerga"] = not any(
@@ -217,7 +261,7 @@ async def db_tests(t: str) -> dict:
         hub = FakeHub(agent_hub.InvokeResult(
             agent_hub.STATUS_ERROR, "«Asistente de navegación web» no pudo completar la tarea.",
             detail="exit=2 stderr=unknown flag -p"))
-        deleg = await MatterGraphBuilder(agent_hub=hub)._maybe_delegate(_state(t, msg))
+        deleg = await _delegate(MatterGraphBuilder(agent_hub=hub), _state(t, msg))
         obs["err_status"] = (deleg or {}).get("estado") == agent_hub.STATUS_ERROR
         obs["err_no_salida"] = (deleg or {}).get("salida") is None
         obs["err_no_stderr"] = "unknown flag" not in ((deleg or {}).get("mensaje") or "")
@@ -227,8 +271,11 @@ async def db_tests(t: str) -> dict:
             def invoke_result(self, *a, **k):
                 raise RuntimeError("kaboom")
 
-        obs["raise_none"] = (await MatterGraphBuilder(agent_hub=Exploding())._maybe_delegate(
-            _state(t, msg))) is None
+            def list_available(self):
+                return {k: {"installed": True} for k in agent_hub.CONNECTORS}
+
+        obs["raise_none"] = (await _delegate(
+            MatterGraphBuilder(agent_hub=Exploding()), _state(t, msg))) is None
 
         # ── D · merge jsonb atómico: no pisa otras claves del config ──────
         await hub_config.set_enabled(t, "hermes", True)
@@ -280,6 +327,14 @@ def main() -> int:
           obs["fires_aviso"])
     check("delegación: la salida del CLI sigue SELLADA como no confiable (CP-S1)",
           obs["fires_sealed"])
+    check("delegación: el aviso dice la verdad — salió porque el abogado lo ORDENÓ",
+          obs["fires_aviso_orden"])
+    check("modo 'solo si lo pido' se persiste y se lee", obs["mode_persisted"])
+
+    check("FUGA TAPADA: con @expediente sale SOLO el mensaje limpio del abogado",
+          obs["clean_only"])
+    check("FUGA TAPADA: el contenido de los documentos adjuntos NO sale del equipo",
+          obs["no_docs_out"])
 
     check("pedido pero NO habilitado: el CLI NO se invoca", obs["off_no_invoke"])
     check("pedido pero NO habilitado: se le dice al abogado (bloqueado)", obs["off_blocked"])
@@ -293,7 +348,8 @@ def main() -> int:
     check("CLI falla (D3, flag equivocado): estado='error', turno vivo", obs["err_status"])
     check("CLI falla: no hay salida", obs["err_no_salida"])
     check("CLI falla: el stderr NO se le muestra al abogado (va al log)", obs["err_no_stderr"])
-    check("el hub revienta: _maybe_delegate devuelve None, no propaga", obs["raise_none"])
+    check("el hub revienta: el nodo no propaga y el turno sigue sin ayudante",
+          obs["raise_none"])
 
     check("merge jsonb: varios ayudantes coexisten", obs["merge_coexist"])
     check("merge jsonb: habilitar un ayudante NO pisa 'model_policy'", obs["merge_keeps_policy"])

@@ -24,13 +24,14 @@ Ante CUALQUIER duda (error de DB, política indeterminada, ayudante sin habilita
 
 POR QUÉ NO HAY UN TERCER INTERRUPTOR ("allow_agent_hub"):
 El consentimiento de que el texto salga del equipo NO descansa solo en el toggle de
-Configuración — descansa en que la delegación es de INVOCACIÓN EXPLÍCITA: solo ocurre si
-el abogado NOMBRA al ayudante en su propio mensaje ("usa el asistente de navegación
-para…", ver `agents/delegate_intent.py`). Eso es consentimiento POR MENSAJE y por turno,
-más fuerte y más granular que una casilla global que se marca una vez y se olvida. El
-toggle del Hub decide QUÉ ayudantes existen para el despacho; el mensaje del abogado
-decide SI sale algo y QUÉ sale. Un tercer flag global sería una casilla que nadie lee y
-daría la falsa sensación de que, marcada, ya todo puede salir sin pedirlo.
+Configuración — descansa en un acto del abogado POR TURNO: o bien NOMBRA al ayudante en su
+mensaje (invocación explícita, `agents/delegate_intent.py`), o bien APRUEBA la propuesta de
+Mia viendo el texto exacto que va a salir (CP-HUB2, `agents/delegate_proposal.py` +
+`graph.py::delegation_node`). Ambos son consentimiento por mensaje y por turno, más fuerte
+y más granular que una casilla global que se marca una vez y se olvida. El toggle del Hub
+decide QUÉ ayudantes existen para el despacho; el acto del abogado en el turno decide SI
+sale algo y QUÉ sale. Un tercer flag global sería una casilla que nadie lee y daría la
+falsa sensación de que, marcada, ya todo puede salir sin pedirlo.
 """
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ import logging
 
 from ..agent import llm
 from . import hub_config
+from .agent_hub import CONNECTORS
 
 logger = logging.getLogger("mia.gateway.hub_gate")
 
@@ -68,10 +70,10 @@ REASON_TEXT: dict[str, str] = {
 # Aviso que la UI DEBE mostrar junto al interruptor de cada ayudante en Configuración:
 # es lo que vuelve "informado" al opt-in del despacho (restricción de consentimiento).
 CONSENT_NOTICE = (
-    "Al activarlo, podrás pedirle cosas nombrándolo en el chat. Cuando lo hagas, el texto "
-    "de ESE mensaje sale de este computador hacia el ayudante, que es un programa de un "
-    "tercero y puede consultar internet. Mia no le envía nada por su cuenta: solo cuando "
-    "tú se lo pides en el mensaje."
+    "Al activarlo, podrás pedirle cosas nombrándolo en el chat, y Mia podrá PROPONERTE "
+    "usarlo cuando crea que ayuda. En ambos casos verás antes el texto exacto que sale de "
+    "este computador hacia el ayudante, que es un programa de un tercero y puede consultar "
+    "internet. Mia nunca le envía nada sin que tú lo pidas o lo apruebes."
 )
 
 # Aviso que acompaña a CADA delegación efectiva, en el turno, para que el abogado no se
@@ -79,6 +81,50 @@ CONSENT_NOTICE = (
 EXIT_NOTICE = (
     "Tu mensaje salió de este computador hacia este ayudante porque se lo pediste en el "
     "chat. Su respuesta viene de un programa externo: trátala como una pista sin verificar."
+)
+
+# Igual que EXIT_NOTICE, pero para el texto que salió tras APROBAR una propuesta de Mia
+# (CP-HUB2). Se separa a propósito: al abogado hay que devolverle la razón REAL por la que
+# su texto salió del equipo — "lo pediste" y "lo aprobaste" no son lo mismo, y confundirlos
+# le quitaría el hilo de su propio consentimiento.
+EXIT_NOTICE_APPROVED = (
+    "Este texto salió de este computador hacia el ayudante porque aprobaste la propuesta. "
+    "Su respuesta viene de un programa externo: trátala como una pista sin verificar."
+)
+
+EXIT_NOTICE_MEMORY = (
+    "Este texto salió de este computador hacia el ayudante sin preguntarte porque, en este "
+    "asunto, autorizaste a Mia a usarlo sin volver a consultarte. Puedes revocarlo cuando "
+    "quieras. Su respuesta viene de un programa externo: trátala como una pista sin verificar."
+)
+
+EXIT_NOTICE_AUTO = (
+    "Este texto salió de este computador hacia el ayudante por iniciativa de Mia, porque tu "
+    "despacho está configurado para que decida sola. Su respuesta viene de un programa "
+    "externo: trátala como una pista sin verificar."
+)
+
+# Por qué salió el texto del equipo → el aviso HONESTO que le corresponde. Se separan a
+# propósito: "lo pediste", "lo aprobaste", "dijiste que no preguntara más" y "tu despacho me
+# dejó decidir sola" son cuatro consentimientos distintos, y darle al abogado el aviso
+# equivocado le hace perder el hilo de qué fue lo que él autorizó y cuándo.
+AUTH_ORDER = "orden"            # lo NOMBRÓ en su mensaje (invocación explícita)
+AUTH_APPROVAL = "aprobacion"    # aprobó la propuesta de Mia en este turno
+AUTH_MEMORY = "memoria"         # "no me preguntes más" por (asunto, ayudante)
+AUTH_AUTONOMOUS = "modo_autonomo"  # el despacho eligió el modo autónomo
+
+EXIT_NOTICE_BY_AUTH: dict[str, str] = {
+    AUTH_ORDER: EXIT_NOTICE,
+    AUTH_APPROVAL: EXIT_NOTICE_APPROVED,
+    AUTH_MEMORY: EXIT_NOTICE_MEMORY,
+    AUTH_AUTONOMOUS: EXIT_NOTICE_AUTO,
+}
+
+# Lo que se le dice cuando descarta la propuesta. Importa que sea explícito en que NO salió
+# nada: el abogado tiene que poder confiar en que decir "no" es de verdad un "no".
+PROPOSAL_DISCARDED_TEXT = (
+    "Descartaste la propuesta: no le envié nada a ningún ayudante externo y seguí con el "
+    "expediente y el corpus del despacho."
 )
 
 
@@ -110,3 +156,36 @@ async def delegation_allowed(tenant_id: str, agent_key: str) -> tuple[bool, str]
         logger.exception("hub_gate: fallo leyendo el opt-in del tenant %s → BLOQUEA", tenant_id)
         return False, REASON_ERROR
     return True, REASON_OK
+
+
+async def allowed_agents(tenant_id: str) -> list[str]:
+    """Ayudantes a los que HOY se les podría delegar en este despacho ([] si ninguno).
+
+    Es `delegation_allowed` en plural, y existe para una sola razón: que "en 'soberano' Mia
+    ni siquiera PROPONE" sea estructural y no una condición que alguien pueda olvidar de
+    escribir. El proponente (CP-HUB2) recibe este catálogo; si vuelve vacío no hay nada que
+    proponer, no se arma prompt y no se gasta ni una llamada al modelo. Proponer algo que el
+    candado va a bloquear sería prometer humo.
+
+    Fail-closed en todos los caminos: política 'soberano' → []; error leyendo la política o
+    la config → []. Devuelve claves internas de CONNECTORS, en orden estable.
+
+    OJO: que una clave salga aquí NO es autorización para invocar. Antes de sacar un solo
+    byte hay que llamar a `delegation_allowed` para ESE ayudante — este catálogo se calcula
+    al empezar el turno y el abogado puede tardar minutos en aprobar, tiempo en el que el
+    despacho pudo endurecer su política."""
+    try:
+        policy = await llm.model_policy_for_strict(tenant_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("hub_gate: no se pudo leer la política del tenant %s → sin catálogo",
+                         tenant_id)
+        return []
+    if policy == "soberano":
+        return []
+    try:
+        cfg = await hub_config.get_hub_config(tenant_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("hub_gate: fallo leyendo el opt-in del tenant %s → sin catálogo",
+                         tenant_id)
+        return []
+    return [key for key in CONNECTORS if cfg.get(key) is True]

@@ -64,6 +64,9 @@ MAX_RETRIES = 3
 _TASK_FALLBACK_CHAINS: dict[str, list[str]] = {
     "main": ["claude-sonnet", "mia-local"],      # razonamiento principal: sonnet → local
     "curator": ["claude-sonnet", "mia-local"],   # consolidación semántica: sonnet → local
+    # ¿estos dos playbooks dicen lo mismo o lo contrario? Es una CLASIFICACIÓN de tres
+    # salidas, no razonamiento jurídico: entra como AUXILIAR (barata). Ver _AUX_TASKS.
+    "curator_conflict": ["mia-local"],           # juez de contradicción del Curator
     "compression": ["mia-local"],                # BLOQUEADA (decisión #7), sin fallback
     "verification": ["mia-local"],               # verificación de citas legales
     "title_generation": ["mia-local"],           # títulos de asunto
@@ -72,6 +75,7 @@ _TASK_FALLBACK_CHAINS: dict[str, list[str]] = {
     "vision": ["mia-local"],                     # comprensión de documentos/imágenes
     "soul": ["mia-local"],                       # generación del SOUL.md (identidad del agente)
     "mission_decompose": ["mia-local"],          # CP-E5: hitos de un objetivo del expediente
+    "delegation_triage": ["mia-local"],          # CP-HUB2: ¿hace falta un ayudante externo?
 }
 
 # Tareas cuya cadena es un contrato fijo: un `model` explícito NO puede cambiarla.
@@ -87,8 +91,22 @@ _DEFAULT_TASK = "main"
 VALID_POLICIES = ("suscripcion", "nube", "soberano", "openrouter")
 
 # Tareas auxiliares (baratas): comparten cadena dentro de cada política.
+# CP-HUB2 · `delegation_triage` (¿le sirve al abogado un ayudante externo en este turno?)
+# entra como AUXILIAR y no como `main` por dos razones: es una pregunta de sí/no que no
+# necesita el motor de razonamiento jurídico, y corre en CADA turno de un despacho con
+# ayudantes activos — pagar sonnet por ella sería un impuesto permanente sobre una función
+# que casi siempre responde "no". Al ser auxiliar, en 'soberano' resuelve a mia-local… pero
+# ahí NUNCA llega a ejecutarse: `hub_gate.allowed_agents` devuelve [] y el proponente no se
+# arma (ver graph.py::_plan_delegation).
+#
+# `curator_conflict` (¿estos dos playbooks se contradicen?) también es AUXILIAR: corre una vez
+# por par candidato en el cron semanal del Curator y su salida es una de tres etiquetas. Pagar
+# sonnet por ella no compraría nada — y su modo de fallo ya está cubierto: si el juez revienta o
+# responde algo que no se entiende, el Curator lo trata como duplicado (el comportamiento de
+# siempre). En 'soberano' resuelve a mia-local, como el resto.
 _AUX_TASKS = ("verification", "title_generation", "session_search", "web_extract",
-              "vision", "soul", "mission_decompose")
+              "vision", "soul", "mission_decompose", "delegation_triage",
+              "curator_conflict")
 
 # Aliases de OpenRouter (viven en litellm_config.yaml). `openrouter-sonnet` para el
 # razonamiento; `openrouter-haiku` para tareas baratas (compresión/auxiliares). Se

@@ -46,13 +46,39 @@ TIER_VOLATILE = "volatile"
 # ── Capas STABLE de texto fijo ─────────────────────────────────────────────
 
 # L2 · Metodología jurídica
+#
+# Los dos bloques finales (anatomía y jerarquía) son la METODOLOGÍA ARGUMENTAL, no el
+# estilo de ninguna firma: fijan qué tiene que TRAER un argumento para estar completo y
+# cómo se reparte el desarrollo entre ellos. Van aquí, en el tier STABLE, por dos razones:
+#   · es texto FIJO — entra al prefijo cacheado (TTL 1h) y su costo marginal por turno es
+#     ~cero; ponerlo en la instrucción de cada nodo (L8, no cacheada) se pagaría entero en
+#     todos los turnos y en cada especialista;
+#   · aplica a TODOS los que sostienen una posición (cruce, borrador, panelistas de la
+#     sala), no a un nodo suelto.
+# Regla dura de agnosticismo: las cinco capas se nombran por su ROL FUNCIONAL (hecho,
+# fuente normativa, autoridad interpretativa, prueba, contradicción). Ni un país, ni una
+# corporación, ni un artículo concreto, ni un formato de cita — eso vive en el pack de
+# jurisdicción y en el SOUL.md del despacho, nunca en el código.
 METHODOLOGY = (
     "Razonas como un jurista del Civil Law hispanoamericano. Estructuras tu "
     "análisis en: (1) hechos relevantes, (2) problema jurídico, (3) fundamentos "
     "de derecho con sus fuentes, (4) conclusión y recomendación. Distingues entre "
     "norma aplicable, jurisprudencia y doctrina. Eres prudente: nombras tus "
     "supuestos, los riesgos y lo que falta por verificar antes de afirmar una "
-    "conclusión."
+    "conclusión.\n\n"
+    "Anatomía del argumento. Un argumento no es un título ni un enunciado: es un "
+    "desarrollo. Cada argumento que sostengas lleva sus cinco capas — el hecho "
+    "concreto del expediente que lo activa, con su fuente; la fuente normativa "
+    "aplicable, transcrita en la parte que decide; la autoridad interpretativa que "
+    "lo respalda, aplicada A ESTE caso y no enunciada en abstracto; la prueba que "
+    "lo acredita, integrada al razonamiento; y la confrontación con lo que sostiene "
+    "o sostendría el adversario — y cierra con la consecuencia concreta que de él se "
+    "sigue. Si te falta una capa, complétala o adviértelo: un argumento incompleto "
+    "se anuncia, no se disimula.\n\n"
+    "Jerarquía. No todos los argumentos valen lo mismo. Identifica los tres o cuatro "
+    "más sólidos y concentra en ellos el grueso del desarrollo; los secundarios van "
+    "breves y los débiles se omiten. Una lista plana de argumentos con el mismo peso "
+    "diluye los fuertes entre los flojos: es un defecto, no una virtud."
 )
 
 # L3 · Citación y verificación (CLAUDE.md global · "Legal Citation Verification")
@@ -266,8 +292,14 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "Eres el especialista de hechos del equipo. Extrae del expediente los hechos "
         "relevantes para la consulta del abogado: numerados, en orden cronológico, "
         "cada uno anclado a su fuente citándola como [doc n] — cada documento llega "
-        "sellado en un bloque <<<DOC n>>> y n es ese número. Señala expresamente las "
-        "inconsistencias entre documentos y las fechas o datos determinantes. NO "
+        "sellado en un bloque <<<DOC n>>> y n es ese número. Señala las fechas y los "
+        "datos determinantes.\n"
+        "Las inconsistencias NO se describen: se explotan. Por cada una di dónde consta "
+        "cada extremo (el [doc n] y el punto del documento), en qué consiste exactamente "
+        "la contradicción y para qué sirve en el escrito. Rastrea también las "
+        "contradicciones internas de un mismo documento, el tratamiento desigual de "
+        "supuestos iguales, las admisiones tácitas del adversario y los vacíos de prueba "
+        "sobre lo que él debe acreditar. NO "
         "analices el derecho aplicable ni recomiendes estrategia: eso corresponde a "
         "otro turno del equipo. Cierra con una lista breve titulada 'Datos faltantes "
         "por confirmar' con lo que el expediente NO acredita."
@@ -292,7 +324,11 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "posición del cliente, y qué vacíos impiden una conclusión definitiva. "
         "Apóyate en el expediente como evidencia y, si aparece, en el conocimiento "
         "del despacho como orientación de método (nunca en reemplazo de la fuente "
-        "normativa). Antes del cierre, en prosa aparte, ofrece 2 a 5 caminos concretos "
+        "normativa). Jerarquiza los argumentos disponibles: ordénalos del más fuerte al "
+        "más débil, di por qué cada uno lo es, asigna a los tres o cuatro más sólidos el "
+        "grueso del desarrollo del escrito y nombra los que conviene descartar. Esto es "
+        "jerarquía de ARGUMENTOS, no elección de camino: el menú de opciones que sigue "
+        "es del abogado. Antes del cierre, en prosa aparte, ofrece 2 a 5 caminos concretos "
         "que el abogado pueda elegir para este asunto — p. ej. redactar tal escrito, "
         "pedir más hechos o documentos, esperar y observar, escalar o consultar a "
         "alguien más, u otro camino distinto. NUNCA elijas por él ni le des una única "

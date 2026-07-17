@@ -73,7 +73,68 @@ async def list_agents(request: Request):
         "agentes": agentes,
         "bloqueado_por_politica": policy == "soberano",
         "aviso_consentimiento": hub_gate.CONSENT_NOTICE,
+        # CP-HUB2: cuánta iniciativa tiene Mia con estos ayudantes. Viaja con la lista
+        # porque es la misma decisión del abogado ("¿quién manda aquí?") y verla junto a
+        # los interruptores es lo que la vuelve comprensible.
+        "modo": await hub_config.get_delegation_mode(tenant_id),
+        "modos": _delegation_mode_options(),
     }
+
+
+# ── CP-HUB2 · cuánta iniciativa tiene Mia con los ayudantes externos ────────────
+# §G: el abogado elige en su idioma, no en el de la máquina. Las etiquetas describen QUIÉN
+# DECIDE, que es lo que él está eligiendo — no el mecanismo.
+_DELEGATION_MODE_LABELS: dict[str, str] = {
+    hub_config.MODE_ASK: "Mia propone y yo apruebo (recomendado)",
+    hub_config.MODE_AUTO: "Mia decide sola",
+    hub_config.MODE_ONLY_EXPLICIT: "Solo cuando yo se lo pida",
+}
+
+_DELEGATION_MODE_HINTS: dict[str, str] = {
+    hub_config.MODE_ASK: (
+        "Cuando Mia crea que un ayudante te ahorra trabajo, te muestra cuál y el texto "
+        "exacto que saldría de este computador. No sale nada hasta que apruebes."
+    ),
+    hub_config.MODE_AUTO: (
+        "Mia le pide ayuda a un asistente externo sin consultarte. Te avisa en el mismo "
+        "turno de que tu texto salió del computador, pero cuando ya salió."
+    ),
+    hub_config.MODE_ONLY_EXPLICIT: (
+        "Mia nunca toma la iniciativa. Solo usa un ayudante si lo nombras en tu mensaje."
+    ),
+}
+
+
+def _delegation_mode_options() -> list[dict]:
+    return [{"id": k, "nombre": v, "explicacion": _DELEGATION_MODE_HINTS[k]}
+            for k, v in _DELEGATION_MODE_LABELS.items()]
+
+
+@router.get("/settings/delegation-mode")
+async def get_delegation_mode(request: Request):
+    """Modo de iniciativa vigente + las 3 opciones (español, sin jerga)."""
+    tenant_id = _tenant(request)
+    return {"modo": await hub_config.get_delegation_mode(tenant_id),
+            "modos": _delegation_mode_options()}
+
+
+@router.put("/settings/delegation-mode")
+async def put_delegation_mode(request: Request, body: dict[str, Any]):
+    """Fija el modo. 422 si no es uno de los tres (nunca se persiste un modo inventado).
+
+    OJO: esto NO decide si se puede delegar — eso es la política de modelo ('Todo en mi
+    equipo' sigue bloqueando todo) y el interruptor de cada ayudante. Esto decide solo
+    QUIÉN TOMA LA INICIATIVA dentro de lo que ya está permitido."""
+    tenant_id = _tenant(request)
+    modo = (body or {}).get("modo")
+    if modo not in hub_config.VALID_DELEGATION_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail="Elige una de las opciones disponibles para decidir quién toma la "
+                   "iniciativa con los asistentes externos.")
+    await hub_config.set_delegation_mode(tenant_id, modo)
+    return {"modo": modo, "nombre": _DELEGATION_MODE_LABELS[modo],
+            "modos": _delegation_mode_options()}
 
 
 async def _set(request: Request, agent_id: str, enabled: bool):

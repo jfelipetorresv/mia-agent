@@ -223,8 +223,11 @@ def main() -> int:
         # 1 · interrupt detiene el grafo antes de finalizar
         check("interrupt() dispara __interrupt__ y detiene el grafo", obs["interrupted"])
         # CP9: el equipo de especialistas completo corre antes de la pausa HITL.
+        # CP-HUB2: `delegation` va entre intake y facts. Sin ayudantes habilitados (el caso
+        # de este gate y el de una instalación recién hecha) es un NO-OP puro: ni pausa, ni
+        # consulta, ni cambio en el turno — solo aparece en la secuencia de nodos.
         check("nodos corren en orden hasta draft",
-              obs["nodes1"] == ["intake", "facts", "research", "analysis",
+              obs["nodes1"] == ["intake", "delegation", "facts", "research", "analysis",
                                 "draft", "verification"])
         check("borrador generado antes del checkpoint", (obs["draft1"] or "").startswith("BORRADOR"))
         check("grafo pausado EN hitl_checkpoint (antes de finalize)", "hitl_checkpoint" in obs["next1"])

@@ -18,10 +18,11 @@ from ..cron import build_scheduler
 from ..db import pool
 from ..security import install_redacting_logging
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, auth, automations, curator, folders, gold_cases, guides, hitl,
-                     learning, mailbox, matter_folders, matter_mail, matter_sources, mcp,
-                     missions, notebooklm, personas, policy, remote_drive, settings, setup,
-                     sources, speech, stream, traces, ux, value, welcome)
+from .routes import (assistant, auth, automations, curator, delegation, folders, gold_cases,
+                     guides, hitl, learning, mailbox, matter_folders, matter_mail,
+                     matter_sources, mcp, missions, notebooklm, personas, policy,
+                     remote_drive, settings, setup, sources, speech, stream, traces, ux,
+                     value, welcome)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -155,6 +156,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(auth.router)
 app.include_router(stream.router)
 app.include_router(hitl.router)
+# CP-HUB2: respuesta del abogado a una propuesta de ayudante externo (la otra pausa del
+# turno). Va junto a hitl: es el mismo mecanismo (Command(resume=...) + SSE) sobre la otra
+# decisión que Mia no puede tomar sola.
+app.include_router(delegation.router)
 # Router de ajustes del Agent Hub (Módulo 1e).
 app.include_router(settings.router)
 # Superficie /api/* de las 5 pantallas (Fase 3 backend, decisión #20).

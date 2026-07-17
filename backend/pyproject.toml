@@ -17,6 +17,7 @@ dependencies = [
   "bcrypt>=4.2",
   "cryptography==43.0.3",              # backups/secretos locales: AES-GCM; llave envuelta con Windows DPAPI
   "python-dotenv>=1.0",
+  "pyyaml>=6",                           # 039: frontmatter YAML del vault de Obsidian (connectors/obsidian_sync.py). Ya llegaba transitivamente con litellm; se declara explícito porque ahora es una dependencia DIRECTA. Fuera de los pins críticos del Riesgo #32; el conector degrada a texto plano si faltara.
   "litellm==1.74.8",                     # cliente LLM; el proxy corre aparte en .venv-litellm (start_litellm.ps1)
   "openai>=1.40",
   "langgraph>=1.2",                      # Módulo 1d: StateGraph + interrupt() (HITL)

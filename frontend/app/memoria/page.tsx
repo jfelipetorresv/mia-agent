@@ -11,6 +11,7 @@ import {
   Check,
   FileText,
   FolderOpen,
+  GitCompareArrows,
   GraduationCap,
   History,
   Lightbulb,
@@ -749,8 +750,25 @@ type Proposal = {
 };
 type CuratorMerge = { target_title?: string; reason?: string };
 type CuratorDeletion = { title?: string; reason?: string };
+// Una guía en conflicto, tal como la ve el abogado: su texto, su fecha y de dónde salió.
+// `dice` resume lo que ordena ESTA versión por separado — nunca una mezcla de las dos.
+type ConflictSide = {
+  id: string;
+  title?: string;
+  summary?: string;
+  applies_when?: string;
+  extracto?: string;
+  fecha?: string;
+  procedencia?: string;
+  dice?: string;
+};
+type CuratorConflict = { a: ConflictSide; b: ConflictSide; score?: number; confianza?: number };
 type CuratorProposal = {
   id: string;
+  // 'cleanup' = unir parecidas / archivar sin uso (se aprueba en bloque).
+  // 'conflict' = dos versiones que se contradicen (se elige una, o ninguna).
+  kind?: string;
+  conflict?: CuratorConflict | null;
   merges?: CuratorMerge[];
   proposed_merges?: CuratorMerge[];
   deletions?: CuratorDeletion[];
@@ -766,6 +784,8 @@ function Sugerencias() {
   // B2 · disparo manual del aprendizaje ("Revisar ahora").
   const [reviewing, setReviewing] = useState(false);
   const [reviewMsg, setReviewMsg] = useState<string | null>(null);
+  // Conflicto que se está resolviendo (para no dejar votar dos veces mientras viaja).
+  const [conflictBusy, setConflictBusy] = useState<string | null>(null);
 
   // B4 · "Editar antes de aplicar": el abogado corrige el título/contenido antes
   // de que la sugerencia se convierta en guía o modifique una existente.
@@ -830,6 +850,25 @@ function Sugerencias() {
     await load();
   }
 
+  // Conflicto de criterio: el abogado elige con qué versión se queda el despacho ('a' | 'b'),
+  // o decide sostener las dos ('none'). Mia nunca las funde.
+  async function resolveConflict(id: string, choice: "a" | "b" | "none") {
+    setMsg(null);
+    setConflictBusy(id);
+    try {
+      await apiSend("POST", `/api/curator/proposals/${id}/resolve`, { choice });
+    } catch (e) {
+      // Mismo criterio que arriba: 409 = el conocimiento cambió desde que se detectó.
+      const drift = e instanceof ApiError && e.status === 409;
+      setMsg(drift
+        ? "El conocimiento cambió desde que Mia detectó esta contradicción, así que no se aplicó nada. Mia volverá a plantearla actualizada en su próxima revisión."
+        : plainMessage(e, "No se pudo guardar tu decisión. Intenta de nuevo."));
+    } finally {
+      setConflictBusy(null);
+    }
+    await load();
+  }
+
   // B2 · Mia revisa su trabajo reciente AHORA (sin esperar al ciclo diario) y propone mejoras.
   async function revisarAhora() {
     setReviewMsg(null);
@@ -873,6 +912,12 @@ function Sugerencias() {
       </Button>
     </div>
   );
+
+  // Dos cosas distintas que exigen dos decisiones distintas: la limpieza se aprueba en bloque;
+  // el conflicto se resuelve eligiendo. Un solo botón para ambas sería el atajo que corrompe
+  // el criterio.
+  const cleanups = curator.filter((c) => c.kind !== "conflict");
+  const conflicts = curator.filter((c) => c.kind === "conflict" && !!c.conflict);
 
   if (loading) {
     return (
@@ -986,13 +1031,92 @@ function Sugerencias() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {curator.length > 0 ? (
+      {conflicts.length > 0 ? (
+        <div>
+          <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Criterios que se contradicen
+          </h3>
+          <ul className="space-y-3">
+            {conflicts.map((c, i) => (
+              <li
+                key={c.id}
+                className="animate-slide-up rounded-xl border border-warning/40 bg-card px-5 py-4 shadow-sm"
+                style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+              >
+                <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
+                  <GitCompareArrows className="h-4 w-4 text-warning" />
+                  Estas dos guías dicen lo contrario
+                </div>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Se parecen tanto que Mia iba a unirlas, pero ordenan cosas opuestas. No las va a
+                  unir: eso dejaría un criterio que nadie escribió. Dime cuál es el criterio del
+                  despacho hoy.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {(["a", "b"] as const).map((side) => {
+                    const v = c.conflict?.[side];
+                    if (!v) return null;
+                    return (
+                      <div key={side} className="flex flex-col rounded-lg border border-border bg-muted/30 p-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="truncate text-sm font-medium">{v.title}</span>
+                          <Badge variant="secondary">{originLabel(v.procedencia)}</Badge>
+                        </div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          {v.fecha ? `Actualizada el ${v.fecha}` : "Sin fecha"}
+                        </div>
+                        <div className="mt-2 text-sm">
+                          <span className="text-muted-foreground">Esta dice: </span>
+                          {v.dice}
+                        </div>
+                        {v.extracto ? (
+                          <p className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-background/60 p-2 font-serif text-xs leading-relaxed text-muted-foreground">
+                            {v.extracto}
+                          </p>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          onClick={() => resolveConflict(c.id, side)}
+                          disabled={conflictBusy === c.id}
+                          className="mt-3 gap-1.5"
+                        >
+                          {conflictBusy === c.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Check className="h-3.5 w-3.5" />
+                          )}
+                          Me quedo con esta
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => resolveConflict(c.id, "none")}
+                    disabled={conflictBusy === c.id}
+                  >
+                    Dejar las dos
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    La que no elijas se archiva y puedes reactivarla cuando quieras. Si dejas las
+                    dos, Mia las conserva y no vuelve a proponer unirlas.
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {cleanups.length > 0 ? (
         <div>
           <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Orden del conocimiento
           </h3>
           <ul className="space-y-3">
-            {curator.map((c, i) => {
+            {cleanups.map((c, i) => {
               const merges = c.merges || c.proposed_merges || [];
               const deletions = c.deletions || c.proposed_deletions || [];
               return (

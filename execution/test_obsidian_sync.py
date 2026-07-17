@@ -44,6 +44,7 @@ except Exception:
     pass
 
 import init_knowledge_stores                       # noqa: E402  (runner de la migración 004)
+import init_obsidian_structure                     # noqa: E402  (runner de la migración 039)
 from mia import config, embeddings                 # noqa: E402
 from mia.db import pool                             # noqa: E402
 from mia.memory.tokens import estimate_tokens       # noqa: E402
@@ -83,6 +84,70 @@ def make_tenants() -> tuple[str, str]:
 def drop_tenants(a: str, b: str) -> None:
     with psycopg.connect(autocommit=True, **PG) as c:
         c.execute("DELETE FROM tenants WHERE id = ANY(%s)", ([a, b],))
+
+
+def build_struct_vault(base: Path) -> None:
+    """Vault REAL de estructura (039): documentos de Obsidian de todos los tipos que un
+    despacho ya tiene — con frontmatter completo, sin frontmatter, con YAML roto, un índice
+    lleno de enlaces y una nota con encabezados anidados."""
+    base.mkdir(parents=True, exist_ok=True)
+
+    # 1) Frontmatter completo + campos desconocidos + encabezados anidados (heading_path).
+    (base / "criterio.md").write_text(
+        "---\n"
+        "title: Criterio de indemnización\n"
+        "type: criterio\n"
+        "status: verified\n"
+        "fuente: Manual interno del despacho\n"
+        "revisado: 2024-05-01\n"
+        "tags: [contratos, clausulas]\n"
+        "campo_que_nadie_conoce: valor raro\n"
+        'relacionado_con: "[[Mapa de contratación]]"\n'
+        "---\n"
+        "# Criterio\n\nCuerpo del criterio verificado.\n\n"
+        "## Detalle\n\nDetalle del criterio.\n\n"
+        "### Excepción\n\nLa excepción al criterio.\n", encoding="utf-8")
+
+    # 2) Índice/MOC: el documento más denso en señal del vault.
+    (base / "Mapa de contratación.md").write_text(
+        "---\n"
+        "tipo: moc\n"
+        "estado: verificado\n"
+        "---\n"
+        "# Mapa de contratación\n\n"
+        "## Cláusulas\n\n"
+        "- [[criterio]]\n"
+        "- [[criterio|el criterio de siempre]]\n"
+        "- [[carpeta/Nota Anidada#Sección]]\n"
+        "- ![[diagrama.png]]\n"
+        "- [[Nota Que No Existe]]\n"
+        "- fundamenta:: [[criterio]]\n\n"
+        "## Ejemplo de código\n\n"
+        "```\n[[NoEsUnEnlace]]\n```\n", encoding="utf-8")
+
+    # 3) Borrador declarado.
+    (base / "borrador.md").write_text(
+        "---\nestado: borrador\ntipo: nota\n---\n"
+        "# Idea a medias\n\nEsto todavía no es criterio del despacho.\n", encoding="utf-8")
+
+    # 4) YAML mal formado: no puede tumbar la sincronización del vault.
+    (base / "roto.md").write_text(
+        "---\n"
+        "tipo: nota\n"
+        "estado: [borrador\n"
+        'sin cerrar: "comilla\n'
+        "---\n"
+        "# Nota rota\n\nEl cuerpo de esta nota se sigue indexando.\n", encoding="utf-8")
+
+    # 5) Sin frontmatter: el vault que la mayoría de despachos ya tiene.
+    (base / "plano.md").write_text(
+        "# Nota plana\n\nTexto sin metadatos, como el 90% de los vaults.\n\n"
+        "Enlaza a [[criterio]] sin decir por qué.\n", encoding="utf-8")
+
+    # 6) Estado que no sabemos mapear: NO se adivina.
+    (base / "raro.md").write_text(
+        "---\nestado: en veremos\ntipo: apunte\n---\n"
+        "# Apunte\n\nEstado no reconocido.\n", encoding="utf-8")
 
 
 def build_vault(base: Path) -> None:
@@ -136,8 +201,144 @@ def offline_checks(vault: Path) -> None:
           any("sync_obsidian" in j["name"] for j in jobs))
 
 
+# ── 039 · estructura del vault (frontmatter + wikilinks), sin DB ─────────────
+def _legacy_chunks(sync, content: str) -> list[tuple]:
+    """Reimplementación del pipeline ANTERIOR a 039 (trocear el documento crudo, sin tocar el
+    frontmatter). Es la vara de medir de la cero regresión: para un documento sin frontmatter,
+    el indexador de hoy tiene que producir EXACTAMENTE esto."""
+    out: list[tuple] = []
+    pos = 0
+    for heading_path, body in sync._split_by_headings(content):
+        body = body.strip()
+        if not body:
+            continue
+        for piece in sync._split_to_size(body):
+            out.append((piece, heading_path or None, pos))
+            pos += 1
+    return out
+
+
+def structure_checks(vault: Path) -> None:
+    sync = ObsidianSync()
+    read = lambda name: (vault / name).read_text(encoding="utf-8")  # noqa: E731
+
+    # ── CERO REGRESIÓN: un vault sin frontmatter produce hoy los mismos chunks que antes ──
+    for name in ("plano.md",):
+        raw = read(name)
+        got = [(c["text"], c["heading_path"], c["position"]) for c in sync._chunk_document(raw, name)]
+        check(f"cero regresión: {name} (sin frontmatter) produce los MISMOS chunks que antes de 039",
+              got == _legacy_chunks(sync, raw))
+    doc_plano = "# Uno\n\ncuerpo de uno.\n\n## Dos\n\ncuerpo de dos.\n"
+    ch = sync._chunk_document(doc_plano, "x.md")
+    check("cero regresión: sin frontmatter → frontmatter {} y metadatos vacíos",
+          all(c["frontmatter"] == {} and c["doc_status"] is None and c["doc_type"] is None
+              for c in ch))
+    big_body = "\n\n".join(f"Parrafo {i} con texto de relleno suficiente. " * 4 for i in range(20))
+    check("cero regresión: el troceado por tamaño no cambió",
+          [(c["text"], c["heading_path"], c["position"])
+           for c in sync._chunk_document(f"# G\n\n{big_body}\n", "b.md")]
+          == _legacy_chunks(sync, f"# G\n\n{big_body}\n"))
+
+    # ── frontmatter completo ──
+    crit = sync._chunk_document(read("criterio.md"), "criterio.md")
+    fm = crit[0]["frontmatter"]
+    check("frontmatter: el YAML deja de entrar como texto dentro del chunk",
+          all("campo_que_nadie_conoce" not in c["text"] and not c["text"].startswith("---")
+              for c in crit))
+    check("frontmatter: se parsea a metadatos consultables",
+          fm.get("title") == "Criterio de indemnización" and fm.get("type") == "criterio")
+    check("frontmatter: campos desconocidos se conservan sin romper",
+          fm.get("campo_que_nadie_conoce") == "valor raro")
+    check("frontmatter: las fechas de YAML se guardan en ISO (JSON-safe)",
+          fm.get("revisado") == "2024-05-01")
+    check("frontmatter: las listas se conservan", fm.get("tags") == ["contratos", "clausulas"])
+    check("frontmatter: se replica en TODOS los chunks del documento (filtrable por fila)",
+          all(c["frontmatter"] == fm for c in crit))
+
+    # ── heading_path INTACTO con frontmatter presente ──
+    paths = [c["heading_path"] for c in crit]
+    check("heading_path: la miga de pan sigue intacta con encabezados anidados",
+          "Criterio" in paths and "Criterio > Detalle" in paths
+          and "Criterio > Detalle > Excepción" in paths)
+
+    # ── estado ──
+    check("estado: 'verified' → 'verificado' (variante en inglés)",
+          crit[0]["doc_status"] == "verificado")
+    check("estado: 'borrador' → 'borrador'",
+          sync._chunk_document(read("borrador.md"), "b.md")[0]["doc_status"] == "borrador")
+    check("estado: variante de nombre 'estado' + valor 'verificado'",
+          sync._chunk_document(read("Mapa de contratación.md"), "m.md")[0]["doc_status"] == "verificado")
+    raro = sync._chunk_document(read("raro.md"), "raro.md")
+    check("estado: un valor desconocido NO se adivina → None", raro[0]["doc_status"] is None)
+    check("estado: el valor crudo desconocido sigue en frontmatter",
+          raro[0]["frontmatter"].get("estado") == "en veremos")
+    check("tipo: variante 'tipo' se normaliza a minúsculas", raro[0]["doc_type"] == "apunte")
+    check("estado: variantes de nombre y forma (Estado / STATUS / Doc-Status)",
+          sync._chunk_document("---\nEstado: Verificado\n---\n# A\n\nx\n", "a.md")[0]["doc_status"] == "verificado"
+          and sync._chunk_document("---\nSTATUS: Draft\n---\n# A\n\nx\n", "a.md")[0]["doc_status"] == "borrador"
+          and sync._chunk_document("---\nDoc-Status: evergreen\n---\n# A\n\nx\n", "a.md")[0]["doc_status"] == "verificado")
+
+    # ── YAML mal formado: fail-soft por documento ──
+    roto = sync._chunk_document(read("roto.md"), "roto.md")
+    check("YAML roto: no lanza y el cuerpo se sigue indexando",
+          len(roto) >= 1 and any("cuerpo de esta nota" in c["text"] for c in roto))
+    check("YAML roto: degrada a texto plano (frontmatter {}, sin estado)",
+          roto[0]["frontmatter"] == {} and roto[0]["doc_status"] is None)
+    check("YAML roto: el documento queda EXACTAMENTE como antes de 039",
+          [(c["text"], c["heading_path"], c["position"]) for c in roto]
+          == _legacy_chunks(sync, read("roto.md")))
+
+    # ── frontmatter que no es un mapa / delimitadores que no lo son ──
+    lista = "---\n- uno\n- dos\n---\n# T\n\ncuerpo.\n"
+    check("frontmatter que es una lista (YAML válido, no metadatos) → texto plano",
+          sync._chunk_document(lista, "l.md")[0]["frontmatter"] == {})
+    sin_cierre = "---\ntipo: nota\n# T\n\ncuerpo.\n"
+    check("bloque '---' sin cerrar → NO es frontmatter, texto intacto",
+          sync._chunk_document(sin_cierre, "s.md")[0]["frontmatter"] == {})
+    regla = "# T\n\ncuerpo.\n\n---\n\notro párrafo.\n"
+    check("una regla horizontal '---' a mitad del documento NO se confunde con frontmatter",
+          sync._chunk_document(regla, "r.md")[0]["frontmatter"] == {}
+          and [(c["text"], c["heading_path"], c["position"])
+               for c in sync._chunk_document(regla, "r.md")] == _legacy_chunks(sync, regla))
+    check("frontmatter vacío ('---\\n---') no rompe",
+          sync._chunk_document("---\n---\n# T\n\ncuerpo.\n", "v.md")[0]["frontmatter"] == {})
+
+    # ── wikilinks ──
+    moc = sync._chunk_document(read("Mapa de contratación.md"), "moc.md")
+    clausulas = next(c for c in moc if c["heading_path"] == "Mapa de contratación > Cláusulas")
+    keys = [l["to_key"] for l in clausulas["links"]]
+    check("wikilinks: el índice deja de ser un chunk de enlaces rotos", len(keys) >= 4)
+    check("wikilinks: enlace simple [[criterio]]", "criterio" in keys)
+    check("wikilinks: [[nota|alias]] → destino 'criterio' (el alias se descarta)",
+          all("|" not in k for k in keys))
+    check("wikilinks: [[nota#sección]] → la nota, sin la sección",
+          any(l["to"] == "carpeta/Nota Anidada" and l["to_key"] == "nota anidada"
+              for l in clausulas["links"]))
+    check("wikilinks: un destino inexistente se conserva (el enlace roto es información)",
+          "nota que no existe" in keys)
+    check("wikilinks: ![[diagrama.png]] (adjunto) se ignora",
+          not any("diagrama" in k for k in keys))
+    check("wikilinks: motivo declarado con campo inline (fundamenta:: [[criterio]])",
+          any(l["to_key"] == "criterio" and l["rel"] == "fundamenta" for l in clausulas["links"]))
+    check("wikilinks: un enlace suelto NO inventa motivo (rel=None)",
+          any(l["to_key"] == "criterio" and l["rel"] is None for l in clausulas["links"]))
+    codigo = next((c for c in moc if "NoEsUnEnlace" in c["text"]), None)
+    check("wikilinks: los [[enlaces]] dentro de un bloque de código se ignoran",
+          codigo is not None and not any("noesunenlace" in l["to_key"] for l in codigo["links"]))
+    check("wikilinks: los enlaces se guardan en el chunk donde APARECEN, no en todos",
+          all(not c["links"] for c in moc if c["heading_path"] == "Mapa de contratación"))
+    check("wikilinks: motivo declarado desde el frontmatter (relacionado_con) → primer chunk",
+          any(l["to_key"] == "mapa de contratación" and l["rel"] == "relacionado_con"
+              for l in crit[0]["links"]))
+    check("wikilinks: un vault sin enlaces produce links=[] (cero regresión)",
+          sync._chunk_document(doc_plano, "x.md")[0]["links"] == [])
+    dup = "# T\n\n[[a]] y otra vez [[a]] y [[a|alias]].\n"
+    check("wikilinks: sin repetidos (mismo destino, mismo motivo)",
+          len(sync._chunk_document(dup, "d.md")[0]["links"]) == 1)
+
+
 # ── checks que tocan DB (migración, RLS, sync incremental) ───────────────────
-async def db_checks(a: str, b: str, vault: Path, empty_vault: Path) -> None:
+async def db_checks(a: str, b: str, vault: Path, empty_vault: Path, struct_vault: Path) -> None:
     await pool.open_pool()
     try:
         sync = ObsidianSync()
@@ -251,8 +452,104 @@ async def db_checks(a: str, b: str, vault: Path, empty_vault: Path) -> None:
         s5 = await sync.sync(str(empty_vault), b)
         check("vault vacío: stats en cero sin error",
               s5 == {"indexed": 0, "skipped": 0, "deleted": 0, "errors": 0})
+
+        # --- 039: estructura persistida (se usa B, que quedó vacío tras el check anterior) ---
+        await struct_db_checks(a, b, struct_vault)
     finally:
         await pool.close_pool()
+
+
+# ── 039 · estructura persistida en knowledge_chunks ──────────────────────────
+async def struct_db_checks(a: str, b: str, struct_vault: Path) -> None:
+    sync = ObsidianSync()
+
+    # --- migración 039: columnas nuevas + restricción del vocabulario de estado ---
+    async with pool.connection() as conn:
+        cols = {r[0] for r in await (await conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name='knowledge_chunks'"
+        )).fetchall()}
+    check("migración 039: knowledge_chunks tiene doc_status, doc_type, frontmatter y links",
+          {"doc_status", "doc_type", "frontmatter", "links"}.issubset(cols))
+    async with pool.connection() as conn:
+        ck = (await (await conn.execute(
+            "SELECT count(*) FROM pg_constraint WHERE conname='ck_knowledge_chunks_doc_status'"
+        )).fetchone())[0]
+    check("migración 039: el vocabulario de estado está restringido en la base", ck == 1)
+
+    # --- sync del vault estructurado: 6 notas, la rota NO tumba la sincronización ---
+    s = await sync.sync(str(struct_vault), b)
+    check("vault estructurado: se indexan las 6 notas y la del YAML roto NO rompe el sync",
+          s["indexed"] == 6 and s["errors"] == 0)
+
+    async def rows(tenant: str, where: str, params: tuple = ()) -> list:
+        async with pool.tenant_connection(tenant) as conn:
+            return await (await conn.execute(
+                f"SELECT source_path, doc_status, doc_type, frontmatter, links, content "
+                f"FROM knowledge_chunks WHERE source='obsidian' AND {where}", params
+            )).fetchall()
+
+    # --- el estado queda disponible para filtrar ---
+    verificados = {r[0] for r in await rows(b, "doc_status = 'verificado'")}
+    borradores = {r[0] for r in await rows(b, "doc_status = 'borrador'")}
+    check("estado en DB: la recuperación puede pedir SOLO lo verificado",
+          verificados == {"criterio.md", "Mapa de contratación.md"})
+    check("estado en DB: el borrador del despacho es distinguible del criterio verificado",
+          borradores == {"borrador.md"} and not (verificados & borradores))
+    sin_estado = {r[0] for r in await rows(b, "doc_status IS NULL")}
+    check("estado en DB: lo que el vault no declara queda NULL (ni borrador ni verificado)",
+          sin_estado == {"roto.md", "plano.md", "raro.md"})
+
+    # --- el frontmatter dejó de ser basura textual dentro del chunk ---
+    crit = await rows(b, "source_path = 'criterio.md'")
+    check("frontmatter en DB: se guarda parseado y consultable",
+          crit and crit[0][3].get("fuente") == "Manual interno del despacho")
+    check("frontmatter en DB: el YAML ya no contamina el texto del chunk",
+          all("campo_que_nadie_conoce" not in r[5] for r in crit))
+    async with pool.tenant_connection(b) as conn:
+        n_fm = (await (await conn.execute(
+            "SELECT count(DISTINCT source_path) FROM knowledge_chunks "
+            "WHERE source='obsidian' AND frontmatter @> '{\"tipo\": \"moc\"}'"
+        )).fetchone())[0]
+    check("frontmatter en DB: un campo NO normalizado sigue siendo consultable con @>", n_fm == 1)
+
+    # --- backlinks sin tabla de grafo: quién enlaza a 'criterio' y por qué ---
+    async with pool.tenant_connection(b) as conn:
+        back = await (await conn.execute(
+            "SELECT DISTINCT source_path FROM knowledge_chunks "
+            "WHERE source='obsidian' AND links @> '[{\"to_key\": \"criterio\"}]' "
+            "ORDER BY source_path"
+        )).fetchall()
+    check("enlaces en DB: los backlinks se consultan con links @> (sin tabla de grafo)",
+          {r[0] for r in back} == {"Mapa de contratación.md", "plano.md"})
+    async with pool.tenant_connection(b) as conn:
+        motivo = await (await conn.execute(
+            "SELECT DISTINCT source_path FROM knowledge_chunks WHERE source='obsidian' "
+            "AND links @> '[{\"to_key\": \"criterio\", \"rel\": \"fundamenta\"}]'"
+        )).fetchall()
+    check("enlaces en DB: el MOTIVO del vínculo es consultable (rel='fundamenta')",
+          {r[0] for r in motivo} == {"Mapa de contratación.md"})
+    plano = await rows(b, "source_path = 'plano.md'")
+    check("enlaces en DB: un vault sin frontmatter conserva sus enlaces y '{}' de metadatos",
+          plano and plano[0][3] == {} and plano[0][4] and plano[0][4][0]["rel"] is None)
+
+    # --- re-sync: un cambio de estado se refleja (el UPDATE también escribe estructura) ---
+    (struct_vault / "borrador.md").write_text(
+        "---\nestado: verificado\ntipo: nota\n---\n"
+        "# Idea a medias\n\nEsto todavía no es criterio del despacho.\n", encoding="utf-8")
+    s2 = await sync.sync(str(struct_vault), b)
+    now = await rows(b, "source_path = 'borrador.md'")
+    check("re-sync: borrador → verificado se refleja en la fila (no queda estado viejo)",
+          s2["indexed"] == 1 and all(r[1] == "verificado" for r in now))
+
+    # --- aislamiento: A (que tiene su propio vault) no ve NADA de la estructura de B ---
+    async with pool.tenant_connection(a) as conn:
+        leak = (await (await conn.execute(
+            "SELECT count(*) FROM knowledge_chunks WHERE source='obsidian' "
+            "AND (doc_status IS NOT NULL OR links <> '[]'::jsonb "
+            "     OR frontmatter <> '{}'::jsonb)"
+        )).fetchone())[0]
+    check("RLS 039: A no ve el frontmatter, el estado ni los enlaces del vault de B", leak == 0)
 
 
 def main() -> int:
@@ -261,18 +558,22 @@ def main() -> int:
         print("  [FAIL] PG_PASSWORD vacío en .env — necesario para la migración")
         return 1
 
-    init_knowledge_stores.apply()   # idempotente: asegura las tablas (rol postgres)
+    init_knowledge_stores.apply()      # idempotente: asegura las tablas (rol postgres)
+    init_obsidian_structure.apply()    # idempotente: migración 039 (estructura del vault)
 
     work = Path(tempfile.mkdtemp(prefix="obsidian_", dir=str(ROOT / ".tmp")))
     vault = work / "vault"
     empty_vault = work / "empty"
     empty_vault.mkdir(parents=True, exist_ok=True)
     build_vault(vault)
+    struct_vault = work / "struct"
+    build_struct_vault(struct_vault)
 
     a, b = make_tenants()
     try:
         offline_checks(vault)
-        asyncio.run(db_checks(a, b, vault, empty_vault))
+        structure_checks(struct_vault)
+        asyncio.run(db_checks(a, b, vault, empty_vault, struct_vault))
     finally:
         drop_tenants(a, b)
         shutil.rmtree(work, ignore_errors=True)

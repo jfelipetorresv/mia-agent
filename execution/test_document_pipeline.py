@@ -91,7 +91,11 @@ async def run_gate() -> None:
           {"intake", "facts", "research", "analysis", "draft", "verification",
            "hitl_checkpoint", "finalize"} <= nodes)
     edges = {(e.source, e.target) for e in drawable.edges}
-    expected = {("intake", "facts"), ("facts", "research"), ("research", "analysis"),
+    # CP-HUB2: entre intake y facts está `delegation` (la pausa de "¿le pido esto a un
+    # ayudante externo?"). No toca el orden del equipo de especialistas, que empieza igual
+    # en facts y termina igual en verification→hitl_checkpoint.
+    expected = {("intake", "delegation"), ("delegation", "facts"),
+                ("facts", "research"), ("research", "analysis"),
                 ("analysis", "draft"), ("draft", "verification"),
                 ("verification", "hitl_checkpoint"), ("hitl_checkpoint", "finalize")}
     check("cp9-08 · el orden del equipo es hechos→investigación→cruce→redacción→verificación",

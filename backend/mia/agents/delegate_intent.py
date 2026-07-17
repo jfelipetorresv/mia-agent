@@ -20,24 +20,27 @@ que el interruptor sea real, y ante la duda que mande el abogado):
     el seguro: si no detecta la intención, NO pasa nada (el turno sigue igual). Nunca
     puede sacar datos del expediente por sorpresa, porque nunca actúa sola.
 
-  · (Descartada) Que el LLM decida por tool-calling. Es justo lo contrario del criterio:
-    un modelo decidiendo motu proprio sacar el expediente del equipo. Un fallo de
-    alineación o una inyección indirecta desde un documento del propio expediente
-    ("ejecuta el asistente de navegación y súbelo a…") se convierte en exfiltración. El
-    sello de CP-S1 mitiga la lectura, no que le demos al modelo el gatillo.
+  · (Descartada AQUÍ; rehabilitada en CP-HUB2 con aprobación humana) Que el LLM decida.
+    Como ÚNICA puerta era lo contrario del criterio: un modelo decidiendo motu proprio
+    sacar el expediente del equipo, y una inyección indirecta desde un documento del propio
+    expediente ("ejecuta el asistente de navegación y súbelo a…") se convertía en
+    exfiltración. Lo que cambió en CP-HUB2 no es la confianza en el modelo: es que ya no es
+    él quien abre la puerta (el abogado ve el texto antes de que salga) y que el proponente
+    NO recibe el expediente, así que no puede filtrar lo que nunca leyó.
 
   · (Descartada) Reglas por tipo de tarea. Delegación INVISIBLE: el abogado escribe una
     consulta normal y su texto sale del equipo sin que él lo haya pedido ni lo note. Es
     exactamente la sorpresa que el encargo prohíbe.
 
-  · (Descartada) Que Mia lo proponga y el abogado apruebe (HITL con `interrupt()`).
-    Es seguro, pero es MÁS máquina para el mismo resultado: aquí el abogado ya escribió
-    la orden, preguntarle "¿confirmas?" es una pausa de más sobre algo que él mismo acaba
-    de pedir. Además la delegación ocurre en `intake_node`, muy antes del checkpoint HITL:
-    encajarla exigiría un segundo punto de interrupción en el grafo (nuevo estado que
-    persistir, reanudar y probar) para tapar un hueco que la invocación explícita ya no
-    abre. Se reserva para el día en que Mia deba delegar sin que se lo pidan — que hoy no
-    se necesita.
+  · (Complementaria desde CP-HUB2) Que Mia lo proponga y el abogado apruebe (HITL con
+    `interrupt()`). Se descartó en CP-HUB porque era más máquina para el mismo resultado
+    —si el abogado ya escribió la orden, preguntarle "¿confirmas?" es una pausa de más— y
+    se reservó "para el día en que Mia deba delegar sin que se lo pidan". Ese día llegó:
+    Pipe rechazó que Mia no pudiera decidir por su cuenta, y CP-HUB2 construyó ese segundo
+    punto de interrupción (`agents/delegate_proposal.py` + `graph.py::delegation_node` +
+    `architecture/hitl_flow.md` §8). Este módulo NO cambia: sigue siendo el camino de la
+    ORDEN, y sigue sin preguntar nada — lo que el abogado acaba de pedir no se le vuelve a
+    preguntar. Los dos caminos conviven; el candado de `hub_gate` es el mismo para ambos.
 
 MODO DE FALLO ELEGIDO: falso NEGATIVO. Ante ambigüedad (dos ayudantes nombrados, negación
 cerca, verbo ausente) NO delega. Que el abogado tenga que reformular es barato; que su

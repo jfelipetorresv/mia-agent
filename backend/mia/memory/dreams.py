@@ -13,7 +13,7 @@ from psycopg.types.json import Json
 from .. import config
 from ..agent import llm
 from ..db import pool
-from ..onboarding.soul_interview import soul_path
+from . import soul_manager
 from .gepa import GEPALoop
 from .prescriptions import PrescriptionEngine
 from .trace_capture import TraceCapture
@@ -57,11 +57,15 @@ class Dreams:
         wiki_manager: WikiManager | None = None,
         gepa: GEPALoop | None = None,
         prescriptions: PrescriptionEngine | None = None,
+        soul: object | None = None,
     ) -> None:
         self.trace_capture = trace_capture or TraceCapture()
         self.wiki_manager = wiki_manager or WikiManager(trace_capture=self.trace_capture)
         self.gepa = gepa or GEPALoop(trace_capture=self.trace_capture)
         self.prescriptions = prescriptions or PrescriptionEngine(trace_capture=self.trace_capture)
+        # Dreams NO escribe el SOUL: solo puede PROPONER a través de este módulo (el único
+        # escritor de la identidad). Inyectable para los gates.
+        self.soul = soul or soul_manager
 
     def _week_traces(self, tenant_id: str) -> list[dict]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=7)
@@ -151,16 +155,18 @@ class Dreams:
         pruned_skills = await self.gepa.prune_unused_skills(tenant_id)
         return {"lint": lint, "archived_concepts": archived_concepts, "pruned_skills": pruned_skills}
 
-    def _append_soul_rule(self, tenant_id: str, rule: str) -> None:
-        path = soul_path(tenant_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        current = path.read_text(encoding="utf-8") if path.exists() else ""
-        if rule in current:
-            return
-        section = "\n\n## Preferencias aprendidas por Mia\n" if "## Preferencias aprendidas por Mia" not in current else "\n"
-        path.write_text(current.rstrip() + section + f"- {rule}\n", encoding="utf-8")
-
     async def _nudges(self, tenant_id: str, traces: list[dict]) -> list[str]:
+        """Detecta preferencias repetidas y las PROPONE. Ya NO escribe el SOUL.
+
+        Antes, `_append_soul_rule` añadía la regla directo al SOUL.md: sin aprobación del
+        abogado, sin tope de tamaño y sin historial — el único escritor automático sin
+        freno sobre la capa 1 del prompt (la que se inyecta entera, con autoridad de
+        sistema, en todos los turnos). Hoy Dreams PROPONE y el abogado decide
+        (`memory/soul_manager.py`): la capa de máxima autoridad es la de menor autonomía.
+
+        Degrada limpio: si la propuesta no se puede crear (DB caída, tipo no migrado…),
+        se registra y Dreams sigue. Un nudge no puede tumbar el cron ni el turno del
+        abogado. Devuelve las reglas PROPUESTAS (no aplicadas)."""
         edited = [t for t in traces if _outcome(t) == "edited" and (t.get("draft_original") or t.get("draft_final"))]
         if len(edited) < 3:
             return []
@@ -176,8 +182,26 @@ class Dreams:
                 "El abogado ha corregido repetidamente respuestas de este contexto; "
                 "prioriza la forma final aprobada en asuntos similares."
             )
-            self._append_soul_rule(tenant_id, rule)
-            rules.append(rule)
+            # El porqué que leerá el abogado, en llano (§G): qué vio Mia y qué propone.
+            reason = (
+                f"Corregiste {len(items)} borradores parecidos esta semana. Mia propone "
+                "recordar tu forma final para no repetirte la corrección. Es un cambio a "
+                "la descripción de tu despacho: solo se guarda si lo apruebas."
+            )
+            try:
+                created = await self.soul.propose_soul_rule(
+                    tenant_id, rule, reason=reason, signal_count=len(items),
+                    trace_ids=[f"{tenant_id}:{t.get('matter_id')}:{t.get('timestamp')}"
+                               for t in items],
+                )
+            except Exception:  # noqa: BLE001 — un nudge nunca tumba la consolidación
+                logger.warning(
+                    "no se pudo dejar la preferencia aprendida como propuesta; "
+                    "Dreams continúa (el SOUL no se toca sin aprobación).",
+                    exc_info=True)
+                continue
+            if created:
+                rules.append(rule)
         return rules
 
     async def _weekly_report(self, tenant_id: str, firm_name: str, metrics: dict, wiki: dict,

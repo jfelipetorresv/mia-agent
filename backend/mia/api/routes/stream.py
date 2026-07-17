@@ -18,14 +18,16 @@ from sse_starlette.sse import EventSourceResponse
 
 from ...agents.checkpointer import open_checkpointer
 from ...agents.context_references import expand_context_references
-from ...agents.graph import build_matter_graph, build_project_graph
+from ...agents.graph import (DELEGATION_INTERRUPT_KIND, PROPOSAL_PROMPT, build_matter_graph,
+                             build_project_graph)
 from ...agents.personas import persona_service
 from ...agents.state import initial_state, thread_id_for
 from ...config import MIA_CONTEXT_WINDOW
 from ...db import pool
 from ...observability import audit
 from ...policy import budget as policy_budget
-from ._common import assert_owns_matter, load_profile_snapshot, prepare_new_turn, sse
+from ._common import (assert_owns_matter, load_profile_snapshot, matter_kind,
+                      prepare_new_turn, sse)
 
 router = APIRouter(tags=["matters"])
 logger = logging.getLogger("mia.api.stream")
@@ -91,6 +93,15 @@ async def _stream_turn_events(
             break
         if "__interrupt__" in chunk:
             v = _interrupt_value(chunk)
+            # CP-HUB2: el turno tiene DOS pausas. Se distinguen por el 'tipo' que cada
+            # interrupt trae en su propio payload — no por el orden ni por adivinar. Una
+            # propuesta de ayudante NO es un borrador: no marca pending_review (el asunto no
+            # tiene nada que aprobar todavía) ni emite 'awaiting_review' (la pantalla del
+            # borrador no debe abrirse con un texto que no es un borrador).
+            if v.get("tipo") == DELEGATION_INTERRUPT_KIND:
+                yield sse("awaiting_delegation", v.get("message", PROPOSAL_PROMPT),
+                          propuesta=v.get("propuesta"))
+                continue
             # Riesgo #25: marcar el asunto como "borrador esperando revisión"
             # (RLS activo: el tenant ya fue validado con assert_owns_matter).
             async with pool.tenant_connection(tenant_id) as conn:
@@ -136,7 +147,11 @@ async def _stream_project_events(
 
     Mismo kill-on-disconnect que _stream_turn_events (CP-S3): sin consumidor no tiene
     sentido seguir gastando minutos de razonamiento. NUNCA marca pending_review (eso es
-    exclusivo del flujo de asunto con HITL) ni emite 'awaiting_review'."""
+    exclusivo del flujo de asunto con HITL) ni emite 'awaiting_review'.
+
+    CP-HUB2: un proyecto SÍ puede pausarse — no por su resultado (que no se aprueba), sino
+    porque Mia proponga sacar texto del computador. El muro de confidencialidad es el mismo
+    para asuntos y proyectos."""
     async for chunk in graph.astream(turn_input, cfg, stream_mode="updates"):
         if await is_disconnected():
             logger.info("stream (proyecto): navegador desconectado; se corta el turno "
@@ -148,6 +163,12 @@ async def _stream_project_events(
                     logger.exception("stream (proyecto): no se pudo limpiar el checkpoint "
                                      "a medias (tenant=%s matter=%s)", tenant_id, matter_id)
             break
+        if "__interrupt__" in chunk:
+            v = _interrupt_value(chunk)
+            if v.get("tipo") == DELEGATION_INTERRUPT_KIND:
+                yield sse("awaiting_delegation", v.get("message", PROPOSAL_PROMPT),
+                          propuesta=v.get("propuesta"))
+            continue
         for node, update in chunk.items():
             if node == "work":
                 # work_node lleva su texto en su propio campo 'reply' del estado (ver
@@ -219,10 +240,7 @@ async def stream_matter(
 
     # Bloque A: 'asunto' (comportamiento actual, INTACTO) vs 'proyecto' (sin HITL).
     # matter_id ya está validado por assert_owns_matter — la lectura va bajo RLS igual.
-    async with pool.tenant_connection(tenant_id) as conn:
-        krow = await (await conn.execute(
-            "SELECT kind FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
-    kind = krow[0] if krow else "asunto"
+    kind = await matter_kind(tenant_id, matter_id)
     graph_builder = build_project_graph if kind == "proyecto" else build_matter_graph
 
     # CP-E1: tope de gasto de IA del despacho (política activa). El turno es GET/SSE,

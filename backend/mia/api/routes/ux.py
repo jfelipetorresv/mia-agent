@@ -45,6 +45,7 @@ from ...jurisdiction.pack import GENERIC_CODE, list_packs, load_pack
 from ...memory.gepa import GEPALoop
 from ...memory.playbook_manager import Playbook, PlaybookManager
 from ...memory.profile_manager import ProfileManager
+from ...memory import soul_manager
 from ...memory.trace_capture import TraceCapture
 from ...memory.wiki_manager import WikiManager
 from ...observability import audit
@@ -71,6 +72,8 @@ _PROPOSAL_LABEL = {
     "flag_gap": "Brecha de conocimiento",
     "wiki_correction": "Corrección pendiente",
     "weekly_report": "Resumen semanal",
+    # La identidad del despacho (SOUL.md): Mia la PROPONE, nunca la escribe sola.
+    "soul_rule": "Ajuste a la descripción de tu despacho",
 }
 _JOB_LABEL = {
     "sync_obsidian_all_tenants": "Sincronización del conocimiento",
@@ -1138,8 +1141,32 @@ async def apply_proposal(proposal_id: str, request: Request,
         # pooled (revisor capa 2: sostenerla durante la escritura arriesgaba agotar el
         # pool del tenant bajo carga concurrente). Para los demás tipos, se marca
         # 'applied' aquí mismo, igual que antes.
-        if p["proposal_type"] != "wiki_correction":
+        # 'soul_rule' se aplica FUERA de esta conexión, igual que wiki_correction: escribe
+        # el archivo de identidad en disco y abre su propia transacción para versionar
+        # (memory/soul_manager.py). Sostener esta conexión pooled mientras tanto arriesga
+        # el pool del tenant; y si el tope rechaza el cambio, la propuesta debe quedarse
+        # PENDIENTE — no marcarse aplicada aquí antes de saber si de verdad se aplicó.
+        if p["proposal_type"] not in ("wiki_correction", "soul_rule"):
             await conn.execute(
+                "UPDATE feedback_proposals SET status = 'applied', reviewed_at = now() "
+                "WHERE id = %s::uuid", (proposal_id,))
+
+    if p["proposal_type"] == "soul_rule":
+        # La identidad es sagrada: ningún agente la escribe solo. Mia dejó la regla
+        # PROPUESTA; este es el momento en que el abogado la aprueba y recién entonces se
+        # escribe — con el estado anterior versionado y con tope de tamaño que RECHAZA
+        # (nunca trunca: la identidad no se corta a la mitad en silencio).
+        rule = edited_content if edited_content is not None else p["suggested_content"]
+        try:
+            result = await soul_manager.apply_soul_rule_proposal(tid, rule or "")
+        except soul_manager.SoulTooLargeError as e:
+            # El mensaje YA viene en llano desde el manager (§G). La propuesta sigue
+            # pendiente: el abogado recorta su descripción y vuelve a aprobarla.
+            raise HTTPException(status_code=409, detail=str(e))
+        if not result["applied"]:
+            note = "Esa preferencia ya estaba en la descripción de tu despacho."
+        async with pool.tenant_connection(tid) as conn2:
+            await conn2.execute(
                 "UPDATE feedback_proposals SET status = 'applied', reviewed_at = now() "
                 "WHERE id = %s::uuid", (proposal_id,))
 

@@ -66,6 +66,17 @@ class MatterState(TypedDict, total=False):
     # sin el campo siguen válidos; los nodos leen state.get("persona") or {}.
     persona: Optional[dict]
 
+    # CP-HUB2 · el PLAN de delegación a un ayudante externo de este turno (o None). Lo
+    # escribe intake_node (_plan_delegation) y lo consume delegation_node. Va en el ESTADO,
+    # no en metadata, por una razón que es el corazón del diseño: el estado se persiste en el
+    # checkpoint, así que el texto que se le muestra al abogado en la pausa es EXACTAMENTE el
+    # mismo objeto que se lee al reanudar. Si el plan se recalculara tras la aprobación (el
+    # nodo se re-ejecuta desde el principio al reanudar, semántica de interrupt()), el modelo
+    # podría redactar OTRA petición y saldría del equipo un texto que el abogado nunca vio.
+    # Shape: {"agent_key", "agente" (slug §G), "nombre", "texto", "modo", "estado", "huella"}.
+    # total=False → checkpoints viejos sin el campo siguen válidos.
+    delegation_request: Optional[dict]
+
     # Sala de estrategia (warroom): panel de counsel con posturas opuestas que debaten el
     # asunto + dictamen del moderador. `panel` = lista de panelistas resueltos (shape
     # Panelist del contrato); `warroom_result` = último WarRoomResult (dict) para el GET
@@ -137,6 +148,7 @@ def initial_state(
         knowledge=[],
         draft=None,
         reply=None,
+        delegation_request=None,
         hitl_status="pending",
         trace_id=None,
         metadata={},
