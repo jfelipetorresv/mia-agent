@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ApiError, apiSend, setToken } from "@/lib/api";
+import { apiSend, plainMessage, setToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -31,10 +31,10 @@ export default function LoginPage() {
       const res = await apiSend<AuthResponse>("POST", "/api/auth/login", { email, password });
       setToken(res.token);
       router.replace("/");
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Solo se muestran mensajes que VIENEN del backend (ApiError, en llano);
       // un error de red del navegador ("Failed to fetch") jamás llega a pantalla.
-      const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+      const msg = plainMessage(err, "");
       const generic = !msg || msg === "Credenciales invalidas" || msg === "Sesión expirada";
       setError(generic ? "El correo o la contraseña no coinciden." : msg);
     } finally {

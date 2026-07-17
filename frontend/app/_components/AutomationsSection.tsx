@@ -61,7 +61,7 @@ function paramsSummary(params: Record<string, unknown>, blueprint?: Blueprint): 
   const campos = blueprint?.campos || [];
   const etiquetas = entries.map(([k]) => campos.find((c) => c.name === k)?.etiqueta);
   if (etiquetas.every((e) => Boolean(e))) {
-    return entries.map(([k, v], i) => `${etiquetas[i]}: ${String(v)}`).join(" · ");
+    return entries.map(([, v], i) => `${etiquetas[i]}: ${String(v)}`).join(" · ");
   }
   return "Configuración personalizada";
 }
