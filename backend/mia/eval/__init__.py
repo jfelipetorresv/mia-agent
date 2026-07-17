@@ -12,7 +12,7 @@ despacho exige consentimiento expl√≠cito (`allow_eval_real_data`, fail-closed) ‚
 """
 from .cases import GOLDEN_CASES, GoldenCase, load_golden_cases, load_tenant_gold_cases
 from .compare import compare_reports
-from .scoring import score_turn, substantive_score
+from .scoring import score_turn, substance_signal, substantive_score
 
 __all__ = [
     "GOLDEN_CASES",
@@ -21,5 +21,6 @@ __all__ = [
     "load_tenant_gold_cases",
     "compare_reports",
     "score_turn",
+    "substance_signal",
     "substantive_score",
 ]
