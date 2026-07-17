@@ -1,5 +1,77 @@
 # HANDOFF — Mia (traspaso a Cursor)
 
+---
+
+# CIERRE — 2026-07-17, sesión 48
+
+## Qué se hizo esta sesión
+Se cerró el backlog de las tres auditorías (Cursor, Antigravity, Claude) y se le quitó a MIA
+el sesgo colombiano que llevaba por dentro. Se hicieron reales dos capacidades que tenían API
+pero estaban muertas (Agent Hub y Banco de oro) y se les hizo pantalla. Se le dio criterio
+jurídico con 8 principios destilados de los skills y el vault de Pipe, sin clonar nada suyo.
+De paso volvió a arrancar la DB portable (llevaba sesiones caída) y aparecieron **cuatro fugas
+de confidencialidad que nadie buscaba** y **dos gates que llevaban sesiones en rojo sin que
+constara**. 17 commits, repo limpio.
+
+## Estado de verificación
+- **Capa 1 (tests/build/lint):** PASÓ. `test_rls` 19/19 (HALT) · `jurisdiction_agnostic` 75/75 ·
+  `delegation_decide` 103/103 · `argument_engine` 65/65 · `soul_guard` 47/47 ·
+  `curator_conflicts` 38/38 · `wiki_reading` 36/36 · `obsidian_sync` 73/73 ·
+  `eval_substance` 37/37 · `gold_cases_api` 55/55 · `e2e` 32/32 · `prompt_builder` 46/46 ·
+  `migration_ledger` PASS · `config_tabs` 21/21 · tsc limpio · lint 0 errores ·
+  `next build` 15 rutas · `cargo check` exit 0.
+  **NO se corrió la regresión completa** (103 suites; no cabe): se corrieron las tocadas y sus
+  adyacentes.
+- **Capa 2 (revisor independiente):** HECHO en los dos frentes de riesgo — revisión adversarial
+  del frontend (6 hallazgos, todos corregidos: dos invalidaban objetivos que se daban por
+  cerrados) y del anonimizador (encontró la fuga del `role`, corregida). El resto de frentes
+  los verificó Claude releyendo y ejecutando, no un revisor aparte.
+- **Capa 3 (visual/en vivo):** **PENDIENTE — es de Pipe.** Nada de esto se ha probado en vivo.
+
+## Pendientes y próximo paso
+1. **Capa 3 de Pipe** (lo que Claude no puede hacer): E2E del instalador en máquina limpia,
+   recorrido visual, login real de NotebookLM y, nuevos: **probar la delegación en vivo**
+   (Riesgo #66 · D3: los flags de los CLI nunca se han probado contra un `--help` real; la
+   primera invocación puede fallar — degrada limpio, pero "funciona" está sin verificar) y el
+   **banco de oro de punta a punta**.
+2. **El diagnóstico del turno se tira cada turno** (Riesgo #68): es el razonamiento que llevó a
+   la conclusión y hoy se pierde (vive en el checkpoint y se borra). Por eso las conclusiones
+   clave del banco de oro llegan vacías. Es el hilo abierto de más valor.
+3. **El juez de conflictos del Curator** (Riesgo #67) está probado en cableado, no en puntería.
+   El paso honesto: un set etiquetado de pares reales de la firma contra el modelo vivo.
+4. Riesgos #69-#74 en `memory/bugs-and-risks.md` (hilo del asunto que no sobrevive a un F5,
+   ficheros sin RLS, `index_trace` best-effort, "Patrones rechazados" que no llega al modelo).
+
+## Trabajo en background sin leer
+**Ninguno.** Todos los agentes cerraron y sus informes se leyeron y verificaron.
+**Ojo — un proceso vivo:** la **DB portable quedó ENCENDIDA** en `127.0.0.1:55432` (se levantó
+esta sesión). Colgaba de la sesión y ya se cayó una vez al terminar un comando: **si mañana no
+responde, arráncala** con `tools/postgres16-portable/pgsql/bin/pg_ctl.exe -D tools/pgdata-portable
+-o "-p 55432" start`. Trampas documentadas abajo y en `memory/progress.md`: el clúster es
+`tools/pgdata-portable`; a la copia mínima le faltaba `share/*` (se copió del `-full` SIN
+machacar `share/extension/`, donde vive **pgvector 0.8.2**, que el `-full` no trae); y arrancar
+con los binarios del `-full` levanta el postmaster pero **sus backends mueren con 0xC0000142**
+(el puerto responde y engaña: solo se ve como ConnectionTimeout).
+
+## Decisiones tomadas / suposiciones hechas
+- **Pipe — anonimizador: "enmascarar todo, siempre".** Todos los packs, sin mirar el país del
+  despacho. Secreto profesional > precisión. Efecto aceptado: `artículos 1494-1495` se enmascara
+  como teléfono.
+- **Pipe — delegación: "MIA decide y me pregunta".** Rechazó que MIA no pudiera decidir
+  (*"parte del encanto de MIA es que puede determinar si necesita agentes o subagentes"*), y
+  tenía razón: sus subagentes PROPIOS ya eran autónomos y siguen sin candado.
+- **Pipe — todo en dólares.** Corrigió su idea inicial (moneda por jurisdicción) al ver que la
+  tarifa en pesos + el gasto en USD obligaba a mentir en el "valor neto" o a inventar una tasa.
+  **No se tocó nada**: el trabajo se paró a tiempo.
+- **Pipe — los 8 principios** de sus skills y su vault, sin clonar nada suyo.
+- **Suposición de Claude (decidida, no consultada):** los indicios de sustancia entran como
+  informativos y NO en `ok` — meterlos en el contrato volvería rojos de golpe los casos de oro
+  ya aprobados, y un examen que se pone rojo sin que nada empeore deja de creerse.
+- **Renumeración:** `038_soul_versions` → `040`. Dos agentes crearon el mismo 038. Regla nueva:
+  el número de migración se reserva al EMPEZAR, no al escribir el archivo (Riesgo #73).
+
+---
+
 ## Cómo usar este archivo
 
 Cursor lee este archivo al iniciar sesión en el repositorio. Aquí queda
