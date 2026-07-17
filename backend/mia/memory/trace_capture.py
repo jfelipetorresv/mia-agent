@@ -49,8 +49,17 @@ def _default_traces_dir() -> Path:
 
 
 def _safe_name(s: str) -> str:
-    """Nombre de archivo seguro a partir de un tenant_id arbitrario."""
-    return _SAFE.sub("_", s) or "unknown"
+    """Nombre de archivo seguro a partir de un tenant_id arbitrario.
+
+    En producción el tenant_id ya es un UUID validado en el borde (middleware, Riesgo #72),
+    así que este saneo es la identidad. Como red de seguridad se descarta un nombre de SOLO
+    puntos (`.`, `..`): igual que en `wiki_manager`, un `..` no debe poder trepar de carpeta
+    si algún día este nombre se usa como componente de directorio (hoy va siempre sufijado
+    con `.jsonl`, pero la guarda elimina la asimetría entre los tres saneadores del sistema)."""
+    name = _SAFE.sub("_", s)
+    if not name or set(name) <= {"."}:
+        return "unknown"
+    return name
 
 
 @dataclass

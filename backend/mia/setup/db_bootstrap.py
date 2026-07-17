@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import sys
 from pathlib import Path
 from typing import Callable
@@ -54,6 +55,44 @@ class MigrationChecksumError(RuntimeError):
     instalación existente. La salida segura es crear una migración nueva, no
     volver a ejecutar silenciosamente la anterior.
     """
+
+
+class MigrationPrefixCollisionError(RuntimeError):
+    """Dos migraciones comparten el mismo número de prefijo (p. ej. dos `038_`).
+
+    El orden del ledger y el checksum del gate F0 dependen de que el prefijo
+    numérico sea único y monótono. Dos archivos con el mismo prefijo hacen que el
+    orden dependa del resto del nombre (frágil) y que un agente que trabaje en
+    paralelo pise el número de otro. La salida segura es renumerar una de las dos
+    antes de aplicar nada. Regla: el número se reserva al EMPEZAR, no al escribir.
+    """
+
+
+_MIGRATION_PREFIX_RE = re.compile(r"^(\d+)_")
+
+
+def _assert_unique_prefixes(migrations: list[Path]) -> None:
+    """Falla si dos migraciones comparten el prefijo numérico.
+
+    Preflight barato y determinista: corre antes de tocar el esquema para que la
+    colisión (incidente real de la sesión 48: dos `038`) se detecte como error
+    con explicación en vez de romper el orden del ledger a mitad de camino.
+    """
+    by_prefix: dict[str, list[str]] = {}
+    for path in migrations:
+        match = _MIGRATION_PREFIX_RE.match(path.name)
+        if match is None:
+            continue  # archivos sin prefijo numérico no participan del orden
+        by_prefix.setdefault(match.group(1), []).append(path.name)
+    colisiones = {p: names for p, names in by_prefix.items() if len(names) > 1}
+    if colisiones:
+        detalle = "; ".join(
+            f"{prefix}: {', '.join(sorted(names))}" for prefix, names in sorted(colisiones.items())
+        )
+        raise MigrationPrefixCollisionError(
+            "Números de migración duplicados — renumera una de cada par antes de "
+            f"aplicar ({detalle})."
+        )
 
 
 def migration_sha256(path: Path) -> str:
@@ -145,6 +184,9 @@ def apply_migrations(
     # Defensa en profundidad: paths.migration_paths() ya ordena, pero este
     # helper también lo garantiza para cualquier llamador futuro.
     migrations = sorted(migrations, key=lambda path: path.name)
+    # Antes de tocar nada: dos migraciones con el mismo prefijo numérico rompen
+    # el orden del ledger (incidente real de la sesión 48: dos `038`).
+    _assert_unique_prefixes(migrations)
     applied: list[str] = []
     with psycopg.connect(**_super_kw(host, port, db, super_pw)) as c:
         c.execute("SELECT pg_advisory_lock(%s)", (_MIGRATION_LOCK_KEY,))

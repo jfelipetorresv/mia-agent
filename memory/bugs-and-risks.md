@@ -1,6 +1,17 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-07-17 (sesión 48)
+# Última actualización: 2026-07-17 (sesión 49)
+
+## Actualización 2026-07-17 — Sesión 49 (los 8 riesgos de la sesión 48)
+Cerrados POR CÓDIGO, con gate verde: **#68, #69, #70, #71, #72, #73** (detalle en cada uno ↓).
+Siguen abiertos porque su cierre NO es código sino prueba en vivo / volumen real de Pipe:
+**#66** (D3: invocar los CLI reales) y **#67** (medir la puntería del juez del Curator).
+Migración nueva: `041_traces_diagnosis.sql` (reservada al empezar, regla #73). Gates corridos:
+test_dreams 46/46, test_trace_search 23/23, test_gold_cases_api 57/57, test_migration_ledger PASS
+(con los 2 checks nuevos de #73), test_rls 19/19 (HALT), test_wiki_reading 36/36, test_trace_capture
+26/26, test_hitl_flow 21/21, test_welcome_keys 41/41, tsc frontend 0 errores. Nota honesta:
+test_auth trae 2 fallos PRE-EXISTENTES de contenido del frontend (login/register) ajenos a este
+trabajo; el check nuevo de #72 (tenant no-UUID → 401) sí pasa.
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
 
@@ -43,51 +54,90 @@ programa instalado. **Riesgo:** la primera invocación real puede fallar. **Lo q
 limpio y avisa en llano, y la salida del ayudante va a `metadata` — **NO entra en la cadena de
 razonamiento jurídico**. **Honestidad:** "funciona" está sin verificar; los gates prueban el
 cableado y el candado, no la invocación. **Acción:** capa 3 de Pipe (probar la delegación en vivo).
+**Nota s49:** NO se cierra por código — los CLI reales no están en el entorno de build; el cierre
+exige que Pipe los invoque en vivo. Se revisó en s49 y se dejó como está: ya degrada limpio.
 
 ### 🟡 Riesgo #67 — El juez de conflictos del Curator está probado en cableado, NO en puntería
 `test_curator_conflicts` 38/38 corre **sin red**: el veredicto del juez se inyecta. Que el juez
 distinga de verdad un duplicado de una contradicción ("siempre X" vs "nunca X") **está sin medir**.
 **Lo que lo acota:** fail-soft a duplicado, es decir, el fallo seguro es degradar al comportamiento
 de hoy; y un falso positivo solo interroga al abogado. **Acción:** medir la precisión contra casos
-reales cuando haya volumen.
+reales cuando haya volumen. **Nota s49:** NO se cierra por código — medir la puntería del juez
+necesita un corpus de conflictos reales (duplicado vs. contradicción) que hoy no existe; queda para
+cuando haya volumen. El fail-soft a duplicado ya acota el daño.
 
-### 🔴 Riesgo #68 — El diagnóstico del turno no se persiste (se pierde dato de valor cada turno)
-El diagnóstico vive en el checkpoint y se borra al terminar el turno. **Efecto hoy:** las
+### 🟢 Riesgo #68 — El diagnóstico del turno no se persiste  [CERRADO 2026-07-17, s49]
+**Cierre:** migración `041_traces_diagnosis.sql` añade `diagnosis text` + `diagnosis_summary jsonb`
+a `traces`. `index_trace` los persiste desde `finalize_node` (el diagnóstico ya viajaba en `md`);
+`gold_cases._capture_from_matter` los lee y `_propose_rubric` vuelve a proponer `conclusiones_clave`
+(antes siempre vacías). Gate: round-trip real en test_trace_search 23/23 + conclusiones no vacías en
+test_gold_cases_api 57/57. Los turnos pre-041 llegan sin diagnóstico (el abogado los escribe a mano).
+
+**(histórico)** El diagnóstico vive en el checkpoint y se borra al terminar el turno. **Efecto hoy:** las
 conclusiones clave del banco de oro llegan **vacías** en la captura automática (no se inventan: se le
 pide al abogado que las escriba). **Efecto de fondo:** cada turno tira a la basura la parte más
 valiosa del razonamiento, justo la que serviría para el examen y para aprender.
 **Acción:** persistir el diagnóstico por turno (probablemente junto a `traces`) antes de apoyarse en
 la captura automática.
 
-### 🔴 Riesgo #69 — El archivo "Patrones rechazados" de dreams sigue sin llegar al modelo
-El lazo de aprendizaje NO está cerrado al 100%: lo que el despacho rechaza se escribe, pero el
-modelo no lo lee (confidence hardcodeada en 0.10, sin `wiki_schema`). El resto del wiki ya sí se
-lee (`9019ee6`), este archivo no. **Efecto:** MIA puede repetir un patrón que el abogado ya rechazó.
+### 🟢 Riesgo #69 — "Patrones rechazados" no llega al modelo  [CERRADO 2026-07-17, s49]
+**Cierre:** `dreams._record_rejection` ahora escribe `wiki_schema: 2` y una confianza REAL calculada
+con `confidence_score(n_rechazos, 0)` — los rechazos son el `support` del concepto (cada rechazo es
+un acto deliberado del abogado que lo confirma), así que la confianza sube con el volumen sin
+hardcodear: con 3+ rechazos supera `WIKI_MIN_CONFIDENCE` (0.60) y el lector (`notes_for_query`) lo
+inyecta al turno. Un rechazo aislado no entra (podría ser ruido). Además acumula los patrones
+(no solo el último) acotado al presupuesto de la ficha. Gate: test_dreams 46/46 (2 checks nuevos:
+cumple el esquema del lector + notes_for_query lo devuelve tras acumular rechazos).
 
-### 🔴 Riesgo #70 — El hilo de mensajes del asunto no sobrevive a un F5
-No hay endpoint de historial: los turnos están en `traces` pero **nadie los muestra**. El abogado
-recarga la página y el hilo desaparece — el dato existe, la pantalla no lo pide. Se vive como
-pérdida de trabajo aunque no lo sea.
+**(histórico)** confidence hardcodeada en 0.10, sin `wiki_schema`; el lector lo descartaba por
+ambos gates. **Efecto:** MIA podía repetir un patrón que el abogado ya rechazó.
 
-### 🟡 Riesgo #71 — `index_trace` es best-effort: si esa fila falla, el asunto queda incapturable
-La indexación de la traza no bloquea el turno (bien: no se le tumba el trabajo al abogado por un
-índice). Pero si esa fila no se escribe, el banco de oro **no encuentra el turno** y el 409
-("ya capturado") mentiría. **Acción:** decidir si se reintenta o si se detecta la ausencia en vez de
-asumirla.
+### 🟢 Riesgo #70 — El hilo del asunto no sobrevive a un F5  [CERRADO 2026-07-17, s49]
+**Cierre:** nuevo `GET /api/matters/{id}/historial` (ux.py) lee los turnos de `traces` bajo RLS
+(`assert_owns_matter` + `tenant_connection`) y los devuelve como mensajes en orden cronológico
+(§G: sin jerga). El frontend (`asuntos/[id]/page.tsx`) los carga al montar y repinta el hilo tras
+un F5. Gate: tsc 0 errores + test_ux (next build). El dato ya se escribía (013); faltaba pedirlo.
 
-### 🟡 Riesgo #72 — SOUL, wiki y trazas viven en ficheros SIN RLS 🔐
-El aislamiento entre despachos de todo lo que vive en disco (no en Postgres) depende de **sanear el
-nombre del fichero**: `_safe_tenant` colapsa entradas distintas a la misma carpeta. Hoy NO es
-explotable — los tenant_id son UUID y no colisionan al sanearse — pero es **estructural**: la
+**(histórico)** No había endpoint de historial: el hilo solo vivía en el estado de React y un F5
+lo borraba aunque los turnos estuvieran guardados.
+
+### 🟢 Riesgo #71 — `index_trace` best-effort deja el asunto incapturable  [CERRADO 2026-07-17, s49]
+**Cierre (dos capas):** (1) `index_trace` reintenta los fallos TRANSITORIOS de conexión (3 intentos,
+backoff corto) y distingue el error de esquema (no se reintenta); si agota, PROPAGA y `finalize_node`
+lo registra en WARNING (antes lo tragaba en debug). (2) Detección de ausencia: `gold_cases` cae al
+JSONL local (`_last_accepted_from_jsonl`, que SIEMPRE se escribe) antes de dar el 409 — así el "aprueba
+el borrador primero" ya no miente si el abogado sí aprobó pero la fila índice falló; se captura del
+registro local con aviso en llano. Gate: test_trace_search 23/23, test_gold_cases_api 57/57.
+
+**(histórico)** La fila índice best-effort podía no escribirse y el 409 mentía.
+
+### 🟢 Riesgo #72 — SOUL, wiki y trazas en ficheros SIN RLS  [CERRADO ESTRUCTURALMENTE 2026-07-17, s49] 🔐
+**Cierre:** el aislamiento ya NO descansa en sanear el nombre. El middleware valida que el
+`tenant_id` del JWT sea un UUID canónico (→ 401 si no), en el borde por donde entra en producción
+(auth.py siempre acuña uuid4; `tenants.id` es uuid). Con eso, aguas abajo el saneo es la identidad y
+dos despachos jamás colapsan a una carpeta — la garantía la da la validación del motor, no la función
+de nombres. Defensa en profundidad: se portó la guarda anti-`..` de `wiki_manager` a
+`trace_capture._safe_name` (era la única de las tres que permitía puntos), eliminando la asimetría.
+Gate: check nuevo en test_auth (tenant no-UUID → 401) + test_rls 19/19 + test_wiki_reading 36/36 +
+test_trace_capture 26/26. Residual menor: unificar las tres `_safe_*` en un helper único (deuda de
+limpieza, no de seguridad). No se tocó soul/wiki (ya seguros) para no mover carpetas existentes.
+
+**(histórico)** `_safe_tenant` colapsaba entradas distintas a la misma carpeta. Nunca fue explotable — los tenant_id son UUID y no colisionan al sanearse — pero es **estructural**: la
 garantía no la da el motor, la da una función de nombres. `wiki_dir()` interpolaba el tenant_id sin
 sanear y se corrigió esta sesión (era una primitiva de lectura al wiki de otro despacho en cuanto se
 cableara la lectura). **Acción:** si algún día los identificadores dejan de ser UUID, esto es un
 bloqueante.
 
-### 🟡 Riesgo #73 — El número de migración se reserva al ESCRIBIR, no al empezar
-Dos agentes de esta sesión crearon el mismo `038` y hubo que renumerar (soul → 040). Dos migraciones
-con el mismo prefijo rompen el orden del ledger y el checksum del gate F0.
-**Regla nueva (vinculante):** el número de migración se **reserva al empezar** el trabajo, no al
+### 🟢 Riesgo #73 — Número de migración reservado al ESCRIBIR, no al empezar  [CERRADO 2026-07-17, s49]
+**Cierre:** la regla vinculante ahora tiene guardarraíl de código. `db_bootstrap.apply_migrations`
+llama `_assert_unique_prefixes` (nuevo) ANTES de tocar el esquema: dos migraciones con el mismo
+prefijo numérico fallan con `MigrationPrefixCollisionError` y explicación, en vez de romper el orden
+del ledger a mitad de camino. Gate test_migration_ledger con 2 checks nuevos: (1) un prefijo
+duplicado se bloquea con explicación y no filtra tabla; (2) las migraciones REALES del repo no
+colisionan hoy. La regla sigue vigente (reservar el número al empezar); el guardarraíl la respalda.
+
+**(histórico)** Dos agentes crearon el mismo `038` y hubo que renumerar (soul → 040).
+**Regla (vinculante):** el número de migración se **reserva al empezar** el trabajo, no al
 escribir el archivo. Aplica en particular al trabajo multi-agente sobre el mismo repo.
 
 ### 🟡 Riesgo #74 — Capa 3 de Pipe: la deuda acumulada crece con dos frentes nuevos

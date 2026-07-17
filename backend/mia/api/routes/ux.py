@@ -411,6 +411,31 @@ async def get_draft(matter_id: str, request: Request):
             "verification": md.get("verification")}
 
 
+@router.get("/matters/{matter_id}/historial")
+async def matter_history(matter_id: str, request: Request):
+    """Los turnos previos del asunto, en orden, para repintar el hilo tras un F5 (Riesgo #70).
+
+    El hilo vivía solo en el estado de React: al recargar la página desaparecía aunque los
+    turnos estén guardados. Aquí se leen de `traces` bajo RLS (el asunto de otro despacho es
+    invisible) y se devuelven como mensajes en orden cronológico. §G: nada de jerga hacia el
+    abogado — solo el texto de cada turno."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    async with pool.tenant_connection(tid) as conn:
+        rows = await (await conn.execute(
+            # matter_id en `traces` es text (así lo escribe index_trace): sin ::uuid.
+            "SELECT input, output FROM traces WHERE matter_id = %s "
+            "ORDER BY COALESCE(trace_ts, created_at) ASC",
+            (str(matter_id),))).fetchall()
+    mensajes: list[dict] = []
+    for entrada, salida in rows:
+        if entrada and str(entrada).strip():
+            mensajes.append({"role": "user", "text": str(entrada)})
+        if salida and str(salida).strip():
+            mensajes.append({"role": "mia", "text": str(salida)})
+    return {"mensajes": mensajes}
+
+
 @router.get("/matters/{matter_id}/draft.docx")
 async def download_draft_docx(matter_id: str, request: Request):
     """CP9 · emisión Word: el borrador actual como .docx con formato de escrito.

@@ -1509,9 +1509,19 @@ class MatterGraphBuilder:
                 activated_playbooks=activated,
                 retrieved_doc_ids=retrieved_doc_ids,
                 trace_ts=trace.timestamp,
+                # Riesgo #68: persistir el diagnóstico del turno (vivía solo en el
+                # checkpoint, que se borra) para que la captura del banco de oro no
+                # lo lea vacío. El summary ya viene parseado desde analysis_node.
+                diagnosis=md.get("diagnosis") or None,
+                diagnosis_summary=md.get("diagnosis_summary") or None,
             )
         except Exception:  # noqa: BLE001 — indexado best-effort, no crítico para el turno
-            logger.debug("index_trace falló (best-effort); la traza JSONL sí se escribió", exc_info=True)
+            # Riesgo #71: index_trace ya reintentó los fallos transitorios. Si llega aquí,
+            # el fallo es persistente (esquema o DB caída): se registra en WARNING —no debug—
+            # porque sin esta fila el banco de oro no encontrará el turno. El turno del
+            # abogado sigue en pie (la traza JSONL sí se escribió).
+            logger.warning("index_trace falló tras reintentos; la traza JSONL sí se escribió "
+                           "pero el turno no quedó en el índice consultable", exc_info=True)
 
         # H.4 skill self-improving: tras registrar la traza, extrae un patrón reutilizable y (si
         # aplica) propone una mejora de playbook con status=pending (HITL). FIRE-AND-FORGET: no

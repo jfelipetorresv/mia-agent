@@ -17,7 +17,7 @@ from . import soul_manager
 from .gepa import GEPALoop
 from .prescriptions import PrescriptionEngine
 from .trace_capture import TraceCapture
-from .wiki_manager import WikiManager
+from .wiki_manager import WIKI_SCHEMA_VERSION, WikiManager, confidence_score
 
 logger = logging.getLogger("mia.memory.dreams")
 
@@ -115,30 +115,87 @@ class Dreams:
             await self._record_rejection(tenant_id, trace)
         return {"approved_matters": len(approved_matters), "concepts_updated": sorted(updated), "rejections": len(rejected)}
 
+    # Presupuesto de la sección "Lo que NO funciona" (la única que el LECTOR del
+    # wiki extrae de este archivo). El _card acota el TOTAL a WIKI_NOTE_MAX_CHARS
+    # (1400) y rechaza —no trunca— si no cabe; mantenemos esta sección holgada bajo
+    # ese tope para que el concepto siempre entre al turno.
+    _REJECTION_ENTRY_MAX_CHARS = 200
+    _REJECTION_SECTION_MAX_CHARS = 650
+
+    @staticmethod
+    def _entries_under(body: str, header: str) -> list[str]:
+        """Líneas de viñeta (`- …`) bajo un encabezado `## …`, en orden."""
+        lines = body.splitlines()
+        out: list[str] = []
+        capturing = False
+        for line in lines:
+            if line.startswith("## "):
+                capturing = line[3:].strip().startswith(header)
+                continue
+            if capturing and line.strip().startswith("- "):
+                out.append(line.strip()[2:].strip())
+        return out
+
     async def _record_rejection(self, tenant_id: str, trace: dict) -> None:
         await self.wiki_manager.init_wiki(tenant_id)
         path = self.wiki_manager.concept_path(tenant_id, "Patrones rechazados")
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
         count = existing.count("- matter:")
+        total = count + 1
+
+        # "Patrones rechazados" es evidencia negativa DURA: cada rechazo es un acto
+        # deliberado del abogado que CONFIRMA el patrón (rechazar cuesta, aprobar es
+        # el default del HITL). Por eso los rechazos son el `support` del concepto y
+        # no hay evidencia en contra: la confianza sube con el volumen, sin hardcodear.
+        # Con la fórmula del wiki, 3+ rechazos superan WIKI_MIN_CONFIDENCE (0.60) y el
+        # concepto entra al prompt — cerrando el lazo que el 0.10 fijo dejaba abierto.
+        confidence = confidence_score(total, 0.0)
+
+        # Acumular los rechazos (no solo el último) para que el modelo vea el conjunto
+        # de patrones a evitar, acotado al presupuesto de la ficha que lee el turno.
+        prev_no_funciona = self._entries_under(existing, "Lo que NO funciona")
+        nuevo = str(trace.get("draft_final") or trace.get("output") or "").strip()
+        nuevo = " ".join(nuevo.split())[: self._REJECTION_ENTRY_MAX_CHARS]
+        if nuevo:
+            prev_no_funciona.append(nuevo)
+        # Conservar los más recientes que quepan en el presupuesto de la sección.
+        seleccion: list[str] = []
+        usado = 0
+        for entry in reversed(prev_no_funciona):
+            costo = len(entry) + 3  # "- " + salto de línea
+            if usado + costo > self._REJECTION_SECTION_MAX_CHARS and seleccion:
+                break
+            seleccion.insert(0, entry)
+            usado += costo
+        no_funciona_block = "\n".join(f"- {e}" for e in seleccion) or "- (pendiente)"
+
+        prev_patrones = self._entries_under(existing, "Patrones identificados")
+        prev_patrones.append(
+            f"matter:{trace.get('matter_id')} motivo:{str(trace.get('output', ''))[:240]}"
+        )
+        patrones_block = "\n".join(f"- {p}" for p in prev_patrones[-20:])
+
         content = (
             "---\n"
             "concept: Patrones rechazados\n"
-            "confidence: 0.10\n"
+            f"wiki_schema: {WIKI_SCHEMA_VERSION}\n"
+            f"confidence: {confidence}\n"
+            f"support_count: {total}\n"
+            "contra_count: 0\n"
             f"last_updated: {datetime.now(timezone.utc).date().isoformat()}\n"
-            f"case_count: {count + 1}\n"
+            f"case_count: {total}\n"
             "---\n"
             "# Patrones rechazados\n"
             "## Definicion (segun la practica de este despacho)\n"
             "Registro de salidas que no funcionaron para este despacho.\n\n"
             "## Patrones identificados\n"
-            f"{existing.split('## Patrones identificados')[-1].strip() if '## Patrones identificados' in existing else ''}\n"
-            f"- matter:{trace.get('matter_id')} motivo:{trace.get('output', '')[:240]}\n\n"
+            f"{patrones_block}\n\n"
             "## Casos que lo soportan (referencias anonimas)\n"
             "- Ver sources.md.\n\n"
             "## Conexiones con otros conceptos\n"
             "- Pendiente.\n\n"
             "## Lo que NO funciona (aprendido de rechazos)\n"
-            f"- {str(trace.get('draft_final') or trace.get('output') or '')[:500]}\n"
+            f"{no_funciona_block}\n"
         )
         path.write_text(content, encoding="utf-8")
         index = self.wiki_manager.wiki_dir(tenant_id) / "index.md"

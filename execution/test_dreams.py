@@ -43,6 +43,7 @@ from mia.memory import prescriptions as rx  # noqa: E402
 from mia.memory.dreams import Dreams  # noqa: E402
 from mia.memory.gepa import GEPALoop  # noqa: E402
 from mia.memory.trace_capture import TraceCapture  # noqa: E402
+from mia.memory import wiki_manager as wm  # noqa: E402
 from mia.memory.wiki_manager import WikiManager  # noqa: E402
 
 PG = dict(
@@ -251,6 +252,24 @@ async def run_checks() -> None:
             check("Métricas quedan en tenant_settings", tenant_metrics(tenant)["matters_worked"] >= 5)
             check("Wiki update compila conceptos aprobados", "Concepto Dream" in result["wiki"]["concepts_updated"])
             check("Rechazos quedan registrados en wiki", (await wiki.get_concept(tenant, "Patrones rechazados")) is not None)
+            # Riesgo #69: no basta con que el archivo EXISTA — antes tenía confidence=0.10 fija y
+            # sin wiki_schema, así que el LECTOR (notes_for_query) lo descartaba y NUNCA llegaba
+            # al modelo. Verifica el contrato del lector y que el lazo quede cerrado.
+            _rech = await wiki.get_concept(tenant, "Patrones rechazados")
+            _meta_rech, _ = wm._parse_frontmatter(_rech)
+            check("Rechazos cumplen el esquema del lector (wiki_schema>=2)",
+                  int(_meta_rech.get("wiki_schema") or 0) >= wm.WIKI_SCHEMA_VERSION)
+            # Con varios rechazos acumulados, la confianza supera el umbral y el concepto SÍ entra
+            # al turno (un rechazo aislado no: podría ser ruido — por eso sube con el volumen).
+            for _i in range(3):
+                await dreams._record_rejection(tenant, {
+                    "matter_id": f"rej-{_i}",
+                    "output": f"tesis descartada marcador-zeta-{_i}",
+                    "draft_final": f"no reutilizar el enfoque marcador-zeta {_i}",
+                })
+            _notas = await wiki.notes_for_query(tenant, "marcador-zeta enfoque")
+            check("Rechazos acumulados SÍ llegan al modelo (notes_for_query los devuelve)",
+                  any(str(n.get("id", "")).startswith("wiki:patrones_rechazados") for n in _notas))
             check("GEPA corre desde Dreams", {"new_skills_proposed", "skills_evolved", "skills_pruned", "top_skills"}.issubset(result["gepa"].keys()))
             check("Lint archiva concepto stale/orphan", (Path(tmp) / "wiki" / tenant / "concepts" / "archived" / "concepto_antiguo.md").exists())
             check("Pruning archiva skill viejo", playbook_status(old_skill) == "archived")

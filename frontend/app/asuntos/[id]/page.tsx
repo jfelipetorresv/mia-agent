@@ -211,6 +211,15 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       .catch(() => {
         /* sin sala de estrategia todavia */
       });
+    // Repinta el hilo de la conversacion tras un F5: los turnos viven guardados,
+    // pero la pantalla no los pedia y se perdian al recargar.
+    apiGet<{ mensajes?: Msg[] }>(`/api/matters/${matterId}/historial`)
+      .then((h) => {
+        if (h.mensajes && h.mensajes.length) setMessages(h.mensajes);
+      })
+      .catch(() => {
+        /* hilo nuevo, sin turnos previos */
+      });
     return () => {
       streamAbortRef.current?.abort();
     };

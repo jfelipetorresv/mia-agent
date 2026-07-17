@@ -100,14 +100,17 @@ _SHAPE = {"gold_case_id", "status", "title", "message_anon", "documents_anon",
 
 
 def seed_turno_aprobado(tenant_id: str, matter_id: str, *, n_docs: int = 1,
-                        chunks_por_doc: int = 1) -> None:
+                        chunks_por_doc: int = 1, diagnosis: str | None = None) -> None:
     """Siembra el material que deja un asunto REAL ya resuelto: la traza del turno aprobado
-    (pregunta + borrador que el abogado aprobó) + los documentos con sus chunks."""
+    (pregunta + borrador que el abogado aprobó) + los documentos con sus chunks.
+
+    `diagnosis` (Riesgo #68): persiste el diagnóstico del turno en la columna nueva de `traces`,
+    para probar que la captura del banco de oro lo lee (antes llegaba siempre vacío)."""
     with psycopg.connect(autocommit=True, **PG) as c:
         c.execute(
-            "INSERT INTO traces(tenant_id, matter_id, input, output, hitl_outcome, trace_ts) "
-            "VALUES(%s::uuid, %s, %s, %s, 'approved', now())",
-            (tenant_id, str(matter_id), _MESSAGE, _ANSWER))
+            "INSERT INTO traces(tenant_id, matter_id, input, output, hitl_outcome, trace_ts, "
+            "diagnosis) VALUES(%s::uuid, %s, %s, %s, 'approved', now(), %s)",
+            (tenant_id, str(matter_id), _MESSAGE, _ANSWER, diagnosis))
         for i in range(n_docs):
             doc = c.execute(
                 "INSERT INTO documents(tenant_id, matter_id, filename, mime) "
@@ -327,6 +330,22 @@ def main() -> int:
                   srv["rubric_propuesta"]["conclusiones_clave"] == [])
             check("captura: asunto pequeño → nota_captura vacía (no se recortó nada)",
                   srv["nota_captura"] == "")
+
+            # Riesgo #68: con el diagnóstico persistido, la captura SÍ propone conclusiones_clave
+            # (antes se perdía con el checkpoint y llegaba vacío). El abogado ya no las escribe a mano.
+            m_diag = make_matter(a)
+            _diag = ("Análisis del caso.\n"
+                     "=== CIERRE DEL DIAGNÓSTICO ===\n"
+                     "Problema jurídico: nulidad del acto por falta de motivación\n"
+                     "Normas y fuentes: Ley 1437 de 2011, art. 42\n"
+                     "Riesgo y recomendación: alto; demandar dentro del término de caducidad\n"
+                     "=== FIN DEL CIERRE ===")
+            seed_turno_aprobado(a, m_diag, diagnosis=_diag)
+            r = client.post(f"/api/matters/{m_diag}/gold-cases:draft", headers=auth_a, json={})
+            check("captura: con diagnóstico persistido → 200", r.status_code == 200)
+            _concl = r.json()["rubric_propuesta"]["conclusiones_clave"]
+            check("captura: el diagnóstico persistido SÍ propone conclusiones_clave (Riesgo #68)",
+                  len(_concl) >= 1 and any("nulidad" in c.lower() for c in _concl))
 
             # Recorte EXPLÍCITO en un asunto grande (nunca silencioso).
             m_big = make_matter(a)

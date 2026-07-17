@@ -167,11 +167,12 @@ def _draft_aviso(ner_ran: bool, spans: list[dict]) -> str:
 #   gold_answer  ← traces.output  de ese mismo turno (graph.py:1103 escribe `final`: el borrador
 #                                 aprobado, o el ya corregido si el desenlace fue 'edited')
 #   documents    ← chunks ⋈ documents del asunto (schema.sql:31-48)
-#   diagnosis    ← NO EXISTE de forma durable: vive solo en el checkpoint de LangGraph, que
-#                  `prepare_new_turn` borra al arrancar el turno siguiente (_common.py:110-111).
-#                  Va vacío a propósito: sin diagnóstico, `_propose_rubric` propone las citas
-#                  (que sí salen del borrador) y deja `conclusiones_clave` vacío para que el
-#                  abogado las escriba en la revisión. NO se inventa un diagnóstico.
+#   diagnosis    ← traces.diagnosis, persistido por turno desde el índice (Riesgo #68, migración
+#                  041). Antes vivía solo en el checkpoint de LangGraph, que `prepare_new_turn`
+#                  borra, y llegaba vacío; ahora `_propose_rubric` puede proponer las
+#                  `conclusiones_clave` del cierre. Si un turno viejo (pre-041) no tiene
+#                  diagnóstico persistido, llega vacío y el abogado lo escribe a mano (sin
+#                  inventar nada).
 #
 # `assistant_messages` NO sirve como fuente: no tiene matter_id — es el modo asistente libre,
 # explícitamente "fuera de un asunto" (015_assistant.sql:5-11).
@@ -195,7 +196,7 @@ async def _capture_from_matter(tenant_id: str, matter_id: str) -> dict:
         # Último turno ACEPTADO. 'edited' cuenta: el abogado se quedó con ese texto (es el
         # borrador que aprobó, ya corregido). 'rejected' NO: un borrador que rechazó no es oro.
         trace = await (await conn.execute(
-            "SELECT input, output FROM traces "
+            "SELECT input, output, diagnosis FROM traces "
             "WHERE matter_id = %s AND hitl_outcome IN ('approved', 'edited') "
             "ORDER BY COALESCE(trace_ts, created_at) DESC LIMIT 1",
             (str(matter_id),),
@@ -207,10 +208,22 @@ async def _capture_from_matter(tenant_id: str, matter_id: str) -> dict:
             (matter_id,),
         )).fetchall()
 
+    nota_indice = ""
     if not trace or not str(trace[0] or "").strip():
-        raise NoCaptureMaterial(
-            "Este asunto todavía no tiene un borrador que hayas aprobado, así que no hay nada "
-            "que guardar como caso de oro. Resuelve el asunto y aprueba el borrador primero.")
+        # Riesgo #71: la fila índice de `traces` es best-effort (index_trace pudo fallar). Antes
+        # de decir "aprueba el borrador primero" —que MENTIRÍA si el abogado sí aprobó— se revisa
+        # el JSONL, que se escribe SIEMPRE (fuera del best-effort). Así el 409 solo aparece cuando
+        # de verdad no hay turno aceptado.
+        respaldo = _last_accepted_from_jsonl(tenant_id, matter_id)
+        if respaldo is None:
+            raise NoCaptureMaterial(
+                "Este asunto todavía no tiene un borrador que hayas aprobado, así que no hay nada "
+                "que guardar como caso de oro. Resuelve el asunto y aprueba el borrador primero.")
+        # El registro local no guarda el diagnóstico: se captura el turno, sin conclusiones
+        # automáticas, y se avisa en llano (el abogado las escribe a mano, como antes).
+        trace = (respaldo[0], respaldo[1], None)
+        nota_indice = ("Este asunto sí tiene un borrador aprobado, pero no quedó en el índice de "
+                       "consulta; se tomó del registro local del turno.")
 
     # Agrupa chunks por documento conservando el orden (d.created_at, c.ord).
     por_doc: dict[str, dict] = {}
@@ -242,14 +255,44 @@ async def _capture_from_matter(tenant_id: str, matter_id: str) -> dict:
     if notas:
         nota_captura = ("Este asunto es grande (" + "; ".join(notas) + "). Lo que quedó fuera no "
                         "entra al examen: revisa que lo capturado baste, o completa el texto a mano.")
+    if nota_indice:
+        nota_captura = (nota_captura + " " + nota_indice).strip() if nota_captura else nota_indice
     return {
         "message": str(trace[0] or ""),
         "documents": documentos,
         "gold_answer": str(trace[1] or ""),
-        # El diagnóstico del turno no se persiste en ninguna parte (ver la nota de arriba).
-        "diagnosis": "",
+        # Diagnóstico persistido por turno (Riesgo #68). Vacío en turnos pre-041 o capturados del
+        # registro local; con él, `_propose_rubric` propone las conclusiones del cierre.
+        "diagnosis": str((trace[2] if len(trace) > 2 else "") or ""),
         "nota_captura": nota_captura,
     }
+
+
+def _last_accepted_from_jsonl(tenant_id: str, matter_id: str) -> tuple[str, str] | None:
+    """Respaldo del índice (Riesgo #71): último turno aceptado del asunto en el JSONL local.
+
+    El JSONL se escribe SIEMPRE (no es best-effort), así que sirve para distinguir "no hay
+    borrador aprobado" de "sí lo hay pero index_trace falló". Devuelve (input, output) del turno
+    aceptado más reciente de ESE asunto, o None. Fail-soft: cualquier error de lectura → None
+    (el llamador cae al 409 honesto de "aprueba primero")."""
+    try:
+        from ...memory.trace_capture import TraceCapture
+
+        registros = TraceCapture().read(tenant_id)
+    except Exception:  # noqa: BLE001 — el respaldo nunca debe tumbar la captura
+        logger.debug("respaldo JSONL del banco de oro no disponible", exc_info=True)
+        return None
+    aceptados = [
+        r for r in registros
+        if str(r.get("matter_id") or "") == str(matter_id)
+        and str(r.get("hitl_outcome") or "") in ("approved", "edited")
+        and str(r.get("input") or "").strip()
+    ]
+    if not aceptados:
+        return None
+    ultimo = max(aceptados, key=lambda r: str(r.get("timestamp") or ""))
+    salida = str(ultimo.get("draft_final") or ultimo.get("output") or "")
+    return str(ultimo.get("input") or ""), salida
 
 
 # ── endpoints ──────────────────────────────────────────────────────────────────

@@ -140,6 +140,36 @@ try:
             concurrently_blocked = "CONCURRENTLY" in str(exc)
         check("DDL no transaccional se bloquea con explicación", concurrently_blocked)
 
+        # Riesgo #73: dos migraciones con el mismo prefijo numérico deben fallar
+        # con explicación ANTES de tocar el esquema, no romper el orden del ledger.
+        dup_a = folder / "906_gate_dup.sql"
+        dup_b = folder / "906_gate_dup_other.sql"
+        dup_a.write_text("CREATE TABLE gate_dup_a (id integer);\n", encoding="utf-8")
+        dup_b.write_text("CREATE TABLE gate_dup_b (id integer);\n", encoding="utf-8")
+        try:
+            db_bootstrap.apply_migrations(host, port, db_name, password, [m1, dup_a, dup_b])
+            prefix_blocked = False
+        except db_bootstrap.MigrationPrefixCollisionError as exc:
+            prefix_blocked = "906" in str(exc)
+        with psycopg.connect(host=host, port=port, dbname=db_name,
+                             user="postgres", password=password) as conn:
+            dup_leaked = conn.execute("SELECT to_regclass('public.gate_dup_a')").fetchone()[0]
+        check("prefijo de migración duplicado se bloquea con explicación",
+              prefix_blocked and dup_leaked is None)
+        dup_a.unlink()
+        dup_b.unlink()
+
+        # La carpeta REAL de migraciones no debe tener prefijos duplicados hoy.
+        real_dir = ROOT / "backend" / "mia" / "db" / "migrations"
+        real_migrations = sorted(real_dir.glob("*.sql"))
+        try:
+            db_bootstrap._assert_unique_prefixes(real_migrations)
+            real_unique = True
+        except db_bootstrap.MigrationPrefixCollisionError as exc:
+            real_unique = False
+            print(f"       {exc}")
+        check("migraciones reales del repo no colisionan en prefijo", real_unique)
+
         guarded = folder / "905_gate_backup_required.sql"
         guarded.write_text("CREATE TABLE gate_backup_required (id integer);\n", encoding="utf-8")
 
