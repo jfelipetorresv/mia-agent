@@ -85,8 +85,9 @@ async def run_gate() -> None:
     try:
         sat = SATGraph()
 
-        # Corpus semilla idempotente (el gate es autónomo; upsert no duplica).
-        await ingest_baseline_corpus(pool)
+        # Corpus semilla idempotente (el gate es autónomo; upsert no duplica). La
+        # jurisdicción va EXPLÍCITA: el corpus semilla es opt-in del pack ('co').
+        await ingest_baseline_corpus(pool, jurisdiction="co")
 
         # === 1 · existencia de tablas ===
         async with pool.connection() as conn:

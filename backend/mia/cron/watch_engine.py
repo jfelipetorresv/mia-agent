@@ -571,7 +571,21 @@ def urgent_mail_watch(
             if own:
                 await svc.aclose()
 
-        urgentes = [h for h in headers if h.external_id and mail_looks_urgent(h)]
+        # Jurisdicción del despacho → léxico y remitentes institucionales de SU foro. Si no se
+        # puede resolver —o el despacho aún no la eligió, que el resolver devuelve igual que
+        # 'generic'—, `None` = todos los packs instalados: se despierta de más, nunca de menos
+        # (perder un término procesal es el daño real).
+        try:
+            from ..jurisdiction.resolver import resolve_jurisdictions
+            from ..jurisdiction.pack import GENERIC_CODE
+            juris = [c for c in await resolve_jurisdictions(tenant_id)
+                     if c != GENERIC_CODE] or None
+        except Exception:  # noqa: BLE001
+            logger.exception("vigilancia de correo: no se pudo resolver la jurisdicción "
+                             "(tenant %s); se usan todas las señales instaladas", tenant_id)
+            juris = None
+
+        urgentes = [h for h in headers if h.external_id and mail_looks_urgent(h, juris)]
         if not urgentes:
             return WatchResult(False, meta={"tenant_id": tenant_id})   # wake-gate
         id_map = {f"{h.provider}:{h.external_id}": h for h in urgentes}

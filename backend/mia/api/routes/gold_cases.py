@@ -42,6 +42,16 @@ def _tenant(request: Request) -> str:
     return t
 
 
+# Nota (decisión "enmascarar todo, siempre"): aquí VIVÍA `_tenant_jurisdictions`, que resolvía el
+# pack del despacho para pasárselo al anonimizador. Ya no existe, y no debe volver: el anonimizador
+# ya no acepta jurisdicción — enmascara con la base universal + TODOS los packs instalados + los
+# respaldos por rol, siempre. Un despacho español atiende clientes colombianos, y el secreto
+# profesional manda sobre la precisión del análisis. Al quitar la perilla desaparece toda la clase
+# de fallos que consistía en resolverla mal (DB caída, 'generic' ambiguo, jurisdicción sin elegir).
+# La jurisdicción SIGUE mandando en otras capas —el corpus, el wake-gate del correo—: ahí el error
+# solo hace ruido, no filtra datos del cliente.
+
+
 def _consent_guard(allow_real: bool) -> None:
     """Reusa el candado de datos reales del despacho: guardar un caso de oro desde un asunto real
     exige la misma autorización que correr el examen sobre datos reales. Puro y testeable."""
@@ -152,7 +162,8 @@ async def draft_gold_case(matter_id: str, body: DraftIn, request: Request) -> di
 
     docs = [{"filename": d.filename, "chunks": d.chunks} for d in body.documents]
     bundle = anonymize.anonymize_bundle(body.message, docs, body.gold_answer)
-    diagnosis_anon = anonymize.anonymize_text(body.diagnosis or "").text if body.diagnosis else ""
+    diagnosis_anon = (anonymize.anonymize_text(body.diagnosis or "").text
+                      if body.diagnosis else "")
     rubric = _propose_rubric(bundle["gold_answer"], diagnosis_anon)
 
     # FIX 1: el título por defecto sale del MENSAJE YA ANONIMIZADO (nunca del crudo); un título

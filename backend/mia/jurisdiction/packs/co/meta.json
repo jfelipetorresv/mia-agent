@@ -5,12 +5,16 @@
   "verified": false,
   "verified_at": null,
   "sources": ["SUIN-Juriscol", "Función Pública", "Rama Judicial"],
+  "baseline_corpus_seed": true,
+  "_baseline_corpus_seed_note": "Opt-in EXPLÍCITO al corpus semilla de `rag/ingest_corpus.py` (normas y jurisprudencia colombianas, marcadas [VERIFICAR]). Solo un pack que lo declare true recibe esa semilla: un despacho de otra jurisdicción no recibe corpus ajeno sembrado.",
   "_freshness_note": "Vigencia POR ARCHIVO (quick win de docs/analisis-claude-for-legal.md §5.3): festivos y plazos procesales envejecen a velocidades muy distintas. last_verified=null y freshness_window_days=null mientras nadie haya contrastado el archivo contra la fuente oficial (is_stale() da None = 'no evaluable', nunca un falso 'vigente'). Nota aparte (no dentro de \"freshness\"): ese objeto solo debe tener entradas {archivo: {...}} — un consumidor futuro que itere pack.freshness.items() no debe toparse con un valor que no sea dict.",
   "freshness": {
     "holidays": {"last_verified": null, "freshness_window_days": 365, "freshness_category": "estable"},
     "recess": {"last_verified": null, "freshness_window_days": 365, "freshness_category": "estable"},
     "id_formats": {"last_verified": null, "freshness_window_days": null, "freshness_category": "estable"},
     "doc_markers": {"last_verified": null, "freshness_window_days": null, "freshness_category": "estable"},
+    "pii_hints": {"last_verified": null, "freshness_window_days": null, "freshness_category": "estable"},
+    "mail_signals": {"last_verified": null, "freshness_window_days": null, "freshness_category": "estable"},
     "term_catalog": {"last_verified": null, "freshness_window_days": 90, "freshness_category": "volatil"},
     "citation_style": {"last_verified": null, "freshness_window_days": 180, "freshness_category": "moderado"}
   },

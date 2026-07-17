@@ -94,8 +94,8 @@ CATALOG: dict[str, MCPServerDescriptor] = {
     "consulta-procesos": _descriptor(
         slug="consulta-procesos",
         display_name="Consulta de estados de procesos judiciales",
-        description=("Deja que Mia consulte el estado de un proceso en el sistema de la "
-                     "Rama Judicial o el proveedor que uses, para traerte las novedades."),
+        description=("Deja que Mia consulte el estado de un proceso en el sistema judicial "
+                     "o el proveedor que uses, para traerte las novedades."),
         command="python",
         args=("-m", "mia_mcp_procesos"),
         env_specs=(

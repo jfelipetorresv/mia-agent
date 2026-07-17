@@ -1,0 +1,5 @@
+{
+  "_note": "Pistas de la heurística de SOSPECHA de `security/anonymize.py::scan_suspects`. NO ocultan nada: solo MARCAN candidatos para que la revisión humana los resalte. Se SUMAN a la base pan-hispana del código (nunca la reemplazan): un pack no puede reducir la cobertura.",
+  "address_prefixes": ["Carrera", "Cra", "Kra", "Kr", "Transversal", "Diagonal", "Circular"],
+  "stop_capitalized": ["colombia", "bogotá", "contraloría"]
+}
