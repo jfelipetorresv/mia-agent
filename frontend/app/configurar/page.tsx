@@ -21,6 +21,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
+  Award,
+  Bot,
   BookOpen,
   CalendarClock,
   Check,
@@ -41,7 +43,9 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import AsistentesSection from "@/app/_components/AsistentesSection";
 import AutomationsSection from "@/app/_components/AutomationsSection";
+import BancoOroSection from "@/app/_components/BancoOroSection";
 import ConexionesSection from "@/app/_components/ConexionesSection";
 import CarpetasSection from "@/app/_components/CarpetasSection";
 import ValorGastoSection from "@/app/_components/ValorGastoSection";
@@ -115,7 +119,14 @@ const ESTADO_TEXTO: Record<Paso["estado"], string> = {
 // Los 5 subtabs de la página. Los ids coinciden con los anclas históricos
 // (#conexiones, #carpetas, #automatizaciones, #valor) para que ningún enlace
 // externo (setup.py, dashboard, FuentesPanel, OneDriveFolderPicker) se rompa.
-type TabId = "primeros-pasos" | "conexiones" | "carpetas" | "automatizaciones" | "valor" | "proteccion";
+type TabId =
+  | "primeros-pasos"
+  | "conexiones"
+  | "carpetas"
+  | "automatizaciones"
+  | "valor"
+  | "calidad"
+  | "proteccion";
 
 const HASH_TO_TAB: Record<string, TabId> = {
   "#primeros-pasos": "primeros-pasos",
@@ -123,6 +134,7 @@ const HASH_TO_TAB: Record<string, TabId> = {
   "#carpetas": "carpetas",
   "#automatizaciones": "automatizaciones",
   "#valor": "valor",
+  "#calidad": "calidad",
   "#proteccion": "proteccion",
 };
 
@@ -369,6 +381,10 @@ export default function ConfigurarPage() {
             <PiggyBank className="h-4 w-4" />
             Valor y gasto
           </TabsTrigger>
+          <TabsTrigger value="calidad" className="gap-1.5">
+            <Award className="h-4 w-4" />
+            Calidad
+          </TabsTrigger>
           <TabsTrigger value="proteccion" className="gap-1.5">
             <ShieldCheck className="h-4 w-4" />
             Protección
@@ -450,6 +466,18 @@ export default function ConfigurarPage() {
             />
             <ConexionesSection connectors={c} onChanged={loadStats} />
           </section>
+
+          {/* Los ayudantes externos son otra cosa que Mia "puede usar", así que viven
+              aquí y no en un tab propio: lo que cambia es que son programas del propio
+              equipo del abogado y que Mia solo los llama si él se lo pide por su nombre. */}
+          <section id="asistentes" className="mt-12 scroll-mt-6">
+            <SectionTitle
+              icon={Bot}
+              title="Ayudantes externos"
+              hint="Programas de tu equipo que Mia puede usar para una tarea puntual, solo si se lo pides."
+            />
+            <AsistentesSection />
+          </section>
         </TabsContent>
 
         {/* ── Carpetas ──────────────────────────────────────────────── */}
@@ -513,6 +541,21 @@ export default function ConfigurarPage() {
               ) : null}
             </div>
           </details>
+        </TabsContent>
+
+        {/* ── Calidad (Banco de oro) ────────────────────────────────
+            Tab propio y no dentro de "Valor y gasto": aquello es dinero y esto es
+            un examen de no-regresión. Mezclarlos haría creer que la calidad de Mia
+            se mide en pesos. */}
+        <TabsContent value="calidad" className="animate-fade-in">
+          <section id="calidad" className="mt-6 scroll-mt-6">
+            <SectionTitle
+              icon={Award}
+              title="Banco de oro"
+              hint="El examen con el que compruebas que Mia no empeora."
+            />
+            <BancoOroSection />
+          </section>
         </TabsContent>
 
         <TabsContent value="proteccion" className="animate-fade-in">
