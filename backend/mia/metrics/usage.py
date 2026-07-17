@@ -107,7 +107,32 @@ def estimated_call_cost(alias: str, messages: list[dict], max_tokens: int | None
 
 
 # ── Registro (sync, nunca lanza) ────────────────────────────────────────────────
-def record(alias: str, task: str | None, usage: Any) -> None:
+def _cache_tokens(usage: Any) -> tuple[int, int]:
+    """Extrae (cache_read, cache_creation) de un objeto usage, sea cual sea el formato.
+
+    LiteLLM expone la caché de dos formas según el proveedor: (1) estilo OpenAI en
+    `prompt_tokens_details.cached_tokens` (solo lectura), y (2) passthrough Anthropic en
+    `cache_read_input_tokens` / `cache_creation_input_tokens`. Se prueban ambas; ausencia = 0.
+    """
+    def _int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    read = _int(getattr(usage, "cache_read_input_tokens", 0))
+    creation = _int(getattr(usage, "cache_creation_input_tokens", 0))
+    if not read:
+        details = getattr(usage, "prompt_tokens_details", None)
+        if isinstance(details, dict):
+            read = _int(details.get("cached_tokens"))
+        elif details is not None:
+            read = _int(getattr(details, "cached_tokens", 0))
+    return read, creation
+
+
+def record(alias: str, task: str | None, usage: Any,
+           *, stop_reason: str | None = None) -> None:
     """Bufferiza el uso de UNA llamada al LLM. Sin scope o sin usage → no-op."""
     try:
         scope = _scope.get()
@@ -117,6 +142,7 @@ def record(alias: str, task: str | None, usage: Any) -> None:
         prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion = int(getattr(usage, "completion_tokens", 0) or 0)
         total = int(getattr(usage, "total_tokens", 0) or 0) or (prompt + completion)
+        cache_read, cache_creation = _cache_tokens(usage)
         row = {
             "tenant_id": tenant_id,
             "matter_id": matter_id,
@@ -127,6 +153,9 @@ def record(alias: str, task: str | None, usage: Any) -> None:
             "total_tokens": total,
             "cost_usd": round(cost_usd(alias, prompt, completion), 6),
             "source": source[:32],
+            "cache_read_tokens": cache_read,
+            "cache_creation_tokens": cache_creation,
+            "stop_reason": (str(stop_reason)[:32] if stop_reason else None),
         }
         with _lock:
             if len(_buffer) >= MAX_BUFFER:
@@ -154,9 +183,11 @@ def pending_count() -> int:
 # ── Persistencia (async, bajo RLS) ──────────────────────────────────────────────
 _INSERT_SQL = (
     "INSERT INTO turn_usage (tenant_id, matter_id, task, model, prompt_tokens, "
-    "completion_tokens, total_tokens, cost_usd, source) VALUES "
+    "completion_tokens, total_tokens, cost_usd, source, cache_read_tokens, "
+    "cache_creation_tokens, stop_reason) VALUES "
     "(%(tenant_id)s::uuid, %(matter_id)s::uuid, %(task)s, %(model)s, %(prompt_tokens)s, "
-    "%(completion_tokens)s, %(total_tokens)s, %(cost_usd)s, %(source)s)"
+    "%(completion_tokens)s, %(total_tokens)s, %(cost_usd)s, %(source)s, "
+    "%(cache_read_tokens)s, %(cache_creation_tokens)s, %(stop_reason)s)"
 )
 
 

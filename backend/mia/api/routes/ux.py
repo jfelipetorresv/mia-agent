@@ -1575,7 +1575,7 @@ async def dashboard_stats(request: Request):
     async with pool.tenant_connection(tid) as conn:
         async def scalar(sql):
             return (await (await conn.execute(sql)).fetchone())[0]
-        matters_active = await scalar("SELECT count(*) FROM matters WHERE kind='asunto'")
+        matters_active = await scalar("SELECT count(*) FROM matters WHERE kind='asunto' AND status='active'")
         documents_indexed = await scalar("SELECT count(*) FROM documents")
         playbooks_active = await scalar("SELECT count(*) FROM playbooks WHERE status='active'")
         playbooks_archived = await scalar("SELECT count(*) FROM playbooks WHERE status='archived'")
@@ -1595,14 +1595,19 @@ async def dashboard_stats(request: Request):
         # aplicada, DEGRADA al estimado legacy en vez de tumbar el panel entero.
         real_cost_usd = 0.0
         usage_calls_month = 0
+        cache_read_month = 0
+        prompt_tokens_month = 0
         try:
             usage_row = await (await conn.execute(
-                "SELECT coalesce(sum(cost_usd), 0), count(*) FROM turn_usage "
-                "WHERE created_at >= "
+                "SELECT coalesce(sum(cost_usd), 0), count(*), "
+                "       coalesce(sum(cache_read_tokens), 0), coalesce(sum(prompt_tokens), 0) "
+                "FROM turn_usage WHERE created_at >= "
                 "(date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc')"
             )).fetchone()
             real_cost_usd = float(usage_row[0])
             usage_calls_month = int(usage_row[1])
+            cache_read_month = int(usage_row[2])
+            prompt_tokens_month = int(usage_row[3])
         except Exception:  # noqa: BLE001 — sin turn_usage el panel sigue funcionando
             logger.warning("turn_usage no disponible (¿falta init_turn_usage?); "
                            "el costo cae al estimado legacy", exc_info=True)
@@ -1632,6 +1637,13 @@ async def dashboard_stats(request: Request):
     gross_usd = round(hours_saved * vcfg["hourly_rate_usd"], 2)
     net_usd = round(gross_usd - cost_month_usd, 2)
 
+    # Caché de prompt: mide de verdad el ahorro que la arquitectura AFIRMA (~75% por
+    # prefix caching). hit-rate = tokens de entrada servidos desde caché / tokens de
+    # entrada totales del mes. None (no 0%) mientras no haya señal: cli-* y mia-local
+    # no reportan caché, así que solo el path API/OpenRouter la alimenta — se declara.
+    cache_hit_rate = (round(cache_read_month / prompt_tokens_month, 4)
+                      if prompt_tokens_month else None)
+
     # B3 (frente B): el panel muestra el reloj REAL de los jobs (next_run/last_run). Hay que
     # leer el scheduler VIVO (el que corre en el lifespan, api/main.py) — no construir uno
     # nuevo, que nace con next_run/last_run en None. Fallback fail-open a uno recién armado
@@ -1655,6 +1667,12 @@ async def dashboard_stats(request: Request):
         "knowledge_items": knowledge_items,
         "scheduler_jobs": jobs,
         "cost_month_usd": cost_month_usd,
+        # Ahorro por caché de prompt, MEDIDO (no afirmado). rate=None → aún sin señal.
+        "cache": {
+            "hit_rate": cache_hit_rate,
+            "read_tokens_month": cache_read_month,
+            "prompt_tokens_month": prompt_tokens_month,
+        },
         # CP-V1 · tarjeta "Valor entregado este mes" (todo en llano, §G).
         "value": {
             "hours_saved": hours_saved,

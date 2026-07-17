@@ -353,22 +353,45 @@ class CorteConstitucionalAdapter:
 
         soup = BeautifulSoup(html_str, "html.parser")
         text = _visible_text(soup)
+        norm_text = _normalize(text)
 
-        # magistrado_ponente / decision_date: el catálogo (verificado contra la relatoría)
-        # es AUTORITATIVO — un magistrado ponente o fecha equivocados son un dato jurídico
-        # FALSO en pantalla, inaceptable. La extracción del HTML es solo fallback cuando el
-        # catálogo no trae el dato; si el fallback no encuentra un patrón limpio, el campo
-        # queda VACÍO (mejor vacío que basura).
-        mp = entry.get("magistrado_ponente") or None
-        if not mp:
+        # magistrado_ponente: el catálogo se verifica a mano contra la relatoría, pero
+        # (hallazgo de auditoría) un TYPO en el catálogo aparecería como dato jurídico real.
+        # Por eso NO se presenta el MP del catálogo sin CORROBORARLO por inclusión contra el
+        # texto oficial descargado — mismo criterio fail-closed que `_identity_confirmed` con
+        # el norm_number. Si el MP del catálogo aparece en el texto → confirmado, se usa. Si
+        # NO aparece → se descarta y se cae a la extracción limpia del HTML (y si esa tampoco
+        # da un patrón limpio, queda VACÍO: mejor vacío que un dato sin respaldo en la fuente).
+        catalog_mp = entry.get("magistrado_ponente") or None
+        mp_confirmed = bool(catalog_mp) and _normalize(catalog_mp) in norm_text
+        if catalog_mp and mp_confirmed:
+            mp = catalog_mp
+        else:
             m = _MP_RE.search(text)
             mp = m.group(1).strip() if m else None
+            if catalog_mp and not mp_confirmed:
+                logger.warning(
+                    "corteconstitucional: MP de catálogo '%s' NO aparece en el texto oficial "
+                    "(%s) — no se da por confirmado; se usa la extracción del HTML (%s)",
+                    catalog_mp, url, mp,
+                )
 
+        # decision_date: mismo criterio. La fecha del catálogo solo se presenta como firme si
+        # aparece (como fecha real "D de MES de AAAA") en el texto oficial; si no se corrobora,
+        # se conserva el valor pero se marca `decision_date_approx` (no se presenta como
+        # confirmada). Sin fecha en catálogo, se parsea del HTML (aproximada si no se encuentra).
         entry_date = entry.get("decision_date")
         approx = False
         if entry_date:
             decision_date = (date.fromisoformat(entry_date)
                              if isinstance(entry_date, str) else entry_date)
+            if not self._date_in_text(text, decision_date):
+                approx = True
+                logger.warning(
+                    "corteconstitucional: fecha de catálogo %s NO corroborada en el texto "
+                    "oficial (%s) — se marca aproximada (decision_date_approx)",
+                    decision_date.isoformat(), url,
+                )
         else:
             decision_date, approx = self._parse_date(text, anio)
 
@@ -405,6 +428,23 @@ class CorteConstitucionalAdapter:
             "keywords": entry.get("keywords"),
             "metadata": metadata,
         }
+
+    @staticmethod
+    def _date_in_text(text: str, target: date) -> bool:
+        """True si `target` aparece como fecha real ('D de MES de AAAA') en el texto oficial.
+        Corrobora una fecha traída del catálogo antes de presentarla como confirmada
+        (hallazgo de auditoría: una fecha de catálogo equivocada no puede pasar como firme)."""
+        for m in _DATE_RE.finditer(text):
+            mes = _MESES.get(_normalize(m.group(2)))
+            if not mes:
+                continue
+            try:
+                d = date(int(m.group(3)), mes, int(m.group(1)))
+            except ValueError:
+                continue
+            if d == target:
+                return True
+        return False
 
     @staticmethod
     def _parse_date(text: str, anio: int) -> tuple[date, bool]:

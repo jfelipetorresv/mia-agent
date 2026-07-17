@@ -128,6 +128,19 @@ def main() -> int:
     check("load_pack fail-soft ante 'freshness' de tipo equivocado en meta.json (no lanza, da {})",
           _malformed_top_level_freshness_is_safe())
 
+    # 8 · guarda defensiva del hallazgo de auditoría (2026-07-17): los datos provisionales o
+    # sin verificar NO pueden presentarse como firmes. `data_is_provisional` da a un consumidor
+    # futuro la señal para marcar [VERIFICAR] o negarse; `holiday_dates` sigue devolviendo los
+    # festivos (no rompe consumidores actuales) pero deja el WARNING.
+    check("co: holidays provisionales (_complete:false) -> data_is_provisional True",
+          co.data_is_provisional("holidays") is True)
+    check("co: term_catalog provisional (_complete:false) -> data_is_provisional True",
+          co.data_is_provisional("term_catalog") is True)
+    check("co.holiday_dates sigue devolviendo festivos pese a la guarda (no rompe consumidores)",
+          len(co.holiday_dates(2025)) > 0)
+    check("genérico sin verificar -> data_is_provisional True (nunca autoridad firme)",
+          g.data_is_provisional("holidays") is True)
+
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)
     print(f"\nRESULT: {passed}/{total} checks PASS")

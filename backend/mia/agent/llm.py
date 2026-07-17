@@ -81,6 +81,16 @@ _TASK_FALLBACK_CHAINS: dict[str, list[str]] = {
 # Tareas cuya cadena es un contrato fijo: un `model` explícito NO puede cambiarla.
 _LOCKED_TASKS = frozenset({"compression"})
 
+# ── Prefix caching de Anthropic (decisión #3) ───────────────────────────────────
+# Aliases que salen por la API DIRECTA de Anthropic (model: anthropic/... en
+# litellm_config.yaml). Solo estos soportan el prefix caching de Anthropic con
+# `cache_control` en los bloques de content (LiteLLM lo pasa tal cual y añade el header
+# de TTL 1h para modelos Claude 4.5+). Los aliases cli-* (CLI de suscripción) y mia-local
+# (Ollama) NO lo soportan; openrouter-* se excluye a propósito (motor de un tercero, su
+# reporte de tokens cacheados difiere) — la medición del panel apunta a la API directa.
+# Fuente única de los modelos: litellm_config.yaml (claude-haiku / claude-sonnet).
+_ANTHROPIC_CACHE_ALIASES = frozenset({"claude-haiku", "claude-sonnet"})
+
 _DEFAULT_TASK = "main"
 
 # ── CP2 · política de modelo por tenant (decisión #27) ──────────────────────────
@@ -473,6 +483,43 @@ def resolve_model(task: str | None, model: str | None = None) -> str:
     return resolve_fallback_chain(task, model)[0]
 
 
+def _messages_with_cache(messages: list[dict], alias: str) -> list[dict]:
+    """`messages` con el PREFIJO ESTABLE del system marcado para el prefix caching de
+    Anthropic, o los `messages` sin tocar.
+
+    Solo actúa para los aliases de la API directa de Anthropic (_ANTHROPIC_CACHE_ALIASES).
+    El prompt_builder registró dónde termina el tier estable (capas 1-6) del system; aquí
+    se parte ese string en dos bloques de content: [estable + cache_control TTL 1h] +
+    [resto sin cache]. La concatenación es byte-idéntica al string original — el modelo ve
+    el MISMO texto; solo se añade la metadata de cacheo. Devuelve una lista NUEVA (call_llm
+    reutiliza `messages` a lo largo de la cadena de fallback y de los reintentos: nunca se
+    muta). Si el system no está registrado o no es un string, se deja intacto (sin caching,
+    degradación limpia)."""
+    if alias not in _ANTHROPIC_CACHE_ALIASES:
+        return messages
+    from . import prompt_builder  # diferido: sin ciclo (prompt_builder no importa llm)
+
+    out: list[dict] = []
+    marked = False
+    for m in messages:
+        if (not marked and m.get("role") == "system"
+                and isinstance(m.get("content"), str)):
+            split = prompt_builder.cache_split(m["content"])
+            if split is not None:
+                stable, rest = split
+                blocks: list[dict] = [{
+                    "type": "text", "text": stable,
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                }]
+                if rest:
+                    blocks.append({"type": "text", "text": rest})
+                out.append({**m, "content": blocks})
+                marked = True
+                continue
+        out.append(m)
+    return out
+
+
 def _get_client() -> Any:
     """Cliente OpenAI apuntado al proxy LiteLLM. Import diferido (como embeddings.py)."""
     global _client
@@ -546,9 +593,12 @@ def call_llm(
                                        "se usa respaldo gratuito", alias)
                         continue
                     raise
+            # Prefix caching de Anthropic: marca el prefijo estable del system SOLO para
+            # los aliases de la API directa (el resto recibe los messages sin cambios).
+            alias_messages = _messages_with_cache(messages, alias)
             resp = _call_with_retries(
-                client, {**base_kwargs, "model": alias}, MAX_RETRIES,
-                task=task, alias=alias, next_alias=next_alias,
+                client, {**base_kwargs, "messages": alias_messages, "model": alias},
+                MAX_RETRIES, task=task, alias=alias, next_alias=next_alias,
             )
             if hold_id and budget_tenant:
                 resp_usage = getattr(resp, "usage", None)
@@ -589,7 +639,16 @@ def _record_usage(alias: str, task: str | None, resp: Any) -> None:
     try:
         from ..metrics import usage as usage_metrics  # import diferido (sin ciclos)
 
-        usage_metrics.record(alias, task, getattr(resp, "usage", None))
+        # finish_reason distingue una respuesta completa ('stop') de una truncada por tope
+        # ('length') o de tool_calls; defensivo porque el CLI de suscripción puede no traerlo.
+        stop_reason = None
+        try:
+            choices = getattr(resp, "choices", None) or []
+            if choices:
+                stop_reason = getattr(choices[0], "finish_reason", None)
+        except Exception:  # noqa: BLE001 — nunca romper por leer un campo opcional
+            stop_reason = None
+        usage_metrics.record(alias, task, getattr(resp, "usage", None), stop_reason=stop_reason)
     except Exception:  # noqa: BLE001 — una métrica nunca tumba una respuesta buena
         logger.exception("no se pudo registrar el uso (alias=%s task=%s)", alias, task)
 

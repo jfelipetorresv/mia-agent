@@ -44,3 +44,11 @@ model_list:
 
 litellm_settings:
   drop_params: true
+  # Prefix caching de Anthropic (decisión #3): NO requiere flag aquí. LiteLLM pasa el
+  # `cache_control: {type: ephemeral, ttl: 1h}` que agent/llm.py inyecta en los bloques de
+  # content del system hacia la API de Anthropic, y añade el header de TTL extendido para
+  # modelos Claude 4.5+ (claude-sonnet-4-6 / claude-haiku-4-5). `drop_params` NO lo
+  # descarta (es campo de content, no un parámetro top-level no soportado). Solo se marca
+  # en los aliases anthropic/*; ollama/openrouter reciben el system sin cache_control.
+  # OJO: NO habilitar el `cache:` de LiteLLM aquí — ese es el cache de RESPUESTAS del proxy
+  # (otra cosa), no el prefix caching de prompt de Anthropic.

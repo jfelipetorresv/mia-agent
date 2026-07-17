@@ -89,7 +89,10 @@ async def run_gate() -> None:
         sat = SATGraph()
 
         # Corpus semilla idempotente (el gate es autónomo; upsert no duplica). La
-        # jurisdicción va EXPLÍCITA: el corpus semilla es opt-in del pack ('co').
+        # jurisdicción va EXPLÍCITA: el corpus semilla es opt-in del pack ('co'). El módulo
+        # se blinda tras `MIA_ALLOW_SEED_FAKE` (sus datos son [VERIFICAR]/aproximados y no
+        # deben sembrarse a mano en producción); este gate fija el opt-in de test a propósito.
+        os.environ["MIA_ALLOW_SEED_FAKE"] = "1"
         await ingest_baseline_corpus(pool, jurisdiction="co")
 
         # === 1 · existencia de tablas ===

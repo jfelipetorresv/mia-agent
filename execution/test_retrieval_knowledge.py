@@ -317,8 +317,22 @@ def run_db_checks(ids: dict, obs: dict) -> None:
                      "Expediente:\n(sin documentos recuperados del expediente)")
     got_sys = obs["c_messages"][0]["content"]
     got_user = obs["c_messages"][1]["content"]
+    # Prefix caching de Anthropic: para los alias claude-* (aquí claude-sonnet) el system
+    # se transporta como 2 bloques de content con `cache_control` (habilita el prefix
+    # caching) cuya CONCATENACIÓN reconstruye el string de 10 capas byte a byte. La
+    # garantía de no-regresión es el TEXTO que ve el modelo, no la forma de transporte.
+    def _content_text(content):
+        if isinstance(content, str):
+            return content
+        return "".join(b.get("text", "") for b in content)
+    got_sys_text = _content_text(got_sys)
     check("c3 · system prompt determinista = fachada de 10 capas (byte a byte)",
-          got_sys == expected_system and graph_mod.ANALYSIS_SYSTEM in got_sys)
+          got_sys_text == expected_system and graph_mod.ANALYSIS_SYSTEM in got_sys_text)
+    # c3b · el prefijo estable quedó marcado para el prefix caching (claude-* → bloques
+    # con cache_control; la MEDICIÓN del panel captura el ahorro real).
+    check("c3b · el system de un alias Anthropic marca cache_control en el prefijo estable",
+          isinstance(got_sys, list) and any(
+              isinstance(b, dict) and b.get("cache_control") for b in got_sys))
     check("c4 · user prompt IDÉNTICO al de hoy (byte a byte)", got_user == expected_user)
     check("c5 · sin rastro de la sección de conocimiento",
           graph_mod.KNOWLEDGE_HEADER not in got_user and cr.KNOWLEDGE_TRIMMED_MARKER not in got_user)

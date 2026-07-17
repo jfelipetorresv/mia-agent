@@ -18,16 +18,28 @@ VERIFICACIÓN DE CITAS: estos son DATOS SEMILLA para desarrollo, no citas entreg
 cliente. Los datos aproximados o provisionales van marcados con `[VERIFICAR]` en `metadata`
 para auditoría contra la fuente primaria (SUIN-Juriscol / la corte respectiva) antes de
 cualquier uso real.
+
+BLINDAJE (auditoría 2026-07-17): como el corpus semilla trae jurisprudencia [VERIFICAR] y
+fechas aproximadas, `ingest_baseline_corpus` SE NIEGA a correr salvo que la env var
+`MIA_ALLOW_SEED_FAKE=1` esté fijada (opt-in explícito de test). Así ningún uso a mano en
+producción siembra datos sin confirmar en el SAT-Graph compartido; los tests que lo ejercitan
+fijan la env var a propósito.
 """
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date
 
 from ..jurisdiction.pack import load_pack
 from .sat_graph import SATGraph
 
 logger = logging.getLogger("mia.rag.ingest_corpus")
+
+# Opt-in EXPLÍCITO de test para sembrar el corpus semilla provisional (ver
+# `ingest_baseline_corpus`). Sin esta env var fijada a "1", la función se niega a correr: un
+# uso a mano en producción no puede sembrar citas [VERIFICAR] en el SAT-Graph compartido.
+SEED_FAKE_ENV = "MIA_ALLOW_SEED_FAKE"
 
 # ── Normas (5) ──────────────────────────────────────────────────────────────
 _NORMS = [
@@ -125,20 +137,14 @@ _JURIS = [
         "keywords": ["seguro de cumplimiento", "contrato de seguro", "siniestro"],
         "metadata": {"nota": "[VERIFICAR] contra la providencia oficial (CSJ)"},
     },
-    {
-        "court": "Consejo de Estado", "sala": "Sección Tercera",
-        "decision_number": "CE-S3-2019-00123", "radicado": None,
-        "magistrado_ponente": None,
-        "decision_date": date(2019, 6, 15),
-        "topic": "Responsabilidad fiscal — elementos constitutivos",
-        "ratio_decidendi": ("[VERIFICAR] Elementos constitutivos de la responsabilidad fiscal: "
-                            "daño patrimonial al Estado, conducta y nexo causal."),
-        "obiter_dicta": None,
-        "keywords": ["responsabilidad fiscal", "daño patrimonial", "nexo causal"],
-        "metadata": {"placeholder": True,
-                     "nota": "[VERIFICAR] identificador y datos PROVISIONALES (sin referencia "
-                             "en el corpus de Hermes)"},
-    },
+    # NOTA (hallazgo de auditoría 2026-07-17): aquí vivía una tercera providencia con
+    # `decision_number: "CE-S3-2019-00123"` marcada `placeholder: True` — un identificador de
+    # jurisprudencia INVENTADO, sin referencia en fuente alguna. Se ELIMINÓ: un producto legal
+    # ("ningún hecho sin fuente; ninguna cita sin verificación") no puede sembrar una cita
+    # fabricada ni siquiera como semilla de desarrollo. Las dos providencias restantes son
+    # reales (identificadores verificables) y van marcadas [VERIFICAR] pendientes de contraste
+    # contra la fuente primaria; el corpus de producción se construye con `corpus_factory.py`
+    # (texto oficial real). NO reintroducir identificadores inventados.
 ]
 
 # ── Relaciones (2): (source_norm_number, target_norm_number, relation_type) ──
@@ -176,6 +182,22 @@ async def ingest_baseline_corpus(pool=None, jurisdiction: str | None = None) -> 
                 "skipped": (f"el pack '{jurisdiction}' no declara baseline_corpus_seed; "
                             "este corpus semilla es de Colombia y no se siembra en otra "
                             "jurisdicción")}
+
+    # BLINDAJE (hallazgo de auditoría 2026-07-17): el corpus semilla contiene DATOS
+    # PROVISIONALES — jurisprudencia marcada [VERIFICAR] y fechas aproximadas (no citas
+    # verificadas). Correr este módulo a mano (`python -m mia.rag.ingest_corpus co`)
+    # sembraría esos datos sin confirmar en el SAT-Graph COMPARTIDO por TODOS los tenants.
+    # Por eso solo se permite bajo un opt-in EXPLÍCITO de test (`MIA_ALLOW_SEED_FAKE=1`), que
+    # los gates fijan a propósito; cualquier uso a mano en producción falla aquí con un mensaje
+    # claro. El corpus real de producción se construye con `rag/corpus_factory.py` (texto
+    # oficial descargado, sin [VERIFICAR]).
+    if os.getenv(SEED_FAKE_ENV) != "1":
+        raise RuntimeError(
+            "ingest_baseline_corpus está DESHABILITADO fuera de tests: su corpus semilla "
+            "contiene datos provisionales ([VERIFICAR], fechas aproximadas) que NO deben "
+            "sembrarse en el SAT-Graph compartido de producción. Usa rag/corpus_factory.py "
+            f"(texto oficial real). Los tests que lo necesitan fijan {SEED_FAKE_ENV}=1."
+        )
 
     # La jurisdicción va EXPLÍCITA en cada fila: antes estos dicts no la traían y quedaban
     # marcados por el `COALESCE(..., 'co')` del INSERT. Ese default ya no existe (sat_graph

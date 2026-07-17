@@ -11,9 +11,11 @@ Intelligence (Juan Felipe Torres Varela, Lexia Abogados, Bogotá,
 Colombia). Stack: Python 3.11 + FastAPI + LangGraph +
 PostgreSQL/pgvector + Next.js 14.
 Plataforma: Windows 11 — instalación nativa (Modo B).
-Estado: construcción activa — Fase 0 en progreso.
+Estado: Olas 1 (confidencialidad), 2 (plazos) y 4 (valor visible)
+cerradas; instalador de escritorio ensamblado (42 migraciones DB);
+en pulido/robustecimiento. Ver TRASPASO-MODELO.md para el detalle.
 
-El proyecto vive en: "D:\Codex\Mia-Super Agent\mia"
+El proyecto vive en: "D:\Inteligencia Artificial\Mia-Super Agent\mia"
 (la ruta contiene espacios — siempre entre comillas en comandos).
 
 Dos memorias separadas:
@@ -68,7 +70,9 @@ Dos memorias separadas:
   no tiene RLS. Pinecone sigue soportado como store externo opcional.
 - 2026-06-01 — LiteLLM como gateway LLM porque unifica Claude, GPT,
   Gemini, Ollama y MiniMax en un endpoint OpenAI-compatible.
-  Prefix caching TTL 1h ahorra ~75% en matters largos.
+  El prefijo estable del prompt (capas 1–6) se marca para el prefix
+  caching de Anthropic; el ahorro REAL se MIDE en el panel (cache
+  hit-rate), no se afirma un porcentaje fijo.
 - 2026-06-01 — SAT-Graph en Postgres puro (no Neo4j) porque el
   proyecto es SQL-first y Neo4j añadiría una dependencia de infra
   sin justificación para la escala actual.
@@ -77,8 +81,13 @@ Dos memorias separadas:
   Obsidian y documentos. Modo A (Docker + WSL2) para producción.
 - 2026-06-01 — Core propio (no fork de Hermes) adoptando patrones
   MIT. Hermes es referencia de código, no dependencia.
-- 2026-06-01 — call_llm(task="compression") = claude-haiku siempre.
-  No sonnet. No cambiar sin documentar en memory/decisions.md.
+- 2026-06-01 — call_llm(task="compression") está BLOQUEADA a la
+  cadena barata/local de la política activa del despacho (ningún
+  call-site la puede cambiar; un `model=` explícito se ignora,
+  `_LOCKED_TASKS`). El modelo concreto depende de la política:
+  'suscripcion' = cli-claude-haiku, 'nube' = claude-haiku,
+  'soberano' = mia-local (Ollama). No cambiar el bloqueo sin
+  documentar en memory/decisions.md.
 
 ---
 
@@ -115,7 +124,7 @@ Dos memorias separadas:
 ---
 
 ## F · Referencias
-- Repos de referencia (en "D:\Codex\Mia-Super Agent\"):
+- Repos de referencia (en "D:\Inteligencia Artificial\Mia-Super Agent\"):
   hermes-ref/ (MIT) · jarvis-ref/ (Apache 2.0) · agent-os-ref/
   · claudeos-ref/
 - Hermes docs (leer antes de implementar):
@@ -129,10 +138,11 @@ Dos memorias separadas:
 ## G · Overrides específicos del proyecto
 - Este proyecto es Windows-first, Modo B (nativo). Siempre usar
   rutas y comandos de PowerShell — NO bash de macOS/Linux.
-  Proyecto en "D:\Codex\Mia-Super Agent\mia"
+  Proyecto en "D:\Inteligencia Artificial\Mia-Super Agent\mia"
   (comillas obligatorias por los espacios en la ruta).
 - Obsidian vault en Windows (Modo B nativo):
-  OBSIDIAN_VAULT_PATH=D:\Codex\Lexia-Vault-Test
+  OBSIDIAN_VAULT_PATH=<ruta del vault de Obsidian del despacho>
+  (configurable por instalación; no hay ruta fija cableada)
 - El .env NUNCA se commitea. Está en .gitignore.
 - El frontend NUNCA muestra terminología técnica al usuario:
   no "HITL", no "LangGraph", no "pgvector", no "tenant_id".

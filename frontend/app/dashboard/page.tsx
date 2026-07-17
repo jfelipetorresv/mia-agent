@@ -362,14 +362,21 @@ export default function DashboardPage() {
         )}
       </section>
 
+      {/* ── En el despacho (totales, no del mes) ──────────────────── */}
+      <section className="mt-12 mb-4">
+        <SectionTitle icon={FolderOpen} title="En el despacho" />
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatCard icon={FolderOpen} label="Asuntos activos" value={s.matters_active} delay={0} />
+          <StatCard icon={FileText} label="Documentos en el despacho" value={s.documents_indexed} delay={1} />
+        </div>
+      </section>
+
       {/* ── Este mes ──────────────────────────────────────────────── */}
       <section className="mt-12 mb-4">
         <SectionTitle icon={BarChart3} title="Este mes" />
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard icon={FolderOpen} label="Asuntos activos" value={s.matters_active} delay={0} />
-          <StatCard icon={FileText} label="Documentos" value={s.documents_indexed} delay={1} />
-          <StatCard icon={CheckCircle2} label="Borradores aprobados" value={s.value?.drafts_approved} delay={2} />
-          <StatCard icon={Clock} label="Horas ahorradas" value={s.value?.hours_saved} delay={3} />
+          <StatCard icon={CheckCircle2} label="Borradores aprobados" value={s.value?.drafts_approved} delay={0} />
+          <StatCard icon={Clock} label="Horas ahorradas (estimado)" value={s.value?.hours_saved} delay={1} />
         </div>
         <p className="mt-3 text-sm text-muted-foreground">
           Valor neto estimado: USD {Number(s.value?.net_usd ?? 0).toFixed(2)}.{" "}

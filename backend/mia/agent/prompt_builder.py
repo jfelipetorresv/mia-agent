@@ -29,6 +29,7 @@ Helpers stateless que leen el estado del agente por duck-typing (no importan cor
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
@@ -238,10 +239,60 @@ def build_system_prompt_parts(agent: Any) -> dict[str, str]:
     }
 
 
+# ── Prefix caching de Anthropic — límite del PREFIJO ESTABLE (decisión #3) ───
+# El caching de Anthropic es un match de PREFIJO: se marca `cache_control` en el
+# último bloque del prefijo estable y todo lo anterior se cachea (TTL 1h). El agente
+# consume el system como un STRING plano (`{"role":"system","content": <str>}`), así
+# que el punto de corte (dónde termina el tier STABLE y empieza el volátil) no se puede
+# recuperar del texto plano. En vez de ensuciar el string con un marcador (rompería el
+# conteo de tokens, el CLI de suscripción y los gates que comparan byte-a-byte), lo
+# registramos aquí: el texto completo → longitud de su prefijo estable. `agent/llm.py`
+# consulta `cache_split(system_text)` en el punto de embudo (call_llm) y, SOLO para los
+# aliases de la API directa de Anthropic, parte el system en dos bloques de content:
+# [estable con cache_control] + [resto sin cache]. El string devuelto por
+# build_system_prompt / build_graph_system queda IDÉNTICO byte-a-byte a hoy — el modelo
+# ve el mismo texto; solo cambia la metadata de cacheo (que Anthropic no renderiza).
+# El prefijo estable (L1 identidad/SOUL · L2 método · L3 citación · L5 §G; L4/L6 son
+# costuras vacías) es byte-estable entre turnos Y entre nodos del mismo asunto (L7/L8/
+# persona viven en el tier CONTEXT, no aquí) → el bloque que escribe un nodo lo LEE el
+# siguiente. Si la búsqueda falla (string no registrado) o el prefijo no alcanza el
+# mínimo cacheable del modelo (Anthropic omite el cache en silencio), NO se rompe nada:
+# se manda el string plano y la medición (metrics/usage) marca 0 — degradación limpia.
+_CACHE_BOUNDARY_MAX = 256
+_CACHE_BOUNDARY: "OrderedDict[str, int]" = OrderedDict()
+
+
+def _register_cache_boundary(full: str, stable: str) -> None:
+    """Registra el corte estable/volátil del system `full` (evicción FIFO acotada)."""
+    if not stable or stable == full or not full.startswith(stable):
+        return  # sin prefijo separable → no hay nada que cachear aparte
+    _CACHE_BOUNDARY[full] = len(stable)
+    _CACHE_BOUNDARY.move_to_end(full)
+    while len(_CACHE_BOUNDARY) > _CACHE_BOUNDARY_MAX:
+        _CACHE_BOUNDARY.popitem(last=False)
+
+
+def cache_split(system_text: str) -> tuple[str, str] | None:
+    """(prefijo_estable, resto) del system si su corte de cacheo está registrado; si no, None.
+
+    Ruta de SOLO LECTURA (sin mutación) para no competir por el dict con el hilo que
+    construye el prompt. `prefijo + resto == system_text` byte-a-byte (invariante del
+    registro: full.startswith(stable))."""
+    n = _CACHE_BOUNDARY.get(system_text)
+    if n is None or n <= 0 or n >= len(system_text):
+        return None
+    return system_text[:n], system_text[n:]
+
+
 def build_system_prompt(agent: Any) -> str:
     """System prompt de sistema completo (stable + context + volatile)."""
     parts = build_system_prompt_parts(agent)
-    return "\n\n".join(p for p in (parts["stable"], parts["context"], parts["volatile"]) if p)
+    full = "\n\n".join(p for p in (parts["stable"], parts["context"], parts["volatile"]) if p)
+    # Registra el corte estable/volátil para el caching de Anthropic (ver arriba). No
+    # altera `full`: el string devuelto es idéntico a hoy. build_graph_system termina en
+    # build_system_prompt(agent), así que los nodos del grafo quedan cubiertos aquí.
+    _register_cache_boundary(full, parts["stable"])
+    return full
 
 
 def invalidate(agent: Any) -> None:

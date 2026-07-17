@@ -88,8 +88,36 @@ class JurisdictionPack:
     # NO se conecta a ningún resolver/consumidor — es solo el dato disponible.
     freshness: dict = field(default_factory=dict)
 
+    def data_is_provisional(self, file_key: str) -> bool:
+        """¿Los datos del archivo `file_key` (p. ej. "holidays", "term_catalog") son
+        PROVISIONALES y NO deben usarse como autoridad? True si el archivo se declaró a sí
+        mismo `_complete: false`, o si el pack entero está sin verificar (`verified == false`).
+
+        GUARDA DEFENSIVA (hallazgo de auditoría 2026-07-17). Hoy `holidays`/`term_catalog` del
+        pack 'co' son PROVISIONALES (`_complete: false`, `verified: false`) y NO se consumen en
+        cálculos de producción (solo tests; el resolver de plazos aún no está cableado a estos
+        datos). Cuando un consumidor futuro los CABLEE a un cálculo con consecuencia procesal
+        (festivos, términos), DEBE consultar esto ANTES y, si es True, marcar el resultado
+        [VERIFICAR] o negarse a entregarlo — nunca presentar un plazo o un festivo provisional
+        como firme. No completar aquí los datos: eso es trabajo de verificación contra la
+        fuente oficial, no de inventiva."""
+        data = getattr(self, file_key, None)
+        if isinstance(data, dict) and data.get("_complete") is False:
+            return True
+        return not self.verified
+
     def holiday_dates(self, year: int) -> list[str]:
-        """Fechas ISO de festivos del año dado (lista vacía si el pack no las trae)."""
+        """Fechas ISO de festivos del año dado (lista vacía si el pack no las trae).
+
+        GUARDA (hallazgo de auditoría 2026-07-17): si los festivos son PROVISIONALES
+        (`data_is_provisional('holidays')`) se emite un WARNING — el archivo está incompleto
+        (p. ej. faltan los festivos trasladables a lunes y los de base pascual) y NO debe
+        usarse para un cálculo de plazos con consecuencia procesal sin marcar [VERIFICAR].
+        No se falla (para no romper a los consumidores actuales), pero queda el rastro."""
+        if self.holidays and self.data_is_provisional("holidays"):
+            logger.warning(
+                "jurisdiction[%s]: festivos PROVISIONALES/sin verificar; el resultado debe "
+                "marcarse [VERIFICAR] y no usarse como calendario firme de plazos", self.code)
         return list(self.holidays.get(str(year), []))
 
     def is_stale(self, file_key: str) -> bool | None:

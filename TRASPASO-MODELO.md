@@ -13,7 +13,7 @@ código. Orden de lectura completo al retomar el proyecto:
 
 1. `mia/CLAUDE.md` — constitución del proyecto (decisiones ya tomadas, no re-discutir).
 2. La memoria persistente de Claude Code (se carga sola al abrir sesión en
-   `D:\Codex\Mia-Super Agent`) — estado por checkpoint y protocolo entre sesiones.
+   `D:\Inteligencia Artificial\Mia-Super Agent`) — estado por checkpoint y protocolo entre sesiones.
 3. `mia/memory/session-summaries.md` — SOLO la última entrada.
 4. `mia/HANDOFF.md` — el checkpoint más reciente y qué le falta al frontend (Cursor).
 5. `mia/docs/plan-ejecucion-olas.md` — el roadmap ejecutable (5 olas, 16 checkpoints).
@@ -75,7 +75,7 @@ cualquier checkpoint.
 
 1. **Rama feature** por checkpoint.
 2. **Construir leyendo los repos de referencia EN DISCO** (`hermes-ref/`,
-   `claudeos-ref/`, `jarvis-ref/`, en `D:\Codex\Mia-Super Agent\`), no de memoria del
+   `claudeos-ref/`, `jarvis-ref/`, en `D:\Inteligencia Artificial\Mia-Super Agent\`), no de memoria del
    modelo. Cada checkpoint del plan de olas trae sus archivos de referencia exactos.
 3. **Capa 1 — automatizada:** gate nuevo del checkpoint + regresión COMPLETA
    (`scripts/run_tests.ps1`; `test_rls` es HALT). Si hay frontend, `npm run build` verde.
@@ -158,7 +158,7 @@ subir sus guías de trabajo reales, corpus jurídico real (activa las citas "res
 ## Trampas conocidas de este entorno (te van a morder si no las sabes)
 
 - **Windows-first, Modo B nativo.** PowerShell, no bash de Linux. La ruta del proyecto
-  tiene ESPACIOS: siempre `"D:\Codex\Mia-Super Agent\mia"` entre comillas.
+  tiene ESPACIOS: siempre `"D:\Inteligencia Artificial\Mia-Super Agent\mia"` entre comillas.
 - **`git commit -F archivo`** siempre: el clasificador de permisos rompe con mensajes de
   commit que contienen rutas tipo endpoint (`/api/...`) o heredocs.
 - **`npm run build` con el dev server corriendo PISA la caché `.next`** (página en
@@ -174,8 +174,11 @@ subir sus guías de trabajo reales, corpus jurídico real (activa las citas "res
   entradas VIEJAS de `memory/session-summaries.md` y `memory/progress.md` tienen
   mojibake (UTF-8 leído como Windows-1252) — el contenido reciente está sano, pero un
   grep sobre el histórico puede fallar por eso.
-- **`call_llm(task="compression")` = claude-haiku SIEMPRE** (decisión documentada; no
-  "mejorar" a sonnet).
+- **`call_llm(task="compression")` está BLOQUEADA** a la cadena barata/local de la
+  política activa del despacho — ningún call-site la puede cambiar (un `model=` explícito
+  se ignora, `_LOCKED_TASKS` en `agent/llm.py`). El modelo concreto lo fija la política:
+  'suscripcion' = `cli-claude-haiku`, 'nube' = `claude-haiku`, 'soberano' = `mia-local`.
+  No "mejorar" a sonnet ni tocar el bloqueo sin documentar en `memory/decisions.md`.
 
 ---
 
