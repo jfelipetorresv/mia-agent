@@ -196,6 +196,17 @@ def no_colombian_bias() -> None:
     Madrid, o que se le siembre derecho colombiano a un despacho español, NO lo es."""
     print("\n-- (b2) corpus y wake-gate: sin contagio colombiano --")
 
+    # El PROMPT del extractor de nombres decía "un texto jurídico colombiano" y ponía de
+    # ejemplo "carreras": eso sesga al modelo y le hace perder nombres y direcciones de los
+    # demás países — en un gate de confidencialidad, ese sesgo es una FUGA para todo
+    # despacho que no sea colombiano. Se le escapó a tres auditorías porque todas miraban
+    # los patrones, no el prompt. Este guardián lo fija.
+    from mia.security.anonymize import _NER_SYSTEM
+    _paises = ("colombian", "colombia", "carrera", "cédula", "cedula", "nit", "radicado",
+               "españ", "mexican", "méxico", "mexico", "argentin", "chilen", "peruan")
+    check("el prompt del extractor de nombres NO nombra ningún país ni sus formatos",
+          not any(p in _NER_SYSTEM.lower() for p in _paises))
+
     # El léxico colombiano no contamina el wake-gate de otro foro.
     check("es: 'tutela'/'desacato' (léxico colombiano) NO despiertan la vigilancia",
           mailbox.mail_looks_urgent(mh(subject="Consulta sobre tutela"), ["es"]) is False

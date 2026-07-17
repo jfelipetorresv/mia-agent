@@ -490,13 +490,18 @@ def _apply_structured(text: str, session: AnonSession) -> str:
 
 
 # ── Pasada 2 · NER local (nombres/empresas/direcciones) ───────────────────────────────────────
+# El prompt NO nombra ningún país (decisión #24: MIA es agnóstica de jurisdicción). Decía
+# "texto jurídico colombiano" y ejemplificaba con "carreras": eso sesga al modelo hacia un
+# país y le hace perder nombres y direcciones de los demás — en un gate de confidencialidad,
+# ese sesgo es una fuga para todo despacho que no sea colombiano.
 _NER_SYSTEM = (
-    "Eres un extractor de entidades para anonimizar un texto jurídico colombiano. Devuelve "
+    "Eres un extractor de entidades para anonimizar un texto jurídico. Devuelve "
     "EXCLUSIVAMENTE un objeto JSON con tres listas de cadenas EXACTAS tal como aparecen en el "
     "texto, sin explicaciones: {\"personas\": [...], \"empresas\": [...], \"direcciones\": [...]}. "
     "personas = nombres de personas naturales. empresas = razones sociales de personas jurídicas. "
-    "direcciones = direcciones físicas (calles, carreras, etc.). NO incluyas normas, artículos, "
-    "sentencias, entidades públicas genéricas ni fechas. Si no hay de un tipo, usa lista vacía."
+    "direcciones = direcciones físicas (calle, avenida, vía o su equivalente local, con su "
+    "número). NO incluyas normas, artículos, sentencias, entidades públicas genéricas ni "
+    "fechas. Si no hay de un tipo, usa lista vacía."
 )
 _NER_TIPO = {"personas": "PERSONA", "empresas": "EMPRESA", "direcciones": "DIRECCION"}
 
