@@ -1,6 +1,6 @@
 # Mia — task_plan.md
 # Fases del proyecto · objetivos por módulo · checklists
-# Última actualización: 2026-07-01
+# Última actualización: 2026-07-17 (sesión 48)
 
 Leyenda: [x] completado · [ ] pendiente · [~] en progreso
 
@@ -327,7 +327,52 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
       CREATE_NO_WINDOW; cierra Riesgo #59 pt 3/7). Regresión: línea base 85→86 suites; capa 2
       con 3 revisores, 5 hallazgos corregidos. **PENDIENTE = capa 3 de Pipe: E2E en máquina 100%
       limpia (doble clic en frío) — física, no automatizable en la máquina de dev.**
-- [ ] Reinicio automático del proxy LiteLLM tras guardar clave en el wizard (Riesgo #60) — requiere
-      IPC de Tauri; NO se hizo en F4, queda para una ola futura.
+- [x] Reinicio automático del proxy LiteLLM tras guardar clave en el wizard (Riesgo #60) — HECHO en
+      la sesión 46 (2026-07-12): comando Tauri `restart_litellm` + invocación desde `/activar`;
+      Riesgo #60 CERRADO. Resta solo la confirmación VISUAL en la capa 3 de Pipe.
 - [ ] Pre-lanzamiento (acción de Pipe): registrar Azure Trusted Signing (firma) — no bloquea
       el build del equipo
+
+## Sesión 48 (2026-07-16/17) — Agnosticismo de jurisdicción · Agent Hub y Banco de oro · criterio de MIA
+- [x] **Entorno** — la DB portable vuelve a arrancar (clúster en `tools/pgdata-portable`, puerto
+      55432, binarios mínimos + `share/*` del `-full` sin machacar `share/extension/`). Trampas
+      documentadas en progress.md sesión 48.
+- [x] Bug crítico de la bienvenida: el motor elegido sí se guarda (ruta sin `/api`) — `ca7cd74`
+- [x] Frontend: confianza (deep-link al borrador, fallos que dejan de ser silenciosos, 409 por
+      status), agnosticismo (locale del equipo, placeholders sin país, detonador de cuantía con
+      UVT/UIT/UMA/IPREM/SMI y €) y legibilidad (`--cta-strong`, 5.10:1 medido sobre el fondo real)
+      — `960553b`, `32880a3`
+- [x] **Agnosticismo backend** — patrones/pistas/léxico al pack `co/` (byte-idénticos), migración
+      036 (DEFAULT de jurisdicción a 'generic'; la decisión pasa a Python, nunca 'co'), ejemplos del
+      onboarding sin plaza concreta, prompt del anonimizador sin país. **4 fugas de confidencialidad
+      cerradas.** Gate `test_jurisdiction_agnostic` 75/75 — `902bd90`, `c4b57f5`, `09d00c7`, `47f5578`
+- [x] Dos gates en rojo desde sesiones anteriores, corregidos: `connector_hardening` 37/37 y
+      `value_delivered` 28/28 (la línea base de "84 suites ALL PASS" no era cierta) — `16e9eec`, `9a93341`
+- [x] **Agent Hub** — la delegación se cablea de verdad (`delegate_intent` determinista +
+      `delegate_proposal` con HITL + candado `hub_gate` fail-closed + merge jsonb atómico en
+      `hub_config`); migración 037. Gates `delegation_decide` 103/103, `delegation_wiring` 41/41,
+      `agent_hub` 46/46 — `65e521d`
+- [x] **Banco de oro** — desbloqueado: consentimiento concedible (`/settings/eval-consent`),
+      relectura de un caso (`GET /api/gold-cases/{id}`) y captura armada server-side (el material sin
+      anonimizar nunca pasa por el navegador). Gates `gold_cases_api` 55/55, `gold_cases` 42/42 —
+      `65e521d`
+- [x] **Pantallas** de ayudantes externos (dentro de Conexiones) y del banco de oro (tab propio
+      "Calidad"). Gate `test_config_tabs` 21/21 (era 14) — `84a059b`
+- [x] El examen mide sustancia: 3 señales deterministas en `flags_informativos` (fuera de `ok`).
+      Gate `eval_substance` 37/37 (nuevo) — `aa8ac3a`
+- [x] **Los 8 principios** — Sala de estrategia inyectada en el borrador (0 llamadas nuevas),
+      anatomía del argumento, wiki cableado en lectura, confianza con rechazo, SOUL con HITL +
+      versionado + tope que rechaza, juez de conflictos del Curator, frontmatter/wikilinks de
+      Obsidian. Migraciones 038/039/040. Gates `argument_engine` 65/65, `soul_guard` 47/47,
+      `curator_conflicts` 38/38, `wiki_reading` 36/36, `obsidian_sync` 73/73, `dreams` 44/44,
+      `curator_hitl` 29/29 — `9019ee6`
+- [x] **Gates que estaban DIFERIDOS y hoy están verdes** (con la DB arriba): `test_rls` 19/19 (HALT),
+      `test_welcome_keys` 41/41, `test_setup_wizard` 28/28
+- [ ] **Capa 3 EN VIVO de Pipe** — E2E del instalador en máquina limpia · recorrido visual · login
+      real de NotebookLM · **nuevo:** delegación en vivo (Riesgo #66/D3) y banco de oro de punta a
+      punta
+- [ ] Deuda abierta de esta sesión (ver bugs-and-risks.md #66-#74): persistir el diagnóstico del
+      turno (#68), "Patrones rechazados" de dreams al modelo (#69), endpoint de historial del asunto
+      (#70), `index_trace` best-effort (#71), medir la puntería del juez del Curator (#67)
+- [ ] Backlog acotado del sesgo colombiano: FTS 'spanish' (migración de índices) · voz TTS es_MX
+      (una voz por variante)

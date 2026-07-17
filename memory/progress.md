@@ -1,6 +1,6 @@
 # Mia — progress.md
 # DIARIO DE OBRA · qué se construyó · errores · tests · resultados
-# Última actualización: 2026-07-01
+# Última actualización: 2026-07-17 (sesión 48)
 
 ---
 
@@ -2533,3 +2533,202 @@ test_first_run 68/68, test_welcome_keys 39/39, HALT test_rls 12/12 + check_env_p
 
 **Próximo:** capa 3 de Pipe = E2E en máquina 100% limpia (doble clic en frío). Riesgo #60 (reinicio
 IPC del proxy) queda para una ola futura. Acciones de Pipe: firma Azure Trusted Signing + apps OAuth.
+
+---
+
+## Sesión 48 — 2026-07-16/17
+**Módulo:** agnosticismo de jurisdicción (backend + frontend) · Agent Hub y Banco de oro cableados · criterio de MIA (los 8 principios) — **CERRADA** (capa 3 de Pipe pendiente)
+
+17 commits. Tres hilos: quitarle a MIA lo colombiano que llevaba por dentro, hacer reales dos
+capacidades que tenían API y estaban muertas, y darle criterio (cómo argumenta y cómo recuerda).
+
+**El entorno: la DB portable volvió a arrancar** (llevaba sesiones caída). Trampas anotadas para
+no repetirlas:
+- El clúster vive en `tools/pgdata-portable` y escucha en **55432**. El 5432 lo ocupa un
+  PostgreSQL de sistema **sin pgvector** — conectarse ahí da errores que parecen de código.
+- Se arranca con los **binarios mínimos**, copiando `share/*` desde el `-full` **SIN machacar
+  `share/extension/`**: ahí vive pgvector 0.8.2 y sobrescribirlo lo desaparece.
+- Arrancar con los binarios del `-full` **levanta el postmaster pero sus backends mueren con
+  0xC0000142**: el servidor parece vivo y toda conexión muere con ConnectionTimeout. Falso
+  positivo caro; si se ve ese síntoma, es esto.
+
+**Bug crítico cerrado (`ca7cd74`).** La bienvenida llamaba `PUT /api/settings/model-policy`,
+pero el router de settings se registra sin prefijo: la ruta real es `/settings/model-policy`.
+El 404 lo tragaba un catch vacío → elegir motor u opt-in de OpenRouter/NotebookLM **fallaba en
+silencio** y el abogado creía que su elección había quedado fijada. Además deja de ser
+fail-soft: si la elección no se persiste, la bienvenida se detiene con motivo en llano.
+Hallazgo de Cursor (capa 3). Regresión en `test_second_brain_ui`.
+
+**Frontend — confianza, agnosticismo y legibilidad (`960553b`, `32880a3`).**
+- El borrador pendiente lleva a la pantalla de revisión (no al chat); se consumen
+  `?sin_borrador`/`?confirmed` (antes se escribían y nadie los leía); aprobar/rechazar y
+  restaurar versión dejan de fallar en silencio; el drift del curador se detecta por status
+  409 y no buscando "409" dentro del texto (que no lo contiene si el backend manda `detail`:
+  **el caso normal fallaba**); `AuthGate` ya no deja la pantalla en blanco.
+- Fechas con el locale del equipo (fuera "es-CO" en 8 sitios); placeholders sin forma
+  societaria ni credencial de un país; el detonador de cuantía suma UVT/UIT/UMA/IPREM/SMI y €
+  conservando SMLMV/SMMLV (aquí el falso negativo es el riesgo grave).
+- Token `--cta-strong`: contraste medido **sobre el fondo real** (bg-cta/15, no blanco) →
+  **5.10:1** en reposo y 4.91:1 en hover; antes ~1.90:1 (ilegible). `plainMessage()` en
+  `lib/api.ts` como fuente única de los errores en llano (evita mostrar "Error 500"). Lint en
+  verde (2 de los 3 errores eran preexistentes, confirmados en 7125f8d).
+
+**Backend agnóstico — MIA deja de ser colombiana por dentro (`902bd90`, `c4b57f5`, `09d00c7`).**
+- La raíz: el pack de jurisdicción tenía `id_formats`/`doc_markers` diseñados pero **sin
+  cablear**. Movido a `packs/co/`: formatos de identificación (cédula, NIT, radicado, teléfono
+  +57), pistas de dirección y stop-words (`pii_hints.json`), léxico del buzón
+  (`mail_signals.json`). El seed de corpus colombiano pasa a opt-in del pack. Los 7 patrones se
+  movieron a JSON **sin alterar un carácter**: la tabla para 'co' es byte-idéntica → cero
+  regresión para el despacho fundador.
+- **Cuatro fugas de confidencialidad cerradas, todas confirmadas ejecutando:** (1) un pack podía
+  APAGAR la red pan-hispana solo declarando un `role` — bastaba un typo, sin malicia, y salían
+  cédulas y DNI en crudo; (2) preexistente: un despacho colombiano dejaba salir el DNI de un
+  cliente español; (3) el respaldo de teléfono no cubría separadores ("615 55 12 34", la forma
+  normal en España, salía crudo); (4) `wiki_dir()` interpolaba el tenant_id en la ruta **sin
+  sanear** — inofensivo mientras el wiki era solo de escritura, primitiva de lectura al wiki de
+  otro despacho en cuanto se cableara la lectura (saneado antes de conectar nada).
+- Otros fail-open: `resolve_jurisdictions` no distinguía "eligió generic" de "nunca lo
+  configuró" (un despacho sin configurar habría perdido cédula/NIT); `load_pack` no era
+  fail-soft ante JSON corrupto; `lru_cache` congelaba una degradación transitoria para toda la
+  vida del proceso.
+- **Migración 036:** el DEFAULT `jurisdiction` de `legal_norms`, `jurisprudence` y
+  `firm_profiles` pasa a 'generic'. La jurisdicción al escribir se decide ahora en Python
+  (`SATGraph._resolve_jurisdiction`): explícita del llamador → pack del despacho → 'generic'.
+  **Nunca 'co'.** Marcar 'generic' deja el material sin adscripción; marcar 'co' AFIRMA una
+  autoridad jurídica falsa. Sin un solo UPDATE (verificado contra la base: legal_norms co=26,
+  jurisprudence co=13, firm_profiles colombia=6, idénticos antes y después).
+- Dos defectos vivos que no estaban en el inventario: `firm_profiles` (007) tenía DEFAULT
+  'colombia' y `auth.py` inserta sin jurisdicción → **todo despacho nuevo nacía con el perfil
+  marcado colombiano**; y `corpus_factory` marcaba como colombianas las normas del pack español.
+- `47f5578`: el prompt del anonimizador decía "extractor de entidades para anonimizar un texto
+  jurídico **colombiano**" y ejemplificaba direcciones con "carreras". **Se le escapó a tres
+  auditorías del mismo archivo el mismo día**, dos de ellas adversariales: todas miraban los
+  patrones, ninguna miró el prompt. Es un gate de confidencialidad: sesgar al modelo hacia un
+  país le hace perder nombres y direcciones de los demás.
+- Ejemplos del cuestionario de onboarding: fuera "Bogotá, Colombia" y las cuantías en pesos; el
+  ejemplo enseña el FORMATO ("Ciudad, País").
+
+**Dos gates que llevaban sesiones en rojo sin que constara (`16e9eec`, `9a93341`).** Ambos sobre
+dinero, ambos verificados como ya fallando en 7125f8d — **la línea base de "84 suites ALL PASS"
+NO era cierta**:
+- `test_connector_hardening` exigía que 'suscripcion' NUNCA usara OpenRouter, pero b582541 (sesión
+  47) extendió el overflow por decisión de Pipe ("Ambas"). El código era correcto; el test se quedó
+  en la regla vieja. No se debilita nada: 'soberano' sigue sin usar OpenRouter jamás, y se añade el
+  caso que faltaba ('suscripcion' sin opt-in tampoco enruta a un tercero). 37/37 (era 35/36).
+- `test_value_delivered` exigía que un alias sin precio costara 0, pero f147fb9 lo cambió a tarifa
+  conservadora de Sonnet — y es lo correcto: con 0 el gasto de un motor desconocido no se cuenta,
+  el tope mensual no frena y el abogado cree que no gastó. 28/28 (era 26/27).
+
+**Agent Hub y Banco de oro: tenían API y estaban muertos por dentro (`65e521d`, `84a059b`).**
+- **Delegación:** `graph.py` LEÍA `metadata['delegate']` y **nadie lo escribía nunca** — habilitar
+  un ayudante no hacía nada. Ahora `agents/delegate_intent.py` (determinista, sin LLM) detecta lo
+  que el abogado ORDENA, y `agents/delegate_proposal.py` deja que MIA proponga (decisión de Pipe,
+  ver decisions.md #34). Candado `gateway/hub_gate.py`: con política 'soberano' NO se delega aunque
+  el ayudante esté habilitado; la política se lee con `model_policy_for_strict` (LANZA si la DB
+  falla: un error de infraestructura jamás abre la salida). Sale exactamente el mensaje del abogado:
+  ni documentos, ni hechos, ni perfil, ni historial (probado). Bug de raíz: `hub_config.set_enabled`
+  hacía read-modify-write del config entero → activar un ayudante podía **resucitar una política que
+  el despacho acababa de endurecer**; ahora merge jsonb atómico.
+- **Banco de oro:** tres bloqueos. (1) `allow_eval_real_data` solo se LEÍA — no había forma de
+  concederlo y el 403 mandaba "a Configuración", donde no había nada → GET/PUT
+  `/settings/eval-consent`, fail-closed, merge anidado (el `||` de jsonb es superficial y habría
+  borrado el resto de `config['eval']`). (2) No se podía releer un caso → GET
+  `/api/gold-cases/{id}` (nunca devuelve `anon_map` ni su hash). (3) La UI no podía armar el caso →
+  `:draft` lo arma **server-side** desde el matter_id, así el material sin anonimizar nunca llega al
+  navegador. Topes explícitos (20 documentos, 60 fragmentos) avisados con números: nunca un recorte
+  silencioso que parezca captura completa. RLS de la captura probado a conciencia: `traces.matter_id`
+  es text sin FK, así que se sembró una traza del despacho B con el matter_id de A y timestamp más
+  reciente — A no la captura.
+- **Pantallas:** ayudantes externos dentro de Conexiones (activar NO hace que MIA los use; dice sin
+  alarmismo que no se ha probado en vivo); Banco de oro en tab propio "Calidad", NO dentro de "Valor
+  y gasto" (aquello es dinero, esto es un examen). Sospecha vs dato confirmado se distinguen por
+  color, icono, texto, insignia Y subrayado — nunca solo por color. El resaltado ignora los offsets
+  del backend a propósito (son posiciones sobre el texto global concatenado) y marca por valor, de
+  más largo a más corto, para que "Juan Pérez" no destroce "Juan Pérez Gómez". Nunca dice "limpio".
+  Gate `test_config_tabs` 21/21 (era 14) — fija, entre otras, que las rutas de `/settings` van SIN
+  el prefijo `/api`: el mismo error que dejó la bienvenida sin guardar el motor.
+
+**El examen empieza a medir sustancia (`aa8ac3a`).** Hallazgo, ahora test y no afirmación: un
+borrador con **cero argumentos desarrollados** pero con las citas marcadas sacaba `ok:True`.
+Cualquier mejora argumental era invisible al sistema. Tres señales deterministas, sin juez LLM y sin
+léxico jurídico: densidad de desarrollo, anclaje al expediente (por COBERTURA: 20 `[doc 1]`
+amontonados en un párrafo dan 1/3, no 1.0) y fundamentación normativa concreta. Tres señales
+RECHAZADAS por no poder medirse sin mentir: "confronta a la contraparte" (solo por léxico, la más
+gameable), "consecuencia jurídica al cierre" (fórmulas de un país) y concentración 80/20 (evaluada:
+NO discrimina, mide varianza). Los indicios van en `flags_informativos`, **fuera de `flags` y de
+`ok`**: una rúbrica nueva en el contrato vigente volvería rojos de golpe los casos de oro ya
+aprobados, y un examen que se pone rojo sin que nada haya empeorado deja de creerse.
+**Honestidad:** esto mide la FORMA, no la calidad del argumento; cada señal por separado es
+gameable. Los nombres (`indicios_*`, ratio, densidad) lo dicen así a propósito: nunca "solidez".
+
+**Los ocho principios — cómo argumenta y cómo recuerda (`9019ee6`).** Destilados de los skills de
+firma de Pipe y de su vault, sin clonar nada: lo colombiano y lo propio de Lexia se descartó por
+diseño. El hallazgo que ordenó todo: **MIA estaba construida para NO MENTIR, no para ARGUMENTAR
+BIEN, y aprendía de Pipe sin volver a leer nunca lo aprendido.**
+- La **Sala de estrategia** (52/52, sellada, cara) existía y el redactor **nunca la consultaba**.
+  Ahora el dictamen —ya pagado y persistido por asunto— se inyecta sellado en el borrador. Se
+  descartó correr la Sala en cada turno (~9 llamadas contra las 4 del turno: triplicaría la
+  factura). Coste real: 0 llamadas nuevas, 1 SELECT indexado.
+- **Anatomía del argumento** en la capa 2 (cacheada, +238 tokens que se pagan una vez): hecho del
+  expediente, norma transcrita, autoridad aplicada AL CASO, prueba integrada y confrontación con el
+  adversario. Roles funcionales, sin un solo país. Y jerarquía: el grueso a los 3-4 fuertes, los
+  débiles se omiten. `facts` deja de describir inconsistencias y pasa a explotarlas.
+- El **wiki era de SOLO ESCRITURA**: `search_wiki()` no la llamaba nadie en todo el repo. Todo lo
+  aprendido de las correcciones del abogado —incluida "Lo que NO funciona"— iba a un .md que el
+  modelo no veía jamás. Cableado en retrieval, fenceado como inferido y NO citable, ≤2 conceptos y
+  ≤640 tokens por turno, 25 ms fuera del event loop.
+- Antes de leerlo hubo que arreglar la **confianza, que era un trinquete**: solo subía (9 toques →
+  1.0) y nunca bajaba ante un rechazo. Ahora un rechazo pesa el doble que una aprobación (rechazar
+  cuesta un acto deliberado; aprobar es el default) y nunca llega a 1.0. Los archivos viejos con
+  confianza inflada NO se leen hasta recompilarse.
+- **`dreams` escribía reglas en SOUL** —la capa 1 del prompt, inyectada entera y con autoridad de
+  sistema— sin HITL, sin tope y sin versionado; era el único escritor automático sin freno sobre la
+  capa más autoritativa, y estaba **PROTEGIDO POR UN TEST** que exigía ese comportamiento ("Nudges
+  actualiza SOUL"): hubo que invertirlo. Ahora propone y el abogado aprueba; versionado espejo de
+  `playbook_versions` y tope que RECHAZA (no trunca: cortar la identidad en silencio es peor). La
+  instrucción directa del abogado se aplica sin re-preguntar (su input es fidedigno).
+- El **Curator fusionaba contradicciones**: coseno >0.85 y fundía. "Siempre X" y "nunca X" son casi
+  idénticos para una máquina. Ahora un juez barato separa duplicado de conflicto (fail-soft a
+  duplicado: un falso positivo interroga al abogado y deja de aprobar, y una memoria que nadie
+  aprueba deja de aprender). ~$0.012/despacho/semana.
+- **Obsidian**: el frontmatter entraba como basura textual y los `[[wikilinks]]` no se parseaban —
+  MIA leía el segundo cerebro del despacho como un PDF. Ahora son metadatos consultables. Sin
+  frontmatter → idéntico a antes; YAML roto → esa nota degrada y el vault sigue sincronizando.
+- Migraciones: 037 (consentimiento de agentes por asunto), 038 (conflictos del curador), 039
+  (frontmatter/links de Obsidian), 040 (versiones de SOUL). **La 040 nació como 038 y hubo que
+  renumerar**: dos agentes reservaron el mismo número. Dos migraciones con el mismo prefijo rompen
+  el orden del ledger y el checksum del gate F0.
+
+**Tests (capa 1).** Verdes al cierre: `test_rls` 19/19 (HALT) · `migration_ledger` PASS ·
+`argument_engine` 65/65 · `soul_guard` 47/47 · `curator_conflicts` 38/38 · `wiki_reading` 36/36 ·
+`obsidian_sync` 73/73 · `eval_substance` 37/37 (nuevo) · `e2e` 32/32 · `prompt_builder` 46/46 ·
+`dreams` 44/44 · `curator_hitl` 29/29 · `jurisdiction_agnostic` 75/75 · `delegation_decide` 103/103 ·
+`delegation_wiring` 41/41 · `warroom` 52/52 · `agent_hub` 46/46 · `gold_cases_api` 55/55 ·
+`gold_cases` 42/42 · `config_tabs` 21/21 · `second_brain_ui` 27/27 · `connector_hardening` 37/37 ·
+`value_delivered` 28/28 · `untrusted_content` 28/28 · `sat_graph_jurisdiction` 26/26 (era 11) ·
+`tsc` limpio · `next lint` 0 errores · `next build` 15 rutas · `cargo check` exit 0.
+**Además, con la DB por fin arriba se corrieron tres gates que estaban DIFERIDOS y hoy están
+verdes:** `test_rls` 19/19 (HALT), `test_welcome_keys` 41/41 y `test_setup_wizard` 28/28.
+
+**Capa 2.** Revisiones adversariales independientes en los frentes de frontend, jurisdicción
+(verificó la equivalencia de los regex contra HEAD y encontró la fuga del `role`) y delegación.
+Todos los hallazgos corregidos en los mismos commits.
+
+**Honestidad sobre el alcance (lo que NO se verificó):**
+- El gate del **Curator prueba el cableado, no la puntería del juez** (corre sin red, el veredicto se
+  inyecta). Su precisión real está sin medir; lo acota que el fallo seguro es degradar al
+  comportamiento de hoy.
+- **D3 sigue abierto**: los flags de los CLI del Agent Hub nunca se han confirmado contra un `--help`
+  real. La salida del ayudante va a `metadata` y NO entra en la cadena de razonamiento jurídico. La
+  primera invocación real puede fallar; degrada limpio y avisa en llano, pero "funciona" está sin
+  verificar en vivo.
+- El archivo **"Patrones rechazados" de dreams sigue sin llegar al modelo** (confidence hardcodeada
+  0.10, sin `wiki_schema`): el lazo de aprendizaje no está cerrado al 100%.
+- **El diagnóstico del turno no se persiste** (vive en el checkpoint y se borra al terminar): las
+  conclusiones clave del banco de oro llegan vacías. No se inventan — se le pide al abogado que las
+  escriba.
+- Pendiente reportado y no tocado: FTS 'spanish' (exige migración de índices) y voz TTS es_MX
+  (requiere empaquetar una voz por variante).
+
+**Próximo:** capa 3 de Pipe — E2E del instalador en máquina limpia, recorrido visual, login real de
+NotebookLM y, nuevo, probar en vivo la delegación (D3) y el banco de oro de punta a punta.

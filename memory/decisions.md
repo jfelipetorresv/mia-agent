@@ -1,6 +1,6 @@
 # Mia — decisions.md
 # Decisiones arquitectónicas con razonamiento completo
-# Última actualización: 2026-06-14
+# Última actualización: 2026-07-17 (sesión 48)
 # (Estas decisiones NO se re-discuten — ver CLAUDE.md sección D)
 
 ---
@@ -558,3 +558,103 @@ sandbox). (5) El error de vault sin configurar llega al abogado en lenguaje llan
 configure."); el detalle técnico queda solo en el log (`VaultConfigError`). Gates:
 test_vault_write ampliado a 34/34 (junction REAL con mklink /J + stems reservados) ·
 test_wiki_manager 18/18 · test_dreams 16/16 · test_obsidian_sync 22/22 sin regresión.
+
+## #33 — 2026-07-16 · Anonimizador: "enmascarar todo, siempre" (decisión de Pipe)
+
+**Decisión.** El anonimizador aplica SIEMPRE los patrones de **todos los packs instalados** + la
+base universal + los respaldos por rol, **sin mirar la jurisdicción del despacho**. `jurisdictions`
+desaparece de su API pública (un llamador viejo revienta con TypeError en vez de que se le ignore
+en silencio).
+
+**Razonamiento.** El anonimizador es un gate de confidencialidad: si falla, se filtran datos de
+clientes reales. **El secreto profesional manda sobre la precisión del análisis.** Se acepta
+sobre-enmascarar; no se acepta filtrar un dato por ser de otro país — un despacho colombiano recibe
+clientes españoles, y el pack 'co' cubriendo el rol suprimía el respaldo que atrapaba el DNI (fuga
+preexistente, confirmada ejecutando). Filtrar la cédula de un cliente es irreversible; enmascarar de
+más solo estorba.
+
+**Efecto aceptado y dicho:** `artículos 1494-1495` se enmascara como teléfono. Se prefiere ese ruido
+a un dato del cliente en claro.
+
+**Corolario estructural.** Los respaldos por rol (DOCUMENTO/TELEFONO) **no son suprimibles por
+configuración**: antes, un pack podía apagar la red pan-hispana con solo declarar un `role` — bastaba
+un typo, sin malicia, y salían cédulas y DNI en crudo. Un gate de seguridad que un archivo de datos
+puede desactivar no es un gate.
+
+## #34 — 2026-07-17 · Delegación: "MIA decide y me pregunta" (decisión de Pipe)
+
+**Decisión.** MIA puede **decidir por sí misma** que necesita un ayudante externo y **proponerlo** al
+abogado. Tres modos por despacho (`tenant_settings.config->>'delegation_mode'`): **preguntar**
+(default) · **autonomo** · **solo_si_lo_pido**.
+
+**Razonamiento.** El diseño original (CP-HUB) solo permitía delegar cuando el abogado nombraba al
+ayudante en su propio mensaje: el acto de pedirlo ES el consentimiento. Pipe lo rechazó — *"parte del
+encanto de MIA es que puede determinar si necesita agentes o subagentes"*. Un asistente que solo
+obedece órdenes literales no es un asistente.
+
+**Por qué ahora es aceptable darle la decisión al modelo.** Porque **el modelo ya no abre la puerta**:
+entre su decisión y la salida de datos está el abogado aprobando el texto exacto (interrupt HITL en
+`graph.py::delegation_node`). Pero "el humano aprueba" NO se acepta como control único —un control que
+depende de leer con atención cada vez se degrada a la décima propuesta—, así que hay tres límites
+**estructurales** que hacen que, incluso con un proponente 100% controlado por una inyección indirecta
+desde un documento del expediente, no haya nada que exfiltrar:
+1. **El proponente no ve el expediente.** Solo el mensaje limpio del abogado y el catálogo de
+   ayudantes. No se le pide discreción: no puede filtrar lo que nunca leyó.
+2. **El texto propuesto no es canal de salida libre.** Saneado y recortado; una línea corta y legible
+   no es buen sitio donde esconder un expediente — y, sobre todo, ES legible.
+3. **El ayudante sale de un catálogo cerrado** (ya filtrado por `hub_gate.allowed_agents`): slug
+   inventado, texto libre o JSON roto → None. Nunca se construye un destino con lo que dijo el modelo.
+La propuesta llega a la pantalla **etiquetada** como contenido generado por MIA y potencialmente
+influido por un documento, para que el abogado la lea con la desconfianza correcta.
+
+**Lo que NO cambia.** La política manda sobre el toggle: con 'soberano' no se delega aunque el
+ayudante esté habilitado, y la política se lee con `model_policy_for_strict` (LANZA si la DB falla —
+un error de infraestructura jamás abre la salida).
+
+## #35 — 2026-07-17 · Todo el dinero en dólares (decisión de Pipe)
+
+**Decisión.** El valor y el gasto se muestran **siempre en dólares**, para cualquier despacho. Se
+rechazó la moneda por jurisdicción.
+
+**Razonamiento.** El gasto de MIA ocurre en USD (es lo que cobran los proveedores de modelo). La
+tarifa del abogado está en su moneda. Mostrar la tarifa en pesos junto a un gasto en USD obliga a una
+de dos cosas: **mentir en el "valor neto"** (restar magnitudes de monedas distintas) o **inventar una
+tasa de cambio** que nadie mantiene y que envejece mal. Ambas convierten una cifra útil en una cifra
+falsa. Una sola moneda, la real del gasto, es honesta aunque sea incómoda.
+
+**Efecto.** Confirma el comportamiento actual: no hubo cambio de código. Queda registrado para que no
+se re-abra cada vez que se toca el agnosticismo de jurisdicción.
+
+## #36 — 2026-07-17 · Los 8 principios: destilar los skills y el vault de Pipe, sin clonar nada suyo
+
+**Decisión.** MIA incorpora ocho principios de oficio destilados de dos sistemas de Pipe —sus skills
+de firma (cómo analiza) y su vault personal (cómo recuerda)—. **Ninguno se clonó:** lo colombiano y lo
+propio de Lexia se descartó por diseño; solo entró lo que un abogado de Madrid o de Ciudad de México
+reconocería como oficio.
+
+**Razonamiento.** El hallazgo que ordenó el trabajo: **MIA estaba construida para NO MENTIR, no para
+ARGUMENTAR BIEN** — todos los gates eran de veracidad y ninguno de sustancia— y **aprendía de Pipe sin
+volver a leer nunca lo aprendido** (el wiki era de solo escritura). Un sistema que no miente pero no
+argumenta no sirve; uno que aprende y no recuerda, tampoco.
+
+**Lo que se descartó explícitamente:**
+- **Correr la Sala de estrategia en cada turno:** ~9 llamadas contra las 4 del turno → triplicaría la
+  factura del despacho. En su lugar se reusa el dictamen ya pagado y persistido por asunto (coste
+  real: 0 llamadas nuevas, 1 SELECT indexado).
+- **Clonar el criterio jurídico colombiano de Pipe:** violaría la regla dura (MIA no es de ningún
+  país). Los roles del argumento son funcionales, sin una sola jurisdicción.
+- **Truncar el SOUL al llegar al tope:** rechaza en vez de truncar — cortar la identidad del despacho
+  en silencio es peor que fallar ruidosamente.
+
+**Corolarios que quedan como regla.**
+- **Ningún escritor automático sin freno sobre la capa 1.** `dreams` escribía reglas en SOUL —
+  inyectado entero y con autoridad de sistema— sin HITL, sin tope y sin versionado. Ahora propone y el
+  abogado aprueba, con versionado espejo de `playbook_versions`.
+- **La confianza no es un trinquete.** Un rechazo pesa el doble que una aprobación (rechazar cuesta un
+  acto deliberado; aprobar es el default) y nunca llega a 1.0. Lo aprendido con confianza inflada no
+  se lee hasta recompilarse: es lo que evita leer basura con autoridad el día 1.
+- **La instrucción directa del abogado se aplica sin re-preguntar** (regla dura: su input es
+  fidedigno). El escepticismo aplica a lo que MIA infiere, no a lo que él ordena.
+- **Un test puede estar protegiendo un defecto.** El comportamiento peligroso de `dreams` estaba
+  fijado por un test que exigía justo eso ("Nudges actualiza SOUL"); hubo que invertirlo. Un gate
+  verde no prueba que el diseño sea correcto: prueba que no ha cambiado.

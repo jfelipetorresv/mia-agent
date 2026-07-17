@@ -1,8 +1,99 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-07-01
+# Última actualización: 2026-07-17 (sesión 48)
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
+
+## Actualización 2026-07-16/17 — Sesión 48 (agnosticismo de jurisdicción · Agent Hub y Banco de oro · criterio)
+
+### 🟢 Riesgo — La bienvenida no guardaba el motor elegido (CERRADO, `ca7cd74`)
+`/activar` llamaba `PUT /api/settings/model-policy`, pero el router de settings se registra SIN
+prefijo (`api/main.py:159`): la ruta real es `/settings/model-policy`. El 404 lo tragaba un catch
+vacío → elegir motor y los opt-in de OpenRouter/NotebookLM **fallaban en silencio** y el abogado
+creía que su elección había quedado fijada. **Cierre:** ruta corregida + el fallo deja de ser
+fail-soft (la bienvenida se detiene con motivo en llano en vez de decir "listo" sobre una config
+que no se aplicó). Regresión en `test_second_brain_ui`; `test_config_tabs` (21/21) fija además que
+las rutas de `/settings` van sin `/api`. Hallazgo de Cursor en capa 3.
+
+### 🟢 Riesgo — Dos gates llevaban sesiones en rojo sin que constara (CERRADOS, `16e9eec` + `9a93341`)
+**La línea base de "84 suites ALL PASS" NO era cierta.** Ambos fallaban ya en 7125f8d (verificado),
+ambos sobre dinero, y en los dos casos el código era correcto y el test se había quedado en la regla
+vieja: `test_connector_hardening` fijaba que 'suscripcion' nunca usara OpenRouter (b582541 lo cambió
+por decisión de Pipe, "Ambas") y `test_value_delivered` fijaba que un alias sin precio costara 0
+(f147fb9 lo pasó a tarifa conservadora de Sonnet — con 0, el gasto de un motor desconocido no se
+cuenta, el tope mensual no frena y el abogado cree que no gastó). Hoy: 37/37 y 28/28.
+**Lección:** un gate en rojo que nadie mira es peor que no tenerlo — afirma una seguridad que no
+existe. La línea base se re-corre por tramos (no cabe entera en una tanda).
+
+### 🟢 Riesgo — Sesgo colombiano hardcodeado en el backend (CERRADO, `902bd90`/`c4b57f5`/`09d00c7`/`47f5578`)
+MIA nacía colombiana por dentro (REGLA DURA: MIA se adapta al despacho que la instala). Cerrado en
+cuatro commits: patrones/pistas/léxico al pack, DEFAULT de jurisdicción a 'generic' (migración 036)
+con la decisión movida a Python (nunca 'co'), ejemplos del onboarding sin plaza concreta, y el
+prompt del anonimizador sin nombrar país. **Cuatro fugas de confidencialidad cerradas** en el
+camino (ver progress.md sesión 48), todas confirmadas ejecutando. Guardián: `test_jurisdiction_
+agnostic` 75/75 (el prompt no puede volver a nombrar un país ni un formato local).
+**Backlog acotado que queda, con su razón de no tocarse hoy:** FTS 'spanish' (exige migración de
+índices) y voz TTS es_MX (exige empaquetar una voz por variante).
+
+### 🔴 Riesgo #66 — D3: los flags de los CLI del Agent Hub nunca se han probado contra un `--help` real
+Sucesor vivo del Riesgo #9. La delegación ya está cableada de verdad (`delegate_intent` +
+`delegate_proposal` + `hub_gate`), pero **ningún ayudante externo se ha invocado en vivo**: los flags
+con los que MIA llama a cada CLI están calcados de la documentación, no confirmados contra el
+programa instalado. **Riesgo:** la primera invocación real puede fallar. **Lo que lo acota:** degrada
+limpio y avisa en llano, y la salida del ayudante va a `metadata` — **NO entra en la cadena de
+razonamiento jurídico**. **Honestidad:** "funciona" está sin verificar; los gates prueban el
+cableado y el candado, no la invocación. **Acción:** capa 3 de Pipe (probar la delegación en vivo).
+
+### 🟡 Riesgo #67 — El juez de conflictos del Curator está probado en cableado, NO en puntería
+`test_curator_conflicts` 38/38 corre **sin red**: el veredicto del juez se inyecta. Que el juez
+distinga de verdad un duplicado de una contradicción ("siempre X" vs "nunca X") **está sin medir**.
+**Lo que lo acota:** fail-soft a duplicado, es decir, el fallo seguro es degradar al comportamiento
+de hoy; y un falso positivo solo interroga al abogado. **Acción:** medir la precisión contra casos
+reales cuando haya volumen.
+
+### 🔴 Riesgo #68 — El diagnóstico del turno no se persiste (se pierde dato de valor cada turno)
+El diagnóstico vive en el checkpoint y se borra al terminar el turno. **Efecto hoy:** las
+conclusiones clave del banco de oro llegan **vacías** en la captura automática (no se inventan: se le
+pide al abogado que las escriba). **Efecto de fondo:** cada turno tira a la basura la parte más
+valiosa del razonamiento, justo la que serviría para el examen y para aprender.
+**Acción:** persistir el diagnóstico por turno (probablemente junto a `traces`) antes de apoyarse en
+la captura automática.
+
+### 🔴 Riesgo #69 — El archivo "Patrones rechazados" de dreams sigue sin llegar al modelo
+El lazo de aprendizaje NO está cerrado al 100%: lo que el despacho rechaza se escribe, pero el
+modelo no lo lee (confidence hardcodeada en 0.10, sin `wiki_schema`). El resto del wiki ya sí se
+lee (`9019ee6`), este archivo no. **Efecto:** MIA puede repetir un patrón que el abogado ya rechazó.
+
+### 🔴 Riesgo #70 — El hilo de mensajes del asunto no sobrevive a un F5
+No hay endpoint de historial: los turnos están en `traces` pero **nadie los muestra**. El abogado
+recarga la página y el hilo desaparece — el dato existe, la pantalla no lo pide. Se vive como
+pérdida de trabajo aunque no lo sea.
+
+### 🟡 Riesgo #71 — `index_trace` es best-effort: si esa fila falla, el asunto queda incapturable
+La indexación de la traza no bloquea el turno (bien: no se le tumba el trabajo al abogado por un
+índice). Pero si esa fila no se escribe, el banco de oro **no encuentra el turno** y el 409
+("ya capturado") mentiría. **Acción:** decidir si se reintenta o si se detecta la ausencia en vez de
+asumirla.
+
+### 🟡 Riesgo #72 — SOUL, wiki y trazas viven en ficheros SIN RLS 🔐
+El aislamiento entre despachos de todo lo que vive en disco (no en Postgres) depende de **sanear el
+nombre del fichero**: `_safe_tenant` colapsa entradas distintas a la misma carpeta. Hoy NO es
+explotable — los tenant_id son UUID y no colisionan al sanearse — pero es **estructural**: la
+garantía no la da el motor, la da una función de nombres. `wiki_dir()` interpolaba el tenant_id sin
+sanear y se corrigió esta sesión (era una primitiva de lectura al wiki de otro despacho en cuanto se
+cableara la lectura). **Acción:** si algún día los identificadores dejan de ser UUID, esto es un
+bloqueante.
+
+### 🟡 Riesgo #73 — El número de migración se reserva al ESCRIBIR, no al empezar
+Dos agentes de esta sesión crearon el mismo `038` y hubo que renumerar (soul → 040). Dos migraciones
+con el mismo prefijo rompen el orden del ledger y el checksum del gate F0.
+**Regla nueva (vinculante):** el número de migración se **reserva al empezar** el trabajo, no al
+escribir el archivo. Aplica en particular al trabajo multi-agente sobre el mismo repo.
+
+### 🟡 Riesgo #74 — Capa 3 de Pipe: la deuda acumulada crece con dos frentes nuevos
+Además del E2E del instalador en máquina limpia, el recorrido visual y el login real de NotebookLM,
+ahora hay que probar **en vivo la delegación (D3, ver #66)** y **el banco de oro de punta a punta**.
+Ninguno de los dos se ha ejercido con un caso real por un humano.
 
 ## Actualización 2026-07-13/14 — Sesión 47 (Sala de estrategia + OpenRouter)
 
