@@ -121,6 +121,13 @@ def run_frontend_checks() -> None:
     check("frontend CP7: selector 'Motor de IA' consume /settings/model-policy (PUT al cambiar)",
           "Motor de IA" in conexiones_src and "/settings/model-policy" in conexiones_src
           and "Modelo preferido" not in conexiones_src)
+    # Regresión (hallazgo de Cursor, capa 3): el router de settings se registra SIN
+    # prefijo (api/main.py), así que la ruta real es "/settings/model-policy". La
+    # bienvenida llamaba "/api/settings/model-policy" → 404 tragado por un catch
+    # vacío: el abogado creía haber fijado su motor y Mia seguía con otro.
+    activar = (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8")
+    check("frontend: la bienvenida fija el motor con la ruta REAL (sin prefijo /api)",
+          "/settings/model-policy" in activar and "/api/settings/model-policy" not in activar)
     # B4: "Guías y documentos" + "Lo que Mia sabe hacer" se fusionaron en un solo
     # subtab ("Guías y habilidades", sentence case como el resto de tabs de esta
     # página: "Mi despacho", "Criterios aprendidos") que muestra la métrica GEPA.

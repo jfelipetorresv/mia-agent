@@ -406,13 +406,19 @@ export default function ActivarPage() {
       // de OpenRouter (el PUT es el único lugar que persiste ambas cosas juntas).
       if (politica !== status.politica || conectoOpenrouter) {
         try {
-          await apiSend("PUT", "/api/settings/model-policy", {
+          await apiSend("PUT", "/settings/model-policy", {
             politica,
             ...(conectoOpenrouter ? { allow_openrouter: true } : {}),
           });
-        } catch {
-          // Fail-soft (§G): si esto falla, no rompe el asistente — las llaves de
-          // abajo se guardan igual; el abogado puede activar el respaldo después.
+        } catch (err) {
+          // NO fail-soft: si la elección de motor no se persiste, seguir mostraría
+          // "listo" y el abogado creería que Mia trabaja con el motor que eligió
+          // cuando sigue con otro. Se detiene aquí con un motivo en llano; puede
+          // reintentar sin perder lo que ya escribió.
+          setSaveError(
+            plainMessage(err, "No pude guardar tu elección de motor. Inténtalo de nuevo."),
+          );
+          return;
         }
       }
 
