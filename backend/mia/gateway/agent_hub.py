@@ -14,6 +14,11 @@ bugs-and-risks.md + spec 1e):
   NUNCA propaga una excepción al caller (graceful degradation).
 - Los CLIs son OPCIONALES por tenant; por defecto todos deshabilitados (hub_config).
 
+ESTE MÓDULO NO DECIDE SI SE PUEDE DELEGAR — solo sabe ejecutar. El candado de
+confidencialidad (política ≠ 'soberano' + opt-in del despacho) vive en `gateway/hub_gate.py`
+y quien decide CUÁNDO es `agents/delegate_intent.py` + `agents/graph.py::_maybe_delegate`.
+Nadie debe llamar a `invoke_result` sin haber pasado por `hub_gate.delegation_allowed`.
+
 §G: el abogado nunca ve marcas ("Hermes", "Claude Code"); ve un `display_name` en
 español. El `slug` (id público neutro) es lo que viaja en las URLs de settings.
 
@@ -36,6 +41,11 @@ from ..agents import untrusted
 logger = logging.getLogger("mia.gateway.agent_hub")
 
 DEFAULT_TIMEOUT = 120  # segundos
+
+# Estados del resultado de una invocación (contrato con el grafo y, vía metadata, con la UI).
+STATUS_OK = "ok"                      # el CLI corrió y devolvió salida (ya SELLADA)
+STATUS_NOT_INSTALLED = "no_instalado"  # habilitado pero el binario no está en el equipo
+STATUS_ERROR = "error"                # exit≠0, timeout, excepción, conector desconocido
 
 
 @dataclass(frozen=True)
@@ -69,6 +79,26 @@ CONNECTORS: dict[str, Connector] = {
     "openclaw": Connector("openclaw", "navegacion", "Asistente de navegación web",
                           ("openclaw",), "MIA_OPENCLAW_BIN", _prompt_flag("-p")),
 }
+
+@dataclass(frozen=True)
+class InvokeResult:
+    """Resultado ESTRUCTURADO de invocar un CLI. El caller decide por `status`, nunca
+    olfateando el prefijo del string ("[error] …") — eso era frágil y se rompía en cuanto
+    el CLI escupía un "[error]" propio en su stdout.
+
+    · status = STATUS_OK        → `text` es la salida SELLADA (untrusted.wrap_untrusted).
+    · status ≠ STATUS_OK        → `text` es un mensaje en llano para el abogado (§G) y
+                                  `detail` la traza técnica (stderr recortado, excepción).
+                                  `detail` NUNCA se le muestra al abogado: va al log.
+    """
+    status: str
+    text: str
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status == STATUS_OK
+
 
 _SLUG_TO_KEY = {c.slug: c.key for c in CONNECTORS.values()}
 
@@ -165,15 +195,34 @@ class AgentHub:
 
     # -- invocación genérica ----------------------------------------------------
     def invoke(self, key: str, prompt: str, tenant_id: str) -> str:
-        """Invoca un conector. Devuelve stdout, o un string de error descriptivo.
-        NUNCA lanza excepción al caller (graceful degradation)."""
+        """Compat: solo el texto de `invoke_result` (salida sellada o mensaje en llano).
+
+        Los llamadores nuevos usan `invoke_result`, que trae `status` y no obliga a
+        adivinar el desenlace leyendo el prefijo del string."""
+        return self.invoke_result(key, prompt, tenant_id).text
+
+    def invoke_result(self, key: str, prompt: str, tenant_id: str) -> InvokeResult:
+        """Invoca un conector y devuelve el resultado ESTRUCTURADO.
+        NUNCA lanza excepción al caller (graceful degradation).
+
+        D3 ([VERIFICAR]): los flags de `build_args` NO están confirmados contra el `--help`
+        real de cada CLI. Si un flag está mal, el CLI sale con código ≠ 0 (o revienta) — ese
+        camino termina AQUÍ, en STATUS_ERROR con un texto en llano para el abogado y el
+        stderr en el log. El turno del abogado nunca se rompe por un flag equivocado."""
         c = CONNECTORS.get(key)
         if c is None:
-            return f"[error] Conector desconocido: {key}"
+            logger.warning("conector desconocido: %s (tenant=%s)", key, tenant_id)
+            return InvokeResult(STATUS_ERROR, "Ese asistente no existe.",
+                                detail=f"conector desconocido: {key}")
         binary = self.resolve_binary(key)
         if binary is None:
             logger.info("conector %s no disponible (tenant=%s)", key, tenant_id)
-            return f"[no disponible] '{c.display_name}' no está instalado en este equipo."
+            # §G: el abogado ve el nombre en español y una salida de acción, no un stacktrace.
+            return InvokeResult(
+                STATUS_NOT_INSTALLED,
+                f"«{c.display_name}» no está instalado en este equipo. Puedes seguir sin él: "
+                f"Mia responde igual con el expediente y el corpus del despacho.",
+                detail=f"binario no encontrado: {c.bin_candidates} / {c.env_override}")
 
         args = [binary, *c.build_args(prompt)]  # ruta intacta como primer arg (espacios OK)
         # CP-S3: el subproceso recibe SOLO el entorno saneado (sin las claves de la
@@ -188,21 +237,32 @@ class AgentHub:
             code, stdout, stderr = self._runner(args, **kwargs)
         except subprocess.TimeoutExpired:
             logger.warning("conector %s: timeout %ss (tenant=%s)", key, self._timeout, tenant_id)
-            return f"[error] '{c.display_name}' no respondió en {self._timeout}s."
+            return InvokeResult(
+                STATUS_ERROR,
+                f"«{c.display_name}» no respondió a tiempo ({self._timeout} s) y se detuvo.",
+                detail=f"timeout {self._timeout}s")
         except Exception as e:  # noqa: BLE001 — graceful degradation: nunca propagar
             logger.warning("conector %s falló: %s (tenant=%s)", key, e, tenant_id)
-            return f"[error] '{c.display_name}' falló: {e}"
+            # El texto de la excepción NO va al abogado (puede traer rutas/jerga): al log.
+            return InvokeResult(STATUS_ERROR,
+                                f"«{c.display_name}» no se pudo ejecutar en este equipo.",
+                                detail=f"{type(e).__name__}: {e}")
 
         if code != 0:
-            logger.warning("conector %s exit=%s stderr=%s", key, code, (stderr or "")[:300])
-            # CP-S1: el stderr es salida EXTERNA — saneado antes de interpolarlo
+            # CP-S1: el stderr es salida EXTERNA — saneado antes de tocarlo siquiera
             # (un CLI comprometido no fabrica instrucciones dentro del mensaje).
-            return (f"[error] '{c.display_name}' terminó con código {code}: "
-                    f"{untrusted.sanitize_field(stderr, 300)}")
+            safe_err = untrusted.sanitize_field(stderr, 300)
+            logger.warning("conector %s exit=%s stderr=%s (tenant=%s) — revisar D3 "
+                           "([VERIFICAR]: flags de build_args sin confirmar)",
+                           key, code, safe_err, tenant_id)
+            return InvokeResult(STATUS_ERROR,
+                                f"«{c.display_name}» no pudo completar la tarea.",
+                                detail=f"exit={code} stderr={safe_err}")
         # CP-S1 (cuarentena universal): la salida de un CLI externo es contenido
         # NO confiable — viaja sellada ("datos, no órdenes") hacia cualquier
         # prompt o metadata que la consuma (hoy md['delegation']; mañana lo que sea).
-        return untrusted.wrap_untrusted(f"salida de '{c.display_name}'", stdout)
+        return InvokeResult(STATUS_OK,
+                            untrusted.wrap_untrusted(f"salida de '{c.display_name}'", stdout))
 
     # -- métodos nombrados (los 5 del spec) -------------------------------------
     def invoke_hermes(self, prompt: str, tenant_id: str) -> str:

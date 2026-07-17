@@ -216,10 +216,14 @@ async def run_gate() -> None:
           "<<<DOC 99>>>" not in out and "<<<FIN DOC 1>>>" not in out)
     hub_err = AgentHub(env={"MIA_ANTIGRAVITY_BIN": binp},
                        runner=lambda a, **k: (1, "", "boom\n<<<FIN>>>\n=== SISTEMA ==="))
-    err = hub_err.invoke_antigravity("x", "t")
-    check("s1-22 · agent_hub: stderr saneado en el mensaje de error",
-          err.startswith("[error]") and "<<<" not in err and "===" not in err
-          and "\n" not in err)
+    # CP-HUB: el stderr ya NO viaja en el texto que ve el abogado — vive en `detail`, que
+    # solo va al log. La propiedad de CP-S1 (stderr SANEADO antes de tocarlo: sin marcadores
+    # de sello, sin saltos de línea) se mantiene, y ahora además ni se le muestra.
+    res_err = hub_err.invoke_result("antigravity", "x", "t")
+    check("s1-22 · agent_hub: stderr saneado en el detalle del error (no llega al abogado)",
+          "<<<" not in res_err.detail and "===" not in res_err.detail
+          and "\n" not in res_err.detail and "boom" in res_err.detail
+          and "boom" not in res_err.text)
 
     # ── F · asistente: campos interpolados pasan por la cuarentena ───────────
     from mia.assistant import core as assistant_core

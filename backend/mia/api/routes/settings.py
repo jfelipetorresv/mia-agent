@@ -5,6 +5,8 @@ POST /settings/agents/{agent_id}/enable
 POST /settings/agents/{agent_id}/disable
 GET  /settings/model-policy            → política de modelo efectiva + opciones (CP2)
 PUT  /settings/model-policy            → valida y persiste la política del tenant (CP2)
+GET  /settings/eval-consent            → ¿el despacho autorizó usar asuntos reales en calidad?
+PUT  /settings/eval-consent            → concede o revoca esa autorización (Banco de oro)
 
 §G: el abogado ve solo nombres en español ("Asistente de investigación jurídica",
 "Editor de documentos"…) y un id neutro (slug); NUNCA la marca del CLI. El estado
@@ -19,7 +21,8 @@ from psycopg.types.json import Json
 
 from ...agent import llm
 from ...db import pool
-from ...gateway import hub_config
+from ...eval.harness import read_eval_policy
+from ...gateway import hub_config, hub_gate
 from ...gateway.agent_hub import CONNECTORS, AgentHub, slug_to_key
 from ..middleware import invalidate_policy_cache
 
@@ -44,10 +47,19 @@ def _tenant(request: Request) -> str:
 
 @router.get("/settings/agents")
 async def list_agents(request: Request):
-    """Lista los conectores con su estado para el tenant. Solo español, sin marcas."""
+    """Lista los conectores con su estado para el tenant. Solo español, sin marcas.
+
+    `bloqueado_por_politica` refleja el candado de `gateway/hub_gate.py`: con 'soberano'
+    NO se delega aunque el ayudante esté habilitado (el toggle no es una excepción a la
+    política, es una opción DENTRO de ella). La UI lo necesita para no prometer una
+    delegación que el gate va a bloquear — mismo criterio que `notebooklm_disponible`.
+    `aviso_consentimiento` viaja con la lista para que el opt-in sea INFORMADO: el texto
+    lo redacta el gate (fuente única) y la UI lo muestra literal, sin reescribirlo.
+    """
     tenant_id = _tenant(request)
     available = _hub.list_available()
     enabled_map = await hub_config.get_hub_config(tenant_id)
+    policy = await llm.model_policy_for(tenant_id)
     agentes = [
         {
             "id": info["slug"],                 # id público neutro (sin marca)
@@ -57,7 +69,11 @@ async def list_agents(request: Request):
         }
         for key, info in available.items()
     ]
-    return {"agentes": agentes}
+    return {
+        "agentes": agentes,
+        "bloqueado_por_politica": policy == "soberano",
+        "aviso_consentimiento": hub_gate.CONSENT_NOTICE,
+    }
 
 
 async def _set(request: Request, agent_id: str, enabled: bool):
@@ -103,6 +119,75 @@ async def get_model_policy(request: Request):
         "notebooklm_notebook": await notebooklm.configured_notebook(tenant_id) or "",
         "notebooklm_disponible": policy != "soberano",
     }
+
+
+# ── Autorización para usar asuntos reales en las pruebas de calidad ────────────
+# La LEE `eval/harness.py::read_eval_policy` desde `config['eval']['allow_eval_real_data']`
+# (default False, fail-closed) y la exige el Banco de oro (`gold_cases.py::_consent_guard`)
+# y el examen de calidad. Hasta ahora SOLO se leía: sin este par GET/PUT el abogado veía un
+# 403 que lo mandaba "a Configuración" donde no había nada que tocar.
+#
+# §G: al abogado se le habla de "usar asuntos reales en las pruebas de calidad", nunca de
+# 'eval', 'gold set' ni 'allow_eval_real_data'.
+@router.get("/settings/eval-consent")
+async def get_eval_consent(request: Request):
+    """¿El despacho autorizó que sus asuntos reales se usen en las pruebas de calidad?
+
+    Fail-closed: `read_eval_policy` devuelve False si no hay fila en `tenant_settings`, si no
+    existe la clave, o si la lectura falla. Ausencia = NO permitido, nunca lo contrario."""
+    tenant_id = _tenant(request)
+    return {"permitido": (await read_eval_policy(tenant_id))["allow_real_data"]}
+
+
+@router.put("/settings/eval-consent")
+async def put_eval_consent(request: Request):
+    """Concede (true) o revoca (false) esa autorización.
+
+    MERGE jsonb ANIDADO y atómico, sin read-modify-write (mismo criterio que
+    `put_model_policy`): el `||` de arriba conserva TODAS las demás claves del config
+    ('model_policy', 'allow_openrouter', 'notebooklm_notebook'…) y el `||` de adentro conserva
+    las demás claves de 'eval'. Un `config || {"eval": {...}}` a secas NO servía: reemplazaría
+    el objeto 'eval' entero y borraría cualquier otro ajuste de eval.
+
+    QUÉ IMPLICA REVOCAR (permitido=false):
+      - A futuro: vuelve el 403 al intentar guardar un caso de oro desde un asunto REAL
+        (`gold_cases.py::_consent_guard`) y el examen deja de correr casos no sintéticos
+        (`eval/harness.py`). Aplica de inmediato: la política se lee de la DB en cada
+        llamada, no se cachea (el `_policy_cache` del middleware solo guarda 'model_policy'
+        y 'allow_openrouter'; por eso aquí NO hay que invalidar nada).
+      - Hacia atrás: NO borra ni oculta los casos de oro ya guardados. Son texto ANONIMIZADO
+        (a la DB nunca llegó el mapa marcador→valor real, solo su hash), así que ya no son
+        datos reales del cliente y siguen siendo el examen de no-regresión del despacho.
+        Revocar cierra la CAPTURA de asuntos reales, que es lo que toca datos identificables;
+        no destruye el trabajo de revisión que el abogado ya confirmó. Para retirar un caso
+        concreto existe `DELETE /api/gold-cases/{id}`.
+    """
+    tenant_id = _tenant(request)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — cuerpo no-JSON → 422 uniforme
+        body = None
+    permitido = (body or {}).get("permitido") if isinstance(body, dict) else None
+    if not isinstance(permitido, bool):
+        raise HTTPException(
+            status_code=422,
+            detail="Indica si autorizas o no: 'permitido' debe ser verdadero o falso.",
+        )
+    async with pool.tenant_connection(tenant_id) as conn:
+        await conn.execute(
+            "INSERT INTO tenant_settings (tenant_id, config) "
+            "VALUES (%s::uuid, jsonb_build_object('eval', %s::jsonb)) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "config = COALESCE(tenant_settings.config, '{}'::jsonb) "
+            "         || jsonb_build_object('eval', "
+            "              COALESCE(tenant_settings.config->'eval', '{}'::jsonb) "
+            "              || (EXCLUDED.config->'eval')), "
+            "updated_at = now()",
+            (tenant_id, Json({"allow_eval_real_data": permitido})),
+        )
+    # Se releé de la DB (no se devuelve el valor de entrada): lo que responde es lo que el
+    # candado va a ver, no lo que el cliente pidió.
+    return {"permitido": (await read_eval_policy(tenant_id))["allow_real_data"]}
 
 
 @router.put("/settings/model-policy")

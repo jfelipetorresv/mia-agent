@@ -36,7 +36,7 @@ except Exception:
     pass
 
 import mia.gateway.agent_hub as ah                  # noqa: E402
-from mia.gateway import hub_config                  # noqa: E402
+from mia.gateway import hub_config, hub_gate        # noqa: E402
 from mia.gateway.agent_hub import AgentHub          # noqa: E402
 from mia.agents import untrusted                    # noqa: E402
 from mia.db import pool                             # noqa: E402
@@ -65,6 +65,18 @@ def cleanup(a, b):
         c.execute("DELETE FROM tenants WHERE id = ANY(%s)", ([a, b],))
 
 
+def set_policy(tenant_id: str, policy: str) -> None:
+    """Fija config['model_policy'] por fuera de la app: el candado de delegación
+    (hub_gate) la lee, y no debe depender del MIA_MODEL_POLICY del entorno."""
+    with psycopg.connect(autocommit=True, **PG) as c:
+        c.execute(
+            "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s::jsonb) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "config = COALESCE(tenant_settings.config,'{}'::jsonb) || EXCLUDED.config",
+            (tenant_id, f'{{"model_policy": "{policy}"}}'),
+        )
+
+
 # ── offline: detección + invocación ────────────────────────────────────────
 def test_detection_and_invoke():
     orig_which = ah.shutil.which
@@ -85,8 +97,12 @@ def test_detection_and_invoke():
               all(isinstance(v["installed"], bool) for v in avail.values()))
         check("con which=None todos no instalados", all(not v["installed"] for v in avail.values()))
 
-        out = hub.invoke_openclaw("investiga", "t-1")
-        check("no instalado → '[no disponible]'", out.startswith("[no disponible]"))
+        res = hub.invoke_result("openclaw", "investiga", "t-1")
+        check("no instalado → status='no_instalado' (estructurado, no prefijo del string)",
+              res.status == ah.STATUS_NOT_INSTALLED and not res.ok)
+        check("no instalado → mensaje en llano para el abogado (§G)",
+              "no está instalado en este equipo" in res.text
+              and "openclaw" not in res.text.lower())
         check("no instalado → el runner NO se llama", called["n"] == 0)
         check("no instalado → no lanza excepción (llegamos aquí)", True)
     finally:
@@ -145,22 +161,34 @@ def test_space_path_and_failures():
         check("cwd con espacio se pasa intacto", captured["cwd"] == project_with_space and " " in captured["cwd"])
         check("timeout = 120s", captured["timeout"] == 120)
 
-        # exit != 0
+        # exit != 0 (D3: el síntoma de un flag de build_args equivocado)
         hub_exit = AgentHub(env={"MIA_ANTIGRAVITY_BIN": binp}, runner=lambda a, **k: (1, "", "explotó"))
-        out = hub_exit.invoke_antigravity("x", "t")
-        check("exit≠0 → '[error]' con código, sin excepción", out.startswith("[error]") and "código 1" in out)
+        res = hub_exit.invoke_result("antigravity", "x", "t")
+        check("exit≠0 → status='error', sin excepción", res.status == ah.STATUS_ERROR)
+        check("exit≠0 → el abogado ve 'no pudo completar la tarea'; el stderr va al detail",
+              "no pudo completar la tarea" in res.text and "explotó" not in res.text
+              and "explotó" in res.detail and "exit=1" in res.detail)
 
         # excepción del runner
         def raiser(a, **k):
             raise OSError("kaboom")
-        out = AgentHub(env={"MIA_ANTIGRAVITY_BIN": binp}, runner=raiser).invoke_antigravity("x", "t")
-        check("excepción del runner → '[error]', no propaga", out.startswith("[error]") and "kaboom" in out)
+        res = AgentHub(env={"MIA_ANTIGRAVITY_BIN": binp}, runner=raiser).invoke_result(
+            "antigravity", "x", "t")
+        check("excepción del runner → status='error', no propaga", res.status == ah.STATUS_ERROR)
+        check("excepción: el texto de la excepción NO llega al abogado (va al detail)",
+              "kaboom" not in res.text and "kaboom" in res.detail)
 
         # timeout
         def timeouter(a, **k):
             raise subprocess.TimeoutExpired(cmd=a, timeout=120)
-        out = AgentHub(env={"MIA_ANTIGRAVITY_BIN": binp}, runner=timeouter).invoke_antigravity("x", "t")
-        check("timeout → '[error] no respondió', no propaga", out.startswith("[error]") and "no respondió" in out)
+        res = AgentHub(env={"MIA_ANTIGRAVITY_BIN": binp}, runner=timeouter).invoke_result(
+            "antigravity", "x", "t")
+        check("timeout → status='error' con 'no respondió a tiempo', no propaga",
+              res.status == ah.STATUS_ERROR and "no respondió a tiempo" in res.text)
+
+        # conector desconocido
+        res = AgentHub(env={}).invoke_result("noexiste", "x", "t")
+        check("conector desconocido → status='error', no propaga", res.status == ah.STATUS_ERROR)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -188,21 +216,39 @@ async def db_tests(a, b):
         cfg = await hub_config.get_hub_config(a)
         obs["coexist"] = cfg.get("codex") is True and cfg.get("hermes") is False
 
-        # seam de delegación del grafo.
+        # Seam de delegación del grafo (CP-HUB). El gate completo — candado 'soberano',
+        # degradación, sellado — se ejercita en test_delegation_wiring.py; aquí solo se
+        # comprueba que el seam del Hub sigue enganchado al grafo.
         from mia.agents.graph import MatterGraphBuilder
-        gb = MatterGraphBuilder()
-        obs["delegate_noop"] = (await gb._maybe_delegate({"tenant_id": a, "metadata": {}})) is None
-        st = {"tenant_id": a, "metadata": {"delegate": {"agent": "hermes", "prompt": "x"}}, "messages": []}
-        obs["delegate_gated"] = (await gb._maybe_delegate(st)) is None  # hermes deshabilitado
-
-        await hub_config.set_enabled(a, "hermes", True)
+        set_policy(a, "suscripcion")  # explícita: el gate no debe depender del env
 
         class FakeHub:
-            def invoke(self, key, prompt, tenant_id):
-                return f"DELEGADO:{key}:{prompt}"
+            def __init__(self):
+                self.calls = []
 
-        gb2 = MatterGraphBuilder(agent_hub=FakeHub())
-        obs["delegate_fires"] = (await gb2._maybe_delegate(st)) == "DELEGADO:hermes:x"
+            def invoke_result(self, key, prompt, tenant_id):
+                self.calls.append((key, prompt))
+                return ah.InvokeResult(ah.STATUS_OK, f"DELEGADO:{key}:{prompt}")
+
+        # Sin petición explícita del abogado → no-op silencioso (el caso normal).
+        hub_a = FakeHub()
+        gb = MatterGraphBuilder(agent_hub=hub_a)
+        obs["delegate_noop"] = (await gb._maybe_delegate(
+            {"tenant_id": a, "metadata": {}, "messages": []})) is None
+
+        # Petición explícita pero el ayudante NO está habilitado → bloqueado, sin invocar.
+        msg = "usa el asistente de investigación jurídica para buscar la sentencia"
+        st = {"tenant_id": a, "metadata": {}, "messages": [{"role": "user", "content": msg}]}
+        deleg = await gb._maybe_delegate(st)
+        obs["delegate_gated"] = (deleg or {}).get("estado") == "bloqueado" and hub_a.calls == []
+
+        await hub_config.set_enabled(a, "hermes", True)
+        hub_b = FakeHub()
+        gb2 = MatterGraphBuilder(agent_hub=hub_b)
+        deleg = await gb2._maybe_delegate(st)
+        obs["delegate_fires"] = ((deleg or {}).get("estado") == "ok"
+                                 and (deleg or {}).get("salida") == f"DELEGADO:hermes:{msg}"
+                                 and hub_b.calls == [("hermes", msg)])
         return obs
     finally:
         await pool.close_pool()
@@ -236,6 +282,16 @@ def api_checks(a):
         # desconocido → 404 ; sin token → 401
         out["unknown_status"] = client.post("/settings/agents/noexiste/enable", headers=H).status_code
         out["notoken_status"] = client.get("/settings/agents").status_code
+        # CP-HUB · lo que la pantalla necesita para no prometer una delegación que el
+        # candado va a bloquear: la política del despacho y el aviso de consentimiento
+        # (redactado por el gate — fuente única — para que la UI lo muestre literal).
+        body = client.get("/settings/agents", headers=H).json()
+        out["tiene_bloqueo"] = isinstance(body.get("bloqueado_por_politica"), bool)
+        out["aviso_es_del_gate"] = body.get("aviso_consentimiento") == hub_gate.CONSENT_NOTICE
+        out["aviso_sin_jerga"] = not any(
+            w in (body.get("aviso_consentimiento") or "").lower()
+            for w in ("cli", "binario", "subprocess", "endpoint", "tenant", "prompt")
+        )
     return out
 
 
@@ -259,9 +315,11 @@ def main() -> int:
     check("RLS: tenant B ve su config vacía", obs["b_map_empty"])
     check("disable persiste (is_enabled False)", obs["disabled_after"])
     check("varios agentes coexisten en el jsonb", obs["coexist"])
-    check("delegación OFF por defecto (sin señal → None)", obs["delegate_noop"])
-    check("delegación gated: señal pero agente deshabilitado → None", obs["delegate_gated"])
-    check("delegación dispara con señal + habilitado", obs["delegate_fires"])
+    check("delegación OFF por defecto (el abogado no la pidió → None)", obs["delegate_noop"])
+    check("delegación gated: pedida pero agente deshabilitado → bloqueado, sin invocar",
+          obs["delegate_gated"])
+    check("delegación dispara cuando el abogado la pide + agente habilitado",
+          obs["delegate_fires"])
 
     # PASO 3 · endpoints de settings
     check("GET /settings/agents responde 200", api["list_status"] == 200)
@@ -272,6 +330,11 @@ def main() -> int:
     check("POST disable deshabilita → habilitado False", api["disable_status"] == 200 and api["disabled_false"])
     check("agente desconocido → 404", api["unknown_status"] == 404)
     check("sin token → 401", api["notoken_status"] == 401)
+    check("CP-HUB: la lista dice si la política del despacho bloquea la delegación",
+          api["tiene_bloqueo"])
+    check("CP-HUB: el aviso de consentimiento sale del gate (fuente única), no de la UI",
+          api["aviso_es_del_gate"])
+    check("CP-HUB: el aviso está en llano, sin jerga técnica (§G)", api["aviso_sin_jerga"])
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

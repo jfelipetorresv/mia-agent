@@ -46,8 +46,8 @@ from ..agent import llm, prompt_builder
 from ..agent.context_compressor import ContextCompressor
 from ..agent.error_classifier import LLMErrorKind, classify_llm_error
 from ..agent.turn_llm_state import TurnLLMState
-from ..gateway import hub_config
-from ..gateway.agent_hub import AgentHub
+from ..gateway import hub_gate
+from ..gateway.agent_hub import CONNECTORS, AgentHub
 from ..db import pool as db_pool
 from ..memory.playbook_manager import Playbook, PlaybookManager
 from ..memory.tokens import estimate_tokens
@@ -55,7 +55,8 @@ from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
 from ..policy import budget as policy_budget
-from . import context_recovery, delegation, reasoning_filter, research, retrieval, untrusted, verification
+from . import (context_recovery, delegate_intent, delegation, reasoning_filter, research,
+               retrieval, untrusted, verification)
 from .state import HITL_OUTCOME, MatterState
 
 logger = logging.getLogger("mia.agents.graph")
@@ -351,20 +352,82 @@ class MatterGraphBuilder:
         # H.5: compresor para el rescate CONTEXT_TOO_LONG (una vez por turno, ver _llm).
         self._compressor = ContextCompressor(trace_capture=self.trace_capture)
 
-    async def _maybe_delegate(self, state: MatterState) -> Optional[str]:
-        """Delegación OPCIONAL a un CLI externo (1e · PASO 4). OFF salvo que:
-        (a) `state.metadata['delegate'] = {'agent': <key>, 'prompt'?: str}` (señal
-        explícita puesta por una capa superior), Y (b) el tenant tenga ese agente
-        habilitado (hub_config). Si no, devuelve None (transparente al abogado). El
-        CLI corre en hilo aparte (subprocess síncrono)."""
-        req = (state.get("metadata") or {}).get("delegate")
-        if not isinstance(req, dict):
+    async def _maybe_delegate(self, state: MatterState) -> Optional[dict]:
+        """Delegación a un ayudante externo del Hub (CP-HUB). Devuelve el bloque que va a
+        `metadata['delegation']`, o None si no hay nada que contar.
+
+        TRES CONDICIONES, en este orden, todas necesarias:
+          1. El abogado lo PIDIÓ explícitamente en su mensaje (`delegate_intent.detect`,
+             determinista, sin LLM). Sin petición → None y el turno sigue idéntico a hoy.
+          2. El candado de confidencialidad lo permite (`hub_gate.delegation_allowed`):
+             política ≠ 'soberano' Y ayudante habilitado por el despacho. Fail-closed.
+          3. El ayudante está instalado y corre bien (si no, degrada con gracia).
+
+        QUÉ SALE DEL EQUIPO — y por qué NO pasa por `security/anonymize`:
+        Sale EXACTAMENTE el mensaje que el abogado acaba de escribir. Nada más: ni los
+        documentos recuperados del expediente, ni los hechos, ni el perfil del despacho, ni
+        el historial. Ese recorte es la mitigación real, y es más fuerte que anonimizar.
+        Anonimizar aquí sería peor por tres razones concretas:
+          · Rompe el encargo: el ayudante recibiría "busca el estado del radicado
+            RADICADO_1" — un marcador no se puede buscar. El abogado pide algo y recibe
+            basura, así que la función queda muerta de otra manera.
+          · Da falsa seguridad: si la UI promete "va anonimizado", el abogado escribe con
+            confianza datos del cliente. Pero `anonymize` es de doble pasada (regex +
+            NER local) y NO es infalible con prosa libre — lo que se filtre, se filtra
+            con el aval de Mia. Peor que no prometer nada.
+          · El caso de uso de `anonymize` es otro: exportación AUTOMÁTICA y masiva de
+            asuntos reales (Banco de oro), donde el abogado no ve el texto que sale. Aquí
+            lo ve: lo escribió él, en este turno, nombrando al destinatario.
+        El consentimiento, entonces, es POR MENSAJE (lo pidió) + POR DESPACHO (lo habilitó
+        con el aviso de `hub_gate.CONSENT_NOTICE`) + AVISO EN EL TURNO (`EXIT_NOTICE`).
+
+        NOTA: se eliminó la señal `metadata['delegate']` (1e · PASO 4). Nadie la escribía
+        nunca — la delegación llevaba muerta desde entonces — y como puerta era peor que
+        inútil: dejaba fijar `prompt` a texto ARBITRARIO (cualquier cosa del estado) sin
+        que el abogado lo pidiera ni lo viera. Hoy hay una sola puerta y empieza en el
+        mensaje del abogado.
+
+        NUNCA lanza: cualquier fallo inesperado → None (el turno del abogado no se rompe
+        porque un ayudante opcional falle)."""
+        try:
+            tenant_id = state["tenant_id"]
+            message = _last_user_message(state)
+            agent_key = delegate_intent.detect(message)
+            if agent_key is None:
+                return None  # el caso normal: no pidió ayudante → silencio total
+
+            c = CONNECTORS[agent_key]
+            base = {"agente": c.slug, "nombre": c.display_name}  # §G: slug neutro, sin marca
+
+            allowed, reason = await hub_gate.delegation_allowed(tenant_id, agent_key)
+            if not allowed:
+                # Lo pidió y NO se hizo: hay que DECÍRSELO. Callar sería peor que bloquear
+                # — el abogado creería que su ayudante trabajó en el turno.
+                logger.info("delegación a %s no autorizada (%s) tenant=%s",
+                            agent_key, reason, tenant_id)
+                return {**base, "estado": "bloqueado",
+                        "mensaje": hub_gate.REASON_TEXT.get(reason, hub_gate.REASON_TEXT[
+                            hub_gate.REASON_ERROR]),
+                        "motivo_interno": reason,  # traza/log — la UI NO lo muestra (§G)
+                        "salida": None, "aviso": None}
+
+            # Autorizado: aquí y solo aquí sale texto del equipo. El subprocess es síncrono
+            # → hilo aparte para no bloquear el event loop.
+            res = await asyncio.to_thread(self.hub.invoke_result, agent_key, message, tenant_id)
+            if not res.ok:
+                # No instalado / flag equivocado (D3) / timeout / excepción: mensaje en llano
+                # y el detalle técnico al log. El turno CONTINÚA sin el ayudante.
+                logger.info("delegación a %s degradó (%s): %s", agent_key, res.status, res.detail)
+                return {**base, "estado": res.status, "mensaje": res.text,
+                        "motivo_interno": res.detail, "salida": None, "aviso": None}
+            return {**base, "estado": "ok", "mensaje": None, "motivo_interno": None,
+                    # `salida` viene SELLADA por agent_hub (untrusted.wrap_untrusted): es
+                    # contenido externo, datos y no órdenes. No se debilita aquí.
+                    "salida": res.text, "aviso": hub_gate.EXIT_NOTICE}
+        except Exception:  # noqa: BLE001 — un ayudante OPCIONAL jamás tumba el turno
+            logger.warning("delegación: fallo inesperado (tenant=%s); el turno sigue sin ella",
+                           state.get("tenant_id"), exc_info=True)
             return None
-        agent_key = req.get("agent")
-        if not agent_key or not await hub_config.is_enabled(state["tenant_id"], agent_key):
-            return None
-        prompt = req.get("prompt") or _last_user_message(state)
-        return await asyncio.to_thread(self.hub.invoke, agent_key, prompt, state["tenant_id"])
 
     async def _llm(self, messages: list[dict], *, task: str = "main",
                    state: Optional[MatterState] = None, md: Optional[dict] = None,
@@ -495,9 +558,14 @@ class MatterGraphBuilder:
             md["knowledge_retrieved"] = len(knowledge)
         else:
             md.pop("knowledge_retrieved", None)
-        delegation = await self._maybe_delegate(state)  # no-op salvo señal + habilitado
-        if delegation is not None:
-            md["delegation"] = delegation
+        # CP-HUB: delegación a un ayudante externo. No-op salvo que el abogado la haya
+        # PEDIDO en su mensaje Y el candado de confidencialidad la autorice (hub_gate).
+        # `deleg`, no `delegation`: ese nombre sombreaba al módulo `agents.delegation`.
+        # El bloque va a metadata (lo pinta la UI) y NO entra a ningún prompt — ver el
+        # contrato en _maybe_delegate.
+        deleg = await self._maybe_delegate(state)
+        if deleg is not None:
+            md["delegation"] = deleg
         return {"documents": docs, "knowledge": knowledge, "metadata": md}
 
     # ── 2 · facts (CP9 · especialista de HECHOS) ─────────────────────────────
