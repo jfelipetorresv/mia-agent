@@ -18,7 +18,9 @@ import {
   Loader2,
   Pencil,
   Plus,
+  ShieldAlert,
   ShieldCheck,
+  ShieldQuestion,
   Sparkles,
   Upload,
 } from "lucide-react";
@@ -237,6 +239,7 @@ type Playbook = {
   protected?: boolean;
   origin?: string;
   content?: string;
+  health_status?: string;
 };
 type Skill = { skill_id: string; title: string; approval_rate: number; edit_rate: number; activations: number };
 type PlaybookVersion = { id: string; changed_by: string; reason: string; created_at: string; title: string };
@@ -251,6 +254,41 @@ const ORIGIN_LABEL: Record<string, string> = {
 
 function originLabel(origin?: string): string {
   return ORIGIN_LABEL[origin || "manual"] || "Escrita a mano";
+}
+
+// Salud de la guía: 'sano' (citas en regla), 'revisar' (hay algo sin verificar) o
+// 'sin_revisar' (todavía no se ha chequeado). Nunca se muestra el nombre técnico del campo.
+const HEALTH_LABEL: Record<string, string> = {
+  sano: "Sana",
+  revisar: "Revisar",
+  sin_revisar: "Sin revisar",
+};
+
+function healthBadge(status?: string) {
+  const s = status || "sin_revisar";
+  const label = HEALTH_LABEL[s] || "Sin revisar";
+  if (s === "sano") {
+    return (
+      <Badge variant="success" className="gap-1">
+        <ShieldCheck className="h-3 w-3" />
+        {label}
+      </Badge>
+    );
+  }
+  if (s === "revisar") {
+    return (
+      <Badge variant="warning" className="gap-1">
+        <ShieldAlert className="h-3 w-3" />
+        {label}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="gap-1 text-muted-foreground">
+      <ShieldQuestion className="h-3 w-3" />
+      {label}
+    </Badge>
+  );
 }
 
 function fmtDateTime(s?: string): string {
@@ -284,6 +322,7 @@ function Saber() {
   const [restoreError, setRestoreError] = useState<string | null>(null);
 
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [healthBusyId, setHealthBusyId] = useState<string | null>(null);
 
   async function load() {
     const [pbs, ranked] = await Promise.all([
@@ -416,6 +455,20 @@ function Saber() {
     }
   }
 
+  async function checkHealth(p: Playbook) {
+    setHealthBusyId(p.id);
+    try {
+      const res = await apiSend<{ health_status: string }>("POST", `/api/playbooks/${p.id}/health`);
+      setItems((prev) =>
+        prev.map((it) => (it.id === p.id ? { ...it, health_status: res.health_status } : it))
+      );
+    } catch {
+      /* el abogado puede reintentar desde la lista */
+    } finally {
+      setHealthBusyId(null);
+    }
+  }
+
   async function openHistory(p: Playbook) {
     setHistoryFor(p);
     setRestoreError(null);
@@ -541,6 +594,7 @@ function Saber() {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="truncate font-medium">{p.title}</span>
                     <Badge variant="secondary">{originLabel(p.origin)}</Badge>
+                    {healthBadge(p.health_status)}
                     {p.protected ? (
                       <Badge variant="outline" className="gap-1">
                         <ShieldCheck className="h-3 w-3" />
@@ -585,6 +639,20 @@ function Saber() {
                     <Button size="sm" variant="ghost" onClick={() => openHistory(p)} className="gap-1.5">
                       <History className="h-3.5 w-3.5" />
                       Historial
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => checkHealth(p)}
+                      disabled={healthBusyId === p.id}
+                      className="gap-1.5"
+                    >
+                      {healthBusyId === p.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                      )}
+                      Revisar salud
                     </Button>
                   </div>
                 </div>

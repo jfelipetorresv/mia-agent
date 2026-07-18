@@ -19,11 +19,11 @@ from ..db import pool
 from ..security import install_redacting_logging
 from ..setup import paths
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, auth, automations, curator, delegation, folders, gold_cases,
-                     guides, hitl, learning, mailbox, matter_folders, matter_mail,
-                     matter_sources, mcp, missions, notebooklm, personas, policy,
-                     remote_drive, settings, setup, sources, speech, stream, traces, ux,
-                     value, welcome)
+from .routes import (assistant, atajos, auth, automations, curator, delegation, folders,
+                     gold_cases, guides, hitl, learning, mailbox, matter_folders, matter_mail,
+                     matter_sources, mcp, missions, notebooklm, personas, playbook_health,
+                     policy, remote_drive, settings, setup, sources, speech, stream, traces,
+                     ux, value, welcome)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -218,6 +218,8 @@ app.include_router(sources.router, prefix="/api")
 app.include_router(welcome.router, prefix="/api")
 # Banco de oro (gold-set de calidad por-despacho) · captura anonimizada + rúbrica → /api/gold-cases/*.
 app.include_router(gold_cases.router, prefix="/api")
+app.include_router(playbook_health.router)
+app.include_router(atajos.router, prefix="/api")
 
 
 @app.get("/health")

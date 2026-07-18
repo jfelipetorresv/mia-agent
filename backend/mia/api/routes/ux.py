@@ -699,7 +699,8 @@ def _playbook_out(row: dict, *, with_content: bool = False) -> dict:
     md = row.get("metadata") or {}
     out = {"id": str(row["id"]), "title": row["title"], "summary": row["summary"],
            "applies_when": row["applies_when"], "status": row.get("status", "active"),
-           "protected": bool(row.get("protected")), "origin": md.get("origin", "manual")}
+           "protected": bool(row.get("protected")), "origin": md.get("origin", "manual"),
+           "health_status": row.get("health_status") or "sin_revisar"}
     if with_content:
         out["content"] = row["content"]
     return out
@@ -717,7 +718,8 @@ async def _get_playbook_row(tid: str, playbook_id: str) -> dict | None:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT id, title, summary, applies_when, content, status, protected, "
-                "usage_count, last_used_at, metadata, created_at, updated_at "
+                "usage_count, last_used_at, metadata, created_at, updated_at, "
+                "health_status, health_checked_at "
                 "FROM playbooks WHERE id = %s::uuid", (playbook_id,))
             return await cur.fetchone()
 
@@ -732,7 +734,8 @@ async def list_playbooks(request: Request, status: str = Query("activos")):
     async with pool.tenant_connection(tid) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                "SELECT id, title, summary, applies_when, status, protected, metadata "
+                "SELECT id, title, summary, applies_when, status, protected, metadata, "
+                "health_status "
                 f"FROM playbooks {where} ORDER BY usage_count DESC, created_at", ())
             rows = await cur.fetchall()
     return [_playbook_out(r) for r in rows]

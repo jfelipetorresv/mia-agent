@@ -10,6 +10,8 @@ import {
   BellRing,
   Settings2,
   MessagesSquare,
+  Wand2,
+  UserRound,
 } from "lucide-react";
 import { apiGet, streamPost, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -18,6 +20,9 @@ import { cn } from "@/lib/utils";
 type Conversation = { id: string; title: string; updated_at: string };
 type Role = "user" | "assistant";
 type Message = { role: Role; content: string };
+// Atajo de despacho (guía o agente del despacho): un clic PRE-LLENA el cuadro de mensaje
+// con `texto` — el abogado revisa y decide si lo envía (consent-first, nunca se auto-envía).
+type Atajo = { kind: "guia" | "agente"; id: string; label: string; texto: string };
 
 // Ejemplos que ENSEÑAN qué puede hacer Mia (empty state). Cada uno toca una
 // capacidad real: sus asuntos, un recordatorio, la configuración y una consulta libre.
@@ -39,6 +44,7 @@ export default function ChatPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [atajos, setAtajos] = useState<Atajo[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -58,11 +64,21 @@ export default function ChatPage() {
 
   useEffect(() => {
     loadConversations();
+    apiGet<{ atajos: Atajo[] }>("/api/atajos")
+      .then((res) => setAtajos(res.atajos || []))
+      .catch(() => setAtajos([]));
     return () => {
       abortRef.current?.abort();
       if (typerRef.current) clearInterval(typerRef.current);
     };
   }, []);
+
+  // Consent-first: PRE-LLENA el cuadro de mensaje con el texto del atajo. El abogado lo
+  // revisa y edita antes de enviar — nunca se auto-envía.
+  function useAtajo(texto: string) {
+    setInput(texto);
+    inputRef.current?.focus();
+  }
 
   // Autoscroll al fondo mientras Mia responde o llega un mensaje nuevo.
   useEffect(() => {
@@ -259,6 +275,28 @@ export default function ChatPage() {
                   </button>
                 ))}
               </div>
+              {atajos.length > 0 ? (
+                <div
+                  className="mt-8 flex w-full max-w-lg animate-slide-up flex-wrap justify-center gap-2"
+                  style={{ animationDelay: "420ms", animationFillMode: "backwards" }}
+                >
+                  {atajos.map((a) => (
+                    <button
+                      key={`${a.kind}-${a.id}`}
+                      onClick={() => useAtajo(a.texto)}
+                      title="Se agrega a tu cuadro de mensaje para que lo revises antes de enviar"
+                      className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3.5 py-1.5 text-xs font-medium text-card-foreground shadow-sm backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+                    >
+                      {a.kind === "agente" ? (
+                        <UserRound className="h-3.5 w-3.5 text-primary" />
+                      ) : (
+                        <Wand2 className="h-3.5 w-3.5 text-primary" />
+                      )}
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="mx-auto w-full max-w-2xl px-4 py-6">
