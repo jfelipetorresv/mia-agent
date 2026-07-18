@@ -29,7 +29,7 @@ from ..agents.checkpointer import open_checkpointer
 from ..agents.graph import build_matter_graph
 from ..agents.state import initial_state, thread_id_for
 from ..db import pool
-from .cases import GoldenCase, load_golden_cases
+from .cases import GoldenCase, load_golden_cases, load_tenant_gold_cases
 from .scoring import score_turn, substantive_score
 
 logger = logging.getLogger("mia.eval.harness")
@@ -191,6 +191,20 @@ async def run_suite(tenant_id: str, cases: Optional[list[GoldenCase]] = None,
                 "score": score_turn("", "", {}), "reached_draft": False,
             })
     return build_report(run_id, results)
+
+
+# ── correr la suite COMPLETA: canónicos sintéticos + Banco de oro confirmado ──
+async def run_full_suite(tenant_id: str, *, run_id: str,
+                         substantive_judge: Optional[callable] = None) -> dict:
+    """El examen completo del despacho: los 3 casos sintéticos canónicos + los casos de oro que
+    el abogado ya CONFIRMÓ (`gold_cases.status='confirmed'`, vía `load_tenant_gold_cases`).
+
+    Los casos confirmados llegan hidratados con `synthetic=True` (`cases._rows_to_cases`): un
+    caso de oro guardado ya está anonimizado, así que corre sin pedir el candado de datos
+    reales — ese candado protege la CAPTURA (leer el expediente crudo), no la ejecución del
+    grafo sobre texto ya anónimo. Delega en `run_suite`, que queda intacto."""
+    cases = load_golden_cases() + await load_tenant_gold_cases(tenant_id)
+    return await run_suite(tenant_id, cases, run_id=run_id, substantive_judge=substantive_judge)
 
 
 def build_report(run_id: str, case_results: list[dict]) -> dict:

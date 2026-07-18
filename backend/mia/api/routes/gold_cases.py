@@ -21,6 +21,7 @@ claro). Guardar un caso desde un asunto REAL reusa el candado de consentimiento 
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.types.json import Json
@@ -29,7 +30,7 @@ from pydantic import BaseModel, Field
 from ...agent import prompt_builder
 from ...agents import verification
 from ...db import pool
-from ...eval.harness import EvalConsentError, read_eval_policy
+from ...eval.harness import EvalConsentError, persist_report, read_eval_policy, run_full_suite
 from ...security import anonymize
 from ._common import assert_owns_matter, require_uuid
 
@@ -531,6 +532,26 @@ async def confirm_gold_case(gold_case_id: str, request: Request) -> dict:
             "UPDATE gold_cases SET status = 'confirmed', updated_at = now() WHERE id = %s::uuid",
             (gold_case_id,))
     return {"gold_case_id": gold_case_id, "status": "confirmed"}
+
+
+@router.post("/gold-cases:evaluate")
+async def evaluate_gold_cases(request: Request) -> dict:
+    """Corre el examen de calidad COMPLETO del despacho: los casos sintéticos canónicos + los
+    casos de oro que el abogado ya CONFIRMÓ en este banco. Reusa el mismo candado de
+    consentimiento que `:draft` — correr el examen exige la misma autorización de datos reales
+    que guardar un caso (aunque los casos confirmados ya estén anonimizados, la política es UNA
+    sola perilla por despacho, y así el 403 nunca sorprende)."""
+    tenant_id = _tenant(request)
+    allow_real = (await read_eval_policy(tenant_id))["allow_real_data"]
+    try:
+        _consent_guard(allow_real)
+    except EvalConsentError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    run_id = f"despacho_{date.today().isoformat()}"
+    report = await run_full_suite(tenant_id, run_id=run_id)
+    persist_report(report)
+    return report
 
 
 @router.get("/gold-cases")
