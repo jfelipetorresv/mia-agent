@@ -1,10 +1,17 @@
 """Mia · connectors.obsidian_install — detección e instalación guiada de Obsidian (CP-C2 · decisión #32).
 
-Solo Windows (Modo B nativo). Dos funciones, ambas seguras de llamar desde la API:
+Solo Windows (Modo B nativo). Funciones seguras de llamar desde la API:
 
-- `is_installed()` — NUNCA lanza: busca Obsidian.exe en las rutas típicas de instalación
-  por usuario (%LOCALAPPDATA%) y, como respaldo, le pregunta a winget. Si winget no
-  existe en el equipo, simplemente devuelve False.
+- `is_installed_fast()` — NUNCA lanza y NUNCA invoca winget: SOLO revisa las rutas
+  típicas de instalación por usuario (%LOCALAPPDATA%). Es la que debe usar
+  cualquier ruta que se sirve en caliente a una petición HTTP (p.ej.
+  GET /api/setup/status) — un winget list sin Obsidian instalado puede tardar
+  ~60s (hallazgo MN3) y esa ruta no puede pagar ese costo por petición.
+- `is_installed()` — NUNCA lanza: primero el mismo chequeo local de
+  `is_installed_fast()` y, como respaldo, le pregunta a winget (hasta
+  DETECT_TIMEOUT_S). Si winget no existe en el equipo, simplemente devuelve
+  False. Úsala solo en flujos que toleran esa latencia (p.ej. folders.py y el
+  propio `install()`), nunca en el camino caliente de un status.
 - `install()` — ejecuta winget como LISTA de argumentos (sin shell, sin interpolación)
   con timeout de 10 minutos. Devuelve (ok, mensaje en lenguaje llano para el abogado).
 """
@@ -32,14 +39,34 @@ def _local_candidates() -> list[Path]:
     ]
 
 
-def is_installed() -> bool:
-    """¿Obsidian ya está en este equipo? Nunca lanza (aunque winget no exista)."""
+def is_installed_fast() -> bool:
+    """¿Obsidian ya está en este equipo? SOLO rutas locales — SIN winget, SIN red.
+
+    Segura de llamar desde el camino caliente de una petición HTTP (status del
+    asistente de configuración): nunca bloquea esperando un subproceso externo.
+    Nunca lanza.
+    """
     try:
         for exe in _local_candidates():
             if exe.is_file():
                 return True
     except OSError:
         pass
+    return False
+
+
+def is_installed(fast: bool = False) -> bool:
+    """¿Obsidian ya está en este equipo? Nunca lanza (aunque winget no exista).
+
+    Con `fast=True` se comporta exactamente como `is_installed_fast()` (sin
+    winget). Por defecto (`fast=False`) hace el chequeo local y, si no lo
+    encuentra, respalda con winget (hasta DETECT_TIMEOUT_S) — no usar esta
+    variante completa en rutas servidas en caliente a una petición HTTP.
+    """
+    if is_installed_fast():
+        return True
+    if fast:
+        return False
     try:
         proc = subprocess.run(
             ["winget", "list", "--id", WINGET_ID, "-e",

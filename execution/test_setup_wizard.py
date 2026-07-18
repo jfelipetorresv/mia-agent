@@ -3,7 +3,7 @@ Mia · test_setup_wizard.py — gate de CP-C4 (asistente de configuración guiad
 
 Verifica con DB REAL y detectores SIMULADOS (sin red, sin winget, sin instalar nada):
 
-  (s) GET /api/setup/status — estructura completa (6 pasos con id/titulo/estado/
+  (s) GET /api/setup/status — estructura completa (7 pasos con id/titulo/estado/
       detalle/accion), detección simulada de cada componente (Obsidian, vault,
       carpetas, guías, motor, Telegram) cambia el estado, textos sin jerga (§G),
       y es SOLO LECTURA: consultar el estado no escribe nada en la DB.
@@ -122,37 +122,50 @@ class Detectors:
     """Simula cada componente del equipo (el gate NO toca winget ni el disco)."""
 
     def __init__(self) -> None:
-        # Obsidian pospuesto (2026-07-06): salió del recorrido → ya no se detecta aquí.
         self.which: dict[str, str | None] = {"claude": None, "ollama": None}
         self.telegram = False
         self.voz = False  # CP-Z1b: el gate NO depende de los pesos de la máquina
         self.detected_clouds: list[dict] = []
-        self._saved: list = []
+        # Obsidian reincorporado (2026-07-18): se simula igual que los demás —
+        # nunca winget ni disco real en el gate. Se mockea is_installed_fast
+        # (la que de verdad consume /status desde el fix MN3), no is_installed.
+        self.obsidian_installed = False
+        self.vault_path: str | None = None
+        self._saved: dict[str, object] = {}
+
+    async def _fake_vault_path(self, _tid: str) -> str | None:
+        return self.vault_path
 
     def install(self) -> None:
-        self._saved = [
-            setup_mod.shutil.which,
-            notify.telegram_configured,
-            setup_mod.detect_cloud_folders,
-            setup_mod.speech_engine.get_engine,
-            setup_mod._DETECT_TTL_SECONDS,
-        ]
+        self._saved = {
+            "which": setup_mod.shutil.which,
+            "telegram_configured": notify.telegram_configured,
+            "detect_cloud_folders": setup_mod.detect_cloud_folders,
+            "get_engine": setup_mod.speech_engine.get_engine,
+            "is_installed_fast": setup_mod.obsidian_install.is_installed_fast,
+            "get_tenant_vault_path": setup_mod.vault_writer_mod.get_tenant_vault_path,
+            "DETECT_TTL": setup_mod._DETECT_TTL_SECONDS,
+        }
         setup_mod.shutil.which = lambda name: self.which.get(name)
         notify.telegram_configured = lambda env=None: self.telegram
         setup_mod.detect_cloud_folders = lambda *a, **k: list(self.detected_clouds)
         setup_mod.speech_engine.get_engine = lambda: SimpleNamespace(
             available=lambda: (self.voz, "" if self.voz else "no instalado"))
+        setup_mod.obsidian_install.is_installed_fast = lambda: self.obsidian_installed
+        setup_mod.vault_writer_mod.get_tenant_vault_path = self._fake_vault_path
         # El caché de detecciones (60s) se desactiva: el gate CAMBIA los detectores
         # entre consultas y debe ver el efecto de inmediato.
         setup_mod._DETECT_TTL_SECONDS = 0.0
         setup_mod._detect_cache.clear()
 
     def restore(self) -> None:
-        (setup_mod.shutil.which,
-         notify.telegram_configured,
-         setup_mod.detect_cloud_folders,
-         setup_mod.speech_engine.get_engine,
-         setup_mod._DETECT_TTL_SECONDS) = self._saved
+        setup_mod.shutil.which = self._saved["which"]
+        notify.telegram_configured = self._saved["telegram_configured"]
+        setup_mod.detect_cloud_folders = self._saved["detect_cloud_folders"]
+        setup_mod.speech_engine.get_engine = self._saved["get_engine"]
+        setup_mod.obsidian_install.is_installed_fast = self._saved["is_installed_fast"]
+        setup_mod.vault_writer_mod.get_tenant_vault_path = self._saved["get_tenant_vault_path"]
+        setup_mod._DETECT_TTL_SECONDS = self._saved["DETECT_TTL"]
         setup_mod._detect_cache.clear()
 
 
@@ -185,12 +198,14 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     before = table_counts(tenant_a)
     r = client.get("/api/setup/status", headers=auth_a)
     body = r.json()
-    check("s1 · GET /setup/status → 200 con 6 pasos y campos completos",
-          r.status_code == 200 and len(body["pasos"]) == 6
+    check("s1 · GET /setup/status → 200 con 7 pasos y campos completos",
+          r.status_code == 200 and len(body["pasos"]) == 7
           and all({"id", "titulo", "estado", "detalle", "accion"} <= set(p) for p in body["pasos"]))
     ids = [p["id"] for p in body["pasos"]]
-    check("s2 · los pasos son los del recorrido (perfil→motor→carpetas→guías→telegram→voz; Obsidian pospuesto)",
-          ids == ["perfil", "motor", "carpetas", "guias", "telegram", "voz"])
+    check("s2 · los pasos son los del recorrido (perfil→motor→obsidian→carpetas→guías→telegram→voz)",
+          ids == ["perfil", "motor", "obsidian", "carpetas", "guias", "telegram", "voz"])
+    check("s2b · Obsidian aparece ENTRE motor y carpetas",
+          ids.index("motor") < ids.index("obsidian") < ids.index("carpetas"))
     check("s3 · sin nada configurado: 0 listos y el siguiente es el perfil",
           body["completados"] == 0 and body["siguiente"] == "perfil")
     todo_texto = " ".join(
@@ -233,8 +248,9 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     check("s7 · detecciones simuladas → motor/telegram/voz quedan LISTOS",
           estados["motor"] == "listo"
           and estados["telegram"] == "listo" and estados["voz"] == "listo")
-    check("s8 · guías y carpetas siguen pendientes (aún no hay datos)",
-          estados["guias"] == "pendiente" and estados["carpetas"] == "pendiente")
+    check("s8 · guías, carpetas y obsidian siguen pendientes (aún no hay datos)",
+          estados["guias"] == "pendiente" and estados["carpetas"] == "pendiente"
+          and estados["obsidian"] == "pendiente")
     with sb() as c:
         c.execute("INSERT INTO playbooks (tenant_id, title, summary, applies_when, content) "
                   "VALUES (%s::uuid, 'Guía setup', 's', 'w', 'c')", (tenant_a,))
@@ -244,8 +260,60 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     estados4 = {p["id"]: p["estado"] for p in r4["pasos"]}
     check("s9 · con guía y carpeta registradas → esos pasos quedan LISTOS",
           estados4["guias"] == "listo" and estados4["carpetas"] == "listo")
-    check("s10 · el progreso cuenta bien (5 de 6; falta solo el perfil)",
+    check("s9b · obsidian sigue pendiente (aún no hay vault conectado)",
+          estados4["obsidian"] == "pendiente")
+    check("s10 · el progreso cuenta bien (5 de 7; falta perfil y obsidian)",
           r4["completados"] == 5 and r4["siguiente"] == "perfil")
+
+    # ── obsidian: instalado sin vault → sigue pendiente; con vault → LISTO ──
+    det.obsidian_installed = True
+    r4b = client.get("/api/setup/status", headers=auth_a).json()
+    obs4b = next(p for p in r4b["pasos"] if p["id"] == "obsidian")
+    check("o1 · Obsidian instalado sin vault conectado → sigue pendiente",
+          obs4b["estado"] == "pendiente")
+    det.vault_path = "D:\\vault-prueba"
+    r4c = client.get("/api/setup/status", headers=auth_a).json()
+    obs4c = next(p for p in r4c["pasos"] if p["id"] == "obsidian")
+    check("o2 · con vault conectado (DB) → Obsidian queda LISTO",
+          obs4c["estado"] == "listo" and r4c["completados"] == 6)
+    # Obsidian queda LISTO de aquí en adelante (no se revierte): así el resto del
+    # recorrido (skip/unskip de 'perfil', chat) se comporta igual que antes de
+    # reincorporarlo — el único pendiente restante es 'perfil'.
+
+    # ── (w) fix del hallazgo bloqueante (MN3): /status con Obsidian NO instalado
+    # y SIN exe local NUNCA debe invocar winget. Se restaura momentáneamente la
+    # función REAL is_installed_fast (sin mock), se fuerza "sin exe local"
+    # (_local_candidates → []) y se espía subprocess.run — no basta con mockear
+    # is_installed_fast como hace 'det': aquí se ejercita el código real.
+    _real_subprocess = setup_mod.obsidian_install.subprocess
+    _orig_run = _real_subprocess.run
+    _orig_local_candidates = setup_mod.obsidian_install._local_candidates
+    winget_calls: list = []
+
+    def _spy_run(cmd, *args, **kwargs):
+        if isinstance(cmd, (list, tuple)) and cmd and str(cmd[0]).lower() == "winget":
+            winget_calls.append(list(cmd))
+        return _orig_run(cmd, *args, **kwargs)
+
+    setup_mod.obsidian_install.is_installed_fast = det._saved["is_installed_fast"]  # función REAL
+    setup_mod.obsidian_install._local_candidates = lambda: []  # sin exe local
+    _real_subprocess.run = _spy_run
+    try:
+        t0 = time.monotonic()
+        rw = client.get("/api/setup/status", headers=auth_a)
+        w_elapsed = time.monotonic() - t0
+    finally:
+        _real_subprocess.run = _orig_run
+        setup_mod.obsidian_install._local_candidates = _orig_local_candidates
+        # el status vuelve a ver el mock de 'det' (obsidian_installed=True desde o2)
+        setup_mod.obsidian_install.is_installed_fast = lambda: det.obsidian_installed
+        setup_mod._detect_cache.clear()
+    check("w1 · /status con Obsidian sin exe local NUNCA invoca winget (espía subprocess.run)",
+          rw.status_code == 200 and not winget_calls)
+    check("w2 · /status responde rápido, sin el fallback bloqueante de winget (<5s)",
+          w_elapsed < 5.0)
+    check("w3 · el status conserva sus 7 pasos tras ejercitar el código real",
+          len(rw.json()["pasos"]) == 7)
 
     # ── (k) skip/unskip retomable + RLS ──
     rs = client.post("/api/setup/steps/perfil/skip", headers=auth_a)

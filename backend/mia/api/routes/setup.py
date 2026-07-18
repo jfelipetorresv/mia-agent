@@ -27,6 +27,8 @@ from fastapi import APIRouter, HTTPException, Request
 from psycopg.types.json import Json
 
 from ...channels import notify
+from ...connectors import obsidian_install
+from ...connectors import vault_writer as vault_writer_mod
 from ...connectors.local_folders import detect_cloud_folders, list_sources
 from ...db import pool
 from ...onboarding.soul_interview import soul_status
@@ -38,10 +40,13 @@ logger = logging.getLogger("mia.api.setup")
 # Los pasos del recorrido, en orden. El id es estable (lo usa la UI y el skip).
 # "voz" va al final: es una capacidad opcional (CP-Z1b) — el "siguiente paso"
 # no debe anteponerla a carpetas o guías, que dan más valor al arrancar.
-# Obsidian pospuesto por decisión de Pipe (2026-07-06): fuera del recorrido por ahora
-# (su instalación/sync sigue disponible en el menú Configuración). Su guía se conserva
-# en STEP_GUIDES por si se reactiva.
-STEP_IDS = ("perfil", "motor", "carpetas", "guias", "telegram", "voz")
+# Obsidian reincorporado al recorrido (2026-07-18): antes se excluía por un
+# hallazgo de latencia (winget list ~60s cuando no está instalado, MN3). El
+# fix real NO es el caché (con caché fría, la primera carga igual esperaba a
+# winget): el status usa obsidian_install.is_installed_fast(), que SOLO mira
+# rutas locales y NUNCA invoca winget. El criterio de "listo" sigue siendo el
+# vault conectado (dato en DB).
+STEP_IDS = ("perfil", "motor", "obsidian", "carpetas", "guias", "telegram", "voz")
 
 # ── CP-C4b · La guía explicativa de cada paso (encargo de Pipe 2026-07-02) ────
 # El recorrido no solo DETECTA: EXPLICA como un onboarding — qué es cada
@@ -276,8 +281,21 @@ async def collect_setup_status(tid: str) -> dict:
         soul = (await _detected(f"soul:{tid}", lambda: soul_status(tid))) or {}
     except Exception:  # noqa: BLE001
         logger.exception("setup: no pude leer el estado del perfil (tenant=%s)", tid)
-    # (Obsidian pospuesto: su detección salía del recorrido — no se corre `winget`
-    # aquí, que tardaba hasta 60s por un dato que ya nadie lee. Hallazgo capa 2 MN3.)
+    obsidian_installed = False
+    vault_path = None
+    try:
+        # RÁPIDA a propósito (sin winget, MN3): este status se sirve en caliente a
+        # una petición HTTP y no puede pagar el fallback de ~60s de winget list.
+        # is_installed() completa (con winget) sigue viva para folders.py y para
+        # el propio install() — aquí NUNCA se invoca.
+        obsidian_installed = bool(await _detected(
+            "obsidian:installed", obsidian_install.is_installed_fast))
+    except Exception:  # noqa: BLE001
+        logger.exception("setup: no pude detectar Obsidian (tenant=%s)", tid)
+    try:
+        vault_path = await vault_writer_mod.get_tenant_vault_path(tid)
+    except Exception:  # noqa: BLE001
+        logger.exception("setup: no pude leer el vault configurado (tenant=%s)", tid)
     try:
         sources = [s for s in await list_sources(tid, include_disabled=False)]
     except Exception:  # noqa: BLE001
@@ -330,8 +348,17 @@ async def collect_setup_status(tid: str) -> dict:
               if ollama_ok else
               "No detecté un motor en este equipo. Puedes elegir la opción de nube en el menú Configuración."),
              "automatica", "/configurar#conexiones"),
-        # Obsidian pospuesto (decisión de Pipe 2026-07-06): fuera del recorrido; su
-        # instalación/sync sigue en Configuración.
+        # Obsidian reincorporado al recorrido (2026-07-18): el criterio de listo
+        # es el vault conectado (dato en DB); "instalado" se detecta con
+        # is_installed_fast() (sin winget, MN3) — nunca invoca el subproceso.
+        step("obsidian", "Tu espacio de notas (Obsidian)",
+             bool(vault_path),
+             ("Tu espacio de notas ya está conectado con Mia."
+              if vault_path else
+              "Obsidian está instalado; conecta tu espacio de notas desde el menú Configuración."
+              if obsidian_installed else
+              "Instala Obsidian (gratuito) y conecta tu espacio de notas desde el menú Configuración."),
+             "guiada", "/configurar#conexiones"),
         step("carpetas", "Tus carpetas de trabajo",
              len(sources) > 0,
              (f"Mia conoce {len(sources)} carpeta{'s' if len(sources) != 1 else ''} de trabajo."
