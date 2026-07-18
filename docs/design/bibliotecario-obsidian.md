@@ -47,16 +47,27 @@ Mover, crear o reestructurar carpetas y notas de verdad — tocar el vault del a
 
 Mismo patrón que los modos de delegación que Pipe ya aprobó para los ayudantes externos de
 Mia (`backend/mia/gateway/hub_config.py`): **preguntar / autónomo / solo si lo pido**,
-configurable por despacho. Por defecto:
+configurable por despacho.
 
-- **Automático** para lo reversible y de bajo riesgo (ordenar la bandeja de entrada según
-  reglas ya aprobadas por el abogado).
-- **Pide aprobación** para lo de alto impacto (renombrar, fusionar o reestructurar notas
-  que el abogado ya escribió).
+**Modo por defecto: autónomo** (decisión de Pipe, 2026-07-18: "que ordene sola, para
+facilitarle la vida al usuario"). Mia organiza el vault sin pedir permiso paso a paso —
+**pero solo porque ese automático viene con tres salvaguardas que lo hacen rendir cuentas,
+no actuar a ciegas** (condición expresa de Pipe: "que sea rigurosa y deje un log, por si
+acaso"):
 
-Flujo estándar cuando se requiere aprobación: **"propone → tú apruebas"**. Mia presenta una
-tabla `documento → destino → por qué (+ fuente)` y no ejecuta nada hasta que el abogado
-aprueba — igual que ya funciona la aprobación de borradores.
+1. **Registro de auditoría completo.** Cada acción (mover, crear, renombrar, enlazar) queda
+   registrada: qué se hizo, cuándo, por qué, y de dónde salió el archivo. El abogado puede
+   ver en cualquier momento "esto es lo que Mia ordenó" y un resumen periódico se lo acerca.
+2. **Deshacer garantizado.** Toda acción —o una tanda entera— se puede revertir al estado
+   anterior exacto. "Revertir" significa volver de inmediato al último estado estable.
+3. **Lo irreversible nunca es automático.** Borrar no existe (se archiva). Una fusión que
+   podría perder información, o cualquier cosa difícil de deshacer, **siempre** se propone y
+   espera aprobación, aunque el modo sea autónomo. El automático solo cubre lo reversible.
+
+Flujo cuando algo sí requiere aprobación (por ser irreversible, o si el despacho baja el
+modo a *preguntar*): **"propone → tú apruebas"**. Mia presenta una tabla
+`documento → destino → por qué (+ fuente)` y no ejecuta nada hasta que el abogado aprueba —
+igual que ya funciona la aprobación de borradores.
 
 ## 3. Barreras duras (van en el código, no en una instrucción)
 
@@ -92,7 +103,7 @@ Frontmatter jurídico (taxonomía cerrada, mismo criterio que ya aplica
 
 | Campo | Qué guarda |
 |---|---|
-| `tipo_nota` | de qué tipo de documento se trata (ver decisión abierta §6) |
+| `tipo_nota` | de qué tipo de documento se trata (lista base ampliable, §6) |
 | `caso` / `expediente` | a qué asunto pertenece |
 | `cliente` / `cliente_id` | a qué cliente pertenece (anonimizado si aplica) |
 | `fecha` | fecha del documento o de la nota |
@@ -105,7 +116,8 @@ Frontmatter jurídico (taxonomía cerrada, mismo criterio que ya aplica
 
 Carpetas de referencia:
 
-- `inbox/` — todo lo nuevo aterriza aquí sin clasificar.
+- **"Sin clasificar"** — no es una carpeta, es una vista inteligente (§6.2): muestra todo lo
+  nuevo que aún no tiene sitio, esté donde esté; el archivo se mueve una sola vez a su destino.
 - `expedientes/[caso]/` — hechos, pruebas, escritos, correspondencia, jurisprudencia; con
   una nota-índice `CASO.md` viva que se actualiza sola.
 - `clientes/[cliente]/`
@@ -123,24 +135,26 @@ Carpetas de referencia:
 | **Ejecutar** | Aplica el plan — tras aprobación, o en automático si el modo/riesgo lo permite. Deja registro y opción de deshacer. | Sí |
 | **Mantener** | Actualiza el mapa e índices; propone fusiones de notas duplicadas (nunca las fusiona solo). | No, hasta aprobar |
 
-## 6. Decisiones abiertas para Pipe
+## 6. Decisiones tomadas (Pipe, 2026-07-18)
 
-1. **Taxonomía exacta de `tipo_nota`.** ¿Qué lista cerrada de tipos usamos (p. ej. hecho,
-   prueba, escrito, correspondencia, jurisprudencia, concepto, minuta) y quién la puede
-   ampliar — solo Pipe, o cualquier abogado del despacho?
-2. **¿El `inbox/` es una carpeta física o una vista?** Una carpeta física es más simple y
-   visible en Obsidian; una vista (búsqueda guardada por `estado: sin_clasificar`) evita
-   mover el archivo dos veces (de donde cayó → a `inbox/` → a su destino final). Afecta
-   directamente cuánto trabajo del Plano 2 puede ser automático desde el día uno.
-3. **¿Hasta dónde llega el modo automático por defecto?** El diseño da "ordenar inbox" como
-   ejemplo de bajo riesgo, pero la línea entre "bajo riesgo" y "alto impacto" depende de
-   reglas concretas que hay que fijar por escrito antes de activar el automático (p. ej.
-   ¿mover un archivo suelto a la carpeta de su cliente detectado es automático? ¿renombrar
-   con un nombre más claro también?).
-4. **Nivel de detalle del `cliente_id` anonimizado en frontmatter.** Si un despacho pide
-   anonimizar el vault mismo (no solo lo que sale a IA externa), ¿el `cliente_id` en el
-   frontmatter debe ser un alias estable interno, o basta con el nombre real porque el
-   vault ya vive dentro del perímetro confidencial del despacho?
+1. **Tipos de nota — lista fija que cualquier abogado puede ampliar.** Mia parte de una
+   lista base cerrada (hecho, prueba, escrito, correspondencia, jurisprudencia, concepto,
+   contrato…) para dar consistencia, pero cualquier abogado del despacho puede proponer
+   tipos nuevos que se suman a la lista. No es un catálogo congelado ni un caos de etiquetas
+   libres: crece con el uso, con orden.
+2. **La bandeja de entrada es una vista inteligente, no una carpeta física.** "Lo sin
+   clasificar" es una búsqueda que muestra todo lo que aún no tiene sitio, esté donde esté;
+   el archivo se mueve **una sola vez**, directo a su destino. Esto permite que el modo
+   automático empiece a ordenar desde el primer día sin duplicar movimientos.
+3. **Modo automático amplio por defecto — con rigor, log y deshacer** (ver §2). Mia ordena
+   sola desde el principio para facilitarle la vida al abogado; la contrapartida obligatoria
+   son las tres salvaguardas del Plano 2 (auditoría completa, deshacer garantizado, y lo
+   irreversible nunca automático). Sin esas tres, el automático amplio no se activa.
+4. **El cliente va con su nombre real en el vault.** El vault vive dentro del perímetro
+   confidencial del despacho, así que un alias solo añadiría fricción. La anonimización se
+   aplica a lo que sale hacia una IA externa (barrera dura #3), no al contenido interno del
+   vault. (Si algún despacho pidiera anonimizar el vault mismo, se trataría como excepción
+   configurable, no como el comportamiento por defecto.)
 
 ## 7. Plan de construcción por fases
 
