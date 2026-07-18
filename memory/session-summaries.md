@@ -1,5 +1,12 @@
 # Mia — Resúmenes de sesión
 
+## 2026-07-17 — Sesión 49
+TL;DR: Se cablearon 6 features que estaban "activas por fuera, muertas por dentro" + verificación visual en vivo.
+Qué construimos: (A) Banco de oro conectado al examen (run_full_suite + POST /gold-cases:evaluate, gated por allow_eval_real_data); (F) borrada gepa_run_all_tenants huérfana; (A-Pinecone) store secundario opt-in por despacho, aislado por namespace, fail-soft, nunca externaliza el expediente; (B-MCP) consumidor real stdio en sandbox por tenant, salida SELLADA [VERIFICAR], soberano bloquea antes de lanzar el subproceso; (D) blindaje del instalador: /health reporta migraciones aplicadas vs esperadas + checkpointer (migración 043), la cáscara Tauri frena si la base no terminó de actualizarse, backups rotan a 3; (E) atajos de un clic en el chat (pre-llenan, no auto-envían) + salud de guías sana/revisar (migración 044, fail-open).
+Qué decidimos: Pipe eligió E completa (atajos + salud). Orquestación multi-agente: Opus coordina, Sonnet implementa grupos disjuntos, Opus verifica adversarial re-corriendo el gate; un solo escritor de git; deps y numeración de migración las prepara el coordinador (D=043, E=044).
+Verificación: cada meta con su gate verde; HALT test_rls 19/19 y check_env_pins 10/10; verificación visual en vivo de chat/atajos y memoria/salud = PASA. 7 commits + retro.
+Qué sigue: capa 3 en vivo de Pipe — MCP e2e (arrancar LiteLLM y re-correr test_mcp stdio-live), Pinecone real (llaves+índice dim 1024), banco de oro e2e, delegación D3 (Riesgo #66); ajuste opcional de cupo de agentes en list_shortcuts (≥6 guías).
+
 ## 2026-07-16/17 — Sesión 48 · MIA deja de ser colombiana + Agent Hub/Banco de oro cableados + criterio (los 8 principios)
 TL;DR: 17 commits en tres frentes — se le quitó a MIA el sesgo colombiano que llevaba hardcodeado por dentro (4 fugas de confidencialidad cerradas), se hicieron reales dos capacidades que tenían API y estaban muertas, y se le dio criterio jurídico; de paso, la DB portable volvió a arrancar y aparecieron DOS gates que llevaban sesiones en rojo sin que constara (la línea base de "84 suites ALL PASS" NO era cierta).
 Qué construimos:

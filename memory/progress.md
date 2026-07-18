@@ -1,6 +1,6 @@
 # Mia — progress.md
 # DIARIO DE OBRA · qué se construyó · errores · tests · resultados
-# Última actualización: 2026-07-17 (sesión 48)
+# Última actualización: 2026-07-17 (sesión 49)
 
 ---
 
@@ -2732,3 +2732,61 @@ Todos los hallazgos corregidos en los mismos commits.
 
 **Próximo:** capa 3 de Pipe — E2E del instalador en máquina limpia, recorrido visual, login real de
 NotebookLM y, nuevo, probar en vivo la delegación (D3) y el banco de oro de punta a punta.
+
+---
+
+## Sesión 49 — 2026-07-17 — 6 features cableadas ("activas por fuera, muertas por dentro") + verificación visual
+
+Se retomó el patrón de sesión 48 (capacidades con API expuesta pero sin cablear por dentro) y
+se cerraron 6 metas con orquestación multi-agente (Opus coordina, Sonnet implementa grupos
+disjuntos sin solaparse en archivos, Opus verifica adversarial re-corriendo el gate de cada una;
+un solo escritor de git).
+
+**(A) Banco de oro conectado al examen.** `run_full_suite` + `POST /gold-cases:evaluate`
+gateados por `allow_eval_real_data` (el mismo consentimiento de sesión 48, ahora con algo que
+consentir). Gate `test_gold_cases_influence_eval` 11/11.
+
+**(F) Limpieza.** `gepa_run_all_tenants` borrada — quedó huérfana, ningún scheduler ni ruta la
+invocaba.
+
+**(A-Pinecone) Store secundario opt-in por despacho.** Aislado por namespace, fail-soft (una
+falla de Pinecone nunca tumba el turno), y por diseño **nunca externaliza el expediente completo**
+— solo lo que el despacho decide indexar ahí. Gate `test_pinecone_wiring` 23/23. Deps nuevas en
+`pyproject`: `pinecone>=3`.
+
+**(B-MCP) Consumidor real stdio.** Sandbox por proceso/tenant, salida SELLADA `[VERIFICAR]` (no
+entra a la cadena de razonamiento jurídico como hecho verificado), el candado `hub_gate` de
+sesión 48 bloquea ANTES de lanzar el subproceso (política 'soberano' nunca abre un stdio externo).
+Gate `test_mcp` 39/39, con el caso `stdio-live` en SKIP honesto cuando no hay LiteLLM arriba (no
+se simula un PASS falso). Deps nuevas en `pyproject`: `mcp>=1.10,<2`.
+
+**(D) Blindaje del instalador.** `/health` reporta migraciones aplicadas vs. esperadas +
+checkpointer — migración **043** (grant del ledger a `mia_app`, sin el cual el rol de la app no
+podía ni leer su propio estado de migraciones). La cáscara Tauri frena el arranque si la base no
+terminó de actualizarse (evita que el abogado use MIA a medio-migrar). Backups rotan a 3 (antes
+sin tope). Gate `test_first_run` 71/71.
+
+**(E) Atajos de un clic + salud de guías.** Pipe eligió la opción completa (no solo atajos).
+Atajos en el chat PRE-LLENAN el mensaje, nunca auto-envían (el abogado siempre confirma antes de
+que algo salga). Salud de guías sana/revisar — migración **044** (`playbook_health`), fail-open
+(si el chequeo de salud falla, la guía se sigue ofreciendo; no se oculta trabajo del abogado por
+un error de infraestructura). Gates `test_playbook_health` 29/29, `test_despacho_atajos` 17/17.
+
+**Migraciones nuevas:** 043 (grant ledger a `mia_app`) y 044 (`playbook_health`) — numeración y
+dependencias las preparó el coordinador para evitar el choque de sesión 48 (dos agentes
+reservando el mismo número).
+
+**Tests (capa 1).** `test_gold_cases_influence_eval` 11/11 · `test_pinecone_wiring` 23/23 ·
+`test_mcp` 39/39 (stdio-live SKIP honesto sin LiteLLM) · `test_first_run` 71/71 ·
+`test_playbook_health` 29/29 · `test_despacho_atajos` 17/17. HALT: `test_rls` 19/19,
+`check_env_pins` 10/10.
+
+**Capa 3 — verificación visual en vivo.** Recorrido de chat/atajos (pre-llenan, no auto-envían,
+confirmado visualmente) y de memoria/salud de guías (sana/revisar visible) = **PASA**.
+
+**Cierre.** 7 commits + retro de sesión.
+
+**Próximo:** capa 3 en vivo de Pipe pendiente — MCP e2e (arrancar LiteLLM y re-correr
+`test_mcp` con el caso stdio-live real, no en SKIP), Pinecone real (llaves + índice dim 1024),
+banco de oro e2e, delegación D3 (Riesgo #66); ajuste opcional del cupo de agentes en
+`list_shortcuts` (≥6 guías, no confirmado como bloqueante).

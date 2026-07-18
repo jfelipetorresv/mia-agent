@@ -1,6 +1,6 @@
 # Mia — task_plan.md
 # Fases del proyecto · objetivos por módulo · checklists
-# Última actualización: 2026-07-17 (sesión 48)
+# Última actualización: 2026-07-17 (sesión 49)
 
 Leyenda: [x] completado · [ ] pendiente · [~] en progreso
 
@@ -376,3 +376,26 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
       (#70), `index_trace` best-effort (#71), medir la puntería del juez del Curator (#67)
 - [ ] Backlog acotado del sesgo colombiano: FTS 'spanish' (migración de índices) · voz TTS es_MX
       (una voz por variante)
+
+## Sesión 49 (2026-07-17) — 6 features cableadas ("activas por fuera, muertas por dentro") + verificación visual
+- [x] **(A) Banco de oro conectado al examen** — `run_full_suite` + `POST /gold-cases:evaluate`,
+      gated por `allow_eval_real_data`. Gate `test_gold_cases_influence_eval` 11/11
+- [x] **(F) Limpieza** — borrada `gepa_run_all_tenants` (huérfana, sin invocador)
+- [x] **(A-Pinecone) Store secundario opt-in** por despacho, aislado por namespace, fail-soft,
+      nunca externaliza el expediente completo. Gate `test_pinecone_wiring` 23/23. Deps nuevas:
+      `pinecone>=3`
+- [x] **(B-MCP) Consumidor real stdio** en sandbox por tenant, salida SELLADA `[VERIFICAR]`,
+      `hub_gate` bloquea ANTES de lanzar el subproceso. Gate `test_mcp` 39/39 (stdio-live SKIP
+      honesto sin LiteLLM). Deps nuevas: `mcp>=1.10,<2`
+- [x] **(D) Blindaje del instalador** — `/health` reporta migraciones aplicadas vs. esperadas +
+      checkpointer (migración 043, grant del ledger a `mia_app`); la cáscara Tauri frena si la
+      base no terminó de actualizarse; backups rotan a 3. Gate `test_first_run` 71/71
+- [x] **(E) Atajos de un clic** en el chat (pre-llenan, no auto-envían) + **salud de guías**
+      sana/revisar (migración 044 `playbook_health`, fail-open). Gates `test_playbook_health`
+      29/29, `test_despacho_atajos` 17/17
+- [x] HALT verdes: `test_rls` 19/19, `check_env_pins` 10/10
+- [x] Verificación visual en vivo (capa 3 parcial): chat/atajos y memoria/salud de guías = PASA
+- [ ] **Capa 3 EN VIVO de Pipe (resto)** — MCP e2e (LiteLLM arriba + stdio-live real), Pinecone
+      real (llaves + índice dim 1024), banco de oro e2e, delegación D3 (Riesgo #66)
+- [ ] Ajuste opcional: cupo de agentes en `list_shortcuts` (≥6 guías) — no confirmado como
+      bloqueante
