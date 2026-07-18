@@ -171,6 +171,48 @@ async def retrieve_knowledge_rrf(
     # de sus propias trazas — si el presupuesto de la sección aprieta, lo primero
     # que cede es lo inferido. Fail-soft total: ver `wiki_notes`.
     notes.extend(await wiki_notes(tenant_id, query_text))
+    # Módulo A · Pinecone como store SECUNDARIO opt-in: va AL FINAL (menor prioridad)
+    # y solo AUMENTA esta lista — nunca compite en el RRF de pgvector de arriba ni
+    # toca `retrieve_rrf` del EXPEDIENTE (Pinecone solo espeja `knowledge_chunks`).
+    # Fail-soft total: ver `pinecone_secondary_notes`.
+    notes.extend(await pinecone_secondary_notes(tenant_id, query_vec, top_k=top_k))
+    return notes
+
+
+async def pinecone_secondary_notes(tenant_id: str, query_vec: list[float],
+                                   *, top_k: int = 4) -> list[dict]:
+    """Notas del store SECUNDARIO opt-in (Pinecone, Módulo A) que espeja
+    `knowledge_chunks` (carpetas locales + Obsidian). Solo AUMENTA
+    `retrieve_knowledge_rrf`: nunca compite en el RRF de pgvector de arriba ni se usa
+    en `retrieve_rrf` del EXPEDIENTE — Pinecone no espeja `chunks`/`documents`.
+
+    FAIL-SOFT total (mismo patrón que `wiki_notes`): sin Pinecone configurado para el
+    despacho el connector es Noop y la consulta devuelve []; cualquier error de config
+    o de red se atrapa aquí y también devuelve [] — jamás tumba el turno del abogado.
+    El import es perezoso por el mismo motivo que en `wiki_notes`: evita pagar el
+    import de connectors cuando no hace falta y no arriesga un ciclo.
+    """
+    try:
+        from ..connectors.pinecone_connector import pinecone_scope_for_tenant
+
+        async with pinecone_scope_for_tenant(tenant_id) as pc:
+            if not pc.is_configured:
+                return []
+            matches = await pc.query(tenant_id, query_vec, top_k=top_k)
+    except Exception:  # noqa: BLE001 — Pinecone es opcional, jamás tumba el turno
+        logger.warning("pinecone: consulta omitida en este turno (tenant=%s)",
+                       tenant_id, exc_info=True)
+        return []
+    notes: list[dict] = []
+    for m in matches:
+        meta = m.get("metadata") or {}
+        notes.append({
+            "id": m.get("id"),
+            "content": meta.get("content"),
+            "source": meta.get("source"),
+            "source_path": meta.get("source_path"),
+            "score": m.get("score"),
+        })
     return notes
 
 

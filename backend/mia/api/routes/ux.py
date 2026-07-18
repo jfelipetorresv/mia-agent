@@ -1691,6 +1691,9 @@ async def dashboard_stats(request: Request):
             # CP-S2: el estado sale SOLO de la configuración del tenant (RLS) —
             # antes un PINECONE_API_KEY global del entorno marcaba "activo" para
             # todos los despachos (clave de la instalación, no del despacho).
+            # Módulo A: ya hay tráfico real (sync + retrieval lo usan como store
+            # secundario opt-in); este indicador sigue leyendo solo el status
+            # guardado — no hace ninguna llamada de red aquí.
             "external_store": {"active": bool(pinecone_cfg.get("status") == "active"),
                                "vectors_count": (((pinecone_cfg.get("stats") or {}).get("total_vector_count")) or 0)},
             "models": _available_models(),

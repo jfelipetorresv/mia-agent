@@ -51,6 +51,7 @@ except ImportError:      # de romper la sincronización. Fail-soft, no fail-hard
 from .. import embeddings
 from ..db import pool
 from ..memory.tokens import estimate_tokens
+from .pinecone_connector import pinecone_scope_for_tenant
 
 logger = logging.getLogger("mia.connectors.obsidian_sync")
 
@@ -560,11 +561,13 @@ class ObsidianSync:
                      chunk.get("doc_status"), chunk.get("doc_type")),
                 )
             # el archivo pudo encoger: elimina los chunks con índice >= nuevos.
-            await conn.execute(
+            pruned = await (await conn.execute(
                 "DELETE FROM knowledge_chunks WHERE tenant_id = %s::uuid AND source = %s "
-                "AND source_path = %s AND chunk_index >= %s",
+                "AND source_path = %s AND chunk_index >= %s RETURNING chunk_index",
                 (tenant_id, SOURCE, filepath, len(chunks)),
-            )
+            )).fetchall()
+        await self._pinecone_mirror_upsert(tenant_id, filepath, chunks, vectors,
+                                           pruned_indices=[r[0] for r in pruned])
 
     async def _delete_removed(self, tenant_id: str, current_files: Iterable[str]) -> int:
         """Borra de knowledge_chunks los chunks cuyo source_path ya no existe en el vault.
@@ -578,13 +581,65 @@ class ObsidianSync:
             )).fetchall()
             stored_paths = {r[0] for r in rows}
             removed = sorted(stored_paths - set(current))
+            deleted_rows: list[tuple] = []
             if removed:
-                await conn.execute(
+                deleted_rows = await (await conn.execute(
                     "DELETE FROM knowledge_chunks WHERE tenant_id = %s::uuid AND source = %s "
-                    "AND source_path = ANY(%s)",
+                    "AND source_path = ANY(%s) RETURNING source_path, chunk_index",
                     (tenant_id, SOURCE, removed),
-                )
+                )).fetchall()
+        if deleted_rows:
+            ids = [f"{SOURCE}:{path}:{idx}" for path, idx in deleted_rows]
+            await self._pinecone_mirror_delete(tenant_id, ids)
         return len(removed)
+
+    # ── espejo en Pinecone (store SECUNDARIO opt-in, Módulo A) ───────────────
+    async def _pinecone_mirror_upsert(self, tenant_id: str, filepath: str,
+                                      chunks: list[dict], vectors: list[list[float]],
+                                      *, pruned_indices: list[int]) -> None:
+        """Espeja el upsert (y la poda por encogimiento) de ESTA nota en Pinecone. Id
+        determinista `{SOURCE}:{filepath}:{chunk_index}`: un re-sync hace upsert en
+        sitio, nunca duplica. FAIL-SOFT total (mismo patrón que `wiki_notes` /
+        `_notebooklm_context`): knowledge_chunks YA quedó escrito arriba; si Pinecone
+        no está configurado (Noop) o la llamada falla, el sync del vault sigue igual."""
+        try:
+            async with pinecone_scope_for_tenant(tenant_id) as pc:
+                if not pc.is_configured:
+                    return
+                if chunks:
+                    vectors_pc = []
+                    for chunk, vec in zip(chunks, vectors):
+                        metadata = {
+                            "content": (chunk["text"] or "")[:2000],
+                            "source": SOURCE,
+                            "source_path": filepath,
+                        }
+                        if chunk.get("heading_path"):
+                            metadata["heading_path"] = chunk["heading_path"]
+                        vectors_pc.append({
+                            "id": f"{SOURCE}:{filepath}:{chunk['position']}",
+                            "values": vec,
+                            "metadata": metadata,
+                        })
+                    await pc.upsert(tenant_id, vectors_pc)
+                if pruned_indices:
+                    ids = [f"{SOURCE}:{filepath}:{idx}" for idx in pruned_indices]
+                    await pc.delete(tenant_id, ids)
+        except Exception:  # noqa: BLE001 — Pinecone es opcional, jamás tumba el sync
+            logger.warning("pinecone: upsert omitido para %s (tenant=%s)",
+                           filepath, tenant_id, exc_info=True)
+
+    async def _pinecone_mirror_delete(self, tenant_id: str, ids: list[str]) -> None:
+        """Espeja en Pinecone el borrado de chunks cuyas notas desaparecieron del vault.
+        FAIL-SOFT total — ver `_pinecone_mirror_upsert`."""
+        try:
+            async with pinecone_scope_for_tenant(tenant_id) as pc:
+                if not pc.is_configured:
+                    return
+                await pc.delete(tenant_id, ids)
+        except Exception:  # noqa: BLE001 — Pinecone es opcional, jamás tumba el sync
+            logger.warning("pinecone: delete omitido para %d ids (tenant=%s)",
+                           len(ids), tenant_id, exc_info=True)
 
     # ── hashes (RLS por tenant) ──────────────────────────────────────────────
     async def _get_stored_hashes(self, tenant_id: str) -> dict[str, str]:

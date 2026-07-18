@@ -32,6 +32,8 @@ dependencies = [
   "av~=13.1",                            # CP-Z2: códec OGG/Opus para las notas de voz de Telegram (wheel autocontenido, sin ffmpeg externo). Fuera de los pins críticos del Riesgo #32. Solo lo usa speech/opus.py.
   "beautifulsoup4~=4.12",                # Data Factory del corpus: parseo del HTML de portales oficiales (Función Pública, Corte Constitucional). ~= a propósito, fuera de los pins críticos del Riesgo #32. Solo lo usa rag/corpus_factory.py.
   "rapidocr-onnxruntime~=1.4",           # Fase 3 bloque 3a: lectura óptica LOCAL de PDFs escaneados (PaddleOCR sobre ONNX, CPU, sin binarios externos). El doc nunca sale del servidor. ~= a propósito, fuera de los pins críticos del Riesgo #32. Solo lo usa ingest/ocr.py; fail-soft si falta (ingest/extract.py degrada con honestidad).
+  "pinecone>=3",                         # Store vectorial SECUNDARIO opt-in por despacho (connectors/pinecone_connector.py). Fuera de los pins críticos del Riesgo #32; fail-soft: si falta o falla, la sincronización y la recuperación siguen con pgvector.
+  "mcp>=1.10,<2",                        # Cliente MCP stdio (mcp/client.py). Ya llegaba transitivo por litellm[proxy]; se declara DIRECTO porque el backend lo importa por su cuenta. Fuera de los pins críticos del Riesgo #32.
 ]
 
 # Proyecto "virtual": no se empaqueta; las deps se instalan en mia/.venv con uv.
