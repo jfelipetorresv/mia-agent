@@ -982,6 +982,31 @@ class MatterGraphBuilder:
             "[VERIFICAR] — no la cites como respaldada.\n" + sealed
         )
 
+    async def _mcp_context(self, state: MatterState, question: str) -> Optional[str]:
+        """CP-E6b: bloque de contexto (sellado) de los servidores MCP que el despacho
+        conectó (gestión documental, consulta de procesos, etc.), o None.
+
+        Fail-soft TOTAL: cualquier fallo o bloqueo del candado → None (el turno sigue solo
+        con el corpus local). Mismo encabezado/contrato que `_notebooklm_context` — toda
+        norma/jurisprudencia/afirmación jurídica que salga de aquí va a la memoria con
+        [VERIFICAR] (no es corpus respaldado)."""
+        try:
+            from ..mcp import turn as mcp_turn  # import diferido (fail-soft, sin ciclos)
+
+            answer = await mcp_turn.consult(state["tenant_id"], question)
+        except Exception:  # noqa: BLE001 — un enriquecimiento nunca tumba el turno
+            logger.warning("research: consulta MCP falló (tenant=%s); se sigue sin ella",
+                           state.get("tenant_id"), exc_info=True)
+            return None
+        if not answer:
+            return None
+        return (
+            "Material de apoyo traído de un sistema externo que tu despacho conectó "
+            "(fuente externa, NO es corpus verificado del sistema): úsalo solo como PISTA. "
+            "Toda norma, jurisprudencia o afirmación jurídica que tomes de aquí va a la "
+            "memoria con [VERIFICAR] — no la cites como respaldada.\n" + answer
+        )
+
     async def _research_single(
         self, state: MatterState, md: dict, jurisdictions: list[str],
     ) -> dict:
@@ -997,6 +1022,9 @@ class MatterGraphBuilder:
         # como contexto externo NO confiable: informa, pero NO entra a `sources` (no cuenta
         # como respaldo de citas) ni a `documents` (no obtiene numeración [doc n]).
         nb_context = await self._notebooklm_context(state, msg)
+        # CP-E6b: ídem para los servidores MCP que el despacho conectó (mismo candado de
+        # política, mismo contrato fail-soft, mismo encabezado [VERIFICAR]).
+        mcp_context = await self._mcp_context(state, msg)
 
         def _messages(facts_txt: str) -> list[dict]:
             parts = [f"Consulta del abogado:\n{msg}"]
@@ -1005,6 +1033,8 @@ class MatterGraphBuilder:
             parts.append(sources_txt if sources_txt else research.NO_SOURCES_NOTE)
             if nb_context:
                 parts.append(nb_context)
+            if mcp_context:
+                parts.append(mcp_context)
             parts.append("Elabora la memoria de investigación.")
             return [
                 {"role": "system", "content": prompt_builder.build_graph_system(
