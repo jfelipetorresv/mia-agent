@@ -246,13 +246,6 @@ async def feedback_run_all_tenants() -> dict:
     return await FeedbackProcessor().run_all_tenants()
 
 
-async def gepa_run_all_tenants() -> dict:
-    """Evolución procedural semanal de playbooks por tenant."""
-    from ..memory.gepa import GEPALoop
-
-    return await GEPALoop().run_all_tenants()
-
-
 async def dreams_run_all_tenants() -> dict:
     """Consolidación semanal profunda del second brain por tenant.
 
