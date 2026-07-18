@@ -37,6 +37,8 @@ PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 ORCH = ROOT / "desktop" / "orchestration.json"
 MARKER_NAME = ".mia-setup-complete"
 
+sys.path.insert(0, str(BACKEND))
+
 _results: list[tuple[str, bool]] = []
 
 
@@ -230,6 +232,39 @@ def main() -> int:
                             priv_detail.append(t)
                     check("mia_app tiene SELECT/INSERT/UPDATE/DELETE en tablas checkpoint*",
                           priv_ok, str(priv_detail))
+
+            # META D (gap 2/2): tras la 1a corrida real, el ledger debe quedar
+            # completo (todas las migraciones del bundle, ni una menos) y legible
+            # por mia_app (requiere el GRANT de 043_grant_migrations_ledger_read.sql;
+            # sin él /health no puede contar migrations_applied). Consulta directa
+            # (este gate no levanta FastAPI) equivalente a lo que expondría /health.
+            from mia.setup import paths as mia_paths
+
+            expected_count = len(mia_paths.migration_paths())
+            try:
+                with psycopg.connect(
+                    host="127.0.0.1", port=pg_port, dbname="mia",
+                    user="mia_app", password=env_values.get("PG_APP_PASSWORD") or "",
+                    autocommit=True,
+                ) as ac:
+                    applied_count = ac.execute(
+                        "SELECT count(*) FROM public.mia_schema_migrations"
+                    ).fetchone()[0]
+                    checkpointer_present = ac.execute(
+                        "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' "
+                        "AND tablename LIKE 'checkpoint%')"
+                    ).fetchone()[0]
+                check("mia_app puede leer mia_schema_migrations (GRANT 043)", True)
+            except Exception as exc:  # noqa: BLE001
+                applied_count = -1
+                checkpointer_present = False
+                check("mia_app puede leer mia_schema_migrations (GRANT 043)", False, repr(exc))
+            check(
+                "migrations_applied == migrations_expected == migration_paths() tras 1a corrida",
+                applied_count == expected_count and expected_count > 0,
+                f"applied={applied_count} expected={expected_count}",
+            )
+            check("checkpointer == true tras 1a corrida", checkpointer_present is True)
 
             # (a) login REAL como mia_app vía DATABASE_URL del .env generado.
             database_url = env_values.get("DATABASE_URL") or ""

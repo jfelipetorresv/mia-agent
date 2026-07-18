@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -237,6 +238,44 @@ try:
         except backup.BackupError as exc:
             substituted_blocked = "no coincide" in str(exc)
         check("una herramienta PostgreSQL sustituida se bloquea", substituted_blocked)
+
+        # META D (gap 4/5): rotate_backups conserva solo los `keep` más recientes.
+        fake_dir = work / "backups-falsos"
+        fake_dir.mkdir()
+        fake_paths = []
+        now = time.time()
+        for i in range(5):
+            p = fake_dir / f"mia-falso-{i}{backup.BACKUP_SUFFIX}"
+            p.write_bytes(b"contenido-falso")
+            # mtimes estrictamente descendentes: i=0 es el más antiguo, i=4 el más nuevo.
+            os.utime(p, (now + i, now + i))
+            fake_paths.append(p)
+        removed_fake = backup.rotate_backups(directory=fake_dir, keep=3)
+        remaining_fake = {p.name for p in fake_dir.glob(f"*{backup.BACKUP_SUFFIX}")}
+        check("rotate_backups (falsos) deja exactamente 3 archivos", len(remaining_fake) == 3)
+        check("rotate_backups (falsos) conserva los 3 más recientes",
+              remaining_fake == {fake_paths[2].name, fake_paths[3].name, fake_paths[4].name})
+        check("rotate_backups (falsos) borra los 2 más antiguos",
+              {p.name for p in removed_fake} == {fake_paths[0].name, fake_paths[1].name})
+
+        # 4 respaldos REALES (ya creados por create_verified_database_backup /
+        # create_database_backup arriba: 2 en backup_dir) + 2 más -> deben quedar 3.
+        backup.create_verified_database_backup(
+            pg_bin=pg_bin, app_dir=app_dir, host=host, port=port,
+            db=source_db, password=password, destination_dir=backup_dir,
+            require_recovery_confirmation=False,
+        )
+        time.sleep(1.1)  # mtime de FAT/NTFS en llamadas rápidas puede empatar al segundo
+        backup.create_verified_database_backup(
+            pg_bin=pg_bin, app_dir=app_dir, host=host, port=port,
+            db=source_db, password=password, destination_dir=backup_dir,
+            require_recovery_confirmation=False,
+        )
+        before_rotate = list(backup_dir.glob(f"*{backup.BACKUP_SUFFIX}"))
+        check("hay 4 respaldos reales antes de rotar", len(before_rotate) == 4)
+        backup.rotate_backups(directory=backup_dir, keep=3)
+        after_rotate = list(backup_dir.glob(f"*{backup.BACKUP_SUFFIX}"))
+        check("rotate_backups (reales) deja exactamente 3 respaldos", len(after_rotate) == 3)
 finally:
     try:
         with psycopg.connect(autocommit=True, **admin) as conn:

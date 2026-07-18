@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import traceback
@@ -55,7 +56,7 @@ def _verified_backup(
     *,
     require_recovery_confirmation: bool = True,
 ) -> Path:
-    return backup.create_verified_database_backup(
+    path = backup.create_verified_database_backup(
         pg_bin=pg_bin,
         app_dir=app_dir,
         host=settings["host"],
@@ -64,6 +65,16 @@ def _verified_backup(
         password=settings["password"],
         require_recovery_confirmation=require_recovery_confirmation,
     )
+    # Solo tras un backup ya verificado: "Mia Backups" no debe crecer sin límite
+    # con una copia por cada arranque/migración. Un fallo de rotación nunca debe
+    # ocultar que el backup en sí ya se creó y verificó correctamente.
+    try:
+        backup.rotate_backups(directory=path.parent, keep=3)
+    except Exception:
+        logging.getLogger("mia.setup.maintenance").exception(
+            "no se pudieron rotar los respaldos antiguos"
+        )
+    return path
 
 
 def _secret_rows(

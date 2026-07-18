@@ -17,6 +17,7 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from ..security import install_redacting_logging
+from ..setup import paths
 from .middleware import TenantContextMiddleware
 from .routes import (assistant, auth, automations, curator, delegation, folders, gold_cases,
                      guides, hitl, learning, mailbox, matter_folders, matter_mail,
@@ -227,6 +228,9 @@ async def health():
         "pgvector": None,
         "embed_model": config.EMBED_MODEL,
         "embed_dim": config.EMBED_DIM,
+        # No depende de la conexión: cuántas migraciones trae ESTE bundle instalado
+        # (setup.paths ya sabe resolver dev vs. onedir de PyInstaller).
+        "migrations_expected": len(paths.migration_paths()),
     }
     try:
         async with pool.get_pool().connection() as conn:
@@ -235,6 +239,21 @@ async def health():
             )).fetchone()
             info["db"] = True
             info["pgvector"] = row[0] if row else None
+            # META D: cuántas migraciones quedaron aplicadas de verdad en el ledger
+            # (requiere el GRANT SELECT de 043_grant_migrations_ledger_read.sql;
+            # mia_app antes no podía leer public.mia_schema_migrations) y si el
+            # checkpointer de LangGraph (tablas 'checkpoint%') ya existe. El instalador
+            # compara esto contra migrations_expected para detectar una actualización
+            # a medias en vez de marcar 'ready' con el esquema incompleto.
+            migrations_row = await (await conn.execute(
+                "SELECT count(*) FROM public.mia_schema_migrations"
+            )).fetchone()
+            info["migrations_applied"] = migrations_row[0] if migrations_row else 0
+            checkpointer_row = await (await conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' "
+                "AND tablename LIKE 'checkpoint%')"
+            )).fetchone()
+            info["checkpointer"] = bool(checkpointer_row[0]) if checkpointer_row else False
     except Exception:  # noqa: BLE001 — el /health reporta el fallo, no lo propaga
         # Auditoría 2026-07: el detalle del error (que puede traer host/usuario de la
         # conexión) va SOLO al log (ya redactado); /health es público y responde genérico.

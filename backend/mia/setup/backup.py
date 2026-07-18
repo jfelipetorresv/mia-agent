@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from ..security import dpapi
 
 MAGIC = b"MIA-BACKUP-V1\n"
+BACKUP_SUFFIX = ".mia-backup"
 KEY_FILE_NAME = ".mia-backup-key.dpapi"
 RECOVERY_MARKER_NAME = ".mia-backup-recovery-confirmed"
 RECOVERY_PREFIX = "MIA-RECOVERY-V1:"
@@ -296,7 +297,7 @@ def create_database_backup(
     folder.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     unique = uuid.uuid4().hex[:12]
-    final_path = folder / f"mia-{stamp}-{unique}.mia-backup"
+    final_path = folder / f"mia-{stamp}-{unique}{BACKUP_SUFFIX}"
     partial = final_path.with_name(final_path.name + ".partial")
     error_log = folder / f".{final_path.name}.pgdump-error"
 
@@ -566,3 +567,33 @@ def cleanup_decrypted_temps(app_dir: Path) -> int:
     """Limpieza pública serializada entre hilos y procesos de Mia."""
     with _RESTORE_LOCK, _restore_process_lock(app_dir):
         return _cleanup_decrypted_temps_unlocked(app_dir)
+
+
+def rotate_backups(directory: Path, keep: int = 3) -> list[Path]:
+    """Conserva solo los `keep` respaldos más recientes; borra el resto.
+
+    Sin esto, "Mia Backups" crece sin límite en el disco del abogado con un
+    respaldo nuevo por cada arranque/migración. Ordena por mtime descendente
+    (el mismo criterio que ya usa maintenance.protection_status para "el último
+    respaldo") y devuelve las rutas borradas para que el llamador las reporte
+    si quiere. Llamar SOLO después de un backup ya verificado — nunca antes,
+    para no quedarse sin copias si el nuevo respaldo resulta inválido.
+    """
+    if keep < 0:
+        raise ValueError("keep no puede ser negativo.")
+    try:
+        files = sorted(
+            directory.glob(f"*{BACKUP_SUFFIX}"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return []
+    removed: list[Path] = []
+    for path in files[keep:]:
+        try:
+            path.unlink()
+            removed.append(path)
+        except OSError:
+            continue
+    return removed

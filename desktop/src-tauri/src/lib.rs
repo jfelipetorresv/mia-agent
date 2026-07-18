@@ -1180,6 +1180,78 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
         );
     }
 
+    // --- b2) Blindaje del instalador: el esquema debe haber quedado COMPLETO
+    // ------------------------------------------------------------------------
+    // META D: identity::backend_identity (arriba, sin tocarla) solo exige que
+    // /health traiga las claves db/pgvector/embed_model — eso confirma que ES
+    // Mia, no que su base de datos terminó de actualizarse. Reutilizamos el
+    // mismo health_url ya validado para leer migrations_applied/
+    // migrations_expected/checkpointer (backend/mia/api/main.py::health, gap 2
+    // de esta ola) y jamás marcar "ready" sobre un esquema a medias — p. ej. si
+    // el GRANT de la migración 043 o una migración posterior fallara en
+    // silencio.
+    if closing(shared) {
+        return Err("la ventana se cerró durante el arranque".into());
+    }
+    let schema_check = client
+        .get(&cfg.backend.health_url)
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await;
+    let schema_ok = match schema_check {
+        Ok(resp) if resp.status().is_success() => match resp.text().await {
+            Ok(body) => match serde_json::from_str::<serde_json::Value>(&body) {
+                Ok(json) => {
+                    let applied = json.get("migrations_applied").and_then(|v| v.as_i64());
+                    let expected = json.get("migrations_expected").and_then(|v| v.as_i64());
+                    let checkpointer = json.get("checkpointer").and_then(|v| v.as_bool());
+                    log_line(
+                        &log_dir,
+                        &format!(
+                            "Backend: verificación de esquema — migrations_applied={applied:?} migrations_expected={expected:?} checkpointer={checkpointer:?}."
+                        ),
+                    );
+                    matches!(checkpointer, Some(true))
+                        && applied.is_some()
+                        && applied == expected
+                }
+                Err(e) => {
+                    log_line(
+                        &log_dir,
+                        &format!("ERROR técnico: /health devolvió un cuerpo no-JSON al verificar el esquema: {e}"),
+                    );
+                    false
+                }
+            },
+            Err(e) => {
+                log_line(
+                    &log_dir,
+                    &format!("ERROR técnico: no pude leer el cuerpo de /health al verificar el esquema: {e}"),
+                );
+                false
+            }
+        },
+        Ok(resp) => {
+            log_line(
+                &log_dir,
+                &format!("ERROR técnico: /health respondió {} al verificar el esquema.", resp.status()),
+            );
+            false
+        }
+        Err(e) => {
+            log_line(
+                &log_dir,
+                &format!("ERROR técnico: /health no respondió al verificar el esquema: {e}"),
+            );
+            false
+        }
+    };
+    if !schema_ok {
+        return Err(
+            "Mia se instaló pero no terminó de actualizar su base de datos".into(),
+        );
+    }
+
     // --- c) Frontend -----------------------------------------------------
     if closing(shared) {
         return Err("la ventana se cerró durante el arranque".into());
