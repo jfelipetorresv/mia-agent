@@ -56,6 +56,7 @@ from ..memory.tokens import estimate_tokens
 from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
+from ..onboarding.ficha_loader import load_ficha_context
 from ..policy import budget as policy_budget
 from . import (context_recovery, delegate_intent, delegate_proposal, delegation,
                reasoning_filter, research, retrieval, untrusted, verification)
@@ -139,13 +140,28 @@ EDIT_SYSTEM = prompt_builder.GRAPH_NODE_INSTRUCTIONS["edit"]
 
 def _matter_context_for(state: MatterState) -> str:
     """L7 · resumen situacional del asunto (ligero a propósito: el material pesado
-    —documentos, knowledge, diagnóstico— sigue viajando en el mensaje user)."""
+    —documentos, knowledge, diagnóstico— sigue viajando en el mensaje user).
+
+    Pieza 4b: se antepone la MEMORIA EN DISCO del expediente (ficha.md + HANDOFF.md +
+    bitácora reciente) como una capa de contexto del asunto, cargada por el ficha-loader
+    con su propio presupuesto de tokens. Va en L7 (tier CONTEXT, NO cacheado): la ficha
+    evoluciona por asunto y no debe envenenar el prefijo estable. Fail-soft: si la carpeta
+    o los archivos no existen aún, o algo falla, el loader devuelve "" y esta capa queda
+    byte a byte como antes."""
     docs = state.get("documents") or []
     knowledge = state.get("knowledge") or []
     partes = [f"Documentos del expediente recuperados en este turno: {len(docs)}."]
     partes.append("Hay notas internas del despacho disponibles como orientación."
                   if knowledge else "Sin notas internas del despacho en este turno.")
-    return " ".join(partes)
+    base = " ".join(partes)
+    # alias = UUID del asunto (misma convención que create_matter/scaffold_matter_workspace).
+    ficha = ""
+    try:
+        ficha = load_ficha_context(state.get("tenant_id") or "", state.get("matter_id") or "")
+    except Exception:  # noqa: BLE001 — inyectar la ficha jamás debe tumbar el turno
+        logger.warning("no se pudo cargar la ficha del expediente en L7 (matter=%s)",
+                       state.get("matter_id"), exc_info=True)
+    return f"{base}\n\n{ficha}" if ficha else base
 
 # ── Conocimiento del despacho en el analysis (CP3 · Riesgo #16) ──────────────
 # Encabezado de la sección en el user prompt. Deja claro al modelo que las notas

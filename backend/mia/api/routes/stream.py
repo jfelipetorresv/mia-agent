@@ -337,6 +337,21 @@ async def stream_matter(
                         request.is_disconnected, checkpointer=cp,
                     ):
                         yield ev
+                # TODO(pieza-4e · cierre automático a ~65%): ESTE es el punto de integración
+                # exacto para un cierre auto disparado desde el backend, PERO hoy no hay aquí un
+                # presupuesto de contexto que crezca: `prepare_new_turn` BORRA el checkpoint al
+                # terminar el turno (_common.py: `adelete_thread` cuando el grafo llega a END),
+                # así que `graph.aget_state(cfg)` no acumula la conversación entre turnos y la
+                # compresión del runner es REACTIVA (solo ante CONTEXT_TOO_LONG), no un medidor
+                # de llenado. El tamaño real de la conversación vive en el FRONTEND (el hilo
+                # visible). Por eso el disparo automático lo hace el frontend llamando a
+                # POST /api/matters/{id}/cierre con {auto: true, messages: <hilo visible>} cuando
+                # detecta ~65% de llenado — misma ruta que el botón manual. Si en el futuro el
+                # runner conserva un transcript persistente por sesión, invocar AQUÍ (fail-soft,
+                # sin bloquear el cierre del SSE):
+                #     await session_briefing.maybe_auto_cierre(tenant_id, matter_id, <messages>)
+                # NO se cablea una llamada al LLM dentro del generador SSE sin una fuente real de
+                # la conversación (sería inventar el mecanismo — regla dura: cero cron/heurística).
         except Exception:
             logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)
             yield sse("error", "Mia no pudo completar el turno. Intenta de nuevo.")

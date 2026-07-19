@@ -9,10 +9,12 @@ import {
   CheckCircle2,
   ChevronRight,
   FileText,
+  Moon,
   Paperclip,
   Scale,
   Send,
   Sparkles,
+  Sunrise,
   Swords,
   X,
 } from "lucide-react";
@@ -25,6 +27,8 @@ import FuentesPanel from "../../_components/FuentesPanel";
 import GuideInterviewWizard from "../../_components/GuideInterviewWizard";
 import SalaEstrategiaDialog from "./_components/SalaEstrategiaDialog";
 import SalaEstrategiaResult from "./_components/SalaEstrategiaResult";
+import DiarioDialog from "./_components/DiarioDialog";
+import CierreDialog, { type CierreResult } from "./_components/CierreDialog";
 import type { DebateTurn, Panelist, WarRoomResult } from "./_components/warroom-types";
 import { Button } from "@/components/ui/button";
 import {
@@ -164,6 +168,22 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   const [warroomResult, setWarroomResult] = useState<WarRoomResult | null>(null);
   const [convertingToDraft, setConvertingToDraft] = useState(false);
 
+  // Pieza 4 · sesión de trabajo del expediente (botones, nunca comandos §G):
+  // "Arrancar el día" (/daily) y "Cerrar por hoy" (/cierre). El cierre destila
+  // lo que el abogado decidió en la conversación; por eso necesita el hilo
+  // visible. Se dispara MANUAL (botón) y AUTOMÁTICO al llenarse el contexto (~65%,
+  // gateado en el backend) para no perder contexto — decisión de Pipe.
+  const [diarioOpen, setDiarioOpen] = useState(false);
+  const [cierreOpen, setCierreOpen] = useState(false);
+  const [cierreBusy, setCierreBusy] = useState(false);
+  const [cierreResult, setCierreResult] = useState<CierreResult | null>(null);
+  // Espejo siempre-fresco del hilo: send()/runChatStream capturan `messages` del
+  // render y quedan obsoletos tras el streaming; el cierre lee este ref.
+  const messagesRef = useRef<Msg[]>([]);
+  // El cierre-auto dispara UNA vez al cruzar el umbral, para no re-destilar (coste
+  // LLM) en cada turno posterior; el abogado siempre puede cerrar a mano después.
+  const autoCierreDoneRef = useRef(false);
+
   const dictation = useDictation(
     (text) => {
       setDictationNotice("");
@@ -171,6 +191,12 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
     },
     (notice) => setDictationNotice(notice),
   );
+
+  // Mantén el espejo del hilo al día para que el cierre destile SIEMPRE la
+  // conversación más reciente (los closures de send/runChatStream se congelan).
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   async function loadDocs() {
     try {
@@ -344,6 +370,12 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       setStatus("No se pudo completar la consulta.");
     } finally {
       setStreaming(false);
+      // Cierre-auto tras el turno: diferido para que el último mensaje ya esté en
+      // el ref (setMessages del streaming se aplica en el próximo render). El
+      // backend gatea por llenado (~65%); si no aplica, es una llamada barata.
+      setTimeout(() => {
+        void maybeAutoCierre();
+      }, 0);
     }
   }
 
@@ -473,6 +505,77 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       setStatus("No se pudo preparar el borrador. Intenta de nuevo.");
     } finally {
       setConvertingToDraft(false);
+    }
+  }
+
+  // Hilo visible en el formato que espera /cierre ({role, content}); el backend
+  // destila SOLO los mensajes del abogado (role "user"). Se leen del ref para
+  // tomar la conversación más reciente, no la del render que abrió el closure.
+  function cierrePayload(): Array<{ role: string; content: string }> {
+    return messagesRef.current
+      .filter((m) => m.text.trim())
+      .map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
+  }
+
+  // "Cerrar por hoy" (manual): destila lo que el abogado decidió y lo guarda en el
+  // expediente. Muestra en un diálogo qué se guardó (o por qué no había nada).
+  async function runCierre() {
+    if (cierreBusy || streaming) return;
+    setCierreResult(null);
+    setCierreOpen(true);
+    setCierreBusy(true);
+    try {
+      const res = await apiSend<CierreResult>("POST", `/api/matters/${matterId}/cierre`, {
+        messages: cierrePayload(),
+      });
+      setCierreResult(res);
+      // Un cierre a mano que sí guardó cuenta como cierre de la sesión: no lo
+      // repitas automáticamente después.
+      if (res.written) autoCierreDoneRef.current = true;
+    } catch {
+      setCierreResult({
+        written: false,
+        reason: "fallo_escritura",
+        durables: [],
+        pendientes: [],
+      });
+    } finally {
+      setCierreBusy(false);
+    }
+  }
+
+  // Cierre AUTOMÁTICO: se llama tras cada turno; el backend decide si la ventana
+  // llegó a ~65% (gate) y solo entonces destila. Silencioso salvo cuando guarda
+  // algo — ahí avisa en llano y no vuelve a dispararse (una vez por sesión).
+  // TODO(pieza-4e): el gate del backend mide contra MIA_CONTEXT_WINDOW; el
+  // frontend no conoce la ventana efectiva del modelo, así que no envía
+  // `context_window` (usa el default del backend). Si en el futuro se quiere que
+  // el umbral refleje el presupuesto real de la conversación, pasar aquí un
+  // context_window medido — no inventar uno.
+  async function maybeAutoCierre() {
+    if (autoCierreDoneRef.current) return;
+    const payload = cierrePayload();
+    if (payload.length === 0) return;
+    try {
+      const res = await apiSend<{ triggered?: boolean; written?: boolean }>(
+        "POST",
+        `/api/matters/${matterId}/cierre`,
+        { messages: payload, auto: true },
+      );
+      if (res.triggered) {
+        // Disparó el destilado (corrió el LLM): no re-destilar en turnos siguientes.
+        autoCierreDoneRef.current = true;
+        if (res.written) {
+          setNotice({
+            type: "success",
+            text:
+              "La conversación se hizo larga, así que guardé por ti en el expediente lo que " +
+              "decidiste hasta aquí. Puedes seguir sin perder el hilo.",
+          });
+        }
+      }
+    } catch {
+      /* el cierre-auto nunca molesta al abogado: si falla, se ignora en silencio */
     }
   }
 
@@ -646,6 +749,25 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
             <span className="text-muted-foreground">{status}</span>
             <div className="flex items-center gap-2">
               <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDiarioOpen(true)}
+                className="gap-1.5"
+              >
+                <Sunrise className="h-3.5 w-3.5" />
+                Arrancar el día
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={runCierre}
+                disabled={streaming || cierreBusy || messages.length === 0}
+                className="gap-1.5"
+              >
+                <Moon className="h-3.5 w-3.5" />
+                Cerrar por hoy
+              </Button>
+              <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setWarroomDialogOpen(true)}
@@ -784,6 +906,15 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
         hasDocuments={docs.length > 0}
         starting={warroomStarting}
         onStart={startWarroom}
+      />
+
+      <DiarioDialog open={diarioOpen} onOpenChange={setDiarioOpen} matterId={matterId} />
+
+      <CierreDialog
+        open={cierreOpen}
+        onOpenChange={setCierreOpen}
+        busy={cierreBusy}
+        result={cierreResult}
       />
 
       <Dialog
