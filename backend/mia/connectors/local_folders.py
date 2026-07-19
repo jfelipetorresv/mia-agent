@@ -50,7 +50,7 @@ from pathlib import Path
 from .. import embeddings
 from ..db import pool
 from ..ingest.extract import extract_text_detailed
-from ..ingest.ingest import chunk_text
+from ..ingest.ingest import chunk_text, chunk_text_with_folios
 from .obsidian_sync import ObsidianSync
 from .pinecone_connector import pinecone_scope_for_tenant
 
@@ -557,7 +557,8 @@ class LocalFolderSync:
                         continue
                     if kind == "matters":
                         await self._ingest_matter_file(tenant_id, matter_id, source_id, rel,
-                                                       text, new_hashes[rel], f)
+                                                       text, new_hashes[rel], f,
+                                                       offset_map=meta.get("folio_map") or [])
                     else:
                         chunks = self._chunk_file(text, rel)
                         vectors = await self._embed_chunks([c["text"] for c in chunks])
@@ -677,8 +678,9 @@ class LocalFolderSync:
         CPU-pesada — el llamador la corre en un hilo, M1); .md/.txt lectura directa."""
         if p.suffix.lower() in (".pdf", ".docx"):
             return extract_text_detailed(p.name, p.read_bytes())
+        # .md/.txt: texto plano sin páginas → mapa de folios vacío (folio NULL). No inventar.
         return (p.read_text(encoding="utf-8", errors="replace"),
-                {"has_body": True, "ocr_unavailable": False})
+                {"has_body": True, "ocr_unavailable": False, "folio_map": []})
 
     def _chunk_file(self, text: str, rel: str) -> list[dict]:
         """.md → troceo por encabezados de ObsidianSync; el resto → chunk_text (ingest)."""
@@ -796,7 +798,8 @@ class LocalFolderSync:
 
     # ── persistencia del EXPEDIENTE VINCULADO (documents + chunks · RLS por tenant) ──
     async def _ingest_matter_file(self, tenant_id: str, matter_id, source_id: str, rel: str,
-                                  text: str, sha256: str, path: Path) -> None:
+                                  text: str, sha256: str, path: Path,
+                                  offset_map: list[tuple[int, int, int]] | None = None) -> None:
         """Ingesta un archivo de la carpeta vinculada al expediente: extrae texto, trocea,
         embebe e inserta un documento (origin='folder', source_path=ruta relativa, sha256,
         source_id=ESTA fuente) y sus chunks. Reemplaza SIEMPRE el documento previo de esa
@@ -807,7 +810,9 @@ class LocalFolderSync:
         de OTRA carpeta vinculada al mismo expediente (bug de poda cruzada, ver
         memory/bugs-and-risks.md). Los documentos subidos a mano (origin='upload') NUNCA
         se tocan aquí."""
-        chunks = chunk_text(text)
+        # Troceo con folio: cada chunk hereda el folio (página) de su offset de inicio, medido
+        # sobre el MISMO `text` que produjo extract (`offset_map`). Sin páginas → folio NULL.
+        pairs = chunk_text_with_folios(text, offset_map or [])
         async with pool.tenant_connection(tenant_id) as conn:
             # Borrar la versión previa de ESTA ruta traída por ESTA fuente (idempotente) —
             # o el huérfano pre-028 del mismo path, nunca la de una carpeta hermana.
@@ -815,10 +820,10 @@ class LocalFolderSync:
                 "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='folder' "
                 "AND source_path=%s AND (source_id=%s::uuid OR source_id IS NULL)",
                 (matter_id, rel, source_id))
-            if not chunks:
+            if not pairs:
                 # Archivo sin texto útil: no se crea documento (quedó podado el anterior).
                 return
-            vectors = await self._embed_chunks(chunks)
+            vectors = await self._embed_chunks([c for c, _ in pairs])
             doc_id = (await (await conn.execute(
                 "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
                 "source_path, origin, source_id) VALUES "
@@ -826,11 +831,11 @@ class LocalFolderSync:
                 (tenant_id, matter_id, path.name, _guess_mime(path.name), sha256, rel,
                  source_id),
             )).fetchone())[0]
-            for i, (content, vec) in enumerate(zip(chunks, vectors)):
+            for i, ((content, folio), vec) in enumerate(zip(pairs, vectors)):
                 await conn.execute(
-                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia) "
-                    "VALUES (%s::uuid, %s, %s, %s, %s, %s)",
-                    (tenant_id, doc_id, i, content, vec, "documento"))
+                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
+                    (tenant_id, doc_id, i, content, vec, "documento", folio))
 
     async def _prune_matter_docs(self, tenant_id: str, matter_id, source_id: str,
                                  current) -> int:

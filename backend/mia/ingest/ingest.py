@@ -36,6 +36,44 @@ def chunk_text(text: str, size: int = 1200, overlap: int = 150) -> list[str]:
     return out
 
 
+def _folio_at(spans: list[tuple[int, int, int]], pos: int) -> int | None:
+    """Folio (página) del offset `pos` según `spans` (ORDENADOS por char_inicio).
+
+    Devuelve el folio del span que CONTIENE `pos`; si `pos` cae en un hueco (una nota OCR
+    intercalada o el "\\n" entre páginas) arrastra el folio de la última página iniciada
+    antes de `pos`; si `pos` es anterior a toda página (p. ej. la nota global de honestidad)
+    devuelve None. Nunca inventa un folio que no se pueda determinar."""
+    current: int | None = None
+    for folio, s, e in spans:
+        if s > pos:
+            break
+        current = folio
+        if pos < e:
+            return folio
+    return current
+
+
+def chunk_text_with_folios(text: str, offset_map: list[tuple[int, int, int]],
+                           size: int = 1200, overlap: int = 150,
+                           ) -> list[tuple[str, int | None]]:
+    """Hermana de `chunk_text` (misma partición EXACTA de caracteres) que además ancla cada
+    chunk a su folio. `offset_map` es la lista `(folio, char_inicio, char_fin)` que produce
+    `extract`, medida sobre ESTE MISMO `text`. Un chunk que cruza páginas hereda el folio de
+    su offset de INICIO (decisión simple y defendible). Sin mapa (fuentes sin páginas) el
+    folio es None → folio_ancla NULL. Devuelve `[(chunk, folio|None), ...]`."""
+    text = text.strip()
+    if not text:
+        return []
+    spans = sorted(offset_map or [], key=lambda t: t[1])
+    out: list[tuple[str, int | None]] = []
+    i = 0
+    step = max(1, size - overlap)
+    while i < len(text):
+        out.append((text[i:i + size], _folio_at(spans, i)))
+        i += step
+    return out
+
+
 async def ingest_file(tenant_id: str, matter_id: str, path: Path) -> int:
     chunks = chunk_text(path.read_text(encoding="utf-8"))
     if not chunks:

@@ -104,14 +104,16 @@ def extract_text_detailed(filename: str, data: bytes) -> tuple[str, dict]:
         import docx
         d = docx.Document(io.BytesIO(data))
         text = "\n".join(p.text for p in d.paragraphs).strip()
+        # .docx no tiene paginado estable → sin folios (mapa vacío ⇒ folio NULL). Nunca inventar.
         return text, {"ocr_pages": 0, "total_pages": 0, "truncated": False,
                       "has_body": _alnum_count(text) >= _MIN_BODY_ALNUM,
-                      "ocr_unavailable": False}
+                      "ocr_unavailable": False, "folio_map": []}
     if name.endswith((".txt", ".md")):
         text = data.decode("utf-8", errors="replace").strip()
+        # texto plano sin páginas → sin folios (mapa vacío ⇒ folio NULL). Nunca inventar.
         return text, {"ocr_pages": 0, "total_pages": 0, "truncated": False,
                       "has_body": _alnum_count(text) >= _MIN_BODY_ALNUM,
-                      "ocr_unavailable": False}
+                      "ocr_unavailable": False, "folio_map": []}
     raise ValueError(f"Tipo de documento no soportado: {filename} (usa PDF, Word .docx, .txt o .md)")
 
 
@@ -146,14 +148,24 @@ def _dpi_for_budget(page, base_dpi: int) -> int:
 
 
 def _assemble_body(page_texts: list[str], ocr_flags: list[bool],
-                   toolarge_flags: list[bool], total_pages: int) -> tuple[str, bool]:
-    """Une las páginas EN ORDEN y decide si el documento tiene cuerpo real.
+                   toolarge_flags: list[bool], total_pages: int,
+                   ) -> tuple[str, bool, list[tuple[int, int, int]]]:
+    """Une las páginas EN ORDEN, decide si el documento tiene cuerpo real y construye el
+    MAPA DE FOLIOS del cuerpo ensamblado.
 
     MEN1: antes de cada bloque CONTIGUO de páginas leídas por OCR intercala el marcador de
     segmento, de modo que el troceo posterior lo arrastre cerca del contenido óptico aunque
     esté en la página 200. Las páginas saltadas por descomunales dejan su anotación honesta.
-    Devuelve `(cuerpo, has_real_text)` — `has_real_text` ignora las anotaciones (M3)."""
-    out: list[str] = []
+
+    Devuelve `(cuerpo, has_real_text, folio_map)`:
+      - `has_real_text` ignora las anotaciones (M3).
+      - `folio_map`: lista de `(folio, char_inicio, char_fin)` con `folio` 1-based = número de
+        página del PDF, y offsets MEDIDOS SOBRE EL MISMO cuerpo que se devuelve (contando los
+        `\n` de unión y las notas OCR/descomunal que se intercalan). Así el troceo posterior
+        NO se desalinea: los caracteres del mapa son EXACTAMENTE los del cuerpo emitido. Las
+        notas intercaladas NO llevan folio (quedan como huecos → chunk con folio None)."""
+    out: list[str] = []                       # partes emitidas EN ORDEN (notas + segmentos)
+    folio_by_part: dict[int, int] = {}        # índice de parte → folio (solo las páginas)
     real_chars = 0
     prev_was_ocr = False
     for i in range(total_pages):
@@ -169,10 +181,26 @@ def _assemble_body(page_texts: list[str], ocr_flags: list[bool],
         else:
             prev_was_ocr = False
         if seg and seg.strip():
+            folio_by_part[len(out)] = i + 1    # esta parte es el folio (página) i+1
             out.append(seg)
             real_chars += _alnum_count(seg)
-    body = "\n".join(p for p in out if p).strip()
-    return body, real_chars >= _MIN_BODY_ALNUM
+    parts = [p for p in out if p]              # `out` nunca trae partes vacías → índices == out
+    joined = "\n".join(parts)
+    body = joined.strip()
+    # `body` recorta espacios de los extremos de `joined`: descuenta lo comido al frente para
+    # que los offsets queden relativos al cuerpo DEVUELTO (el mismo que se trocea).
+    lead = len(joined) - len(joined.lstrip())
+    blen = len(body)
+    folio_map: list[tuple[int, int, int]] = []
+    pos = 0
+    for k, p in enumerate(parts):
+        if k in folio_by_part:
+            s = max(0, pos - lead)
+            e = min(blen, pos + len(p) - lead)
+            if e > s:
+                folio_map.append((folio_by_part[k], s, e))
+        pos += len(p) + 1                      # +1 por el "\n" de unión (sobra tras la última)
+    return body, real_chars >= _MIN_BODY_ALNUM, folio_map
 
 
 def _extract_pdf(data: bytes) -> tuple[str, dict]:
@@ -196,23 +224,33 @@ def _extract_pdf(data: bytes) -> tuple[str, dict]:
                 candidates.append(i)
 
         # 2) Sin candidatas → documento con capa de texto: camino normal, sin OCR.
+        # Se ensambla por `_assemble_body` (todas las flags en False) para que el mapa de
+        # folios se mida sobre EXACTAMENTE el mismo cuerpo que luego se trocea.
         if not candidates:
-            text = "\n".join(page_texts).strip()
-            return text, {"ocr_pages": 0, "total_pages": total_pages, "truncated": False,
-                          "has_body": _alnum_count(text) >= _MIN_BODY_ALNUM,
-                          "ocr_unavailable": False}
+            no_flags = [False] * total_pages
+            body, has_body, folio_map = _assemble_body(page_texts, no_flags, no_flags,
+                                                       total_pages)
+            return body, {"ocr_pages": 0, "total_pages": total_pages, "truncated": False,
+                          "has_body": has_body, "ocr_unavailable": False,
+                          "folio_map": folio_map}
 
         # 3) Hay escaneo. ¿Tenemos motor de OCR en este servidor?
         engine = ocr.get_ocr_engine()
         if engine is None:
             # Fail-soft: degradar con honestidad. La ingesta NUNCA revienta por falta de OCR.
-            body = "\n".join(page_texts).strip()
-            has_body = _alnum_count(body) >= _MIN_BODY_ALNUM
+            no_flags = [False] * total_pages
+            body, has_body, folio_map = _assemble_body(page_texts, no_flags, no_flags,
+                                                       total_pages)
             text = (OCR_UNAVAILABLE_NOTE + ("\n" + body if body else "")).strip()
+            # La nota se antepone al cuerpo: corre el mapa de folios por su longitud para que
+            # los offsets sigan midiendo sobre el `text` devuelto (el mismo que se trocea).
+            shift = (len(OCR_UNAVAILABLE_NOTE) + 1) if body else 0
+            folio_map = [(f, s + shift, e + shift) for (f, s, e) in folio_map]
             # ocr_unavailable solo si SIN motor el documento quedó sin cuerpo legible (M3):
             # un mixto (texto + escaneo) sí tiene cuerpo aunque falte el OCR.
             return text, {"ocr_pages": 0, "total_pages": total_pages, "truncated": False,
-                          "has_body": has_body, "ocr_unavailable": not has_body}
+                          "has_body": has_body, "ocr_unavailable": not has_body,
+                          "folio_map": folio_map}
 
         # 4) OCR de las páginas candidatas, con límites de páginas y de tiempo (fail-soft).
         ocr_pages = 0
@@ -248,7 +286,8 @@ def _extract_pdf(data: bytes) -> tuple[str, dict]:
                 ocr_flags[i] = True
 
         used_ocr = any(ocr_flags)  # MEN2: "usó OCR" solo si alguna página aportó texto óptico
-        body, has_body = _assemble_body(page_texts, ocr_flags, toolarge_flags, total_pages)
+        body, has_body, folio_map = _assemble_body(page_texts, ocr_flags, toolarge_flags,
+                                                   total_pages)
 
         parts: list[str] = []
         if used_ocr:
@@ -258,6 +297,11 @@ def _extract_pdf(data: bytes) -> tuple[str, dict]:
         if truncated and first_omitted is not None:
             parts.append(_ocr_truncation_note(first_omitted))
         text = "\n".join(parts).strip()
+        # Si la nota global se antepuso al cuerpo, corre el mapa de folios por su longitud
+        # (todas las notas empiezan por "[", no hay strip al frente) para que los offsets
+        # sigan alineados con el `text` devuelto que luego se trocea.
+        shift = (len(OCR_HONESTY_NOTE) + 1) if (used_ocr and body) else 0
+        folio_map = [(f, s + shift, e + shift) for (f, s, e) in folio_map]
         return text, {"ocr_pages": ocr_pages, "total_pages": total_pages,
                       "truncated": truncated, "has_body": has_body,
-                      "ocr_unavailable": False}
+                      "ocr_unavailable": False, "folio_map": folio_map}

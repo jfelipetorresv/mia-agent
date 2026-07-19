@@ -40,7 +40,7 @@ from ...connectors.mailbox.providers import _max_attachment_bytes
 from ...connectors.mailbox.service import MailboxService
 from ...db import pool
 from ...ingest.extract import extract_text_detailed_async
-from ...ingest.ingest import chunk_text
+from ...ingest.ingest import chunk_text_with_folios
 from ...observability import audit
 from ._common import _is_uuid
 
@@ -286,13 +286,15 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
         await _ingest_document(
             tenant_id, matter_id, name, att.get("content_type") or None, data, text,
             source_path=f"{provider}:{message_id}/{name}",
-            display_name=name, added=added, already=already, skipped=skipped)
+            display_name=name, added=added, already=already, skipped=skipped,
+            offset_map=meta.get("folio_map") or [])
 
 
 async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: str | None,
                            raw: bytes, text: str, *, source_path: str, display_name: str,
                            added: list, already: list, skipped: list,
-                           fecha_documento: date | None = None) -> None:
+                           fecha_documento: date | None = None,
+                           offset_map: list[tuple[int, int, int]] | None = None) -> None:
     """Ingesta UN documento origin='mail' (dedupe por sha256): extrae→trocea→embebe→inserta.
     Molde de LocalFolderSync._ingest_matter_file, pero la clave de dedupe es la HUELLA del
     contenido (como la subida manual): re-vincular el mismo correo NO duplica nada."""
@@ -304,12 +306,15 @@ async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: 
     if dup:
         already.append(display_name)
         return
-    chunks = chunk_text(text)
-    if not chunks:
+    # Troceo con folio: cada chunk hereda el folio (página) de su offset de inicio, medido
+    # sobre el MISMO `text` que produjo extract (`offset_map`). El CUERPO del correo y las
+    # fuentes sin páginas no traen mapa → folio NULL. Nunca se inventa.
+    pairs = chunk_text_with_folios(text, offset_map or [])
+    if not pairs:
         skipped.append({"name": display_name,
                         "reason": "Ese correo o archivo no tenía texto para agregar."})
         return
-    vectors = embeddings.embed_texts(chunks)
+    vectors = embeddings.embed_texts([c for c, _ in pairs])
     async with pool.tenant_connection(tenant_id) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
@@ -317,8 +322,9 @@ async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: 
             "VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'mail', %s) RETURNING id",
             (tenant_id, matter_id, filename, mime, sha256, source_path,
              fecha_documento))).fetchone())[0]
-        for i, (content, vec) in enumerate(zip(chunks, vectors)):
+        for i, ((content, folio), vec) in enumerate(zip(pairs, vectors)):
             await conn.execute(
-                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia) "
-                "VALUES (%s::uuid, %s, %s, %s, %s, %s)", (tenant_id, doc_id, i, content, vec, "documento"))
+                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
+                "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
+                (tenant_id, doc_id, i, content, vec, "documento", folio))
     added.append(display_name)

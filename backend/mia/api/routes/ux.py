@@ -24,6 +24,7 @@ from psycopg.types.json import Json
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from ... import embeddings
 from ...agent.prompt_builder import strip_diagnosis_closing
@@ -40,7 +41,7 @@ from ...security.at_rest import encrypt_secret
 from ...cron import build_scheduler
 from ...db import pool
 from ...ingest.extract import extract_text_async, extract_text_detailed_async
-from ...ingest.ingest import chunk_text
+from ...ingest.ingest import chunk_text, chunk_text_with_folios
 from ...jurisdiction.pack import GENERIC_CODE, list_packs, load_pack
 from ...memory.gepa import GEPALoop
 from ...memory.playbook_manager import Playbook, PlaybookManager
@@ -52,6 +53,7 @@ from ...observability import audit
 from ...onboarding.soul_interview import (
     SoulInterview, build_summary, derive_firm_profile, load_responses, soul_status,
 )
+from ...onboarding.workspace import scaffold_matter_workspace
 from ...output.docx_export import draft_to_docx
 from ...policy import budget as policy_budget
 from ._common import assert_owns_matter, load_profile_snapshot, MAX_UPLOAD_BYTES, _is_uuid, sse
@@ -174,6 +176,17 @@ async def create_matter(request: Request, body: MatterCreate):
             "INSERT INTO matters (tenant_id, title, description, kind) VALUES (%s::uuid, %s, %s, %s) "
             "RETURNING id, status, created_at",
             (tid, body.name, body.description, body.kind))).fetchone()
+    # Andamiaje en disco del expediente (solo Asuntos): alias = UUID del asunto (convención
+    # crítica y consistente). El disco es ACCESORIO — jamás debe tumbar el alta, así que va
+    # fuera del event loop y en try/except que solo loguea.
+    if body.kind == "asunto":
+        try:
+            await run_in_threadpool(
+                scaffold_matter_workspace, tid, str(row[0]), titulo=body.name)
+        except Exception:
+            logger.exception(
+                "no se pudo andamiar el expediente en disco (tenant=%s matter=%s)",
+                tid, str(row[0]))
     return {"id": str(row[0]), "name": body.name, "description": body.description,
             "status": row[1], "created_at": row[2], "kind": body.kind}
 
@@ -239,20 +252,23 @@ async def upload_document(matter_id: str, request: Request, response: Response,
                 "El documento parece escaneado y este servidor no tiene lectura óptica "
                 "instalada — no pude leer su contenido."))
         raise HTTPException(status_code=422, detail="No pude leer texto en este documento.")
-    chunks = chunk_text(text)
-    if not chunks:
+    # Troceo con folio: cada chunk lleva el folio (página del PDF) de su offset de inicio,
+    # medido sobre el MISMO `text` que devolvió extract (meta['folio_map']). Sin páginas → None.
+    pairs = chunk_text_with_folios(text, meta.get("folio_map") or [])
+    if not pairs:
         raise HTTPException(status_code=400, detail="El documento está vacío o no tiene texto.")
-    vectors = embeddings.embed_texts(chunks)
+    vectors = embeddings.embed_texts([c for c, _ in pairs])
     async with pool.tenant_connection(tid) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, origin) "
             "VALUES (%s::uuid, %s::uuid, %s, %s, %s, 'upload') RETURNING id",
             (tid, matter_id, file.filename, file.content_type, sha256))).fetchone())[0]
-        for i, (content, vec) in enumerate(zip(chunks, vectors)):
+        for i, ((content, folio), vec) in enumerate(zip(pairs, vectors)):
             await conn.execute(
-                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
-                "VALUES (%s::uuid, %s, %s, %s, %s)", (tid, doc_id, i, content, vec))
-    return {"id": str(doc_id), "name": file.filename, "fragments": len(chunks)}
+                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
+                "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
+                (tid, doc_id, i, content, vec, "documento", folio))
+    return {"id": str(doc_id), "name": file.filename, "fragments": len(pairs)}
 
 
 # ── Proyectos (Bloque A) · archivos producidos por Mia ───────────────────────
@@ -301,8 +317,9 @@ async def create_output(matter_id: str, request: Request, response: Response, bo
             (tid, matter_id, body.title, "text/markdown", sha256, body.content))).fetchone())[0]
         for i, (content, vec) in enumerate(zip(chunks, vectors)):
             await conn.execute(
-                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
-                "VALUES (%s::uuid, %s, %s, %s, %s)", (tid, doc_id, i, content, vec))
+                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia) "
+                "VALUES (%s::uuid, %s, %s, %s, %s, %s)",
+                (tid, doc_id, i, content, vec, "inferido"))
     return {"id": str(doc_id), "title": body.title, "status": "guardado"}
 
 

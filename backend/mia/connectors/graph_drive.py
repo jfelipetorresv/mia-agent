@@ -38,7 +38,7 @@ from urllib.parse import quote
 
 from ..db import pool
 from ..ingest.extract import extract_text_detailed_async
-from ..ingest.ingest import chunk_text
+from ..ingest.ingest import chunk_text_with_folios
 from .local_folders import (
     MAX_FILE_BYTES,
     MAX_FILES_PER_SYNC,
@@ -409,7 +409,8 @@ class RemoteDriveSync:
                     continue
                 if kind == "matters":
                     await self._ingest_matter_file(tenant_id, matter_id, source_id, f["rel"],
-                                                   f["name"], text, sha)
+                                                   f["name"], text, sha,
+                                                   offset_map=meta.get("folio_map") or [])
                 else:
                     chunks = self._local._chunk_file(text, f["rel"])
                     vectors = await self._local._embed_chunks([c["text"] for c in chunks])
@@ -494,11 +495,14 @@ class RemoteDriveSync:
         CPU-pesado y no debe congelar el cron ni los demás jobs); .md/.txt decodificados."""
         if name.lower().endswith((".pdf", ".docx")):
             return await extract_text_detailed_async(name, blob)
-        return blob.decode("utf-8", errors="replace"), {"has_body": True, "ocr_unavailable": False}
+        # .md/.txt: texto plano sin páginas → mapa de folios vacío (folio NULL). No inventar.
+        return (blob.decode("utf-8", errors="replace"),
+                {"has_body": True, "ocr_unavailable": False, "folio_map": []})
 
     # ── persistencia del EXPEDIENTE VINCULADO (documents origin='drive' + chunks) ──
     async def _ingest_matter_file(self, tenant_id: str, matter_id, source_id: str, rel: str,
-                                  name: str, text: str, sha256: str) -> None:
+                                  name: str, text: str, sha256: str,
+                                  offset_map: list[tuple[int, int, int]] | None = None) -> None:
         """Ingesta un archivo remoto al expediente: extrae texto, trocea, embebe e inserta un
         documento (origin='drive', source_path=ruta relativa, sha256, source_id=ESTA fuente)
         y sus chunks. Reemplaza SIEMPRE el documento previo de esa ruta (sus chunks caen por
@@ -508,11 +512,13 @@ class RemoteDriveSync:
         migración 028) — NUNCA los de OTRA carpeta de OneDrive vinculada al mismo expediente
         (bug de poda cruzada, ver memory/bugs-and-risks.md). Los documentos subidos a mano
         (origin='upload') y los de carpetas locales (origin='folder') NUNCA se tocan aquí."""
-        chunks = chunk_text(text)
+        # Troceo con folio: cada chunk hereda el folio (página) de su offset de inicio, medido
+        # sobre el MISMO `text` que produjo extract (`offset_map`). Sin páginas → folio NULL.
+        pairs = chunk_text_with_folios(text, offset_map or [])
         # Los embeddings se calculan ANTES de abrir la conexión por-tenant (igual que la ruta
         # de conocimiento): una llamada de red al servicio de embeddings no debe mantener
         # abierta una conexión con RLS del pool (m6).
-        vectors = await self._local._embed_chunks(chunks) if chunks else []
+        vectors = await self._local._embed_chunks([c for c, _ in pairs]) if pairs else []
         async with pool.tenant_connection(tenant_id) as conn:
             # Borrar la versión previa de ESTA ruta traída por ESTA fuente (idempotente) —
             # o el huérfano pre-028 del mismo path, nunca la de una carpeta remota hermana.
@@ -520,7 +526,7 @@ class RemoteDriveSync:
                 "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='drive' "
                 "AND source_path=%s AND (source_id=%s::uuid OR source_id IS NULL)",
                 (matter_id, rel, source_id))
-            if not chunks:
+            if not pairs:
                 return
             doc_id = (await (await conn.execute(
                 "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
@@ -528,11 +534,11 @@ class RemoteDriveSync:
                 "(%s::uuid, %s::uuid, %s, %s, %s, %s, 'drive', %s::uuid) RETURNING id",
                 (tenant_id, matter_id, name, _guess_mime(name), sha256, rel, source_id),
             )).fetchone())[0]
-            for i, (content, vec) in enumerate(zip(chunks, vectors)):
+            for i, ((content, folio), vec) in enumerate(zip(pairs, vectors)):
                 await conn.execute(
-                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia) "
-                    "VALUES (%s::uuid, %s, %s, %s, %s, %s)",
-                    (tenant_id, doc_id, i, content, vec, "documento"))
+                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
+                    (tenant_id, doc_id, i, content, vec, "documento", folio))
 
     async def _prune_matter_docs(self, tenant_id: str, matter_id, source_id: str,
                                  current_rels) -> int:
