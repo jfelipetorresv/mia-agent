@@ -902,7 +902,7 @@ del primer cliente. Lista completa de riesgos abiertos en `memory/bugs-and-risks
 
 **Contexto:** replan a "Plataforma Legal Hispana + Asistente Conversacional" (ver `Plan/Plan.md`).
 Prioridad del propietario: núcleo conversacional, memoria/contexto, mucha documentación,
-plugins/Telegram/conectores, voz tipo Jarvis (Handy STT + TTS). Calculadora de plazos baja a auxiliar.
+plugins/Telegram/conectores, voz por dictado (Handy STT + TTS). Calculadora de plazos baja a auxiliar.
 
 **Qué construimos (Fase 0):**
 - **0.B** — Los tests son SCRIPTS (no pytest). Línea base REAL **23/25** (no "17/17"). 2 rojos

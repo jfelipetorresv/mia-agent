@@ -834,7 +834,7 @@ Qué sigue:
 
 ## 2026-07-02 â€” SesiÃ³n 24 (cierre)
 TL;DR: se cerraron CP6, CP9 y CP-C4b (con su UI de Cursor y una correcciÃ³n); y se trazÃ³ el
-roadmap de 5 olas a partir del anÃ¡lisis de Hermes/ClaudeOS/OpenJarvis.
+roadmap de 5 olas a partir del anÃ¡lisis de Hermes/ClaudeOS.
 QuÃ© construimos:
 - CP6 (una sola voz) aprobado por Pipe y mergeado a main.
 - CP9 (equipo de especialistas: hechosâ†’investigaciÃ³nâ†’cruceâ†’redacciÃ³nâ†’verificaciÃ³n de citasâ†’Word)

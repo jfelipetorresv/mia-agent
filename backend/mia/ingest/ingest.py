@@ -49,9 +49,9 @@ async def ingest_file(tenant_id: str, matter_id: str, path: Path) -> int:
         )).fetchone())[0]
         for ord_, (content, vec) in enumerate(zip(chunks, vectors)):
             await conn.execute(
-                "INSERT INTO chunks(tenant_id, document_id, ord, content, embedding) "
-                "VALUES (%s,%s,%s,%s,%s)",
-                (tenant_id, doc_id, ord_, content, vec),
+                "INSERT INTO chunks(tenant_id, document_id, ord, content, embedding, procedencia) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (tenant_id, doc_id, ord_, content, vec, "documento"),
             )
     return len(chunks)
 

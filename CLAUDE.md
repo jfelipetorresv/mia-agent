@@ -94,7 +94,7 @@ Dos memorias separadas:
 ## E · Mapa de memoria (/memory/)
 - task_plan.md       → fases del proyecto, objetivos por módulo,
   checklists
-- findings.md        → patrones de Hermes/OpenJarvis, restricciones
+- findings.md        → patrones de Hermes, restricciones
   técnicas
 - progress.md        → qué se construyó, errores, tests, resultados
   · DIARIO DE OBRA
@@ -125,12 +125,11 @@ Dos memorias separadas:
 
 ## F · Referencias
 - Repos de referencia (en "D:\Inteligencia Artificial\Mia-Super Agent\"):
-  hermes-ref/ (MIT) · jarvis-ref/ (Apache 2.0) · agent-os-ref/
+  hermes-ref/ (MIT) · agent-os-ref/
   · claudeos-ref/
 - Hermes docs (leer antes de implementar):
   github.com/mudrii/hermes-agent-docs
   (architecture.md · memory.md · skills.md · plugins.md · cron.md)
-- OpenJarvis: scalingintelligence.stanford.edu/blogs/openjarvis/
 - Corpus jurídico Colombia: SUIN-Juriscol · Función Pública · SAMAI
 
 ---

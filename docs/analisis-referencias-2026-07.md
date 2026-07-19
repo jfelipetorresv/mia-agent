@@ -1,8 +1,7 @@
-# Qué adoptar de Hermes, ClaudeOS y OpenJarvis — plan para Mia
+# Qué adoptar de Hermes y ClaudeOS — plan para Mia
 
 _Análisis del 2026-07-02 (sesión 24). Fuentes: `hermes-ref` (Hermes Agent, Python/MIT),
-`claudeos-ref` (ClaudeOS [Hermes] V2.3, TypeScript), `jarvis-ref/OpenJarvis-main`
-(OpenJarvis, Python+Rust). Cada repo fue leído a fondo por un analista dedicado con el
+`claudeos-ref` (ClaudeOS [Hermes] V2.3, TypeScript). Cada repo fue leído a fondo por un analista dedicado con el
 mapa completo de lo que Mia ya tiene, para no recomendar reinventar lo construido._
 
 Este documento es el plan de referencia; la ejecución de cada ola se puede afinar luego
@@ -77,9 +76,9 @@ El frente donde los tres repos más aportan y el más crítico para el secreto p
 
 ---
 
-## OLA 3 — Voz _(el pilar "tipo Jarvis" que querías)_
+## OLA 3 — Voz _(el pilar de voz que querías)_
 
-OpenJarvis da la **arquitectura y los patrones de privacidad**, pero conviene saber: su voz
+La referencia de voz da la **arquitectura y los patrones de privacidad**, pero conviene saber: su voz
 es "graba y envía" (por lotes), **no** es conversación en tiempo real con interrupción. Eso
 hay que construirlo; no viene hecho. Lo bueno: adoptamos lo sólido y evitamos deuda.
 
@@ -91,11 +90,11 @@ hay que construirlo; no viene hecho. Lo bueno: adoptamos lo sólido y evitamos d
   y sintetizar por frases conforme Mia genera el texto, para que se sienta en tiempo real.
   Esfuerzo: **medio.**
 - **Fase 3 — Asistente omnipresente (opcional).** Un "overlay" de escritorio que aparece con
-  un atajo de teclado desde cualquier aplicación (el verdadero "ClaudeClaw"). OpenJarvis lo
+  un atajo de teclado desde cualquier aplicación (el verdadero "ClaudeClaw"). La referencia lo
   tiene pulido solo en Mac; en Windows es viable pero menos fino. Esfuerzo: **medio-alto.**
-- Referencias: `jarvis-ref/.../src/openjarvis/speech/` (todo el subsistema, con "local
-  primero"), `.../server/stream_bridge.py` (streaming), `.../frontend/src/hooks/useSpeech.ts`
-  (dictado), `.../frontend/src-tauri/src/lib.rs` (overlay + atajo global).
+- Referencias (subsistema de voz local-first, en disco): `speech/` (todo el subsistema),
+  `server/stream_bridge.py` (streaming), `frontend/src/hooks/useSpeech.ts` (dictado),
+  `frontend/src-tauri/src/lib.rs` (overlay + atajo global).
 
 > **Decisión de alto impacto para ti (Regla 2):** ¿la voz de Mia es **100% local**
 > (privacidad total, calidad buena pero no perfecta en español) o se permite **nube** para
@@ -160,7 +159,7 @@ hay que construirlo; no viene hecho. Lo bueno: adoptamos lo sólido y evitamos d
   programar, no para litigar.
 - El "marketplace" comunitario de skills: un despacho no instalaría habilidades de terceros
   desconocidos.
-- Empaquetar todo el sistema dentro de una app de escritorio (modelo de OpenJarvis): Mia es
+- Empaquetar todo el sistema dentro de una app de escritorio (modelo monolítico de escritorio): Mia es
   multi-cliente en servidor; el escritorio, si llega, debe ser un cliente delgado que apunta
   al servidor de Mia con conexión segura y autenticación por despacho.
 

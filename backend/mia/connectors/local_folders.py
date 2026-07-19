@@ -828,9 +828,9 @@ class LocalFolderSync:
             )).fetchone())[0]
             for i, (content, vec) in enumerate(zip(chunks, vectors)):
                 await conn.execute(
-                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
-                    "VALUES (%s::uuid, %s, %s, %s, %s)",
-                    (tenant_id, doc_id, i, content, vec))
+                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, %s)",
+                    (tenant_id, doc_id, i, content, vec, "documento"))
 
     async def _prune_matter_docs(self, tenant_id: str, matter_id, source_id: str,
                                  current) -> int:

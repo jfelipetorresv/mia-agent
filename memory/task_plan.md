@@ -157,7 +157,7 @@ Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor indep
 
 
 ## Roadmap 5 olas (aprobado por Pipe 2026-07-02) — plan completo en `docs/plan-ejecucion-olas.md`
-De los análisis de Hermes/ClaudeOS/OpenJarvis (`docs/analisis-referencias-2026-07.md`). Pipe
+De los análisis de Hermes/ClaudeOS (`docs/analisis-referencias-2026-07.md`). Pipe
 aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
 
 | CP | Ola | Qué es | Ref |
@@ -169,9 +169,9 @@ aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
 | CP-P2 | 2 | Blueprints + sugerencias consent-first (plazos procesales = confirmación humana) | hermes `cron/blueprint_catalog.py`, `suggestions.py` |
 | CP-V1 | 4 Valor | "Valor entregado" = horas ahorradas × tarifa − costo, en el panel | claudeos `src/lib/time-saved.ts` |
 | CP-V2 | 4 | Auto-diagnóstico prescriptivo riguroso (severidad×impacto×certeza, anti-invención) | claudeos `skills/dream/SKILL.md` |
-| CP-Z1 | 3 Voz | Dictado web con STT local (faster-whisper) — **DECISIÓN Pipe: local vs nube** | openjarvis `src/openjarvis/speech/` |
-| CP-Z2 | 3 | Respuesta hablada (TTS local) + streaming incremental por frases | openjarvis `speech/tts.py`, `server/stream_bridge.py` |
-| CP-Z3 | 3 | (Opcional) Overlay de escritorio omnipresente (cliente delgado) | openjarvis `frontend/src-tauri/src/lib.rs` |
+| CP-Z1 | 3 Voz | Dictado web con STT local (faster-whisper) — **DECISIÓN Pipe: local vs nube** | Lexter/Handy `speech/` |
+| CP-Z2 | 3 | Respuesta hablada (TTS local) + streaming incremental por frases | `speech/tts.py`, `stream_bridge` |
+| CP-Z3 | 3 | (Opcional) Overlay de escritorio omnipresente (cliente delgado) | Tauri `src-tauri/src/lib.rs` |
 | CP-E1 | 5 Escala | Observer hooks (auditoría) + middleware (políticas por tenant) | hermes `docs/observability/`, `docs/middleware/` |
 | CP-E2 | 5 | Adjuntar pruebas por referencia (@expediente/@carpeta) | hermes `agent/context_references.py` |
 | CP-E3 | 5 | Personas jurídicas especializadas editables | claudeos Pantheon |

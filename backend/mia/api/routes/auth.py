@@ -1,6 +1,7 @@
 """Rutas de autenticacion real multi-tenant."""
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -14,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import config
 from ...db import pool
+from ...onboarding.workspace import scaffold_despacho_workspace
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -186,6 +188,16 @@ async def register(body: RegisterBody, request: Request):
             )
     except errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail="Email ya registrado") from exc
+
+    # Fase 1: andamiaje en disco del despacho (.mia/ + expedientes/). Es ACCESORIO — la
+    # fuente de verdad es la fila del tenant ya creada; nunca debe tumbar el registro.
+    # Idempotente y no destructivo; I/O síncrona → threadpool para no bloquear el event loop.
+    try:
+        await run_in_threadpool(
+            scaffold_despacho_workspace, tenant_id, despacho_nombre=firm_name)
+    except Exception:  # noqa: BLE001 — el andamiaje de disco jamás rompe el alta del despacho
+        logging.getLogger("mia.onboarding").warning(
+            "no se pudo crear el andamiaje del despacho (tenant=%s)", tenant_id, exc_info=True)
 
     return {"token": create_token(tenant_id, email), "tenant_id": tenant_id}
 

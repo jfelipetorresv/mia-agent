@@ -75,7 +75,7 @@ cualquier checkpoint.
 
 1. **Rama feature** por checkpoint.
 2. **Construir leyendo los repos de referencia EN DISCO** (`hermes-ref/`,
-   `claudeos-ref/`, `jarvis-ref/`, en `D:\Inteligencia Artificial\Mia-Super Agent\`), no de memoria del
+   `claudeos-ref/`, en `D:\Inteligencia Artificial\Mia-Super Agent\`), no de memoria del
    modelo. Cada checkpoint del plan de olas trae sus archivos de referencia exactos.
 3. **Capa 1 — automatizada:** gate nuevo del checkpoint + regresión COMPLETA
    (`scripts/run_tests.ps1`; `test_rls` es HALT). Si hay frontend, `npm run build` verde.

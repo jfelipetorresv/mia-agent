@@ -256,6 +256,20 @@ async def health():
                 "AND tablename LIKE 'checkpoint%')"
             )).fetchone()
             info["checkpointer"] = bool(checkpointer_row[0]) if checkpointer_row else False
+            # Fase 1 · verificación ESTRUCTURAL de la migración 045 (procedencia documental).
+            # migrations_applied==expected NO basta: ADD COLUMN IF NOT EXISTS pudo quedar
+            # registrado en el ledger aunque falte alguna columna. Se afirma la FORMA real de
+            # 045 (6 columnas: chunks.procedencia/folio_ancla + documents.tipo/parte/
+            # folio_radicado/fecha_documento) para que el instalador no marque 'ready' con el
+            # esquema a medias. information_schema no requiere GRANT extra (a diferencia del
+            # ledger, que dependió de 043).
+            prov_row = await (await conn.execute(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' "
+                "AND ((table_name='chunks' AND column_name IN ('procedencia','folio_ancla')) "
+                "OR (table_name='documents' AND column_name IN "
+                "('tipo','parte','folio_radicado','fecha_documento')))"
+            )).fetchone()
+            info["provenance_ready"] = bool(prov_row and prov_row[0] == 6)
     except Exception:  # noqa: BLE001 — el /health reporta el fallo, no lo propaga
         # Auditoría 2026-07: el detalle del error (que puede traer host/usuario de la
         # conexión) va SOLO al log (ya redactado); /health es público y responde genérico.

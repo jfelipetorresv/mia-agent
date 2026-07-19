@@ -29,6 +29,7 @@ import hashlib
 import logging
 import re
 import unicodedata
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -91,6 +92,18 @@ def _body_filename(meta: dict) -> str:
     """Nombre legible del documento del cuerpo: correo-AAAA-MM-DD-<asunto>.txt."""
     fecha = (meta.get("date") or "")[:10] or "sin-fecha"
     return f"correo-{fecha}-{_slug(meta.get('subject') or '')}.txt"
+
+
+def _parse_mail_date(raw: str | None) -> date | None:
+    """Fecha PROPIA del correo (≠ created_at = fecha de ingesta) para
+    `documents.fecha_documento`. El metadato `date` del buzón llega en ISO
+    (`_iso(parse_dt(...))`), así que basta con los primeros 10 caracteres (YYYY-MM-DD).
+    Si NO parsea, devuelve None: NUNCA se inventa una fecha (Mia no interpreta fechas
+    procesales; el dato se guarda solo si es inequívoco)."""
+    try:
+        return date.fromisoformat((raw or "")[:10])
+    except (ValueError, TypeError):
+        return None
 
 
 def _body_text(meta: dict, body: str) -> str:
@@ -236,7 +249,8 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
         full_text.encode("utf-8"), full_text,
         source_path=f"{provider}:{message_id}",
         display_name=f"Correo: {asunto}",
-        added=added, already=already, skipped=skipped)
+        added=added, already=already, skipped=skipped,
+        fecha_documento=_parse_mail_date(meta.get("date")))
 
     # 2) cada adjunto soportado → documento propio
     cap = _max_attachment_bytes()
@@ -277,7 +291,8 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
 
 async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: str | None,
                            raw: bytes, text: str, *, source_path: str, display_name: str,
-                           added: list, already: list, skipped: list) -> None:
+                           added: list, already: list, skipped: list,
+                           fecha_documento: date | None = None) -> None:
     """Ingesta UN documento origin='mail' (dedupe por sha256): extrae→trocea→embebe→inserta.
     Molde de LocalFolderSync._ingest_matter_file, pero la clave de dedupe es la HUELLA del
     contenido (como la subida manual): re-vincular el mismo correo NO duplica nada."""
@@ -298,11 +313,12 @@ async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: 
     async with pool.tenant_connection(tenant_id) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
-            "source_path, origin) VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'mail') "
-            "RETURNING id",
-            (tenant_id, matter_id, filename, mime, sha256, source_path))).fetchone())[0]
+            "source_path, origin, fecha_documento) "
+            "VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'mail', %s) RETURNING id",
+            (tenant_id, matter_id, filename, mime, sha256, source_path,
+             fecha_documento))).fetchone())[0]
         for i, (content, vec) in enumerate(zip(chunks, vectors)):
             await conn.execute(
-                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
-                "VALUES (%s::uuid, %s, %s, %s, %s)", (tenant_id, doc_id, i, content, vec))
+                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia) "
+                "VALUES (%s::uuid, %s, %s, %s, %s, %s)", (tenant_id, doc_id, i, content, vec, "documento"))
     added.append(display_name)

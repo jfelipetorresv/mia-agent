@@ -1,5 +1,5 @@
 # Mia — findings.md
-# Patrones de referencia (Hermes / OpenJarvis) · restricciones técnicas
+# Patrones de referencia (Hermes) · restricciones técnicas
 # Última actualización: 2026-06-30
 
 Los repos de referencia están en "D:\Codex\Mia-Super Agent\" y son SOLO
@@ -20,7 +20,7 @@ fuente de patrones, no dependencias ni base del proyecto.
 - **Plugins**: 6 hooks de extensión.
 - **Curator**: tarea cron semanal (mantenimiento del knowledge store).
 
-## Patrones clave — OpenJarvis (jarvis-ref/, Apache 2.0)
+## Patrones clave — orquestación, eficiencia y trazas
 - **Orchestrator–Operative**: separación orquestador / agente operativo.
 - **EfficiencyTracker**: medición de eficiencia de ejecución.
 - **TraceCapture**: trazas en formato JSONL.
