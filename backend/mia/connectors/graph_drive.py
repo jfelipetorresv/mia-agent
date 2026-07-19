@@ -37,6 +37,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from ..db import pool
+from ..jobs import enqueue_classification
 from ..ingest.extract import extract_text_detailed_async
 from ..ingest.ingest import chunk_text_with_folios
 from .local_folders import (
@@ -539,6 +540,9 @@ class RemoteDriveSync:
                     "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
                     "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
                     (tenant_id, doc_id, i, content, vec, "documento", folio))
+        # Documento + chunks ya COMMITEADOS (cerró el `async with`): recién aquí el job ve la fila.
+        # Triaje de metadata como trabajo recuperable — fail-soft, jamás rompe el sync de OneDrive.
+        await enqueue_classification(tenant_id, doc_id)
 
     async def _prune_matter_docs(self, tenant_id: str, matter_id, source_id: str,
                                  current_rels) -> int:

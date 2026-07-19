@@ -19,11 +19,11 @@ from ..db import pool
 from ..security import install_redacting_logging
 from ..setup import paths
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, atajos, auth, automations, curator, delegation, folders,
-                     gold_cases, guides, hitl, learning, mailbox, matter_folders, matter_mail,
-                     matter_sources, mcp, missions, notebooklm, personas, playbook_health,
-                     policy, remote_drive, sessions, settings, setup, sources, speech, stream,
-                     traces, ux, value, welcome)
+from .routes import (assistant, atajos, auth, automations, curator, delegation,
+                     documents_review, folders, gold_cases, guides, hitl, learning, mailbox,
+                     matter_folders, matter_mail, matter_sources, mcp, missions, notebooklm,
+                     personas, playbook_health, policy, remote_drive, sessions, settings, setup,
+                     sources, speech, stream, traces, ux, value, welcome)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -188,6 +188,10 @@ app.include_router(matter_mail.router)
 # en una sola vista → GET /api/matters/{id}/sources. El router ya trae su propio prefijo
 # /api, se monta sin prefijo extra (igual que matter_folders/matter_mail).
 app.include_router(matter_sources.router)
+# Fase 1 · "Documentos por confirmar": lista y confirmación campo por campo de la metadata que el
+# clasificador dejó como duda (metadata_sugerida) → /api/matters/{id}/documents/pending|confirm.
+# El router ya trae su propio prefijo /api, se monta sin prefijo extra (igual que matter_mail).
+app.include_router(documents_review.router)
 # Fase 3 · ONEDRIVE REMOTO SELECTIVO: navegar/registrar/sincronizar carpetas → /api/drive/*.
 # El router ya trae su propio prefijo /api/drive, se monta sin prefijo extra.
 app.include_router(remote_drive.router)

@@ -42,6 +42,7 @@ from ...cron import build_scheduler
 from ...db import pool
 from ...ingest.extract import extract_text_async, extract_text_detailed_async
 from ...ingest.ingest import chunk_text, chunk_text_with_folios
+from ...jobs import enqueue_classification
 from ...jurisdiction.pack import GENERIC_CODE, list_packs, load_pack
 from ...memory.gepa import GEPALoop
 from ...memory.playbook_manager import Playbook, PlaybookManager
@@ -268,6 +269,9 @@ async def upload_document(matter_id: str, request: Request, response: Response,
                 "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
                 "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
                 (tid, doc_id, i, content, vec, "documento", folio))
+    # Documento + chunks ya COMMITEADOS (la transacción del `async with` cerró): recién ahora
+    # el job puede ver la fila. Triaje de metadata como trabajo recuperable — fail-soft, no bloquea.
+    await enqueue_classification(tid, doc_id)
     return {"id": str(doc_id), "name": file.filename, "fragments": len(pairs)}
 
 

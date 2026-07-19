@@ -39,6 +39,7 @@ from ...connectors.mailbox.base import PROVIDERS
 from ...connectors.mailbox.providers import _max_attachment_bytes
 from ...connectors.mailbox.service import MailboxService
 from ...db import pool
+from ...jobs import enqueue_classification
 from ...ingest.extract import extract_text_detailed_async
 from ...ingest.ingest import chunk_text_with_folios
 from ...observability import audit
@@ -327,4 +328,8 @@ async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: 
                 "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
                 "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
                 (tenant_id, doc_id, i, content, vec, "documento", folio))
+    # Documento + chunks ya COMMITEADOS (cerró el `async with`): recién aquí el job ve la fila.
+    # Triaje de metadata recuperable — fail-soft. La `fecha_documento` del correo (fidedigna) ya
+    # quedó fijada en el INSERT: el clasificador NO la pisa (la respeta / persiste con COALESCE).
+    await enqueue_classification(tenant_id, doc_id)
     added.append(display_name)

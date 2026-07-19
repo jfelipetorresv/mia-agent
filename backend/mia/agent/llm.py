@@ -67,6 +67,9 @@ _TASK_FALLBACK_CHAINS: dict[str, list[str]] = {
     # ¿estos dos playbooks dicen lo mismo o lo contrario? Es una CLASIFICACIÓN de tres
     # salidas, no razonamiento jurídico: entra como AUXILIAR (barata). Ver _AUX_TASKS.
     "curator_conflict": ["mia-local"],           # juez de contradicción del Curator
+    # Clasificar metadata de un documento (tipo/parte/radicado/fecha) es TRIAJE barato, no
+    # juicio jurídico sustantivo: entra como AUXILIAR (ver _AUX_TASKS), como curator_conflict.
+    "doc_classification": ["mia-local"],         # clasificador de metadata en la ingesta
     "compression": ["mia-local"],                # BLOQUEADA (decisión #7), sin fallback
     "verification": ["mia-local"],               # verificación de citas legales
     "title_generation": ["mia-local"],           # títulos de asunto
@@ -114,9 +117,16 @@ VALID_POLICIES = ("suscripcion", "nube", "soberano", "openrouter")
 # sonnet por ella no compraría nada — y su modo de fallo ya está cubierto: si el juez revienta o
 # responde algo que no se entiende, el Curator lo trata como duplicado (el comportamiento de
 # siempre). En 'soberano' resuelve a mia-local, como el resto.
+#
+# `doc_classification` (¿qué tipo/parte/radicado/fecha tiene este documento recién ingerido?)
+# también es AUXILIAR: es TRIAJE de metadata barato, no juicio jurídico sustantivo (que nunca
+# corre en modelo local). Corre una vez por documento al ingerirlo y su salida es texto libre
+# por campo con una confianza; su modo de fallo ya está cubierto (fail-soft en classify.py: si
+# el modelo revienta o el JSON no se entiende, el documento queda sin metadata y la ingesta
+# sigue). En 'soberano' resuelve a mia-local, como el resto.
 _AUX_TASKS = ("verification", "title_generation", "session_search", "web_extract",
               "vision", "soul", "mission_decompose", "delegation_triage",
-              "curator_conflict")
+              "curator_conflict", "doc_classification")
 
 # Aliases de OpenRouter (viven en litellm_config.yaml). `openrouter-sonnet` para el
 # razonamiento; `openrouter-haiku` para tareas baratas (compresión/auxiliares). Se

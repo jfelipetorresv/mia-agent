@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .. import embeddings
 from ..db import pool
+from ..jobs import enqueue_classification
 
 # psycopg async requiere SelectorEventLoop en Windows (Modo B); el Proactor no sirve.
 if sys.platform == "win32":
@@ -91,6 +92,9 @@ async def ingest_file(tenant_id: str, matter_id: str, path: Path) -> int:
                 "VALUES (%s,%s,%s,%s,%s,%s)",
                 (tenant_id, doc_id, ord_, content, vec, "documento"),
             )
+    # Documento + chunks ya COMMITEADOS (cerró el `async with`): recién aquí el job ve la fila.
+    # Triaje de metadata como trabajo recuperable — fail-soft, jamás rompe la ingesta text/plain.
+    await enqueue_classification(tenant_id, doc_id)
     return len(chunks)
 
 

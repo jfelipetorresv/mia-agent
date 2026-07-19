@@ -47,7 +47,103 @@ async def _matter_folder_sync(tenant_id: str, payload: Mapping[str, Any]) -> dic
     return await LocalFolderSync().sync_source(tenant_id, source)
 
 
-HANDLERS: dict[str, Handler] = {"matter_folder_sync": _matter_folder_sync}
+# Presupuesto de texto que el job reconstruye de los chunks para clasificar. El clasificador
+# solo mira la cabecera/primera página y trunca a su propio _MAX_CHARS (~6000); con holgura
+# sobre eso basta. Los chunks solapan ~150 chars, ese duplicado en la cabecera es inocuo.
+_CLASSIFY_TEXT_BUDGET = 8000
+
+# Columnas REALES de la ficha (migración 045) que la ALTA confianza puede escribir. Lista
+# blanca de literales del código — NUNCA se interpola una clave venida del modelo o del payload.
+_CLASSIFY_HIGH_COLS = ("tipo", "parte", "folio_radicado")
+
+
+async def _load_doc_for_classify(
+    tenant_id: str, document_id: str
+) -> tuple[str, str, str] | None:
+    """Carga filename/origin y reconstruye el COMIENZO del texto (desde los chunks) del
+    documento para clasificarlo. None si el documento ya no existe (p. ej. un re-sync lo
+    reemplazó): en ese caso el job se salta sin ruido."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT filename, origin FROM documents WHERE id = %s::uuid",
+            (document_id,),
+        )).fetchone()
+        if not row:
+            return None
+        filename, origin = row[0] or "", row[1] or ""
+        chunks = await (await conn.execute(
+            "SELECT content FROM chunks WHERE document_id = %s::uuid ORDER BY ord",
+            (document_id,),
+        )).fetchall()
+    parts: list[str] = []
+    total = 0
+    for (content,) in chunks:
+        if not content:
+            continue
+        parts.append(content)
+        total += len(content)
+        if total >= _CLASSIFY_TEXT_BUDGET:
+            break
+    return filename, origin, "\n".join(parts)
+
+
+async def _persist_classification(
+    tenant_id: str, document_id: str, result: Mapping[str, Any]
+) -> dict:
+    """Aplica el retorno {alta, sugerida} del clasificador sobre `documents` (RLS del tenant):
+      · ALTA  → escribe DIRECTO las columnas reales (045); `fecha_documento` con COALESCE para
+        NUNCA pisar una fecha ya fijada (dato fidedigno, red adicional al chequeo del clasificador).
+      · SUGERIDA → guarda el jsonb en `documents.metadata_sugerida` (046). Ese jsonb ES la marca
+        de 'pendiente' (decisión de la fase base: sin flag/status aparte; la lista 'Documentos por
+        confirmar' se deriva de `metadata_sugerida IS NOT NULL`). Sin dudas no se toca la columna."""
+    alta = result.get("alta") or {}
+    sugerida = result.get("sugerida") or {}
+    sets: list[str] = []
+    params: list[Any] = []
+    for campo in _CLASSIFY_HIGH_COLS:  # tipo/parte/folio_radicado (nombres controlados)
+        valor = alta.get(campo)
+        if valor:
+            sets.append(f"{campo} = %s")
+            params.append(valor)
+    fecha = alta.get("fecha_documento")
+    if fecha:
+        # COALESCE: si ya hay fecha (correo, etc.) se conserva; solo rellena si estaba NULL.
+        sets.append("fecha_documento = COALESCE(fecha_documento, %s)")
+        params.append(fecha)
+    if sugerida:  # solo hay algo por confirmar si el clasificador dejó dudas
+        sets.append("metadata_sugerida = %s")
+        params.append(Jsonb(dict(sugerida)))
+    if not sets:
+        return {"alta": 0, "sugerida": 0, "updated": False}
+    params.append(document_id)
+    async with pool.tenant_connection(tenant_id) as conn:
+        await conn.execute(
+            f"UPDATE documents SET {', '.join(sets)} WHERE id = %s::uuid",
+            tuple(params),
+        )
+    return {"alta": len(alta), "sugerida": len(sugerida), "updated": True}
+
+
+async def _classify_document(tenant_id: str, payload: Mapping[str, Any]) -> dict:
+    """Job recuperable de clasificación de metadata (triaje barato, cadena AUX). Idempotente:
+    re-ejecutarlo solo recalcula y re-escribe los mismos campos. Fail-soft heredado del
+    clasificador (nunca inventa; cualquier fallo del modelo devuelve un resultado vacío)."""
+    from ..ingest.classify import classify_document
+
+    document_id = str(payload.get("document_id") or "")
+    uuid.UUID(document_id)  # valida forma; jamás ejecuta rutas/comandos del payload
+    loaded = await _load_doc_for_classify(tenant_id, document_id)
+    if loaded is None:
+        return {"skipped": "document_unavailable"}
+    filename, origin, text = loaded
+    result = await classify_document(tenant_id, document_id, text, filename, origin)
+    return await _persist_classification(tenant_id, document_id, result)
+
+
+HANDLERS: dict[str, Handler] = {
+    "matter_folder_sync": _matter_folder_sync,
+    "classify_document": _classify_document,
+}
 
 
 def _validate_type(job_type: str) -> None:
@@ -105,6 +201,25 @@ async def enqueue_job(
         if result is not None:
             return result
     raise RuntimeError("No pude estabilizar el trabajo equivalente en la cola.")
+
+
+async def enqueue_classification(tenant_id: str, document_id: str) -> None:
+    """Encola (FAIL-SOFT) la clasificación de metadata de un documento recién ingerido, para el
+    handler `classify_document`. `dedupe_key = document_id` ⇒ un solo job vivo por documento (si
+    ya hay uno encolado/corriendo, coalesce). NUNCA rompe la ingesta: cualquier fallo al encolar
+    se loguea y se traga — el triaje de metadata es un extra opcional, no un requisito de ingesta."""
+    try:
+        await enqueue_job(
+            tenant_id,
+            "classify_document",
+            {"document_id": str(document_id), "tenant_id": str(tenant_id)},
+            dedupe_key=str(document_id),
+        )
+    except Exception:  # noqa: BLE001 — encolar el triaje jamás debe tumbar la ingesta
+        logger.warning(
+            "classify: no pude encolar la clasificación del doc %s (ingesta intacta)",
+            document_id, exc_info=True,
+        )
 
 
 async def latest_job(tenant_id: str, job_type: str, dedupe_key: str) -> dict | None:

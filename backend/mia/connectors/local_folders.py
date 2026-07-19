@@ -49,6 +49,7 @@ from pathlib import Path
 
 from .. import embeddings
 from ..db import pool
+from ..jobs import enqueue_classification
 from ..ingest.extract import extract_text_detailed
 from ..ingest.ingest import chunk_text, chunk_text_with_folios
 from .obsidian_sync import ObsidianSync
@@ -836,6 +837,9 @@ class LocalFolderSync:
                     "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
                     "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
                     (tenant_id, doc_id, i, content, vec, "documento", folio))
+        # Documento + chunks ya COMMITEADOS (cerró el `async with`): recién aquí el job ve la fila.
+        # Triaje de metadata como trabajo recuperable — fail-soft, jamás rompe el sync de la carpeta.
+        await enqueue_classification(tenant_id, doc_id)
 
     async def _prune_matter_docs(self, tenant_id: str, matter_id, source_id: str,
                                  current) -> int:

@@ -8,6 +8,7 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronRight,
+  ClipboardCheck,
   FileText,
   Moon,
   Paperclip,
@@ -29,6 +30,7 @@ import SalaEstrategiaDialog from "./_components/SalaEstrategiaDialog";
 import SalaEstrategiaResult from "./_components/SalaEstrategiaResult";
 import DiarioDialog from "./_components/DiarioDialog";
 import CierreDialog, { type CierreResult } from "./_components/CierreDialog";
+import DocumentosPorConfirmarDialog from "./_components/DocumentosPorConfirmarDialog";
 import type { DebateTurn, Panelist, WarRoomResult } from "./_components/warroom-types";
 import { Button } from "@/components/ui/button";
 import {
@@ -177,6 +179,11 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   const [cierreOpen, setCierreOpen] = useState(false);
   const [cierreBusy, setCierreBusy] = useState(false);
   const [cierreResult, setCierreResult] = useState<CierreResult | null>(null);
+  // "Documentos por confirmar": la DUDA del clasificador de ingesta. La lista vive en
+  // su propio diálogo (no se reusa la revisión del borrador); aquí solo llevamos un
+  // contador liviano para el acceso/indicador y para refrescarlo al confirmar.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
   // Espejo siempre-fresco del hilo: send()/runChatStream capturan `messages` del
   // render y quedan obsoletos tras el streaming; el cierre lee este ref.
   const messagesRef = useRef<Msg[]>([]);
@@ -206,9 +213,24 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
     }
   }
 
+  // Contador de "Documentos por confirmar": cuántos documentos del asunto tienen
+  // un dato que Mia dejó como duda. Solo cuenta para el indicador — la lista real la
+  // carga el diálogo cuando se abre. Fail-soft: si falla, se asume 0 (no molesta).
+  async function loadPendingCount() {
+    try {
+      const res = await apiGet<{ documentos?: unknown[] }>(
+        `/api/matters/${matterId}/documents/pending`,
+      );
+      setPendingCount((res.documentos || []).length);
+    } catch {
+      setPendingCount(0);
+    }
+  }
+
   useEffect(() => {
     apiGet<{ name?: string }>(`/api/matters/${matterId}`).then(setMatter).catch(() => {});
     loadDocs();
+    loadPendingCount();
     // Contador liviano del plan de trabajo: decide si la card empieza expandida.
     apiGet<{ missions: Array<{ progress?: { done?: number; total?: number } }> }>(
       `/api/missions?matter_id=${encodeURIComponent(matterId)}`,
@@ -296,6 +318,9 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       }
     }
     await loadDocs();
+    // Un documento recién subido puede quedar con dudas de ficha cuando termine su
+    // clasificación (asíncrona); refrescamos el contador para que el indicador aparezca.
+    void loadPendingCount();
     // El duplicado es informativo, no un error (§G): se anuncia en el mismo resumen.
     const parts: string[] = [];
     if (added > 0) parts.push(`${added} ${added === 1 ? "documento agregado" : "documentos agregados"}`);
@@ -748,6 +773,20 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
           <div className="mb-2 flex min-h-5 items-center justify-between text-sm">
             <span className="text-muted-foreground">{status}</span>
             <div className="flex items-center gap-2">
+              {pendingCount > 0 ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmOpen(true)}
+                  className="gap-1.5 border-primary/40 text-primary animate-slide-up hover:bg-primary/5"
+                >
+                  <ClipboardCheck className="h-3.5 w-3.5" />
+                  Documentos por confirmar
+                  <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-semibold text-primary-foreground">
+                    {pendingCount}
+                  </span>
+                </Button>
+              ) : null}
               <Button
                 variant="ghost"
                 size="sm"
@@ -909,6 +948,13 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       />
 
       <DiarioDialog open={diarioOpen} onOpenChange={setDiarioOpen} matterId={matterId} />
+
+      <DocumentosPorConfirmarDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        matterId={matterId}
+        onChanged={loadPendingCount}
+      />
 
       <CierreDialog
         open={cierreOpen}
