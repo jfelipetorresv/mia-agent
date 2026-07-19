@@ -78,12 +78,18 @@ class Dreams:
 
     async def _save_metrics(self, tenant_id: str, metrics: dict) -> None:
         async with pool.tenant_connection(tenant_id) as conn:
+            # Path anidado '{dreams,last_metrics}' no crea 'dreams' si config='{}'.
+            # Merge del padre (mismo footgun documentado en budget.py / mailbox).
+            patch = {"last_metrics": metrics}
             await conn.execute(
-                "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+                "INSERT INTO tenant_settings (tenant_id, config) "
+                "VALUES (%s::uuid, jsonb_build_object('dreams', %s::jsonb)) "
                 "ON CONFLICT (tenant_id) DO UPDATE SET "
-                "config = jsonb_set(tenant_settings.config, '{dreams,last_metrics}', %s::jsonb, true), "
+                "config = jsonb_set("
+                "  COALESCE(tenant_settings.config, '{}'::jsonb), '{dreams}', "
+                "  COALESCE(tenant_settings.config->'dreams', '{}'::jsonb) || %s::jsonb, true), "
                 "updated_at = now()",
-                (tenant_id, Json({"dreams": {"last_metrics": metrics}}), Json(metrics)),
+                (tenant_id, Json(patch), Json(patch)),
             )
 
     async def _replay(self, tenant_id: str, traces: list[dict]) -> dict:

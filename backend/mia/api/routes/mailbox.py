@@ -250,14 +250,20 @@ async def set_content_analysis(request: Request):
     except Exception:  # noqa: BLE001
         body = None
     activar = bool((body or {}).get("activar")) if isinstance(body, dict) else False
+    patch = {"allow_content_analysis": activar}
     async with pool.tenant_connection(tenant_id) as conn:
+        # jsonb_set con path anidado NO crea el objeto intermedio 'mailbox' si falta
+        # (tenants nacen con config='{}'). Se fusiona el padre 'mailbox' entero (||),
+        # mismo patrón que budget.py / value.py.
         await conn.execute(
-            "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+            "INSERT INTO tenant_settings (tenant_id, config) "
+            "VALUES (%s::uuid, jsonb_build_object('mailbox', %s::jsonb)) "
             "ON CONFLICT (tenant_id) DO UPDATE SET "
-            "config = jsonb_set(COALESCE(tenant_settings.config, '{}'::jsonb), "
-            "  '{mailbox,allow_content_analysis}', %s::jsonb, true), updated_at = now()",
-            (tenant_id, Json({"mailbox": {"allow_content_analysis": activar}}),
-             "true" if activar else "false"),
+            "config = jsonb_set("
+            "  COALESCE(tenant_settings.config, '{}'::jsonb), '{mailbox}', "
+            "  COALESCE(tenant_settings.config->'mailbox', '{}'::jsonb) || %s::jsonb, true), "
+            "updated_at = now()",
+            (tenant_id, Json(patch), Json(patch)),
         )
     return {"analisis_contenido": activar}
 

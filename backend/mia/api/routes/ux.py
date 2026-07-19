@@ -55,8 +55,9 @@ from ...onboarding.soul_interview import (
 from ...output.docx_export import draft_to_docx
 from ...policy import budget as policy_budget
 from ._common import assert_owns_matter, load_profile_snapshot, MAX_UPLOAD_BYTES, _is_uuid, sse
+from . import delegation as delegation_routes
 from .hitl import _resume
-from .stream import SSE_PING_SECONDS, stream_matter
+from .stream import SSE_PING_SECONDS, StreamBody, stream_matter
 
 router = APIRouter(prefix="/api", tags=["ux"])
 
@@ -363,15 +364,25 @@ class ChatBody(BaseModel):
 
 @router.post("/matters/{matter_id}/chat")
 async def chat(matter_id: str, request: Request, body: ChatBody):
-    """Devuelve la URL del stream SSE para que el cliente conecte y reciba el turno."""
+    """Devuelve la URL del stream SSE. El mensaje NO va en la URL: el cliente lo
+    reenvía por POST /stream en el body (confidencialidad — no historial/proxy logs)."""
     tid = _tenant(request)
     await assert_owns_matter(tid, matter_id)
-    return {"stream_url": f"/api/matters/{matter_id}/stream?message={quote(body.message)}"}
+    # body.message se valida (min implícito vía uso) pero no se embebe en la URL.
+    if not (body.message or "").strip():
+        raise HTTPException(status_code=422, detail="Escribe un mensaje para consultar.")
+    return {"stream_url": f"/api/matters/{matter_id}/stream"}
+
+
+@router.post("/matters/{matter_id}/stream")
+async def stream_alias_post(matter_id: str, request: Request, body: StreamBody):
+    """Alias /api del SSE por POST — mensaje en body, no en query string."""
+    return await stream_matter(matter_id, request, body.message)
 
 
 @router.get("/matters/{matter_id}/stream")
 async def stream_alias(matter_id: str, request: Request, message: str = Query(..., min_length=1)):
-    """Alias /api del SSE real (reusa el handler de 1d, no duplica la lógica del grafo)."""
+    """Alias /api del SSE por GET (compat gates). Preferir POST con body."""
     return await stream_matter(matter_id, request, message)
 
 
@@ -494,6 +505,19 @@ async def approve_draft(matter_id: str, request: Request, body: ApproveBody | No
 async def reject_draft(matter_id: str, request: Request, body: RejectBody | None = None):
     reason = body.reason if body else ""
     return await _resume(request, matter_id, {"decision": "rejected", "feedback": reason})
+
+
+@router.post("/matters/{matter_id}/delegation/aprobar")
+async def delegation_aprobar_alias(
+    matter_id: str, request: Request, body: delegation_routes.ApproveBody,
+):
+    """Alias /api de la pausa de ayudante externo (CP-HUB2)."""
+    return await delegation_routes.aprobar(matter_id, request, body)
+
+
+@router.post("/matters/{matter_id}/delegation/descartar")
+async def delegation_descartar_alias(matter_id: str, request: Request):
+    return await delegation_routes.descartar(matter_id, request)
 
 
 # ── Pantalla 4 · perfil ──────────────────────────────────────────────────────
@@ -2051,4 +2075,5 @@ async def warroom_to_draft(matter_id: str, request: Request):
     if proximo:
         partes += ["", f"Próximo paso definido por la sala: {proximo}"]
     message = "\n".join(partes)
-    return {"stream_url": f"/api/matters/{matter_id}/stream?message={quote(message)}"}
+    # El texto de la estrategia NO va en la URL: la pantalla lo manda en el body del POST /stream.
+    return {"stream_url": f"/api/matters/{matter_id}/stream", "message": message}

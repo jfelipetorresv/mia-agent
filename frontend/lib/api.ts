@@ -192,8 +192,8 @@ async function consumeSse(res: Response, onEvent: SseHandler): Promise<void> {
   }
 }
 
-// Consume un SSE por GET (el mensaje viaja en el query param del path). Lo usa el
-// turno del asunto (/matters/{id}/stream), donde el mensaje es corto.
+// Consume un SSE por GET. Queda para warroom/stream y compat; el turno del asunto
+// debe usar streamPost para que el mensaje no viaje en la URL.
 export async function streamTurn(
   streamPath: string,
   onEvent: SseHandler,
@@ -204,9 +204,8 @@ export async function streamTurn(
   await consumeSse(res, onEvent);
 }
 
-// Consume un SSE por POST con cuerpo JSON — para turnos cuyo mensaje puede ser
-// largo (chat general del asistente): no cabe con garantías en un query param, así
-// que abrimos el stream directamente sobre el POST (fetch, no EventSource).
+// Consume un SSE por POST con cuerpo JSON — turno del asunto, chat del asistente,
+// HITL y delegación: el texto no viaja en query string (historial/proxy logs).
 export async function streamPost(
   streamPath: string,
   body: unknown,

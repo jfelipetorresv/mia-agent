@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Download, FileText, Save, Send, Sparkles } from "lucide-react";
-import { apiDownload, apiGet, apiSend, streamTurn } from "@/lib/api";
+import { apiDownload, apiGet, apiSend, streamPost } from "@/lib/api";
 import MicButton from "../../_components/MicButton";
 import FuentesPanel from "../../_components/FuentesPanel";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,13 @@ import { cn } from "@/lib/utils";
 type Matter = { name?: string; kind?: string };
 type Msg = { role: "user" | "mia"; text: string };
 type Output = { id: string; title: string; created_at?: string };
+type DelegationProposal = {
+  agente?: string;
+  nombre?: string;
+  texto?: string;
+  huella?: string;
+  aviso?: string;
+};
 
 // Umbral a partir del cual vale la pena ofrecer "Guardar en el proyecto" bajo una
 // respuesta de Mia — respuestas cortas (confirmaciones, aclaraciones) no son un
@@ -80,6 +87,9 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
+  const [delegation, setDelegation] = useState<DelegationProposal | null>(null);
+  const [delegationRemember, setDelegationRemember] = useState(false);
+  const [delegationBusy, setDelegationBusy] = useState(false);
 
   const dictation = useDictation(
     (text) => {
@@ -117,9 +127,83 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matterId]);
 
+  function handleProjectEvent(event: string, data: unknown) {
+    const payload = data as {
+      message?: string;
+      reply?: string;
+      propuesta?: DelegationProposal;
+    };
+    if (event === "thinking") {
+      setStatus(payload.message || "Mia está trabajando…");
+    } else if (event === "awaiting_delegation") {
+      setStatus(payload.message || "Mia propone pedirle ayuda a un asistente externo.");
+      setDelegation(payload.propuesta || {});
+      setDelegationRemember(false);
+      setMessages((m) => {
+        const copy = [...m];
+        const nombre = payload.propuesta?.nombre || "un asistente externo";
+        copy[copy.length - 1] = {
+          role: "mia",
+          text:
+            payload.message ||
+            `Mia propone pedirle ayuda a ${nombre}. Revisa el texto antes de autorizar.`,
+        };
+        return copy;
+      });
+    } else if (event === "reply") {
+      setDelegation(null);
+      setStatus("");
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = {
+          role: "mia",
+          text: payload.reply || "No pude generar una respuesta.",
+        };
+        return copy;
+      });
+    } else if (event === "error") {
+      const mensaje = payload.message || "No pude completar esta consulta.";
+      setStatus(mensaje);
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = { role: "mia", text: mensaje };
+        return copy;
+      });
+    }
+  }
+
+  async function respondDelegation(aprobar: boolean) {
+    if (!delegation || delegationBusy || streaming) return;
+    if (aprobar && !delegation.huella) {
+      setStatus("No se pudo confirmar la propuesta. Intenta de nuevo.");
+      return;
+    }
+    setDelegationBusy(true);
+    setStreaming(true);
+    setStatus(aprobar ? "Mia está retomando el trabajo…" : "Mia continúa sin el ayudante…");
+    streamAbortRef.current?.abort();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    try {
+      const path = aprobar
+        ? `/api/matters/${matterId}/delegation/aprobar`
+        : `/api/matters/${matterId}/delegation/descartar`;
+      const body = aprobar
+        ? { huella: delegation.huella, recordar: delegationRemember }
+        : {};
+      setDelegation(null);
+      await streamPost(path, body, handleProjectEvent, controller.signal);
+    } catch {
+      setStatus("No se pudo responder a la propuesta. Intenta de nuevo.");
+    } finally {
+      setDelegationBusy(false);
+      setStreaming(false);
+    }
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || delegation) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", text }, { role: "mia", text: "" }]);
     setStatus("Mia está trabajando…");
@@ -133,34 +217,7 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
         `/api/matters/${matterId}/chat`,
         { message: text },
       );
-      await streamTurn(
-        stream_url,
-        (event, data) => {
-          const payload = data as { message?: string; reply?: string };
-          if (event === "thinking") {
-            setStatus(payload.message || "Mia está trabajando…");
-          } else if (event === "reply") {
-            setStatus("");
-            setMessages((m) => {
-              const copy = [...m];
-              copy[copy.length - 1] = {
-                role: "mia",
-                text: payload.reply || "No pude generar una respuesta.",
-              };
-              return copy;
-            });
-          } else if (event === "error") {
-            const mensaje = payload.message || "No pude completar esta consulta.";
-            setStatus(mensaje);
-            setMessages((m) => {
-              const copy = [...m];
-              copy[copy.length - 1] = { role: "mia", text: mensaje };
-              return copy;
-            });
-          }
-        },
-        controller.signal,
-      );
+      await streamPost(stream_url, { message: text }, handleProjectEvent, controller.signal);
     } catch {
       const mensaje = "No se pudo completar la consulta.";
       setStatus(mensaje);
@@ -422,6 +479,50 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
             </Button>
             <Button onClick={guardarSalida} disabled={saving}>
               {saving ? "Guardando…" : "Guardar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(delegation)} onOpenChange={() => {}}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {delegation?.nombre
+                ? `¿Autorizar a ${delegation.nombre}?`
+                : "¿Autorizar al asistente externo?"}
+            </DialogTitle>
+            <DialogDescription>
+              {delegation?.aviso ||
+                "Esto es una propuesta para que la revises, no algo que Mia ya hizo. Solo saldrá el texto de abajo."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm whitespace-pre-wrap">
+            {delegation?.texto || "(Sin texto propuesto)"}
+          </div>
+          <label className="flex items-start gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={delegationRemember}
+              onChange={(e) => setDelegationRemember(e.target.checked)}
+              disabled={delegationBusy || streaming}
+            />
+            <span>No volver a preguntarme por este ayudante en este proyecto</span>
+          </label>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              disabled={delegationBusy || streaming}
+              onClick={() => respondDelegation(false)}
+            >
+              Descartar
+            </Button>
+            <Button
+              disabled={delegationBusy || streaming || !delegation?.huella}
+              onClick={() => respondDelegation(true)}
+            >
+              Autorizar
             </Button>
           </DialogFooter>
         </DialogContent>

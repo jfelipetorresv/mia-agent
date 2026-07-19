@@ -1,12 +1,12 @@
 """Mia · api.routes.stream — SSE del turno del asunto (1d · PASO 4).
 
-GET /matters/{matter_id}/stream?message=... abre el SSE: corre intake→analysis→
-draft y emite eventos hasta que el grafo se pausa (interrupt) esperando la revisión
-del abogado. El cierre (finalizing→done) lo emite el POST de aprobación
-(decisión #11). El abogado nunca ve jerga técnica (§G): la capa traduce el avance
-del grafo a frases del oficio.
+POST /matters/{matter_id}/stream  {message}  — camino preferido (el texto no viaja
+en la URL). GET con ?message= se mantiene por compatibilidad con gates antiguos.
 
-El mensaje del abogado entra como query param `message` (GET no lleva body).
+Abre el SSE: corre intake→analysis→draft y emite eventos hasta que el grafo se
+pausa (interrupt) esperando la revisión del abogado. El cierre (finalizing→done)
+lo emite el POST de aprobación (decisión #11). El abogado nunca ve jerga técnica
+(§G): la capa traduce el avance del grafo a frases del oficio.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import logging
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ...agents.checkpointer import open_checkpointer
@@ -225,6 +226,16 @@ async def _recover_project_history(graph: Any, tenant_id: str, matter_id: str) -
     if not st or not st.values:
         return []
     return _budget_project_history(st.values.get("history") or [])
+
+
+class StreamBody(BaseModel):
+    message: str = Field(..., min_length=1)
+
+
+@router.post("/matters/{matter_id}/stream")
+async def stream_matter_post(matter_id: str, request: Request, body: StreamBody):
+    """Turno por POST: el mensaje viaja en el body (no en la URL ni en logs de proxy)."""
+    return await stream_matter(matter_id, request, body.message)
 
 
 @router.get("/matters/{matter_id}/stream")

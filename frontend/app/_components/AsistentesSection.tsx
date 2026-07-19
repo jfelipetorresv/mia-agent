@@ -116,16 +116,18 @@ export default function AsistentesSection() {
           (patrón del resto de secciones); aquí solo va lo que hay que explicar. */}
       <div className="space-y-2 text-sm text-muted-foreground">
         <p>
-          Activar un ayudante aquí no hace que Mia lo use: solo decide que ese ayudante existe
-          para tu despacho. Mia lo llama únicamente cuando tú lo nombras en tu mensaje con una
-          orden clara, por ejemplo: «usa el asistente de navegación web para buscar el estado
-          del proceso». Si no lo nombras, Mia sigue trabajando como siempre.
+          Activar un ayudante aquí solo decide que ese ayudante existe para tu despacho. Cómo
+          Mia lo usa depende del modo de delegación en Ajustes: puede proponerte ayuda y
+          pedirte autorización, hacerlo de forma autónoma, o llamarlo solo cuando tú lo
+          nombras en el mensaje (por ejemplo: «usa el asistente de navegación web para buscar
+          el estado del proceso»).
         </p>
         <p>
-          Lo único que sale hacia ese ayudante es el texto exacto de tu mensaje — nunca tus
-          documentos, los hechos del expediente, tu perfil ni el historial de la conversación.
-          Ten en cuenta que es un programa de un tercero y normalmente se conecta a internet
-          por su cuenta, fuera del control de Mia.
+          Lo único que sale hacia ese ayudante es el texto que tú autorizas (o el de tu
+          mensaje si lo pediste explícitamente) — nunca tus documentos, los hechos del
+          expediente, tu perfil ni el historial de la conversación. Ten en cuenta que es un
+          programa de un tercero y normalmente se conecta a internet por su cuenta, fuera del
+          control de Mia.
         </p>
         <p>
           Esto acaba de activarse y todavía no lo hemos probado en una tarea real: es posible

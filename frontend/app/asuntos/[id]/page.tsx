@@ -16,7 +16,7 @@ import {
   Swords,
   X,
 } from "lucide-react";
-import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
+import { apiGet, apiSend, apiUpload, streamPost, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
 import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
@@ -27,7 +27,23 @@ import SalaEstrategiaDialog from "./_components/SalaEstrategiaDialog";
 import SalaEstrategiaResult from "./_components/SalaEstrategiaResult";
 import type { DebateTurn, Panelist, WarRoomResult } from "./_components/warroom-types";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+
+type DelegationProposal = {
+  agente?: string;
+  nombre?: string;
+  texto?: string;
+  huella?: string;
+  aviso?: string;
+};
 
 // GET /api/matters/{id}/warroom devuelve, según el contrato, el último
 // WarRoomResult "plano" o `{ result: null }` cuando aún no hay uno — se
@@ -84,6 +100,9 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
   const [hasDraft, setHasDraft] = useState(false);
+  const [delegation, setDelegation] = useState<DelegationProposal | null>(null);
+  const [delegationRemember, setDelegationRemember] = useState(false);
+  const [delegationBusy, setDelegationBusy] = useState(false);
   // B3: "Convierte lo que hicimos aquí en una guía" — solo visible cuando el
   // desenlace real del borrador fue APROBADO. `awaiting_review=false` por sí solo NO
   // alcanza como señal: el grafo también llega a END (deja de estar pausado) cuando el
@@ -276,11 +295,28 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       diagnosis?: string;
       diagnosis_summary?: DiagnosisSummary | null;
       verification?: Verification | null;
+      propuesta?: DelegationProposal;
     };
     if (event === "thinking") setStatus(payload.message || "Mia está analizando...");
     else if (event === "draft_ready") setStatus("Mia está redactando...");
     else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
-    else if (event === "awaiting_review") {
+    else if (event === "awaiting_delegation") {
+      setStatus(payload.message || "Mia propone pedirle ayuda a un asistente externo.");
+      setDelegation(payload.propuesta || {});
+      setDelegationRemember(false);
+      setMessages((m) => {
+        const copy = [...m];
+        const nombre = payload.propuesta?.nombre || "un asistente externo";
+        copy[copy.length - 1] = {
+          role: "mia",
+          text:
+            payload.message ||
+            `Mia propone pedirle ayuda a ${nombre}. Revisa el texto antes de autorizar.`,
+        };
+        return copy;
+      });
+    } else if (event === "awaiting_review") {
+      setDelegation(null);
       setStatus("Tienes un borrador listo");
       setHasDraft(true);
       if (payload.diagnosis) setDiagnosis(payload.diagnosis);
@@ -297,13 +333,13 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
     }
   }
 
-  async function runChatStream(stream_url: string) {
+  async function runChatStream(stream_url: string, message: string) {
     setStreaming(true);
     streamAbortRef.current?.abort();
     const controller = new AbortController();
     streamAbortRef.current = controller;
     try {
-      await streamTurn(stream_url, handleChatEvent, controller.signal);
+      await streamPost(stream_url, { message }, handleChatEvent, controller.signal);
     } catch {
       setStatus("No se pudo completar la consulta.");
     } finally {
@@ -311,9 +347,38 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
     }
   }
 
+  async function respondDelegation(aprobar: boolean) {
+    if (!delegation || delegationBusy || streaming) return;
+    if (aprobar && !delegation.huella) {
+      setStatus("No se pudo confirmar la propuesta. Intenta de nuevo.");
+      return;
+    }
+    setDelegationBusy(true);
+    setStreaming(true);
+    setStatus(aprobar ? "Mia está retomando el trabajo…" : "Mia continúa sin el ayudante…");
+    streamAbortRef.current?.abort();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    try {
+      const path = aprobar
+        ? `/api/matters/${matterId}/delegation/aprobar`
+        : `/api/matters/${matterId}/delegation/descartar`;
+      const body = aprobar
+        ? { huella: delegation.huella, recordar: delegationRemember }
+        : {};
+      setDelegation(null);
+      await streamPost(path, body, handleChatEvent, controller.signal);
+    } catch {
+      setStatus("No se pudo responder a la propuesta. Intenta de nuevo.");
+    } finally {
+      setDelegationBusy(false);
+      setStreaming(false);
+    }
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || delegation) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", text }, { role: "mia", text: "" }]);
     setStatus("Mia está analizando...");
@@ -324,7 +389,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
         `/api/matters/${matterId}/chat`,
         { message: text },
       );
-      await runChatStream(stream_url);
+      await runChatStream(stream_url, text);
     } catch {
       setStatus("No se pudo completar la consulta.");
     }
@@ -393,17 +458,17 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   // arranca el flujo de redacción normal — el borrador resultante pasa por el
   // mismo gate de citas que cualquier otro (revisar/page.tsx).
   async function convertWarroomToDraft() {
-    if (convertingToDraft || streaming) return;
+    if (convertingToDraft || streaming || delegation) return;
     setConvertingToDraft(true);
     setStatus("Mia está preparando tu borrador...");
     setHasDraft(false);
     setMessages((m) => [...m, { role: "mia", text: "" }]);
     try {
-      const { stream_url } = await apiSend<{ stream_url: string }>(
+      const { stream_url, message } = await apiSend<{ stream_url: string; message: string }>(
         "POST",
         `/api/matters/${matterId}/warroom/to-draft`,
       );
-      await runChatStream(stream_url);
+      await runChatStream(stream_url, message);
     } catch {
       setStatus("No se pudo preparar el borrador. Intenta de nuevo.");
     } finally {
@@ -720,6 +785,55 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
         starting={warroomStarting}
         onStart={startWarroom}
       />
+
+      <Dialog
+        open={Boolean(delegation)}
+        onOpenChange={() => {
+          /* Debe elegir Autorizar o Descartar: cerrar sin decidir dejaría el asunto en 409. */
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {delegation?.nombre
+                ? `¿Autorizar a ${delegation.nombre}?`
+                : "¿Autorizar al asistente externo?"}
+            </DialogTitle>
+            <DialogDescription>
+              {delegation?.aviso ||
+                "Esto es una propuesta para que la revises, no algo que Mia ya hizo. Solo saldrá el texto de abajo."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm whitespace-pre-wrap">
+            {delegation?.texto || "(Sin texto propuesto)"}
+          </div>
+          <label className="flex items-start gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={delegationRemember}
+              onChange={(e) => setDelegationRemember(e.target.checked)}
+              disabled={delegationBusy || streaming}
+            />
+            <span>No volver a preguntarme por este ayudante en este asunto</span>
+          </label>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              disabled={delegationBusy || streaming}
+              onClick={() => respondDelegation(false)}
+            >
+              Descartar
+            </Button>
+            <Button
+              disabled={delegationBusy || streaming || !delegation?.huella}
+              onClick={() => respondDelegation(true)}
+            >
+              Autorizar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
