@@ -105,6 +105,10 @@ Todo pasa **dentro de un asunto**: entra a un asunto (o crea uno) y súbele docu
   quedó desfasado (pasa si se editaron archivos del frontend con el servidor caído, o si se
   relanzó MIA varias veces). Solución: cierra MIA, **borra la carpeta `frontend\.next`**, vuelve a
   abrirla y haz **Ctrl+Shift+R** en el navegador (tu navegador guarda los archivos viejos).
+  > OJO: justo después de borrar `.next`, la **primera** carga recompila TODO y puede tardar
+  > **~1 minuto**. Durante esa espera el navegador puede mostrar ese mismo `ChunkLoadError` (se
+  > cansa de esperar). No refresques en bucle: espera a que el log diga `✓ Compiled / in ...s` y
+  > recién ahí refresca — a partir de ahí carga en menos de un segundo.
 - **"Conectar carpeta" no hace nada / "no se pudo vincular"** → casi siempre es que el **cerebro
   (8000) está apagado**: el explorador de carpetas recorre tu disco *a través* del servidor local
   de MIA. No es un fallo del programa ni una limitación del navegador; enciende MIA y reintenta.
