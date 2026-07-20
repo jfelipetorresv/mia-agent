@@ -10,7 +10,13 @@ Verifica el motor de agents/warroom.py:
   · parseo del dictamen del moderador al shape `conclusions`;
   · fail-soft del parseo (dictamen sin bloque → texto crudo en `estrategia`);
   · degradado por presupuesto (3 panelistas, sin ronda de réplicas);
-  · guarda de "sin documentos".
+  · guarda de "sin documentos";
+  · PRESUPUESTO DE CONTEXTO: con un expediente enorme los prompts de las dos rondas y el del
+    moderador NO desbordan el tope propio de la Sala, el recorte se AVISA con números y el
+    conteo de [doc n] baja con el recorte (una cita a un extracto que el panel no vio se
+    marca [VERIFICAR]);
+  · ORDENAMIENTO APLICABLE: la Sala pasa la jurisdicción del despacho al prompt (del estado,
+    de la metadata de investigación o de la configuración) y cae a 'generic' si no hay nada.
 
     .venv\\Scripts\\python.exe execution\\test_warroom.py
 
@@ -32,11 +38,14 @@ try:
 except Exception:
     pass
 
-from mia.agents import warroom  # noqa: E402
+from mia import config  # noqa: E402
+from mia.agent import prompt_builder  # noqa: E402
+from mia.agents import context_recovery, untrusted, warroom  # noqa: E402
 from mia.agents import verification  # noqa: E402
 from mia.agents.warroom import (  # noqa: E402
     Panelist, WarRoomError, build_panel, parse_warroom_dictamen, propose_panel, run_warroom,
 )
+from mia.memory.tokens import estimate_tokens  # noqa: E402
 
 MARK = verification.VERIFY_MARK
 
@@ -118,6 +127,28 @@ class FailingRoundBuilder:
         if stance == self.fail_stance_label:
             raise RuntimeError("panelista caído en ronda 1 (simulado)")
         return (f"POSTURA-{stance}", None)
+
+
+class RecordingBuilder:
+    """Registra CADA prompt que la Sala manda al modelo (system, user y tokens estimados)
+    para poder medir el desbordamiento de contexto y qué ordenamiento llegó al system.
+    `cite_doc` es el [doc n] que citan los panelistas."""
+
+    def __init__(self, cite_doc: int = 1) -> None:
+        self.cite_doc = cite_doc
+        self.prompts: list[dict] = []
+
+    async def _llm(self, messages, *, task="main", state=None, md=None, node="",
+                   model=None, shrink=None):
+        self.prompts.append({
+            "node": node,
+            "system": messages[0]["content"],
+            "user": messages[1]["content"],
+            "tokens": sum(estimate_tokens(m["content"]) for m in messages),
+        })
+        if node == "warroom_moderator":
+            return _GOOD_DICTAMEN, None
+        return (f"Mi postura se apoya en [doc {self.cite_doc}].", None)
 
 
 def _state(docs=None, tenant="11111111-1111-1111-1111-111111111111"):
@@ -376,6 +407,152 @@ async def _checks() -> None:
         return all(f"POSTURA-{o}" in prompt for o in survivors if o != label)
     check("MAYOR 1: cada panelista sí recibe las intervenciones de los demás supervivientes",
           all(_sees_all_others(s) for s in survivors))
+
+    # ── 10 · PRESUPUESTO DE CONTEXTO propio de la Sala ───────────────────────
+    # La Sala arma sus prompts a mano (no pasa por los `shrink` de los nodos del grafo) y
+    # corre ≈9 llamadas por sesión. Antes renderizaba el expediente ENTERO sin techo: con la
+    # lectura adaptativa (que ya no entrega 8 fragmentos fijos) una ventana estrecha en la
+    # cadena de respaldo reventaba la sesión completa.
+    warroom.policy_budget.budget_status = _budget_ok  # type: ignore[assignment]
+
+    # a · lo que CABE no se toca: el prompt queda idéntico y no hay aviso (si esto falla, el
+    #     recorte se estaría aplicando siempre y los checks de abajo serían triviales).
+    pequeno = [{"id": "d1", "content": "Contrato corto."}]
+    fitted_small, rep_small = warroom.fit_documents(pequeno, 10_000)
+    check("presupuesto: un expediente que CABE no se recorta ni se avisa",
+          fitted_small == pequeno and rep_small is None)
+
+    # b · expediente ~3x el presupuesto de documentos de la Sala.
+    docs_budget = max(1, int(context_recovery.budget_for(
+        warroom.WARROOM_PANELIST_NODE, config.MIA_CONTEXT_WINDOW) * warroom.WARROOM_DOCS_SHARE))
+    n_docs = 40
+    chars_doc = (docs_budget * 4 * 3) // n_docs
+    big_docs = [{"id": f"d{i + 1}",
+                 "content": f"Extracto {i + 1}. " + "hecho probado " * (chars_doc // 14)}
+                for i in range(n_docs)]
+    fitted_big, rep_big = warroom.fit_documents(big_docs, docs_budget)
+    check("presupuesto: un expediente enorme se recorta y CABE en el tope de la Sala",
+          rep_big is not None
+          and estimate_tokens(untrusted.render_documents(fitted_big)) <= docs_budget)
+    check("presupuesto: el informe del recorte trae números reales (no se inventa nada)",
+          rep_big["total"] == n_docs and 0 < rep_big["kept"] < n_docs
+          and rep_big["tokens_after"] < rep_big["tokens_before"])
+    check("presupuesto: el recorte conserva el orden del ranking (los más relevantes primero)",
+          [d["id"] for d in fitted_big] == [d["id"] for d in big_docs[:rep_big["kept"]]])
+
+    # c · intervenciones reinyectadas (ronda de réplicas / moderador).
+    turnos_largos = [{"round": 1, "name": f"P{i}", "stance_label": f"L{i}",
+                      "text": "argumento largo " * 8000} for i in range(4)]
+    fitted_t, rep_t = warroom.fit_turns(turnos_largos, 2000)
+    check("presupuesto: las intervenciones reinyectadas se acortan al tope",
+          rep_t is not None and len(fitted_t) == 4
+          and sum(estimate_tokens(t["text"]) for t in fitted_t) <= 2000)
+    check("presupuesto: acortar para el prompt NO muta la intervención que ve el abogado",
+          all(len(t["text"]) > 100_000 for t in turnos_largos))
+
+    # d · sesión completa con el expediente enorme: ningún prompt desborda.
+    ev_big: list[tuple[str, dict]] = []
+    st_big = _state(docs=big_docs)
+    rb_big = RecordingBuilder(cite_doc=n_docs)  # cita [doc 40]: un extracto que NO sobrevive
+    res_big = await run_warroom(rb_big, st_big, propose_panel(st_big), question="Estrategia",
+                                emit=lambda e, p: ev_big.append((e, p)))
+    peor = max(p["tokens"] for p in rb_big.prompts)
+    # Techo MEDIDO, no cosmético: con el tope propio el prompt más gordo de esta prueba se
+    # queda muy por debajo; SIN tope, el expediente solo (sin system ni debate) ya supera el
+    # 75% de la ventana — es decir, este check todavía puede ponerse rojo (falsación abajo).
+    techo = int(config.MIA_CONTEXT_WINDOW * 0.75)
+    check(f"presupuesto: ningún prompt de la Sala desborda el 75% de la ventana "
+          f"(peor={peor} tope={techo})", peor <= techo)
+    check("presupuesto (falsación): SIN tope este expediente sí desbordaría ese 75%",
+          estimate_tokens(untrusted.render_documents(big_docs)) > techo)
+    check("presupuesto: la sesión corrió completa (9 llamadas: 4+4 panel + 1 dictamen)",
+          len(rb_big.prompts) == 9)
+
+    # e · el recorte se AVISA (con números y en llano). Recorte silencioso = prohibido.
+    avisos = [p.get("message", "") for e, p in ev_big
+              if e == "thinking" and "extracto" in p.get("message", "")]
+    check("presupuesto: el recorte del expediente se avisa exactamente una vez",
+          len(avisos) == 1)
+    check("presupuesto: el aviso lleva los NÚMEROS (cuántos de cuántos)",
+          bool(avisos) and str(rep_big["kept"]) in avisos[0] and str(n_docs) in avisos[0])
+    _jerga_aviso = ("token", "contexto", "presupuesto", "prompt", "chunk", "nodo", "ventana")
+    check("presupuesto: el aviso está en llano, sin jerga técnica (§G)",
+          bool(avisos) and not any(j in avisos[0].lower() for j in _jerga_aviso))
+
+    # f · el conteo de [doc n] sigue al recorte: citar un extracto que el panel NO vio es
+    #     una cita fantasma y tiene que salir marcada.
+    check("presupuesto: citar un extracto recortado ([doc 40]) se marca [VERIFICAR]",
+          all(MARK in t["text"] for t in res_big.debate))
+    # Contraprueba: con el expediente pequeño, citar un extracto REAL no se marca — el gate
+    # sigue distinguiendo, no está marcando todo por defecto.
+    st_ok = _state()
+    res_ok = await run_warroom(RecordingBuilder(cite_doc=1), st_ok, propose_panel(st_ok))
+    check("presupuesto (contraprueba): citar un extracto REAL ([doc 1]) NO se marca",
+          all(MARK not in t["text"] for t in res_ok.debate))
+
+    # ── 11 · ORDENAMIENTO APLICABLE del despacho ─────────────────────────────
+    # La Sala NO corre dentro del grafo: su estado lo arma el integrador y no traía el campo
+    # `jurisdictions` que el intake deja para todos los especialistas. Resultado: L3 caía
+    # SIEMPRE en la rama restrictiva y la Sala no podía citar norma aunque el despacho
+    # tuviera su jurisdicción configurada.
+    # `research` se importa DIFERIDO dentro de warroom → se sustituye por un módulo falso
+    # (sin base ni red) para simular las tres fuentes del ordenamiento.
+    import types
+    fake_research = types.ModuleType("mia.agents.research")
+    _configured: list[str] = []
+
+    async def _resolve(_tenant):
+        return list(_configured)
+
+    fake_research.resolve_jurisdictions_for = _resolve  # type: ignore[attr-defined]
+    fake_research.citation_patterns_for = _no_extra_patterns  # type: ignore[attr-defined]
+    sys.modules["mia.agents.research"] = fake_research
+    # `from . import research` resuelve por ATRIBUTO del paquete cuando el módulo real ya se
+    # importó (lo arrastra alguna dependencia), así que sys.modules solo no basta.
+    import mia.agents as _agents_pkg
+    _agents_pkg.research = fake_research  # type: ignore[attr-defined]
+
+    RESTRICTIVA = prompt_builder.JURISDICTION_UNKNOWN
+
+    # a · el despacho SÍ tiene ordenamiento configurado ('zz' es un código cualquiera: la
+    #     Sala es agnóstica de jurisdicción, no necesita un pack instalado).
+    _configured[:] = ["zz"]
+    st_j = _state()
+    rb_j = RecordingBuilder(cite_doc=1)
+    await run_warroom(rb_j, st_j, propose_panel(st_j))
+    sys_j = [p["system"] for p in rb_j.prompts]
+    check("ordenamiento: con jurisdicción configurada la Sala SALE de la rama restrictiva",
+          len(sys_j) == 9 and all(RESTRICTIVA not in s for s in sys_j))
+    check("ordenamiento: el ordenamiento declarado llega al panel Y al moderador",
+          all("ZZ" in s for s in sys_j))
+    check("ordenamiento: queda en el estado para quien reuse la sesión",
+          st_j.get("jurisdictions") == ["zz"])
+
+    # b · falsación: sin ordenamiento configurado la rama restrictiva SIGUE apareciendo
+    #     (el arreglo no la borró: solo dejó de aplicarla cuando no toca).
+    _configured[:] = []
+    st_g = _state()
+    rb_g = RecordingBuilder(cite_doc=1)
+    await run_warroom(rb_g, st_g, propose_panel(st_g))
+    check("ordenamiento (falsación): sin configuración la Sala SÍ queda en la rama restrictiva",
+          all(RESTRICTIVA in p["system"] for p in rb_g.prompts))
+
+    # c · el que ya viene en el estado manda (cero consultas extra a la configuración).
+    _configured[:] = ["zz"]
+    st_e = _state()
+    st_e["jurisdictions"] = ["yy"]
+    rb_e = RecordingBuilder(cite_doc=1)
+    await run_warroom(rb_e, st_e, propose_panel(st_e))
+    check("ordenamiento: el del estado gana sobre la configuración del despacho",
+          all("YY" in p["system"] and "ZZ" not in p["system"] for p in rb_e.prompts))
+
+    # d · segunda fuente: la que dejó la investigación en la metadata del turno.
+    st_md = _state()
+    st_md["metadata"]["research_jurisdictions"] = ["xx"]
+    rb_md = RecordingBuilder(cite_doc=1)
+    await run_warroom(rb_md, st_md, propose_panel(st_md))
+    check("ordenamiento: se toma el que la investigación dejó en la metadata",
+          all("XX" in p["system"] for p in rb_md.prompts))
 
 
 def main() -> int:

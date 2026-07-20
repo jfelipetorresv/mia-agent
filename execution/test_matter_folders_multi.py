@@ -40,6 +40,7 @@ import random
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import psycopg
@@ -348,15 +349,33 @@ def api_checks(tid_a: str, tid_b: str, matter_target: str, matter_same_tenant: s
         check("las 2 carpetas tienen ids distintos", source1_id != source2_id)
 
         # --- GET /folders lista ambas y su ingesta converge ---
+        # La ingesta NO es síncrona: POST /folders solo ENCOLA un trabajo durable y el
+        # trabajador (jobs/durable.DurableWorker) lo reclama con POLL_SECONDS = 1.0s. Este
+        # bucle DEBE ceder tiempo real al trabajador entre sondeos; si gira sin dormir,
+        # agota sus intentos en ~0.2s (medido: 100 GET seguidos tardan 243 ms) y falla
+        # SIEMPRE, sin que el código de producción tenga nada malo. Por eso el corte es
+        # por RELOJ, no por número de vueltas.
+        # Presupuesto MEDIDO (4 corridas seguidas en esta máquina, 2 carpetas de 1 archivo
+        # cada una): convergió en 9.8 s, 11.2 s, 8.2 s y 11.3 s. El tope de 60 s deja ~5x
+        # sobre el peor caso observado. El reloj SOLO se agota cuando algo está realmente
+        # roto, así que un tope holgado no vuelve lento el gate en verde.
+        deadline = time.monotonic() + 60.0
+        t0 = time.monotonic()
         files1 = files2 = 0
-        for _ in range(100):
+        elapsed = 0.0
+        while True:
             rl = client.get(f"/api/matters/{matter_target}/folders", headers=auth_a)
             byid = {f["id"]: f for f in rl.json().get("folders", [])}
             files1 = byid.get(source1_id, {}).get("files_indexed", 0)
             files2 = byid.get(source2_id, {}).get("files_indexed", 0)
+            elapsed = time.monotonic() - t0
             if files1 >= 1 and files2 >= 1:
                 break
-        check("GET /folders -> lista las 2 carpetas con su conteo por fuente",
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        check(f"GET /folders -> lista las 2 carpetas con su conteo por fuente "
+              f"(convergió en {elapsed:.1f}s)",
               rl.status_code == 200 and files1 >= 1 and files2 >= 1)
         visible.append(rl.text)
 
