@@ -6,16 +6,15 @@
 // edite la jurisdicción con EXACTAMENTE el mismo componente y la misma lista de países —
 // cero divergencia entre la entrevista inicial y la edición posterior.
 //
-// Los 21 países de habla hispana (Colombia primero, resto alfabético) con paquete jurídico
-// instalado marcados con la insignia "Conocimiento jurídico profundo"; los demás se pueden
-// elegir igual — quedan en el perfil sin prometer nada (mismo criterio que el onboarding).
+// Los 21 países de habla hispana en orden alfabético. El abogado elige su jurisdicción;
+// MIA es agnóstica y no destaca ningún país ni promete conocimiento profundo de ninguno.
 import { cn } from "@/lib/utils";
 
 export const COUNTRY_OPTIONS: { code: string; name: string }[] = [
-  { code: "co", name: "Colombia" },
   { code: "ar", name: "Argentina" },
   { code: "bo", name: "Bolivia" },
   { code: "cl", name: "Chile" },
+  { code: "co", name: "Colombia" },
   { code: "cr", name: "Costa Rica" },
   { code: "cu", name: "Cuba" },
   { code: "ec", name: "Ecuador" },
@@ -40,11 +39,9 @@ export const COUNTRY_NAME_BY_CODE: Record<string, string> = Object.fromEntries(
 );
 
 export function CountrySelector({
-  packCodes,
   value,
   onChange,
 }: {
-  packCodes: Set<string>;
   value: string[];
   onChange: (value: string[]) => void;
 }) {
@@ -57,7 +54,6 @@ export function CountrySelector({
     <div className="grid gap-2 sm:grid-cols-2">
       {COUNTRY_OPTIONS.map((option) => {
         const checked = value.includes(option.code);
-        const hasPack = packCodes.has(option.code);
         return (
           <label
             key={option.code}
@@ -74,9 +70,6 @@ export function CountrySelector({
             />
             <span className="min-w-0">
               <span className="block">{option.name}</span>
-              {hasPack ? (
-                <span className="mt-0.5 block text-xs text-primary">Conocimiento jurídico profundo</span>
-              ) : null}
             </span>
           </label>
         );

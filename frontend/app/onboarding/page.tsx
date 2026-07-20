@@ -46,8 +46,6 @@ type Status = {
   draft?: { responses: Record<string, AnswerValue>; idx: number; qid?: string | null } | null;
 };
 
-type JurisdictionOption = { code: string; name: string; verified: boolean };
-
 // Clave reservada dentro de `responses` para la selección de jurisdicción (paso local,
 // no viene de las preguntas del backend). Se extrae antes de mandar `complete`.
 const JURISDICTION_FIELD = "_jurisdicciones";
@@ -68,14 +66,12 @@ const BLOCK_LABEL: Record<string, string> = {
   tools: "Herramientas",
 };
 
-// Países para la pregunta ÚNICA de jurisdicción — Colombia primero, resto alfabético
-// (decisión de Pipe 2026-07-09: consolidar las dos preguntas de país en una, con todos
-// los países de habla hispana y selección múltiple). Los códigos siguen ISO 3166-1
-// alfa-2 y coinciden con los códigos de los paquetes jurídicos (p. ej. "co"): la
-// selección viaja como `jurisdictions` (códigos, para el enrutamiento de paquetes) y
-// además auto-llena `jurisdiction.base` (nombres, para el perfil del despacho). Los
-// países CON paquete instalado se marcan con la insignia "Conocimiento jurídico
-// profundo"; los demás se pueden elegir igual — quedan en el perfil sin prometer nada.
+// Países para la pregunta ÚNICA de jurisdicción — orden alfabético (decisión de Pipe
+// 2026-07-09: consolidar las dos preguntas de país en una, con todos los países de habla
+// hispana y selección múltiple). Los códigos siguen ISO 3166-1 alfa-2 y coinciden con los
+// códigos de los paquetes jurídicos (p. ej. "co"): la selección viaja como `jurisdictions`
+// (códigos) y además auto-llena `jurisdiction.base` (nombres, para el perfil del despacho).
+// MIA es agnóstica: no destaca ningún país ni promete conocimiento profundo de ninguno.
 // COUNTRY_OPTIONS/COUNTRY_NAME_BY_CODE viven en CountrySelector.tsx (C2: extracción para
 // compartir con "Mi despacho").
 
@@ -152,8 +148,6 @@ export default function OnboardingPage() {
   const [completion, setCompletion] = useState<CompletionResult | null>(null);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<{ responses: Record<string, AnswerValue>; idx: number; qid?: string | null } | null>(null);
-  // Códigos de país con paquete jurídico instalado (insignia "Conocimiento jurídico profundo").
-  const [packCodes, setPackCodes] = useState<Set<string>>(new Set());
   // Microtexto discreto de autosave — ayuda, no candado (§ autosave).
   const [savedFlash, setSavedFlash] = useState(false);
 
@@ -168,8 +162,7 @@ export default function OnboardingPage() {
 
         // Paso local de jurisdicción: la ÚNICA pregunta de país (consolidación 2026-07-09).
         // La lista de países es fija (COUNTRY_OPTIONS); el paso SIEMPRE se inserta después
-        // de p2. /api/jurisdictions solo aporta qué países tienen paquete jurídico instalado
-        // (insignia "Conocimiento jurídico profundo"). Fail-open: si falla, sin insignias.
+        // de p2.
         const jurisdictionStep: Question = {
           id: JURISDICTION_QUESTION_ID,
           block: "jurisdiction",
@@ -180,12 +173,6 @@ export default function OnboardingPage() {
         const p2Index = list.findIndex((q) => q.id === "p2");
         const insertAt = p2Index >= 0 ? p2Index + 1 : list.length;
         list = [...list.slice(0, insertAt), jurisdictionStep, ...list.slice(insertAt)];
-        try {
-          const jd = await apiGet<{ jurisdictions: JurisdictionOption[] }>("/api/jurisdictions");
-          setPackCodes(new Set((jd.jurisdictions ?? []).map((j) => j.code)));
-        } catch {
-          /* fail-open: sin insignias de paquete */
-        }
 
         setQuestions(list);
         if (st.completed) {
@@ -524,7 +511,7 @@ export default function OnboardingPage() {
             </StaggerItem>
 
             <StaggerItem>
-              <QuestionInput question={current} value={value} onChange={setAnswer} packCodes={packCodes} />
+              <QuestionInput question={current} value={value} onChange={setAnswer} />
             </StaggerItem>
           </Stagger>
         </StepTransition>
@@ -643,17 +630,15 @@ function QuestionInput({
   question,
   value,
   onChange,
-  packCodes,
 }: {
   question: Question;
   value: AnswerValue | undefined;
   onChange: (value: AnswerValue) => void;
-  packCodes: Set<string>;
 }) {
   switch (question.id) {
     // Paso local de jurisdicción — la única pregunta de país (multi-select de 21 países).
     case JURISDICTION_QUESTION_ID:
-      return <CountrySelector packCodes={packCodes} value={asList(value)} onChange={onChange} />;
+      return <CountrySelector value={asList(value)} onChange={onChange} />;
     // P1 — dos campos: despacho + abogado.
     case "p1": {
       const n = asNamePair(value);

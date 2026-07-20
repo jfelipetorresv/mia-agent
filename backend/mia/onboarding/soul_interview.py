@@ -71,10 +71,10 @@ QUESTIONS: list[dict] = [
     # al completar. build_soul/build_summary siguen renderizando ese campo.
     {"id": "p6", "block": "jurisdiction", "field": "jurisdiction.practice_areas",
      "question": "¿Cuáles son las ramas del derecho en que te especializas?",
-     "example": "Civil, comercial, laboral, seguros"},
+     "example": "Civil, comercial, laboral, familia"},
     {"id": "p7", "block": "jurisdiction", "field": "jurisdiction.client_type",
      "question": "¿Qué tipo de cliente defiende principalmente tu despacho?",
-     "example": "Aseguradoras (HDI, Zurich, SURA, Seguros del Estado)"},
+     "example": "Empresas, entidades públicas, personas naturales"},
     # Bloque 3 — Herramientas
     {"id": "p18", "block": "tools", "field": "memory.tools_that_survived",
      "question": "¿Hay herramientas que usas a diario que Mia debe conocer?",

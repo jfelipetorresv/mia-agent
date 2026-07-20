@@ -30,8 +30,6 @@ type FullProfile = {
   completed: boolean;
 };
 
-type JurisdictionOption = { code: string; name: string; verified: boolean };
-
 // TOOL_OPTIONS vive en ./toolOptions.ts — compartida con onboarding/page.tsx (p18): el
 // abogado edita después de la entrevista con exactamente las mismas opciones, desde la
 // MISMA fuente (C2: una sola lista, para que las dos pantallas nunca se contradigan).
@@ -64,7 +62,6 @@ function asList(value: AnswerValue): string[] {
 export default function MiDespachoSection() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [packCodes, setPackCodes] = useState<Set<string>>(new Set());
 
   const [firm, setFirm] = useState({ firm: "", lawyer: "" });
   const [location, setLocation] = useState({ country: "", city: "" });
@@ -84,12 +81,7 @@ export default function MiDespachoSection() {
   useEffect(() => {
     (async () => {
       try {
-        const [full, jd] = await Promise.all([
-          apiGet<FullProfile>("/api/profile/full"),
-          apiGet<{ jurisdictions: JurisdictionOption[] }>("/api/jurisdictions").catch(
-            () => ({ jurisdictions: [] as JurisdictionOption[] }),
-          ),
-        ]);
+        const full = await apiGet<FullProfile>("/api/profile/full");
         const r = full.responses || {};
         setFirm(asNamePair(r["identity.name"]));
         setLocation(asLocationPair(r["identity.location"]));
@@ -99,7 +91,6 @@ export default function MiDespachoSection() {
         setCountryCodes(full.jurisdictions || []);
         setTpNumber(full.extras?.tp_number || "");
         setPreferredSources(full.extras?.preferred_sources || []);
-        setPackCodes(new Set((jd.jurisdictions ?? []).map((j) => j.code)));
       } catch {
         setLoadError("No se pudo cargar tu perfil. Recarga la página.");
       } finally {
@@ -194,7 +185,7 @@ export default function MiDespachoSection() {
         <p className="text-xs text-muted-foreground">
           Esto le dice a Mia qué normas y jurisprudencia usar. Puedes elegir más de un país.
         </p>
-        <CountrySelector packCodes={packCodes} value={countryCodes} onChange={setCountryCodes} />
+        <CountrySelector value={countryCodes} onChange={setCountryCodes} />
         <ChipsField label="Áreas de práctica" value={practiceAreas} onChange={setPracticeAreas} />
         <ChipsField label="Tipo de cliente" value={clientType} onChange={setClientType} />
       </section>
