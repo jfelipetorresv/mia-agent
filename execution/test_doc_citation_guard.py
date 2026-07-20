@@ -142,6 +142,158 @@ def run() -> None:
     check("variante [documento 2] dentro de rango → intacta",
           MARK not in txt19 and rep19["fantasmas"] == 0)
 
+    run_frontera_identificadores()
+
+
+# ── Frontera de identificadores: el respaldo NO puede truncar un número ────────
+# El defecto que cierra esta sección es el PEOR que puede producir el producto: el
+# guardián declaraba "Con respaldo" (check verde en la pantalla, atribuido a un
+# archivo y folio concretos del expediente) una norma que Mia INVENTÓ, solo porque
+# su texto era prefijo del de una fuente real ("Decreto 108" ⊂ "Decreto 1082 de
+# 2015"). Marcar de más es inofensivo; respaldar de más destruye la única razón por
+# la que un abogado confiaría en esto.
+#
+# Los casos vienen en AMBAS direcciones (clave ⊂ cita y cita ⊂ clave) porque el
+# cotejo es bidireccional y blindar una sola mitad deja el defecto vivo.
+
+def _informe(draft: str, referencias: list[str]) -> dict:
+    """(anotado, informe) de un borrador contra unas referencias de fuente."""
+    fuentes = [{"tipo": "norma", "referencia": r, "titulo": "demanda.pdf · folio 3"}
+               for r in referencias]
+    return verification.annotate_draft(draft, sources=fuentes)
+
+
+def _no_respalda(nombre: str, draft: str, referencias: list[str], cita: str) -> None:
+    """La cita NO puede quedar respaldada: debe salir anotada y con su [VERIFICAR]."""
+    anotado, rep = _informe(draft, referencias)
+    estados = {d["cita"]: d["estado"] for d in rep["detalle"]}
+    ok = (rep["respaldadas"] == 0
+          and estados.get(cita) == "anotada"
+          and (cita + " " + MARK) in anotado
+          and not any("fuente" in d for d in rep["detalle"]))
+    check(nombre, ok)
+    if not ok:  # diagnóstico legible cuando falla
+        print(f"         cita={cita!r} estados={estados} respaldadas={rep['respaldadas']}")
+
+
+def _si_respalda(nombre: str, draft: str, referencias: list[str], cita: str) -> None:
+    """La cita legítima DEBE seguir respaldada (sin marca): el arreglo no puede
+    convertir el guardián en un sello que marca el 100% y no confirma nunca nada."""
+    anotado, rep = _informe(draft, referencias)
+    estados = {d["cita"]: d["estado"] for d in rep["detalle"]}
+    ok = (estados.get(cita) == "respaldada"
+          and MARK not in anotado
+          and rep["respaldadas"] >= 1)
+    check(nombre, ok)
+    if not ok:
+        print(f"         cita={cita!r} estados={estados} anotado={anotado!r}")
+
+
+def run_frontera_identificadores() -> None:
+    print("\n-- Frontera de identificadores (falso 'Con respaldo') --")
+
+    # 20-21 · La sonda del verificador: "Decreto 108" no existe; el expediente dice
+    # "Decreto 1082 de 2015". Ambas direcciones del cotejo.
+    _no_respalda("clave ⊂ cita: 'Decreto 108' NO lo respalda 'Decreto 1082 de 2015'",
+                 "Segun el Decreto 108 la entidad debia publicar el aviso.",
+                 ["Decreto 1082 de 2015"], "Decreto 108")
+    _no_respalda("cita ⊂ clave: 'Decreto 1082 de 2015' NO lo respalda 'Decreto 108'",
+                 "Segun el Decreto 1082 de 2015 la entidad debia publicar el aviso.",
+                 ["Decreto 108"], "Decreto 1082 de 2015")
+
+    # 22-23 · "Ley 143" dentro de "Ley 1437 de 2011".
+    _no_respalda("clave ⊂ cita: 'Ley 143' NO la respalda 'Ley 1437 de 2011'",
+                 "La actuacion se rige por la Ley 143 y sus decretos.",
+                 ["Ley 1437 de 2011"], "Ley 143")
+    _no_respalda("cita ⊂ clave: 'Ley 1437 de 2011' NO la respalda 'Ley 143'",
+                 "La actuacion se rige por la Ley 1437 de 2011 y sus decretos.",
+                 ["Ley 143"], "Ley 1437 de 2011")
+
+    # 24-25 · "Sentencia C-35" dentro de "Sentencia C-355 de 2006" (guion + dígito).
+    _no_respalda("clave ⊂ cita: 'Sentencia C-35' NO la respalda 'Sentencia C-355 de 2006'",
+                 "Asi lo definio la Sentencia C-35 al estudiar el punto.",
+                 ["Sentencia C-355 de 2006"], "Sentencia C-35")
+    _no_respalda("cita ⊂ clave: 'Sentencia C-355 de 2006' NO la respalda 'Sentencia C-35'",
+                 "Asi lo definio la Sentencia C-355 de 2006 al estudiar el punto.",
+                 ["Sentencia C-35"], "Sentencia C-355 de 2006")
+
+    # 26-27 · Separador de millares: la normalización NO puede partir "25.326" en dos
+    # números y dejar que "Ley 25" respalde por prefijo (jurisdicciones que numeran
+    # sin año — la clase de defecto es la misma).
+    _no_respalda("punto de millares: 'Ley 25' NO la respalda 'Ley 25.326'",
+                 "Se aplica la Ley 25 en lo pertinente.",
+                 ["Ley 25.326"], "Ley 25")
+    _no_respalda("punto de millares: 'Ley 25.326' NO la respalda 'Ley 25'",
+                 "Se aplica la Ley 25.326 en lo pertinente.",
+                 ["Ley 25"], "Ley 25.326")
+
+    # 28 · Sufijo de letra pegado al número: "Resolución 123" ≠ "Resolución 123A".
+    _no_respalda("sufijo de letra: 'Resolución 123' NO la respalda 'Resolución 123A'",
+                 "La Resolución 123 ordeno el archivo.",
+                 ["Resolución 123A"], "Resolución 123")
+
+    # 29 · Palabra pegada que cambia la disposición: "Ley 5" ≠ "Ley 5 bis".
+    _no_respalda("extensión que no es un año: 'Ley 5' NO la respalda 'Ley 5 bis'",
+                 "El deber nace de la Ley 5 vigente.",
+                 ["Ley 5 bis"], "Ley 5")
+
+    # 30 · Radicado truncado: los guiones internos son parte del identificador.
+    _no_respalda("radicado truncado: 'Radicado 25000-23-41' NO lo respalda el completo",
+                 "Consta en el Radicado 25000-23-41 del expediente.",
+                 ["Radicado 25000-23-41-000-2024"], "Radicado 25000-23-41")
+
+    # 31 · Prefijo de tipo de norma: "Ley 19" ≠ "Decreto Ley 19 de 2012".
+    _no_respalda("tipo de norma distinto: 'Ley 19' NO la respalda 'Decreto Ley 19 de 2012'",
+                 "Lo dispone la Ley 19 sobre el tramite.",
+                 ["Decreto Ley 19 de 2012"], "Ley 19")
+
+    # ── Los legítimos DEBEN seguir respaldándose (no basta con marcar todo) ──────
+
+    # 32 · El caso legítimo del informe: la cita corta de una fuente con año.
+    _si_respalda("legítimo: 'Ley 80' SÍ la respalda 'Ley 80 de 1993'",
+                 "El contrato se rige por la Ley 80 y sus modificaciones.",
+                 ["Ley 80 de 1993"], "Ley 80")
+
+    # 33 · Cita idéntica a la fuente (con tilde y mayúsculas distintas).
+    _si_respalda("legítimo: cita idéntica a la fuente (sin importar tildes ni mayúsculas)",
+                 "Ver la RESOLUCION 1234 de 2020 del expediente.",
+                 ["Resolución 1234 de 2020"], "RESOLUCION 1234 de 2020")
+
+    # 34 · Anidamiento "artículo N de la Ley M": la clave va DENTRO de la cita.
+    _si_respalda("legítimo: 'Ley 640 de 2001' respalda 'artículo 21 de la Ley 640 de 2001'",
+                 "Se funda en el artículo 21 de la Ley 640 de 2001.",
+                 ["Ley 640 de 2001"], "artículo 21 de la Ley 640 de 2001")
+
+    # 35 · Providencia citada sin el año que sí trae la fuente.
+    _si_respalda("legítimo: 'Sentencia C-355' SÍ la respalda 'Sentencia C-355 de 2006'",
+                 "Asi lo definio la Sentencia C-355 al estudiar el punto.",
+                 ["Sentencia C-355 de 2006"], "Sentencia C-355")
+
+    # 36 · Norma citada sin el año que sí trae la fuente (mismo número completo).
+    _si_respalda("legítimo: 'Ley 1437' SÍ la respalda 'Ley 1437 de 2011'",
+                 "La actuacion se rige por la Ley 1437 y sus decretos.",
+                 ["Ley 1437 de 2011"], "Ley 1437")
+
+    # 37 · El respaldo legítimo conserva la atribución de la fuente en el informe.
+    _, rep37 = _informe("El contrato se rige por la Ley 80 y sus modificaciones.",
+                        ["Ley 80 de 1993"])
+    check("legítimo: la cita respaldada conserva su fuente atribuida en el informe",
+          rep37["detalle"][0].get("fuente", {}).get("referencia") == "Ley 80 de 1993")
+
+    # 38 · Expediente grande (mezcla): las inventadas se marcan y la real se respalda,
+    # en un mismo borrador y con varias claves compitiendo.
+    draft38 = ("Segun el Decreto 108 y la Ley 143, y conforme a la Ley 1437 de 2011, "
+               "la entidad debia publicar el aviso.")
+    anotado38, rep38 = _informe(draft38, ["Decreto 1082 de 2015", "Ley 1437 de 2011",
+                                          "Sentencia C-355 de 2006"])
+    est38 = {d["cita"]: d["estado"] for d in rep38["detalle"]}
+    check("mezcla: en un mismo borrador solo la cita real queda respaldada",
+          est38.get("Decreto 108") == "anotada"
+          and est38.get("Ley 143") == "anotada"
+          and est38.get("Ley 1437 de 2011") == "respaldada"
+          and rep38["respaldadas"] == 1 and rep38["anotadas"] == 2
+          and anotado38.count(MARK) == 2)
+
 
 def main() -> int:
     print("== Guardián de referencias [doc n] fantasma (refuerzo del gate de citas) ==")

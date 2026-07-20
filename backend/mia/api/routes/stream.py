@@ -19,8 +19,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from ...agents.checkpointer import open_checkpointer
 from ...agents.context_references import expand_context_references
-from ...agents.graph import (DELEGATION_INTERRUPT_KIND, PROPOSAL_PROMPT, build_matter_graph,
-                             build_project_graph)
+from ...agents.graph import (DELEGATION_INTERRUPT_KIND, PROJECT_VERIFICATION_NODE,
+                             PROPOSAL_PROMPT, build_matter_graph, build_project_graph)
 from ...agents.personas import persona_service
 from ...agents.state import initial_state, thread_id_for
 from ...config import MIA_CONTEXT_WINDOW
@@ -126,12 +126,16 @@ async def _stream_turn_events(
 
 
 # ── Bloque A (Proyectos) · turno SIN HITL ─────────────────────────────────────
-# Avance del único especialista del grafo de proyecto (build_project_graph) → frases
-# del oficio (§G). Sin interrupt, sin pending_review: el turno siempre corre completo
-# en una sola pasada (intake → work) y termina con el evento 'reply'.
+# Avance del grafo de proyecto (build_project_graph) → frases del oficio (§G). Sin
+# interrupt del borrador, sin pending_review: el turno siempre corre completo en una
+# sola pasada (intake → work → verificación) y termina con el evento 'reply'.
+#
+# 'work' ya NO entrega el texto: entrega el borrador crudo de la respuesta y cede el
+# turno al guardián de citas. Por eso su frase anuncia el paso que ARRANCA (mismo
+# patrón que el flujo de asunto, donde 'draft' anuncia la verificación).
 _PROJECT_NODE_PROGRESS = {
     "intake": "Mia está revisando las fuentes del proyecto…",
-    "work": "Mia está trabajando…",
+    "work": "Mia está verificando las normas y la jurisprudencia que citó…",
 }
 
 
@@ -171,12 +175,17 @@ async def _stream_project_events(
                           propuesta=v.get("propuesta"))
             continue
         for node, update in chunk.items():
-            if node == "work":
-                # work_node lleva su texto en su propio campo 'reply' del estado (ver
-                # graph.py) — aquí se traduce al contrato visible del cliente: el
-                # evento SSE 'reply'.
+            if node == PROJECT_VERIFICATION_NODE:
+                # El texto de un proyecto viaja en su propio campo 'reply' del estado
+                # (ver graph.py) y se traduce aquí al contrato visible del cliente: el
+                # evento SSE 'reply'. Se toma del nodo de VERIFICACIÓN, que es el que
+                # deja el texto ya marcado: emitirlo desde 'work' entregaría al
+                # navegador las citas sin revisar (no hay streaming token a token — el
+                # texto sale completo y una sola vez, así que este es EL punto donde el
+                # guardián de citas se hace efectivo o no sirve de nada).
                 reply = (update or {}).get("reply") or ""
-                yield sse("reply", "Mia terminó.", reply=reply)
+                informe = ((update or {}).get("metadata") or {}).get("verification")
+                yield sse("reply", "Mia terminó.", reply=reply, verificacion=informe)
             elif node in _PROJECT_NODE_PROGRESS:
                 yield sse("thinking", _PROJECT_NODE_PROGRESS[node])
 

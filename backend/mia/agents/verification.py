@@ -74,11 +74,104 @@ def compile_patterns(extra: Optional[list[str]] = None) -> list[re.Pattern]:
     return compiled
 
 
+# Separadores que pueden ir DENTRO de un identificador ("C-355", "25.326",
+# "25000-23-41-000-2024", "SU-230/15") o entre palabras ("art. 5", "21, 22 y 23").
+# Se conservan solo cuando van entre dos alfanuméricos: ahí son parte del número.
+_INNER_SEPARATORS = ".,-/"
+# Basura de borde que no aporta identidad (comillas, paréntesis, marcas de ordinal).
+_EDGE_TRIM = "\"'`()[]{}«»¡!¿?;:*_" + _INNER_SEPARATORS + "°ºª"
+
+
 def _normalize(text: str) -> str:
-    """minúsculas · sin tildes · separadores colapsados a un espacio (para comparar)."""
+    """minúsculas · sin tildes · separadores colapsados a un espacio (para comparar).
+
+    OJO (corrección del falso "Con respaldo"): los separadores que van DENTRO de un
+    número NO se colapsan. Antes "Ley 25.326" quedaba "ley 25 326" y eso partía el
+    identificador en dos, de modo que "Ley 25" lo respaldaba por prefijo. Ahora
+    "25.326", "c-355" y "25000-23-41-000-2024" sobreviven como una sola pieza y solo
+    respaldan a quien traiga el número COMPLETO.
+    """
     text = unicodedata.normalize("NFD", text or "")
-    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
-    return re.sub(r"[\s.\-/]+", " ", text.lower()).strip()
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn").lower()
+    out: list[str] = []
+    for i, ch in enumerate(text):
+        if ch in _INNER_SEPARATORS:
+            prev = text[i - 1] if i else ""
+            nxt = text[i + 1] if i + 1 < len(text) else ""
+            out.append(ch if (prev.isalnum() and nxt.isalnum()) else " ")
+        else:
+            out.append(ch)
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
+# ── Cotejo cita ↔ fuente: por qué NO basta con "una está dentro de la otra" ───
+# El cotejo de respaldo era `k in c or c in k` sobre el texto normalizado. Eso
+# respaldaba en VERDE ("Con respaldo", atribuido a un archivo y folio concretos del
+# expediente) citas que Mia INVENTÓ, con solo ser prefijo de una fuente real:
+#
+#     fuente "Decreto 1082 de 2015"  →  respaldaba  "Decreto 108"
+#     fuente "Ley 1437 de 2011"      →  respaldaba  "Ley 143"
+#     fuente "Sentencia C-355 de 2006" → respaldaba "Sentencia C-35"
+#
+# Es la regla dura del producto exactamente al revés: afirmar respaldo sin tenerlo.
+# Marcar de más es inofensivo (el abogado revisa algo que estaba bien); respaldar de
+# más destruye la única razón por la que un abogado confiaría en esto.
+#
+# La regla que cierra la CLASE de defecto (no los tres ejemplos):
+#   1. Se compara por PIEZAS (tokens), no por substring: un identificador nunca se
+#      puede partir por la mitad. "108" y "1082" son piezas distintas; "123" y
+#      "123a" también; "25.326" es UNA pieza, no "25" y "326".
+#   2. Las piezas comunes deben ser CONTIGUAS y en el mismo orden.
+#   3. Si la fuente tiene piezas de MÁS pegadas al tramo común, esas piezas solo se
+#      toleran si son conectores ("de", "del", "la"...). Así sobrevive el caso
+#      legítimo ("Ley 80" respaldada por "Ley 80 de 1993", "Sentencia C-355" por
+#      "Sentencia C-355 de 2006", "Ley 640 de 2001" dentro de "artículo 21 de la
+#      Ley 640 de 2001") y se rechaza lo que cambia de disposición o de tipo de
+#      norma ("Ley 5" vs "Ley 5 bis", "Ley 19" vs "Decreto Ley 19 de 2012").
+#
+# Los conectores son palabras vacías del español jurídico (el mismo léxico genérico
+# de BASE_CITATION_PATTERNS — sin país, corte ni moneda). Y su AUSENCIA nunca
+# produce un falso verde: solo hace que la cita quede marcada, que es la dirección
+# segura. Una jurisdicción con otra convención de citación pierde confirmaciones,
+# jamás gana un respaldo falso.
+_QUALIFIER_TOKENS = frozenset({"de", "del", "la", "el", "los", "las", "y", "en"})
+
+
+def _match_tokens(text: str) -> tuple[str, ...]:
+    """Piezas comparables de una cita o de una referencia de fuente."""
+    toks = []
+    for raw in _normalize(text).split(" "):
+        tok = raw.strip(_EDGE_TRIM)
+        if tok:
+            toks.append(tok)
+    return tuple(toks)
+
+
+def _covers(long_t: tuple[str, ...], short_t: tuple[str, ...]) -> bool:
+    """`short_t` aparece completo y contiguo dentro de `long_t`, sin que las piezas
+    sobrantes de los bordes cambien de qué norma se está hablando (ver bloque arriba)."""
+    n, m = len(long_t), len(short_t)
+    if not m or m > n:
+        return False
+    for i in range(n - m + 1):
+        if long_t[i:i + m] != short_t:
+            continue
+        if i > 0 and long_t[i - 1] not in _QUALIFIER_TOKENS:
+            continue  # la fuente antepone algo que cambia la norma ("Decreto" Ley 19)
+        j = i + m
+        if j < n and long_t[j] not in _QUALIFIER_TOKENS:
+            continue  # la fuente continúa el identificador ("Ley 5" + "bis")
+        return True
+    return False
+
+
+def _tokens_match(a: tuple[str, ...], b: tuple[str, ...]) -> bool:
+    """Cotejo en ambos sentidos: la fuente puede estar dentro de la cita
+    ('Ley 1437 de 2011' ⊂ 'artículo 164 de la Ley 1437 de 2011') o al revés
+    ('Ley 80' ⊂ 'Ley 80 de 1993')."""
+    if not a or not b:
+        return False
+    return _covers(a, b) or _covers(b, a)
 
 
 def source_keys(sources: Optional[list[dict]]) -> list[str]:
@@ -99,12 +192,12 @@ def source_keys(sources: Optional[list[dict]]) -> list[str]:
 
 
 def _is_backed(citation: str, keys: list[str]) -> bool:
-    """La cita coincide con alguna fuente del corpus (match por inclusión normalizada,
-    en ambos sentidos: 'Ley 1437 de 2011' ⊂ 'artículo 164 de la Ley 1437 de 2011')."""
-    c = _normalize(citation)
+    """La cita coincide con alguna fuente del corpus, sin truncar identificadores
+    (ver el bloque 'Cotejo cita ↔ fuente' arriba)."""
+    c = _match_tokens(citation)
     if not c:
         return False
-    return any(k in c or c in k for k in keys if k)
+    return any(_tokens_match(c, _match_tokens(k)) for k in keys if k)
 
 
 def source_index(sources: Optional[list[dict]]) -> list[tuple[str, dict]]:
@@ -121,17 +214,30 @@ def source_index(sources: Optional[list[dict]]) -> list[tuple[str, dict]]:
     return index
 
 
-def _backing_source(citation: str, index: list[tuple[str, dict]]) -> Optional[dict]:
-    """La fuente del corpus que respalda la cita, o None (mismo match por inclusión
-    normalizada de `_is_backed` — gana la primera coincidencia, que llega en el orden
-    de relevancia con que investigó el turno)."""
-    c = _normalize(citation)
+def _tokenize_index(index: list[tuple[str, dict]]) -> list[tuple[tuple[str, ...], dict]]:
+    """Índice de fuentes ya troceado en piezas. Se calcula UNA vez por borrador: el
+    material del expediente puede aportar cientos de claves y el cotejo corre por
+    cada cita del borrador."""
+    return [(_match_tokens(k), s) for k, s in index if k]
+
+
+def _backing_source_tokenized(
+    citation: str, tindex: list[tuple[tuple[str, ...], dict]]
+) -> Optional[dict]:
+    """La fuente que respalda la cita, o None. Gana la primera coincidencia, que llega
+    en el orden de relevancia con que investigó el turno."""
+    c = _match_tokens(citation)
     if not c:
         return None
-    for k, s in index:
-        if k and (k in c or c in k):
+    for kt, s in tindex:
+        if _tokens_match(c, kt):
             return s
     return None
+
+
+def _backing_source(citation: str, index: list[tuple[str, dict]]) -> Optional[dict]:
+    """La fuente del corpus que respalda la cita, o None (mismo cotejo de `_is_backed`)."""
+    return _backing_source_tokenized(citation, _tokenize_index(index))
 
 
 # ── Guardián de referencias al expediente ([doc n] fantasma) ─────────────────
@@ -284,7 +390,7 @@ def annotate_draft(
     """
     text = draft or ""
     citations = scan_citations(text, compile_patterns(extra_patterns))
-    index = source_index(sources)
+    index = _tokenize_index(source_index(sources))
     detalle: list[dict] = []
     marcadas = respaldadas = anotadas = 0
     inserts: list[int] = []  # posiciones (end) donde insertar la marca
@@ -294,7 +400,7 @@ def annotate_draft(
         if c["marked"]:
             marcadas += 1
             estado = "marcada"
-        elif (fuente := _backing_source(c["citation"], index)) is not None:
+        elif (fuente := _backing_source_tokenized(c["citation"], index)) is not None:
             respaldadas += 1
             estado = "respaldada"
         else:
