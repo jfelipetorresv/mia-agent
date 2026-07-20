@@ -189,13 +189,27 @@ def run_checks(client, auth_a, tid_a, auth_b, tid_b) -> None:
           not any(a["id"] == pb2 for a in atajos3))
     visible.append(r3.text)
 
-    # ── 6 · tope de 6 atajos ──────────────────────────────────────────────────
+    # ── 6 · tope de 6 atajos + cupo garantizado del agente ───────────────────
+    # Se siembran 6 guías más (7 activas en total, más que el tope): antes esto tapaba al
+    # agente por completo — las guías llenaban la lista y el corte final lo descartaba, así
+    # que el despacho configuraba sus agentes y no volvía a verlos en la conversación vacía.
     for i in range(6):
         seed_playbook(tid_a, title=f"Guía adicional {i}", applies_when="w",
                      usage_count=100 + i)
     r4 = client.get("/api/atajos", headers=auth_a)
     atajos4 = r4.json().get("atajos", [])
     check("nunca trae más de 6 atajos (tope de la pantalla)", len(atajos4) <= 6)
+    check("con más guías activas que cupos, el agente del despacho SIGUE apareciendo",
+          any(a["id"] == ag_id for a in atajos4))
+    check("los cupos se aprovechan completos (6 atajos, no menos)", len(atajos4) == 6)
+    # 1 agente habilitado -> 1 cupo reservado, los otros 5 son de las guías más usadas
+    # (usage_count 105..101 = "Guía adicional 5".."Guía adicional 1").
+    check("las guías que entran son las más usadas, en orden de uso",
+          [a["label"] for a in atajos4 if a["kind"] == "guia"] ==
+          [f"Guía adicional {i}" for i in (5, 4, 3, 2, 1)])
+    r4b = client.get("/api/atajos", headers=auth_a)
+    check("el reparto guías/agentes es determinista (misma lista byte a byte)",
+          atajos4 == r4b.json().get("atajos", []))
     visible.append(r4.text)
 
     # ── 7 · RLS: B no ve ni un atajo de A ─────────────────────────────────────

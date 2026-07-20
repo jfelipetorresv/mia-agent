@@ -28,6 +28,13 @@ logger = logging.getLogger("mia.memory.atajos")
 # Cuántos atajos como máximo se ofrecen en la conversación vacía (frontend: hasta 6 chips).
 MAX_SHORTCUTS = 6
 
+# Cupo GARANTIZADO para los agentes del despacho dentro de `MAX_SHORTCUTS`.
+# Por qué: antes se anexaban las guías primero y se cortaba al final, así que con 6 o más guías
+# activas los agentes NO salían NUNCA — el despacho los configuraba en su pantalla y no volvía a
+# verlos en la conversación vacía, que es justo donde más los usaría. Este cupo se reserva ANTES
+# del corte. No agranda la lista: si no hay agentes, las guías se quedan con los 6 cupos.
+RESERVED_FOR_AGENTS = 2
+
 
 def build_playbook_shortcut(row: dict) -> str:
     """Texto reproducible de una guía: 'Aplica la guía del despacho "X": <cuándo aplica>.
@@ -61,10 +68,14 @@ def build_persona_shortcut(persona: dict) -> Optional[str]:
 
 
 async def list_shortcuts(tenant_id: str, limit: int = MAX_SHORTCUTS) -> list[dict]:
-    """Atajos del despacho para la conversación vacía: hasta `limit` guías activas (por
-    `usage_count`, mismo orden que GET /api/playbooks) + personas habilitadas (mismo orden
-    que GET /api/personas), cada uno con un `texto` reproducible listo para pre-llenar el
-    cuadro de mensaje.
+    """Atajos del despacho para la conversación vacía: guías activas (por `usage_count`, mismo
+    orden que GET /api/playbooks) + agentes habilitados (mismo orden que GET /api/personas —
+    esa tabla no lleva contador de uso), cada uno con un `texto` reproducible listo para
+    pre-llenar el cuadro de mensaje. Nunca más de `limit` atajos en total.
+
+    REPARTO: los agentes tienen `RESERVED_FOR_AGENTS` cupos garantizados, que se descuentan
+    ANTES de cortar las guías; si sobran cupos (pocas guías o pocos agentes) el otro grupo los
+    absorbe, así que la lista siempre llega a `limit` mientras haya material.
 
     Determinista: para el mismo estado de la base de datos, el mismo orden y el mismo texto
     siempre. FAIL-OPEN: cualquier error de lectura → lista vacía (nunca rompe la pantalla).
@@ -83,15 +94,22 @@ async def list_shortcuts(tenant_id: str, limit: int = MAX_SHORTCUTS) -> list[dic
         logger.warning("atajos: no se pudieron cargar (tenant=%s)", tenant_id, exc_info=True)
         return []
 
-    shortcuts: list[dict] = []
+    guias: list[dict] = []
     for r in pb_rows:
         texto = build_playbook_shortcut({"title": r[1], "applies_when": r[2]})
-        shortcuts.append({"kind": "guia", "id": str(r[0]), "label": r[1], "texto": texto})
+        guias.append({"kind": "guia", "id": str(r[0]), "label": r[1], "texto": texto})
 
+    agentes: list[dict] = []
     for r in persona_rows:
         texto = build_persona_shortcut(
             {"name": r[1], "description": r[2], "summon_phrases": r[3]})
         if texto:
-            shortcuts.append({"kind": "agente", "id": str(r[0]), "label": r[1], "texto": texto})
+            agentes.append({"kind": "agente", "id": str(r[0]), "label": r[1], "texto": texto})
 
-    return shortcuts[:limit]
+    # Reparto de los `limit` cupos: primero se aparta la reserva de los agentes (solo la que de
+    # verdad se puede usar), se cortan las guías con lo que queda, y el remanente vuelve a los
+    # agentes. Sin reserva, 6 guías activas dejaban la lista llena y ningún agente entraba.
+    reserva = max(0, min(RESERVED_FOR_AGENTS, len(agentes), limit))
+    n_guias = max(0, min(len(guias), limit - reserva))
+    n_agentes = max(0, min(len(agentes), limit - n_guias))
+    return guias[:n_guias] + agentes[:n_agentes]
