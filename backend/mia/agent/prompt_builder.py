@@ -92,6 +92,136 @@ CITATION_POLICY = (
     "cuando aplique, la corporación, el número y la fecha de la providencia."
 )
 
+# L3 (continuación) · ORDENAMIENTO APLICABLE — la regla dura número uno del producto.
+#
+# Mia NO es de ningún país: se instala en el despacho que la contrata y se adapta a SU
+# ordenamiento. Antes de esta capa, la jurisdicción no se le decía al modelo en NINGÚN
+# punto del prompt (solo un "según la jurisdicción del despacho" suelto en la instrucción
+# del nodo de investigación, que no dice CUÁL). Con el hueco abierto, el modelo lo
+# rellenaba con lo que más ha visto: un despacho sin configurar, con cero documentos,
+# recibía articulado de un país concreto transcrito de memoria paramétrica y presentado
+# como derecho aplicable y como "conocimiento consolidado del despacho".
+#
+# Por eso el texto es imperativo y cerrado, no una sugerencia: contra un prior
+# paramétrico fuerte, "procura" y "en lo posible" no hacen nada. Y por eso NO hay un
+# solo nombre de país, código, corporación ni base de datos en este archivo — los
+# nombres salen del pack del despacho (`jurisdiction/packs/{code}/meta.json`), que son
+# DATOS. Escribir aquí el nombre de un país sería cometer el defecto que esta capa
+# corrige.
+
+_JURISDICTION_HEADING = "## Ordenamiento aplicable — REGLA IMPERATIVA"
+
+# Caso PELIGROSO: el despacho no declaró ordenamiento (o su pack no se pudo leer). Aquí
+# es donde el modelo rellenaba el vacío. La prohibición se enuncia por CATEGORÍAS
+# funcionales (artículo, código, corporación, base normativa), nunca por nombres.
+JURISDICTION_UNKNOWN = (
+    f"{_JURISDICTION_HEADING}\n"
+    "El despacho NO te ha declarado bajo qué ordenamiento trabaja. No lo deduzcas del "
+    "idioma, de las partes ni de lo que más hayas visto: no saberlo es el estado real.\n"
+    "PROHIBIDO mientras no lo sepas — aunque el abogado lo pida, aunque parezca obvio y "
+    "aunque lo recuerdes con nitidez: nombrar o numerar un artículo, una ley, un "
+    "decreto, un código o una constitución de un país concreto; transcribir el texto de "
+    "una disposición, literal o parafraseado; nombrar cortes, altas corporaciones, "
+    "entidades públicas o bases de datos normativas de un país concreto, ni ofrecerte a "
+    "consultarlas; afirmar que una regla concreta 'es' el derecho aplicable. Si te "
+    "viene a la cabeza un articulado, ESE impulso es lo que se prohíbe: no lo escribas. "
+    "Marcarlo [VERIFICAR] no lo autoriza — aquí la cita no se marca, se omite.\n"
+    "LO QUE SÍ HACES: razonas en el plano de la INSTITUCIÓN jurídica, no del "
+    "articulado — la figura, sus elementos, requisitos y efectos, con el rigor de "
+    "siempre. Y dices en una frase que para citar norma necesitas saber bajo qué "
+    "ordenamiento trabaja el despacho."
+)
+
+# Procedencia: prohibición de atribuir a una fuente lo que salió de la memoria del
+# modelo. Va SIEMPRE, haya o no jurisdicción configurada — el defecto observado fue
+# atribuir al "conocimiento consolidado del despacho" un texto que el despacho nunca
+# cargó. La exigencia de marcar EN LA MISMA LÍNEA ataca el otro patrón observado: diez
+# citas y una sola marca [VERIFICAR] en un párrafo de cierre.
+PROVENANCE_POLICY = (
+    "## Procedencia — de dónde sale cada cosa que afirmas\n"
+    "Solo atribuyes una afirmación al expediente, al conocimiento del despacho o a "
+    "cualquier fuente si ESE material te llegó sellado en este turno. Si no te llegó "
+    "nada, dilo: no digas que el despacho 'conserva' un conocimiento que no estás "
+    "viendo, ni presentes tu propia memoria como material del despacho. Mentir sobre el "
+    "ORIGEN es tan grave como inventar la norma.\n"
+    "Lo que sale de tu memoria se anuncia como tal y se marca [VERIFICAR] EN LA MISMA "
+    "LÍNEA de cada afirmación. Una sola marca al final para diez citas NO cumple."
+)
+
+
+def _jurisdiction_labels(codes: Any) -> tuple[list[str], bool]:
+    """(nombres declarados por el despacho, alguno_sin_verificar) a partir de sus códigos.
+
+    Los NOMBRES salen del pack (`meta.json → name`), que es dato del despacho; si el
+    despacho declaró un código para el que no hay pack instalado, se usa el propio código
+    como etiqueta (sigue siendo dato suyo) y cuenta como no verificado. FAIL-CLOSED: ante
+    cualquier error de carga se devuelve ([], True) → se emite la instrucción del caso
+    desconocido, que es la restrictiva. Nunca lanza: un pack roto no puede tumbar el
+    prompt del turno.
+    """
+    if not codes:
+        return [], True
+    try:
+        from ..jurisdiction.pack import GENERIC_CODE, load_pack
+    except Exception:  # noqa: BLE001 — fail-closed al caso restrictivo
+        return [], True
+    labels: list[str] = []
+    unverified = False
+    for raw in codes:
+        code = str(raw or "").strip().lower()
+        if not code or code == GENERIC_CODE:
+            continue
+        try:
+            p = load_pack(code)
+        except Exception:  # noqa: BLE001 — un pack ilegible no invalida a los demás
+            labels.append(code.upper())
+            unverified = True
+            continue
+        if p.is_generic:
+            # Código declarado por el despacho sin pack instalado: se respeta su
+            # declaración (puede citar SU derecho) pero no hay datos verificados.
+            labels.append(code.upper())
+            unverified = True
+            continue
+        labels.append(str(p.name or code).strip() or code.upper())
+        if not p.verified:
+            unverified = True
+    return labels, unverified
+
+
+def build_jurisdiction_directive(codes: Any = None) -> str:
+    """Instrucción de ordenamiento aplicable para los códigos del despacho.
+
+    Sin códigos (o con códigos que no resuelven a ningún ordenamiento declarado) devuelve
+    la instrucción del caso DESCONOCIDO: razonar por institución jurídica y prohibición
+    total de articulado de país. Con ordenamiento(s) declarado(s), Mia razona y cita con
+    ESE y declara como extranjero/comparado cualquier otro.
+    """
+    labels, unverified = _jurisdiction_labels(codes)
+    if not labels:
+        return JURISDICTION_UNKNOWN
+    declared = " · ".join(labels)
+    parts = [
+        f"{_JURISDICTION_HEADING}\n"
+        f"El despacho trabaja bajo este ordenamiento (o estos): {declared}. Razonas, "
+        "citas y concluyes ÚNICAMENTE con él: es el único derecho aplicable a este "
+        "asunto, y la norma que cites debe pertenecerle.\n"
+        "PROHIBIDO presentar como aplicable el derecho de otro ordenamiento. Si traes "
+        "una figura, una norma o una decisión ajena a lo declarado arriba, la "
+        "identificas EXPRESAMENTE como derecho extranjero o comparado en la misma frase "
+        "en que la mencionas y dices que NO es aplicable aquí — nunca la deslices como "
+        "si lo fuera, ni mezcles articulado de dos ordenamientos en una enumeración.\n"
+        "Si el asunto exige derecho de un ordenamiento que el despacho no declaró, no lo "
+        "improvises: dilo y pide que te confirmen con qué reglas se trabaja."
+    ]
+    if unverified:
+        parts.append(
+            "El sistema NO tiene datos de referencia verificados de ese ordenamiento. "
+            "Toda norma o providencia que cites saldrá de tu memoria: márcala "
+            "[VERIFICAR] en la misma línea y no la presentes como confirmada."
+        )
+    return "\n".join(parts)
+
 # L5 · Comunicación con el usuario (CLAUDE.md §G)
 USER_COMMS = (
     "Tu interlocutor es un abogado sin formación técnica en IA. Nunca usas jerga "
@@ -115,8 +245,22 @@ def _methodology_layer(agent: Any) -> str:
 
 
 def _citation_layer(agent: Any) -> str:
-    """L3 · Política de citación/verificación (texto fijo)."""
-    return CITATION_POLICY
+    """L3 · Citación + ORDENAMIENTO APLICABLE + procedencia.
+
+    Las tres reglas viven juntas porque son la misma pregunta ("¿de dónde sale esto y
+    vale aquí?") y porque así la más determinante del producto —bajo qué derecho razona
+    Mia— deja de aparecer de pasada. Sigue en el tier STABLE: la jurisdicción del
+    despacho no cambia entre turnos ni entre nodos, así que el prefijo sigue siendo
+    byte-estable y cacheable (el cache es por despacho, no global).
+
+    `jurisdiction_codes` es una costura duck-typed: si el caller no la llena, se emite la
+    instrucción del caso desconocido, que es la restrictiva (fail-closed).
+    """
+    return "\n\n".join((
+        CITATION_POLICY,
+        build_jurisdiction_directive(getattr(agent, "jurisdiction_codes", None)),
+        PROVENANCE_POLICY,
+    ))
 
 
 def _tools_layer(agent: Any) -> str:
@@ -465,12 +609,35 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
 }
 
 
+def _state_jurisdictions(state: Any) -> list[str] | None:
+    """Códigos de jurisdicción alcanzables desde el estado del grafo, o None.
+
+    Duck-typed y tolerante (el estado puede ser un dict, un TypedDict o un objeto): lee
+    `state['jurisdictions']` y, en su defecto, `state['metadata']['research_jurisdictions']`
+    (que el nodo de investigación ya escribe). Ante cualquier forma inesperada devuelve
+    None → instrucción del caso desconocido. Nunca lanza.
+    """
+    if not hasattr(state, "get"):
+        return None
+    try:
+        codes = state.get("jurisdictions")
+        if not codes:
+            md = state.get("metadata") or {}
+            codes = md.get("research_jurisdictions") if hasattr(md, "get") else None
+        if not codes:
+            return None
+        return [str(c) for c in codes if str(c or "").strip()] or None
+    except Exception:  # noqa: BLE001 — fail-closed al caso restrictivo
+        return None
+
+
 def build_graph_system(
     state: Any,
     node: str,
     matter_context: str = "",
     playbook_index: str = "",
     persona_voice: str = "",
+    jurisdictions: list[str] | None = None,
 ) -> str:
     """System prompt del nodo del grafo, compuesto con las 10 capas — sin MiaAgent.
 
@@ -483,9 +650,15 @@ def build_graph_system(
     CONTEXT, NO cacheado: la persona cambia por turno y no debe envenenar el prefijo
     estable). El rol colorea el tono; las reglas duras (L2 método, L3 citación) van ANTES
     y el propio bloque reitera que la voz no las relaja. Vacío → nodo idéntico a hoy.
+
+    `jurisdictions` (códigos de pack del despacho) alimenta L3. Si el caller no la pasa,
+    se busca en el estado (`jurisdictions`, o `metadata.research_jurisdictions`, que el
+    nodo de investigación ya deja escrito); si tampoco está, se emite la instrucción del
+    caso DESCONOCIDO — la restrictiva. Nunca se adivina un ordenamiento.
     """
     if node not in GRAPH_NODE_INSTRUCTIONS:
         raise ValueError(f"nodo desconocido para build_graph_system: {node!r}")
+    codes = jurisdictions if jurisdictions is not None else _state_jurisdictions(state)
     snapshot = state.get("soul_snapshot") if hasattr(state, "get") else None
     soul = str(((snapshot or {}).get("content")) or "").strip()
     from types import SimpleNamespace
@@ -518,6 +691,7 @@ def build_graph_system(
         matter_context=matter_context,                    # L7
         system_message=node_instruction,                  # L8 (voz de persona + tarea del nodo)
         memory_block=playbook_index,                      # L9
+        jurisdiction_codes=codes,                         # L3 (ordenamiento aplicable)
     )
     return build_system_prompt(agent)
 

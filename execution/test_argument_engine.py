@@ -382,10 +382,35 @@ def test_presupuesto() -> None:
           "sala" not in pb.GRAPH_NODE_INSTRUCTIONS["draft"].lower()
           and "dictamen" not in pb.GRAPH_NODE_INSTRUCTIONS["draft"].lower())
 
-    total = estimate_tokens(pb.build_graph_system({"soul_snapshot": None}, "draft"))
-    print(f"       (system del nodo `draft` completo, sin SOUL: {total} tokens)")
-    check(f"p5 · el system del borrador no se dispara ({total} tokens, tope 900)",
-          total < 900)
+    # p5 · RECALIBRADO (capa L3 "ordenamiento aplicable"). El tope de 900 se fijó cuando el
+    # system NO le decía al modelo bajo qué ordenamiento razona; con esa capa dentro el
+    # system del borrador mide ~1145. Se sube a 1200, y NO es debilitar el gate, por dos
+    # razones MEDIDAS (no supuestas) — ver la desagregación de abajo:
+    #   · COSTE POR TURNO: la capa entra al tier STABLE. Se comprobó con `pb.cache_split()`:
+    #     de los ~1145 tokens, ~974 caen en el prefijo y solo ~171 se pagan enteros en cada
+    #     turno. OJO — el prefijo solo se CACHEA de verdad en la política 'nube'
+    #     (`llm._ANTHROPIC_CACHE_ALIASES`); en 'suscripcion', 'openrouter' y 'soberano' la
+    #     tarea `main` resuelve a un alias sin caching y esos tokens se pagan enteros en
+    #     cada llamada. La conclusión se sostiene igual, pero por la OTRA razón, no por esta.
+    #   · CONSUMO DE CONTEXTO: la ventana real de producción es 200.000 tokens; 1145 es el
+    #     0,6%. El tope viejo no protegía un límite físico, era un freno a la deriva.
+    # El freno a la deriva se CONSERVA en dos puntos, y más fino que antes: el total sigue
+    # con techo (margen de ~5%, no cabe una capa nueva sin volver a discutirlo) y, sobre
+    # todo, la franja NO cacheada —la única que se paga a precio pleno en cada turno de
+    # cada especialista— queda con su propio techo estrecho. Meter texto en la franja cara
+    # ahora rompe el gate aunque el total quepa.
+    full = pb.build_graph_system({"soul_snapshot": None}, "draft")
+    total = estimate_tokens(full)
+    split = pb.cache_split(full)
+    cached_t = estimate_tokens(split[0]) if split else 0
+    uncached_t = estimate_tokens(split[1]) if split else total
+    print(f"       (system del nodo `draft` completo, sin SOUL: {total} tokens "
+          f"= {cached_t} cacheados + {uncached_t} por turno)")
+    check(f"p5 · el system del borrador no se dispara ({total} tokens, tope 1200 "
+          f"— recalibrado por la capa de ordenamiento aplicable)", total < 1200)
+    check(f"p5b · la franja NO cacheada del system (la que se paga entera en CADA turno) "
+          f"sigue chica ({uncached_t} tokens, tope 250)",
+          split is not None and uncached_t < 250)
 
 
 def main() -> int:

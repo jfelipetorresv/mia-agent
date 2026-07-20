@@ -552,6 +552,142 @@ def sin_perilla() -> None:
         _clear_caches()
 
 
+# ── (e) EL PROMPT · qué ordenamiento se le declara al modelo ──────────────────
+# Sentido distinto a los cuatro anteriores. Ahí "agnóstico" era del CÓDIGO (no cablear un
+# país); aquí es del MODELO: el prompt tiene que DECIRLE bajo qué ordenamiento razona, y
+# cuando no lo sabe, prohibirle rellenar el vacío con lo que más ha visto. Sin esta capa,
+# un despacho recién creado con jurisdicción 'generic' y cero documentos recibía articulado
+# de un país concreto, transcrito de memoria paramétrica y presentado como derecho aplicable
+# y como conocimiento del propio despacho.
+def jurisdiccion_en_el_prompt() -> None:
+    print("\n-- (e) el prompt le declara el ordenamiento al modelo --")
+    from mia.agent import prompt_builder as pb
+
+    packs = pack_mod.list_packs()
+    code = packs[0] if packs else None
+    nombre = pack_mod.load_pack(code).name if code else ""
+
+    sin = pb.build_jurisdiction_directive(None)
+    con = pb.build_jurisdiction_directive([code]) if code else ""
+
+    # 1 · La instrucción SE EMITE, y es la misma en las dos rutas de armado.
+    check("(e) sin jurisdicción: se emite la instrucción del caso DESCONOCIDO",
+          sin == pb.JURISDICTION_UNKNOWN and pb._JURISDICTION_HEADING in sin)
+    check("(e) la instrucción entra al prompt de TODOS los nodos del grafo",
+          all(pb._JURISDICTION_HEADING in pb.build_graph_system({}, n)
+              for n in pb.GRAPH_NODE_INSTRUCTIONS))
+    check("(e) la política de PROCEDENCIA (no inventar de dónde sale) va SIEMPRE, "
+          "haya o no jurisdicción",
+          pb.PROVENANCE_POLICY in pb.build_graph_system({}, "work")
+          and (not code or pb.PROVENANCE_POLICY in pb.build_graph_system(
+              {}, "work", jurisdictions=[code])))
+
+    # 2 · CAMBIA según haya o no jurisdicción configurada (el corazón del arreglo).
+    if code:
+        check("(e) con jurisdicción declarada la instrucción CAMBIA (no es la del "
+              "caso desconocido)",
+              con != sin and pb.JURISDICTION_UNKNOWN not in con)
+        check("(e) con jurisdicción declarada aparece el NOMBRE que trae el pack "
+              "(dato del despacho, no literal del código)",
+              nombre and nombre in con)
+        check("(e) con jurisdicción declarada NO se le prohíbe citar articulado "
+              "(Mia sigue sirviendo a su despacho)",
+              "no puedes deducirlo" not in con and "PROHIBIDO mientras no lo sepas" not in con)
+        check("(e) con jurisdicción declarada se exige declarar como EXTRANJERO/COMPARADO "
+              "el derecho de otro ordenamiento",
+              "extranjero o comparado" in con)
+        # El pack instalado hoy está `verified: false` → toda cita sale de memoria.
+        if not pack_mod.load_pack(code).verified:
+            check("(e) pack SIN verificar: se exige [VERIFICAR] en la misma línea",
+                  "[VERIFICAR] en la misma línea" in con)
+
+    # 3 · El caso desconocido prohíbe lo que el modelo hacía: articulado, transcripción,
+    #     corporaciones y bases normativas de un país, y "esto es el derecho aplicable".
+    for prohibido in ("un artículo, una ley, un decreto, un código",
+                      "transcribir el texto de una disposición",
+                      "bases de datos normativas de un país concreto",
+                      "'es' el derecho aplicable"):
+        check(f"(e) caso desconocido prohíbe expresamente: {prohibido[:46]}…",
+              prohibido in sin)
+    check("(e) caso desconocido manda razonar por INSTITUCIÓN jurídica, no por articulado",
+          "plano de la INSTITUCIÓN jurídica" in sin)
+    check("(e) caso desconocido manda PEDIR el ordenamiento como siguiente paso",
+          "bajo qué ordenamiento trabaja el despacho" in sin)
+    check("(e) caso desconocido cierra la escapatoria de 'lo marco y lo cito igual'",
+          "no se marca, se omite" in sin)
+    check("(e) procedencia: prohíbe atribuir al despacho lo que salió de la memoria",
+          "presentes tu propia memoria como material del despacho" in pb.PROVENANCE_POLICY)
+    check("(e) procedencia: exige la marca por línea, no un párrafo de cierre",
+          "Una sola marca al final para diez citas NO cumple" in pb.PROVENANCE_POLICY)
+
+    # 4 · De dónde salen los códigos: kwarg > state['jurisdictions'] > metadata.
+    if code:
+        base_sin = pb.build_graph_system({}, "work")
+        check("(e) los códigos llegan por `state['jurisdictions']`",
+              pb.build_graph_system({"jurisdictions": [code]}, "work") != base_sin)
+        check("(e) los códigos llegan por `metadata['research_jurisdictions']` "
+              "(lo que ya escribe el nodo de investigación)",
+              pb.build_graph_system(
+                  {"metadata": {"research_jurisdictions": [code]}}, "work") != base_sin)
+        check("(e) el kwarg explícito GANA sobre el estado",
+              pb.build_graph_system({"jurisdictions": [code]}, "work", jurisdictions=None)
+              != base_sin)
+
+    # 5 · FAIL-CLOSED: ante cualquier duda, la instrucción restrictiva. Nunca se adivina.
+    for etiqueta, codigos in (("None", None), ("lista vacía", []),
+                              ("['generic']", [pack_mod.GENERIC_CODE]),
+                              ("basura vacía", ["", "  ", None])):
+        check(f"(e) fail-closed con {etiqueta} → instrucción del caso desconocido",
+              pb.build_jurisdiction_directive(codigos) == pb.JURISDICTION_UNKNOWN)
+    check("(e) fail-closed: estado sin nada declarado → caso desconocido",
+          pb._state_jurisdictions({}) is None
+          and pb._state_jurisdictions({"metadata": {}}) is None
+          and pb._state_jurisdictions(object()) is None)
+
+    original_load = pack_mod.load_pack
+    try:
+        def _revienta(_code):
+            raise RuntimeError("pack ilegible (simulado)")
+        pack_mod.load_pack = _revienta
+        roto = pb.build_jurisdiction_directive(["xx"])
+        check("(e) fail-soft: con la capa de packs CAÍDA el prompt no revienta y la "
+              "jurisdicción declarada se respeta por su código",
+              pb._JURISDICTION_HEADING in roto and "XX" in roto)
+    finally:
+        pack_mod.load_pack = original_load
+
+    # 6 · Un código declarado SIN pack instalado sigue siendo declaración del despacho:
+    #     puede citar SU derecho (no se le castiga por no tener pack), pero sin verificar.
+    inedito = pb.build_jurisdiction_directive(["zz"])
+    check("(e) código declarado sin pack instalado: se respeta la declaración y se "
+          "marca como no verificado",
+          "ZZ" in inedito and "[VERIFICAR] en la misma línea" in inedito
+          and inedito != pb.JURISDICTION_UNKNOWN)
+
+    # 7 · CERO literales de país / corporación / base de datos EN EL CÓDIGO. Escribir
+    #     aquí el nombre de un país sería cometer el defecto que esta capa corrige.
+    fuente = (Path(pb.__file__).read_text(encoding="utf-8")).lower()
+    prohibidos = [
+        "colombia", "colombiano", "méxico", "mexico", "mexicano", "españa", "espana",
+        "español", "chile", "chileno", "argentina", "perú", "peru", "ecuador", "bolivia",
+        "venezuela", "uruguay", "paraguay", "panamá", "panama", "costa rica", "guatemala",
+        "honduras", "nicaragua", "salvador", "república dominicana", "cuba", "brasil",
+        "suin", "juriscol", "samai", "corte suprema", "corte constitucional",
+        "consejo de estado", "tribunal supremo", "código civil", "codigo civil",
+        "código de comercio", "constitución política", "tutela", "cpaca", "notariado",
+    ]
+    hallados = [p for p in prohibidos if p in fuente]
+    check(f"(e) prompt_builder.py NO contiene literales de país/corte/base normativa "
+          f"{'· hallados: ' + ', '.join(hallados) if hallados else ''}",
+          not hallados)
+
+    # 8 · Determinismo: la capa es texto puro, sin estado oculto (el prefijo STABLE del
+    #     prompt tiene que seguir siendo byte-estable entre turnos o se pierde el cache).
+    check("(e) la instrucción es determinista (mismo input → mismo texto)",
+          pb.build_jurisdiction_directive(None) == sin
+          and (not code or pb.build_jurisdiction_directive([code]) == con))
+
+
 def main() -> int:
     co_no_regression()
     universal_masking()
@@ -562,6 +698,7 @@ def main() -> int:
     fail_closed()
     role_declarado_no_suprime_respaldo()
     sin_perilla()
+    jurisdiccion_en_el_prompt()
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)
