@@ -155,6 +155,53 @@ MIA_RETRIEVAL_NEIGHBOR_RADIUS = int(os.getenv("MIA_RETRIEVAL_NEIGHBOR_RADIUS", "
 MIA_KNOWLEDGE_MIN_TOP_K = int(os.getenv("MIA_KNOWLEDGE_MIN_TOP_K", "4"))
 MIA_KNOWLEDGE_MAX_TOP_K = int(os.getenv("MIA_KNOWLEDGE_MAX_TOP_K", "10"))
 
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    """Bandera booleana de .env, tolerante con la forma en que la escriba un humano."""
+    return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on", "si", "sí")
+
+
+# --- Lectura AGÉNTICA del expediente (opt-in · APAGADA por defecto) --------------
+# Todo lo de arriba ADIVINA cuánto leer ANTES de leer: deriva un número de tres señales
+# y lo pide de una vez. Funciona, pero obliga a fijar una proporción (COVERAGE) que es un
+# compromiso entre la pregunta trivial (paga de más) y la difícil (lee de menos).
+#
+# DECISIÓN DEL DUEÑO (2026-07-20): "no se puede establecer como funciona Claude code o
+# codex? al fin y al cabo su motor sera uno de ellos". Esas herramientas no adivinan:
+# exponen la búsqueda como HERRAMIENTA y el modelo la invoca hasta tener lo suficiente.
+# Así la pregunta fácil cuesta poco porque el modelo no pide más, y la difícil lee lo que
+# necesite — el coste se ajusta solo y nadie fija una proporción.
+#
+# APAGADA POR DEFECTO y sin excepción: es código nuevo en el corazón del turno. Con la
+# bandera en 0 el turno es EXACTAMENTE el de hoy — `intake_node` ni siquiera construye el
+# bucle (una sola guarda `if config.MIA_AGENTIC_READING:` en el punto de llamada).
+MIA_AGENTIC_READING = _env_flag("MIA_AGENTIC_READING")
+# Tope duro de AMPLIACIONES por turno (rondas en las que el modelo pide más material).
+# La primera lectura NO cuenta: sigue siendo la de `plan_reading` (arrancar con las manos
+# vacías desperdicia un turno entero en pedir lo que ya sabemos que hace falta).
+# 0 desactiva el bucle aunque la bandera esté encendida.
+MIA_AGENTIC_READING_MAX_EXPANSIONS = int(
+    os.getenv("MIA_AGENTIC_READING_MAX_EXPANSIONS", "3"))
+# Presupuesto del BUCLE, como fracción del presupuesto del nodo consumidor. Es el techo de
+# la conversación de lectura (lo ya leído + lo que traiga cada ampliación). Al agotarse se
+# sigue con lo que haya: el bucle se corta, el turno JAMÁS se cae.
+MIA_AGENTIC_READING_BUDGET_FRACTION = float(
+    os.getenv("MIA_AGENTIC_READING_BUDGET_FRACTION", "0.50"))
+# Tope de fragmentos que puede traer UNA ampliación (el modelo propone, esto acota).
+MIA_AGENTIC_READING_MAX_TOP_K = int(os.getenv("MIA_AGENTIC_READING_MAX_TOP_K", "12"))
+# Cuántos pedir cuando el modelo no dice cuántos.
+MIA_AGENTIC_READING_DEFAULT_TOP_K = int(
+    os.getenv("MIA_AGENTIC_READING_DEFAULT_TOP_K", "8"))
+# `task` con el que se llama al modelo del bucle (elige la CADENA de proveedores en
+# agent/llm.py). Se deja configurable y no cableado porque el coste del bucle depende de
+# esto: una instalación puede apuntarlo a una tarea auxiliar barata sin tocar código. Un
+# task desconocido cae a la cadena de 'main' (resolve_fallback_chain), nunca falla.
+# AVISO MEDIDO, no supuesto: en la política 'suscripcion' (la de por defecto) la cadena
+# empieza por un alias `cli-*`, y `llm._invoke` DESCARTA las herramientas en esos aliases
+# (avisa por log). El modelo responde texto sin pedir nada y el bucle termina en la
+# primera ronda sin ampliar: correcto y fail-soft, pero el bucle NO aporta ahí.
+MIA_AGENTIC_READING_TASK = os.getenv("MIA_AGENTIC_READING_TASK", "main").strip() or "main"
+
 # Política de modelo POR DEFECTO (CP2 · decisión #27). Valores: "suscripcion" (CLI de
 # Claude Code del abogado, sin billing por API) · "nube" (API Anthropic vía proxy) ·
 # "soberano" (todo local en Ollama) · "openrouter" (CP-OR: la propia cuenta de OpenRouter

@@ -35,7 +35,9 @@ el gateway (decisión #3); las llamadas usan `call_llm(task=...)` (1a/1b).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
+import math
 import re
 import time
 from typing import Any, Callable, Optional
@@ -256,6 +258,84 @@ async def _read_matter_adaptive(tenant_id: str, matter_id: str, msg: str,
                 "(pedidos %s, candidatos %s, complejidad %.2f)",
                 len(docs), plan.n_chunks, plan.top_k, plan.candidates, plan.complexity)
     return docs
+
+
+def _expansion_plan(plan, top_k: int):
+    """Plan de UNA ampliación: el mismo plan del turno con otro tamaño de lectura.
+
+    Se derivan igual que en `plan_reading` el colchón de sobre-pedido, los candidatos del
+    RRF y el tope por pieza — para que lo que traiga una ampliación pase por exactamente
+    la misma tubería de calidad que la primera lectura (dedup, reparto por documento) y
+    no por un atajo. Lo único que cambia es CUÁNTO se pide, que aquí lo dice el modelo
+    en vez de derivarse del presupuesto.
+
+    Vuelve a aplicar el tope por ampliación aunque `parse_expansion_call` ya lo haya
+    aplicado, por el mismo criterio con el que `plan_reading` se defiende sola de lo que
+    hoy le garantiza su único llamador: un tope que solo se sostiene si nadie cambia el
+    orden de las llamadas no es una red, es una convención. Con un asunto de 620
+    fragmentos, sin esta línea un `cuantos` disparatado se convertiría en una lectura de
+    620 fragmentos en una sola ampliación.
+    """
+    top_k = max(1, min(int(top_k), max(1, config.MIA_AGENTIC_READING_MAX_TOP_K)))
+    if plan.n_chunks:
+        top_k = min(top_k, plan.n_chunks)
+    fetch_k = max(top_k, int(math.ceil(top_k * config.MIA_RETRIEVAL_OVERFETCH)))
+    if plan.n_chunks:
+        fetch_k = min(fetch_k, max(plan.n_chunks, top_k))
+    candidates = int(math.ceil(fetch_k * config.MIA_RETRIEVAL_CANDIDATE_MULTIPLIER))
+    candidates = max(config.MIA_RETRIEVAL_MIN_CANDIDATES,
+                     min(candidates, config.MIA_RETRIEVAL_MAX_CANDIDATES))
+    max_per_document = max(
+        2, int(math.ceil(top_k * config.MIA_RETRIEVAL_MAX_PER_DOCUMENT_FRACTION)))
+    return dataclasses.replace(plan, top_k=top_k, fetch_k=fetch_k,
+                               candidates=candidates,
+                               max_per_document=max_per_document)
+
+
+async def _read_matter_agentic(tenant_id: str, matter_id: str, msg: str,
+                               qvec: list[float], plan) -> tuple[list[dict], Optional[dict]]:
+    """Lee el expediente y, SI la instalación lo activó, deja que el modelo pida más.
+
+    Devuelve (documentos, traza) donde la traza es None cuando la lectura agéntica está
+    apagada — que es el default y el único estado en el que este producto ha vivido hasta
+    hoy. CON LA BANDERA APAGADA lo único que ocurre de más es evaluar un booleano: los
+    documentos son, byte por byte, los que devolvía `_read_matter_adaptive`. Eso no es
+    una promesa de comentario, es la forma del código: el `return` de abajo está antes de
+    cualquier otra cosa.
+
+    Con la bandera encendida la primera lectura NO cambia (sigue siendo la de
+    `plan_reading`): lo agéntico son las AMPLIACIONES. Ver `retrieval.agentic_expand`.
+    """
+    docs = await _read_matter_adaptive(tenant_id, matter_id, msg, qvec, plan)
+    if not config.MIA_AGENTIC_READING:
+        return docs, None
+
+    async def _read_more(query: str, top_k: int) -> list[dict]:
+        """La puerta a la base que se le presta al modelo: la MISMA tubería de siempre.
+
+        Cada ampliación embebe SU PROPIA consulta (una llamada más a embeddings): buscar
+        el material que falta con el vector de la pregunta original traería otra vez lo
+        mismo — es justo lo que el modelo está diciendo que no le sirve. Si el embedding
+        falla se reutiliza el vector del turno: peor búsqueda, nunca un turno caído.
+        """
+        try:
+            vecs = await asyncio.to_thread(embeddings.embed_texts, [query])
+            qv = vecs[0] if vecs else qvec
+        except Exception:  # noqa: BLE001
+            logger.warning("lectura agéntica: no se pudo embeber la ampliación; se "
+                           "reutiliza el vector del turno", exc_info=True)
+            qv = qvec
+        return await _read_matter_adaptive(tenant_id, matter_id, query, qv,
+                                           _expansion_plan(plan, top_k))
+
+    budget = int(max(1, _retrieval_budget_tokens()
+                     * config.MIA_AGENTIC_READING_BUDGET_FRACTION))
+    docs, trace = await retrieval.agentic_expand(msg, docs, read_more=_read_more,
+                                                 budget_tokens=budget)
+    logger.info("lectura agéntica: %s ampliaciones, %s fragmentos nuevos, corte por '%s' "
+                "(%s/%s tokens del bucle)", trace.get("expansions"), trace.get("added"),
+                trace.get("stop"), trace.get("tokens_spent"), trace.get("budget_tokens"))
+    return docs, trace
 
 
 def _last_user_message(state: MatterState) -> str:
@@ -1063,11 +1143,16 @@ class MatterGraphBuilder:
         stats = await retrieval.matter_chunk_stats(state["tenant_id"], state["matter_id"])
         plan = None
         docs: list[dict] = []
+        # LECTURA AGÉNTICA (opt-in, `MIA_AGENTIC_READING`): tras la primera lectura el
+        # modelo puede PEDIR más material en vez de que nadie adivine un número. Apagada
+        # —el default— `_read_matter_agentic` devuelve exactamente lo de siempre y una
+        # traza vacía (None). Ver el bloque de `retrieval.agentic_expand`.
+        agentic: Optional[dict] = None
         if stats.get("n_chunks"):
             vecs = await asyncio.to_thread(embeddings.embed_texts, [msg])
             qvec = vecs[0] if vecs else [0.0] * config.EMBED_DIM
             plan = retrieval.plan_reading(stats, msg, _retrieval_budget_tokens())
-            docs = await _read_matter_adaptive(
+            docs, agentic = await _read_matter_agentic(
                 state["tenant_id"], state["matter_id"], msg, qvec, plan)
         # CP3 (Riesgo #16): conocimiento del despacho (knowledge_chunks). Se REUSA el
         # embedding del mensaje si ya se generó para el expediente (cero llamadas extra
@@ -1093,6 +1178,13 @@ class MatterGraphBuilder:
         # contexto (intake) y viaja por metadata para que analysis/draft comprriman UNA sola vez.
         md.setdefault("llm_turn", TurnLLMState().to_dict())
         md.update(stage="intake", retrieved=len(docs))
+        # Trazabilidad de la lectura agéntica: cuántas ampliaciones pidió el modelo, con
+        # qué consulta y motivo, cuánto material nuevo entró y por qué se detuvo. Sin ella
+        # no se puede MEDIR después si de verdad cuesta menos, que es el argumento entero
+        # del cambio. Solo se escribe cuando el bucle corrió (bandera encendida): apagada,
+        # la metadata del turno queda idéntica a la de hoy.
+        if agentic is not None:
+            md["agentic_reading"] = agentic
         # Revisión CP3: el conteo se escribe SIEMPRE que el tenant tenga conocimiento
         # indexado (aunque este turno recupere 0 notas) y se LIMPIA cuando no lo tiene
         # — así nunca persiste el conteo de un turno anterior en la metadata.
