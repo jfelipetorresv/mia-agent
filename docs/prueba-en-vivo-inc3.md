@@ -109,6 +109,11 @@ Todo pasa **dentro de un asunto**: entra a un asunto (o crea uno) y súbele docu
   > **~1 minuto**. Durante esa espera el navegador puede mostrar ese mismo `ChunkLoadError` (se
   > cansa de esperar). No refresques en bucle: espera a que el log diga `✓ Compiled / in ...s` y
   > recién ahí refresca — a partir de ahí carga en menos de un segundo.
+  > SI EL ERROR PERSISTE aunque el servidor ya responda: es el **caché del navegador**, no MIA
+  > (compruébalo pidiendo el archivo que falla: si devuelve 200, el servidor está bien). El
+  > `Ctrl+Shift+R` no siempre basta porque la pestaña arrastra el estado viejo. Abre
+  > **`http://127.0.0.1:3100`** en vez de `http://localhost:3100`: es la misma MIA pero otro
+  > origen para el navegador, así que entra con caché limpio. Alternativa: ventana de incógnito.
 - **"Conectar carpeta" no hace nada / "no se pudo vincular"** → casi siempre es que el **cerebro
   (8000) está apagado**: el explorador de carpetas recorre tu disco *a través* del servidor local
   de MIA. No es un fallo del programa ni una limitación del navegador; enciende MIA y reintenta.
