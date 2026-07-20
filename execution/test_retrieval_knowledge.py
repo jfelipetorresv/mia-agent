@@ -287,8 +287,10 @@ def run_db_checks(ids: dict, obs: dict) -> None:
     check("a9 · la nota del método está en el prompt (contenido + ruta)",
           "término de dos años" in up and "metodos/caducidad.md" in up)
     check("a10 · el expediente sigue presente (los docs no se desplazan)",
-          # CP-S1: los documentos van sellados (<<<DOC n>>>) en vez de "[doc n]".
-          "<<<DOC 1>>>" in up and "Demanda de reparación directa" in up)
+          # CP-S1: los documentos van sellados (<<<DOC n ...>>>) en vez de "[doc n]".
+          # El sello ahora puede traer la procedencia (<<<DOC 1 · archivo.pdf · folio 3>>>)
+          # para que Mia pueda citar por nombre y folio: se compara el PREFIJO.
+          "<<<DOC 1" in up and "Demanda de reparación directa" in up)
 
     print("\n-- b · AISLAMIENTO: B nunca ve el knowledge de A --")
     kb = obs["kb"]

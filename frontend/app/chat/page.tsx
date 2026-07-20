@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { apiGet, streamPost, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import MiaMarkdown from "@/components/MiaMarkdown";
 import { cn } from "@/lib/utils";
 
 type Conversation = { id: string; title: string; updated_at: string };
@@ -325,16 +326,22 @@ export default function ChatPage() {
                     className={
                       m.role === "user"
                         ? "max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
-                        : "max-w-[80%] whitespace-pre-wrap pt-1 font-serif text-[15px] leading-relaxed text-foreground"
+                        : "max-w-[80%] pt-1 font-serif text-[15px] leading-relaxed text-foreground"
                     }
                   >
                     {m.content ? (
-                      <>
-                        {m.content}
-                        {typing && i === lastIdx ? (
-                          <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-primary" aria-hidden />
-                        ) : null}
-                      </>
+                      m.role === "assistant" ? (
+                        <MiaMarkdown
+                          text={m.content}
+                          trailing={
+                            typing && i === lastIdx ? (
+                              <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-primary" aria-hidden />
+                            ) : null
+                          }
+                        />
+                      ) : (
+                        m.content
+                      )
                     ) : (
                       <ThinkingDots />
                     )}

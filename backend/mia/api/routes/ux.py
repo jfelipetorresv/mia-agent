@@ -1369,10 +1369,21 @@ async def wiki_concepts(request: Request):
 @router.get("/wiki/concepts/{concept_name}")
 async def wiki_concept(concept_name: str, request: Request):
     tid = _tenant(request)
-    content = await WikiManager().get_concept(tid, concept_name)
-    if content is None:
+    # El abogado ve el contenido, no el archivo: `markdown` viaja SIN el
+    # frontmatter YAML. Los metadatos (confianza, respaldo, fecha) van como
+    # campos aparte y aditivos — la clave `markdown` conserva su nombre.
+    view = await WikiManager().get_concept_view(tid, concept_name)
+    if view is None:
         raise HTTPException(status_code=404, detail="Concepto no encontrado")
-    return {"concept": concept_name, "markdown": content}
+    return {
+        "concept": concept_name,
+        "markdown": view["body"],
+        "confidence": view["confidence"],
+        "case_count": view["case_count"],
+        "support_count": view["support_count"],
+        "contra_count": view["contra_count"],
+        "last_updated": view["last_updated"],
+    }
 
 
 class WikiFeedbackBody(BaseModel):

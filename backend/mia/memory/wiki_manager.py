@@ -593,6 +593,30 @@ class WikiManager:
             return None
         return path.read_text(encoding="utf-8")
 
+    async def get_concept_view(self, tenant_id: str, concept_name: str) -> dict | None:
+        """Ficha del concepto lista para mostrársela al abogado.
+
+        `get_concept` devuelve el archivo tal cual (frontmatter YAML incluido):
+        eso sirve para el motor, no para la pantalla. Aquí se separa: el CUERPO
+        del markdown por un lado y los metadatos por otro, reusando el mismo
+        `_parse_frontmatter` del resto del módulo. Así la pantalla nunca enseña
+        tripas del archivo.
+        """
+        text = await self.get_concept(tenant_id, concept_name)
+        if text is None:
+            return None
+        meta, body = _parse_frontmatter(text)
+        return {
+            "name": str(meta.get("concept") or concept_name),
+            "body": body.strip(),
+            "confidence": float(meta.get("confidence") or 0.0),
+            "case_count": int(meta.get("case_count") or 0),
+            "last_updated": str(meta.get("last_updated") or ""),
+            "support_count": float(meta.get("support_count") or 0.0),
+            "contra_count": float(meta.get("contra_count") or 0.0),
+            "wiki_schema": int(meta.get("wiki_schema") or 0),
+        }
+
     async def list_concepts(self, tenant_id: str) -> list[dict]:
         await self.init_wiki(tenant_id)
         out: list[dict] = []

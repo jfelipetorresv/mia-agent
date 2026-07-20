@@ -18,25 +18,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import CitationReview, { type Verification } from "../../../_components/CitationReview";
+import { renderInline } from "@/components/MiaMarkdown";
 
 type DraftResponse = { draft: string; verification?: Verification | null };
 
-// Resalta los marcadores [VERIFICAR…]: son la señal de "esto lo confirmas tú".
+// El resaltado de [VERIFICAR…] —la señal de "esto lo confirmas tú"— vive en
+// MiaMarkdown y es el MISMO en todo el producto: borrador, sala de estrategia y
+// conversación. No duplicar aquí: si diverge, el gate de citas se rompe visualmente.
 function renderDraft(text: string) {
-  const parts = text.split(/(\[VERIFICAR[^\]]*\])/g);
-  return parts.map((p, i) =>
-    p.startsWith("[VERIFICAR") ? (
-      <mark
-        key={i}
-        title="Verificar antes de presentar"
-        className="rounded bg-warning/20 px-1 font-sans text-sm font-medium text-warning"
-      >
-        {p}
-      </mark>
-    ) : (
-      <span key={i}>{p}</span>
-    ),
-  );
+  return renderInline(text, "draft");
 }
 
 // El abogado debe verificar TODA cita con la marca [VERIFICAR] en el borrador

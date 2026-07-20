@@ -33,6 +33,7 @@ import CierreDialog, { type CierreResult } from "./_components/CierreDialog";
 import DocumentosPorConfirmarDialog from "./_components/DocumentosPorConfirmarDialog";
 import type { DebateTurn, Panelist, WarRoomResult } from "./_components/warroom-types";
 import { Button } from "@/components/ui/button";
+import MiaMarkdown from "@/components/MiaMarkdown";
 import {
   Dialog,
   DialogContent,
@@ -750,10 +751,14 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
                   className={
                     m.role === "user"
                       ? "max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
-                      : "max-w-[75%] whitespace-pre-wrap pt-1 font-serif text-[15px] leading-relaxed text-foreground"
+                      : "max-w-[75%] pt-1 font-serif text-[15px] leading-relaxed text-foreground"
                   }
                 >
-                  {m.text || <ThinkingDots />}
+                  {m.text ? (
+                    m.role === "mia" ? <MiaMarkdown text={m.text} /> : m.text
+                  ) : (
+                    <ThinkingDots />
+                  )}
                 </div>
               </div>
             ))

@@ -28,6 +28,7 @@ import { apiGet, apiSend, apiUploadMany, ApiError, plainMessage } from "@/lib/ap
 import GuideInterviewWizard from "../_components/GuideInterviewWizard";
 import MiDespachoSection from "../_components/MiDespachoSection";
 import { Button } from "@/components/ui/button";
+import MiaMarkdown from "@/components/MiaMarkdown";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -198,8 +199,8 @@ function Wiki() {
             </DialogDescription>
           </DialogHeader>
           {markdown ? (
-            <div className="whitespace-pre-wrap rounded-lg bg-muted/50 p-4 font-serif text-sm leading-relaxed text-foreground">
-              {markdown}
+            <div className="rounded-lg bg-muted/50 p-4 font-serif text-sm leading-relaxed text-foreground">
+              <MiaMarkdown text={markdown} />
             </div>
           ) : (
             <div className="space-y-2 rounded-lg bg-muted/50 p-4">

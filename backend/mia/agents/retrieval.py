@@ -63,9 +63,10 @@ fused AS (
   FROM (SELECT id, rnk FROM vec UNION ALL SELECT id, rnk FROM fts) u
   GROUP BY id
 )
-SELECT c.id, c.content, f.score
+SELECT c.id, c.content, f.score, d.filename, c.folio_ancla
 FROM fused f
 JOIN chunks c ON c.id = f.id
+JOIN documents d ON d.id = c.document_id
 ORDER BY f.score DESC
 LIMIT %(topk)s
 """
@@ -82,8 +83,16 @@ async def retrieve_rrf(
 ) -> list[dict]:
     """Recupera los `top_k` chunks más relevantes del asunto por RRF (vector+FTS).
 
-    Devuelve [{id, content, score}], ya filtrado por tenant (RLS) y por asunto.
-    Lista vacía si el asunto no tiene chunks indexados todavía.
+    Devuelve [{id, content, score, filename, folio_ancla}], ya filtrado por tenant
+    (RLS) y por asunto. Lista vacía si el asunto no tiene chunks indexados todavía.
+
+    Fase 1 · PROCEDENCIA: el extracto viaja con SU ORIGEN (archivo del que salió y
+    folio de anclaje, migración 045). Sin eso el fragmento llegaba ANÓNIMO al prompt
+    y Mia no podía nombrar la pieza ni anclar el folio al citarla. `folio_ancla` es
+    NULL en las fuentes sin paginación: se propaga como None y NO se imprime (nunca
+    se inventa un folio). El JOIN a `documents` es INNER y no pierde filas
+    (chunks.document_id y documents.filename son NOT NULL) ni afloja el aislamiento:
+    RLS sigue activo sobre ambas tablas bajo tenant_connection.
     """
     args = {
         "qvec": _vector_literal(query_vec),
@@ -95,7 +104,8 @@ async def retrieve_rrf(
     }
     async with pool.tenant_connection(tenant_id) as conn:
         rows = await (await conn.execute(_RRF_SQL, args)).fetchall()
-    return [{"id": str(r[0]), "content": r[1], "score": float(r[2])} for r in rows]
+    return [{"id": str(r[0]), "content": r[1], "score": float(r[2]),
+             "filename": r[3], "folio_ancla": r[4]} for r in rows]
 
 
 # ── Conocimiento del despacho (CP3 · Riesgo #16) ─────────────────────────────

@@ -1418,14 +1418,25 @@ class MatterGraphBuilder:
         mensaje actual y de las fuentes, para que el modelo no confunda charla pasada
         con evidencia del expediente. NO toca `retrieval_query`/intake_node: ese sigue
         usando el mensaje limpio (ver _last_user_message arriba en intake_node).
+
+        Conocimiento del despacho: intake_node lo recupera (y se PAGA el embedding +
+        el RRF) para TODO turno, asunto o proyecto, pero hasta aquí el grafo de
+        proyecto no lo entregaba al modelo — mientras L7 (_matter_context_for) sí le
+        AFIRMABA que había notas internas disponibles. Se renderiza con la MISMA
+        función y el mismo presupuesto que analysis_node (_render_knowledge, ≤15% de
+        la ventana) y se recorta primero en el shrink, por el mismo motivo: las notas
+        orientan el método, la evidencia del expediente es insustituible.
         """
         msg = _last_user_message(state)
         docs = state.get("documents") or []
+        knowledge = state.get("knowledge") or []
         history = state.get("history") or []
         history_txt = _render_project_history(history)
         md = dict(state.get("metadata") or {})
+        # Sin knowledge devuelve '' → el prompt del proyecto queda byte a byte como antes.
+        know_txt = _render_knowledge(knowledge, config.MIA_CONTEXT_WINDOW)
 
-        def _messages(doc_list: list) -> list[dict]:
+        def _messages(doc_list: list, know_section: str = know_txt) -> list[dict]:
             # CP-S1: documentos sellados (<<<DOC n>>>) igual que en facts_node/analysis_node.
             # render_documents ya trae su propio marcador "sin documentos" cuando doc_list
             # está vacía (byte a byte igual que facts/analysis en ese caso).
@@ -1435,17 +1446,32 @@ class MatterGraphBuilder:
                 parts.append(f"Conversación reciente de este proyecto:\n{history_txt}")
             parts.append(f"Mensaje del abogado:\n{msg}")
             parts.append(f"Fuentes conectadas al proyecto:\n{ctx}")
+            if know_section:
+                parts.append(know_section)
             return [
+                # L7 se calcula con el material de ESTA pasada: si el shrink quitó el
+                # knowledge, el contexto NO puede seguir prometiendo notas del despacho.
                 {"role": "system", "content": prompt_builder.build_graph_system(
                     state, "work", matter_context=_matter_context_for(
-                        {"documents": doc_list, "knowledge": state.get("knowledge") or []}),
+                        {"documents": doc_list,
+                         "knowledge": knowledge if know_section else []}),
                     persona_voice=_persona_voice(state))},
                 {"role": "user", "content": "\n\n".join(parts)},
             ]
 
         def _shrink() -> list[dict]:
+            # Mismo orden que analysis_node: primero se vacía el knowledge (queda solo
+            # el marcador); si con eso el prompt cabe HOLGADO, los documents quedan
+            # INTACTOS. Si no, se recortan TAMBIÉN en esta misma pasada — la compresión
+            # es una sola por turno y no puede quemarse en una reducción insuficiente.
+            know_small = context_recovery.KNOWLEDGE_TRIMMED_MARKER if know_txt else ""
+            if know_txt:
+                reduced = _messages(docs, know_small)
+                est = sum(estimate_tokens(str(m.get("content") or "")) for m in reduced)
+                if est <= int(config.MIA_CONTEXT_WINDOW * SHRINK_EARLY_EXIT_FRACTION):
+                    return reduced
             budget = context_recovery.budget_for("work", config.MIA_CONTEXT_WINDOW)
-            return _messages(context_recovery.shrink_documents(docs, budget))
+            return _messages(context_recovery.shrink_documents(docs, budget), know_small)
 
         reply, usage = await self._llm(
             _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="work",
