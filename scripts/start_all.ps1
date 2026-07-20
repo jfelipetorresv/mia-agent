@@ -16,7 +16,10 @@ function Start-Part($name, $script, $port) {
   } else {
     Write-Host ("[encendiendo]  {0} (puerto {1})..." -f $name, $port)
     # Comillas explicitas: la ruta contiene espacios y -ArgumentList no cita solo.
-    Start-Process powershell -ArgumentList '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f (Join-Path $root $script))
+    # -NoProfile: no carga el perfil del usuario (arranque instantaneo, sin el aviso
+    #   "Cargar los perfiles... tardo Nms"). -WindowStyle Minimized: no asusta con
+    #   ventanas negras a pantalla (siguen en la barra de tareas; cierralas para apagar).
+    Start-Process powershell -WindowStyle Minimized -ArgumentList '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f (Join-Path $root $script))
   }
 }
 
