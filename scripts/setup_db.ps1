@@ -9,17 +9,35 @@ if (Test-Path $pgBin) { $env:Path = "$pgBin;$env:Path" }
 
 Set-Location $root
 
-# Verificar que pgvector este en el servidor antes de init_db.
-$pgBin = 'C:\Program Files\PostgreSQL\16\bin\psql.exe'
-if (Test-Path $pgBin) {
-    $check = & $pgBin -h 127.0.0.1 -U postgres -d postgres -tAc "SELECT 1 FROM pg_available_extensions WHERE name='vector'" 2>$null
-    if (-not ($check -match '1')) {
-        Write-Host ''
-        Write-Host 'ERROR: la extension pgvector no esta instalada en PostgreSQL 16.'
-        Write-Host 'Ejecuta como ADMIN:'
-        Write-Host "  & `"$root\scripts\install_pgvector.cmd`""
-        exit 1
-    }
+# Verificar que pgvector este en el servidor que REALMENTE se va a usar.
+# ANTES: se consultaba el PostgreSQL del SISTEMA con ruta fija (C:\Program Files\...\psql.exe)
+# y su puerto por defecto (5432). Si la instalacion usa la base PORTABLE (PG_PORT del .env,
+# p.ej. 55432), ese chequeo miraba la base EQUIVOCADA y abortaba las migraciones con
+# 'pgvector no esta instalada' aunque si lo estuviera (falsa alarma reproducida 2026-07-19).
+# AHORA: se consulta la base configurada en .env, con el mismo venv que corre las migraciones.
+# Si no se puede verificar, NO bloquea (fail-open con aviso): init_db dara el error real.
+& $py -c @"
+import os, sys
+from pathlib import Path
+import psycopg
+from dotenv import load_dotenv
+load_dotenv(Path(r'$root') / '.env')
+try:
+    with psycopg.connect(host=os.getenv('PG_HOST','127.0.0.1'), port=os.getenv('PG_PORT','5432'),
+        dbname=os.getenv('PG_DB','mia'), user='postgres', password=os.getenv('PG_PASSWORD',''),
+        connect_timeout=8, autocommit=True) as conn:
+        ok = conn.execute("SELECT 1 FROM pg_available_extensions WHERE name='vector'").fetchone()
+    sys.exit(0 if ok else 2)
+except Exception as e:
+    print('AVISO: no se pudo verificar pgvector (' + type(e).__name__ + '); se continua.')
+    sys.exit(0)
+"@
+if ($LASTEXITCODE -eq 2) {
+    Write-Host ''
+    Write-Host 'ERROR: la extension pgvector no esta disponible en la base configurada en .env.'
+    Write-Host 'Ejecuta como ADMIN:'
+    Write-Host "  & `"$root\scripts\install_pgvector.cmd`""
+    exit 1
 }
 
 Write-Host '== init_db =='
