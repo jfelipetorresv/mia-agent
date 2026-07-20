@@ -22,6 +22,14 @@ def check(name: str, ok: bool) -> None:
     print(("  [OK]   " if ok else "  [FAIL] ") + name)
 
 
+def sin_comentarios(src: str) -> str:
+    """El código fuente sin comentarios de línea — o sea, aproximadamente lo que el
+    abogado PUEDE llegar a ver. Los checks de promesas y de jerga se hacen sobre esto:
+    un comentario puede (y debe) nombrar los datos provisionales para explicar por qué
+    NO se prometen; lo que no puede es que esa palabra llegue a la pantalla."""
+    return "\n".join(re.sub(r"(?<!:)//.*", "", line) for line in src.split("\n"))
+
+
 def main() -> int:
     print("== Onboarding horizontal ==")
     onboarding = (ROOT / "frontend" / "app" / "onboarding" / "page.tsx").read_text(encoding="utf-8")
@@ -61,6 +69,40 @@ def main() -> int:
           and onboarding.count("¿Con las reglas jurídicas de qué país trabaja tu despacho?") == 1)
     check("la selección de país auto-llena jurisdiction.base (nombres) además de jurisdictions (códigos)",
           'soulResponses["jurisdiction.base"]' in onboarding and "COUNTRY_NAME_BY_CODE" in onboarding)
+
+    # ── LA LISTA NO PROMETE SOLA (defecto corregido 2026-07-20) ───────────────────────
+    # Las 21 casillas se veían idénticas y no consultaban nada: un despacho chileno marcaba
+    # "Chile" creyendo que Mia traía el derecho chileno adentro, cuando el único paquete
+    # instalado es 'co'. La lista de 21 es una comodidad para no escribir el país a mano,
+    # NO un catálogo de capacidades. Estos cuatro checks impiden que vuelva a serlo.
+    selector_visible = sin_comentarios(country_selector)
+    check("el selector consulta la verdad al servidor (GET /api/jurisdictions), no la supone",
+          "/api/jurisdictions" in selector_visible)
+    # La marca se DERIVA de la respuesta. Si alguien vuelve a cablear qué países van
+    # marcados, aparecerá un código de país de dos letras fuera de COUNTRY_OPTIONS.
+    codigos_lista = set(re.findall(r'code:\s*"([a-z]{2})"', country_selector))
+    codigos_sueltos = set(re.findall(r'"([a-z]{2})"', country_selector))
+    check("la marca de país preparado NO es un literal cableado (se deriva de la respuesta)",
+          codigos_sueltos == codigos_lista and "prepared" in selector_visible
+          and "COUNTRY_OPTIONS" in country_selector)
+    # Fail-soft: un fallo de red no puede dejar a nadie sin poder darse de alta (ese
+    # bloqueante ya se cometió una vez). apiGetSoft nunca lanza, y el estado "unknown"
+    # existe para callar en vez de afirmar que no hay material para ningún país.
+    check("si la consulta falla, el paso sigue y no se afirma nada (fail-soft)",
+          "apiGetSoft" in selector_visible and '"unknown"' in selector_visible
+          and '"/api/jurisdictions", null' in selector_visible)
+    # Lo prometido tiene que caber en lo que el paquete 'co' trae DE VERDAD: fuentes
+    # oficiales (corpus_sources), forma de citar (citation_style) y marcadores de
+    # documento. Festivos y términos son PROVISIONALES (`_complete: false`) y el
+    # resolutor de plazos ni siquiera está cableado a ellos: prometerlos sería mentira
+    # con consecuencia procesal. Y nada de jerga técnica en pantalla (§G).
+    promesas_prohibidas = ("festivo", "plazo", "término procesal", "vencimiento",
+                           "calcul", "jurisprudencia de tu país")
+    check("no promete festivos ni cálculo de plazos (esos datos son provisionales)",
+          not any(x in selector_visible.lower() for x in promesas_prohibidas))
+    check("el texto del país no usa jerga técnica (paquete/pack/corpus/instalado)",
+          not any(x in selector_visible.lower()
+                  for x in ("pack", "corpus", "instalad", "paquete", "jurisdiction pack")))
     # LA SALIDA. Sin esto, un despacho de un país que no está entre las casillas no puede
     # terminar el alta — cierra mercados enteros y choca de frente con la regla dura del
     # producto. Se exige la vía completa: campo libre + que baste para avanzar + que el

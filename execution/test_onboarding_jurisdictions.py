@@ -18,6 +18,7 @@ tienen paquete jurídico instalado (insignia "Conocimiento jurídico profundo").
 from __future__ import annotations
 import asyncio
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -99,6 +100,20 @@ def main() -> int:
     check("insignias incluyen el pack 'co'", "co" in codes)
     check("insignias incluyen 'generic' (modo genérico)", GENERIC_CODE in codes)
     check("el API NO anuncia paquete para países sin pack (p. ej. 'ar' no instalado)", "ar" not in codes)
+
+    # 1c · CORRESPONDENCIA UI ↔ REALIDAD (defecto 2026-07-20). El selector marca los países
+    # preparados con lo que devuelve este API, así que un pack instalado cuyo código NO
+    # tenga casilla en COUNTRY_OPTIONS sería trabajo hecho que el abogado no puede elegir
+    # nunca (y quedaría marcado como "sin material" siendo mentira). Al revés también
+    # importa: 'generic' no es un país y jamás debe tener casilla.
+    selector = (ROOT / "frontend" / "app" / "_components" / "CountrySelector.tsx").read_text(encoding="utf-8")
+    ui_codes = set(re.findall(r'code:\s*"([a-z]{2})"', selector))
+    faltantes = [c for c in list_packs() if c not in ui_codes]
+    check(f"todo país con material tiene casilla en el selector (faltan: {faltantes or 'ninguno'})",
+          not faltantes)
+    check("'generic' no se pinta como si fuera un país", GENERIC_CODE not in ui_codes)
+    # El selector tiene que LEER este endpoint: si deja de hacerlo, vuelve a prometer solo.
+    check("el selector consulta este endpoint en vez de suponer", "/api/jurisdictions" in selector)
 
     # 1b · país sin pack elegible con gracia: load_pack degrada a genérico, no revienta
     check("load_pack('ar') sin pack instalado cae al modo genérico (fail-soft)",
