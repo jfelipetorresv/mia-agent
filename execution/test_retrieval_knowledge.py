@@ -132,8 +132,41 @@ def install(script: dict[str, list]) -> FakeCompletions:
     return fc
 
 
+def content_text(msg: dict) -> str:
+    """Texto REAL que el modelo recibe en `msg`, venga como string o como bloques.
+
+    Desde que el prefix caching de Anthropic quedó CABLEADO (commit e8ce3b3),
+    `llm._messages_with_cache` reemplaza —solo para los aliases directos de Anthropic, que
+    son justamente la cadena de este gate: `set_model_policy("nube")` → claude-sonnet— el
+    `content` del system de un `str` por una LISTA de bloques con `cache_control`. El
+    cliente falso se instala en `llm._client`, es decir POR DEBAJO de esa transformación,
+    así que lo que queda en `messages_seen` es la lista, no el string. (Sonda: este gate
+    registra 10 conversiones reales por corrida.)
+
+    Concatenar los bloques reconstruye el system BYTE A BYTE — es el invariante que
+    `prompt_builder.cache_split` declara (`prefijo + resto == system_text`); el marcado de
+    caché es metadata que el modelo no renderiza. Falla en seguro ante una forma
+    inesperada: devuelve texto vacío o su `str()`, nunca algo que haga pasar una aserción
+    de presencia por accidente.
+    """
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "".join(str(b.get("text") or "") for b in c if isinstance(b, dict))
+    return str(c or "")
+
+
 def toks(messages: list[dict]) -> int:
-    return sum(estimate_tokens(str(m.get("content") or "")) for m in messages)
+    # Sobre el TEXTO reconstruido, no sobre el `str()` de la lista de bloques: ese repr
+    # añade las llaves, las comillas, los `cache_control` y escapa cada salto de línea,
+    # de modo que se estaría midiendo el CONTENEDOR y no el prompt. Medido: infla 37
+    # tokens por mensaje-system. Hoy el sesgo es el mismo en los dos prompts de e3 y se
+    # cancela, pero se cancela por casualidad: basta con que una pasada salga por un
+    # alias con caché (lista) y la otra por uno sin caché —mia-local, el eslabón
+    # siguiente de la cadena de fallback— para que el sesgo deje de ser simétrico y e3
+    # dictamine sobre una diferencia que no existe (o esconda una que sí).
+    return sum(estimate_tokens(content_text(m)) for m in messages)
 
 
 # ── datos de prueba ──────────────────────────────────────────────────────────
@@ -323,11 +356,9 @@ def run_db_checks(ids: dict, obs: dict) -> None:
     # se transporta como 2 bloques de content con `cache_control` (habilita el prefix
     # caching) cuya CONCATENACIÓN reconstruye el string de 10 capas byte a byte. La
     # garantía de no-regresión es el TEXTO que ve el modelo, no la forma de transporte.
-    def _content_text(content):
-        if isinstance(content, str):
-            return content
-        return "".join(b.get("text", "") for b in content)
-    got_sys_text = _content_text(got_sys)
+    # Se usa el `content_text` del módulo (el mismo que emplea `toks`): una sola forma de
+    # leer el content en toda la suite, en vez de dos reconstrucciones que pueden divergir.
+    got_sys_text = content_text(obs["c_messages"][0])
     check("c3 · system prompt determinista = fachada de 10 capas (byte a byte)",
           got_sys_text == expected_system and graph_mod.ANALYSIS_SYSTEM in got_sys_text)
     # c3b · el prefijo estable quedó marcado para el prefix caching (claude-* → bloques
