@@ -3,6 +3,8 @@
 // rojo al grabar y el spinner al transcribir van acompañados de su etiqueta.
 "use client";
 
+import { Loader2, Mic } from "lucide-react";
+
 import type { DictationState } from "../../lib/useDictation";
 
 const LABELS: Record<DictationState, string> = {
@@ -30,44 +32,24 @@ export default function MicButton({
         aria-label={LABELS[state]}
         title={LABELS[state]}
         className={
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition " +
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition active:scale-[0.98] " +
           (grabando
-            ? "animate-pulse border-red-300 bg-red-100 text-red-700"
+            ? "animate-pulse border-destructive/40 bg-destructive/10 text-destructive"
             : transcribiendo
-              ? "border-gray-200 bg-gray-100 text-gray-400"
-              : "border-gray-200 bg-white text-gray-600 hover:border-gray-400")
+              ? "border-border bg-muted text-muted-foreground"
+              : "border-border bg-card text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground")
         }
       >
         {transcribiendo ? (
-          <svg
-            viewBox="0 0 24 24"
-            className="h-4 w-4 animate-spin"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            aria-hidden="true"
-          >
-            <path d="M12 3a9 9 0 1 0 9 9" strokeLinecap="round" />
-          </svg>
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
         ) : (
-          <svg
-            viewBox="0 0 24 24"
-            className="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            aria-hidden="true"
-          >
-            <rect x="9" y="3" width="6" height="11" rx="3" />
-            <path d="M5 11a7 7 0 0 0 14 0" strokeLinecap="round" />
-            <path d="M12 18v3" strokeLinecap="round" />
-          </svg>
+          <Mic className="h-4 w-4" aria-hidden />
         )}
       </button>
       {(grabando || transcribiendo) && (
         <span
           className={
-            "text-xs " + (grabando ? "text-red-700" : "text-gray-500")
+            "text-xs " + (grabando ? "text-destructive" : "text-muted-foreground")
           }
           role="status"
         >
