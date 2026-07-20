@@ -91,8 +91,41 @@ def install(script: dict[str, list]) -> FakeCompletions:
     return fc
 
 
+def content_text(msg: dict) -> str:
+    """Texto REAL que el modelo recibe en `msg`, venga como string o como bloques.
+
+    Desde que el prefix caching de Anthropic quedó CABLEADO (commit e8ce3b3), el embudo
+    `llm._messages_with_cache` reemplaza —solo para los aliases directos de Anthropic, que
+    son justamente la cadena que fija este gate: `set_model_policy("nube")` → claude-sonnet—
+    el `content` del system de un `str` por una LISTA de bloques:
+        [{"type":"text","text":<prefijo estable>,"cache_control":{...}},
+         {"type":"text","text":<resto>}]
+    El cliente falso se instala en `llm._client`, es decir POR DEBAJO de esa transformación,
+    así que lo que queda registrado en `messages_seen` es la lista, no el string.
+
+    Concatenar los bloques reconstruye el system original BYTE A BYTE — es el invariante
+    que `prompt_builder.cache_split` declara y garantiza (`prefijo + resto == system_text`;
+    el marcado de caché es metadata que el modelo no renderiza). Por eso esta función NO
+    relaja nada: devuelve exactamente el texto que ve el modelo.
+
+    Sin ella, un `"x" in msg["content"]` sobre una lista deja de ser "¿contiene el texto?"
+    y pasa a ser "¿es 'x' uno de los bloques?" — que es False SIEMPRE. Ese es un gate que
+    no puede ponerse verde: no medía la propiedad, medía el tipo del contenedor. Falla en
+    seguro por diseño: ante una forma inesperada devuelve texto vacío o su `str()`, nunca
+    algo que haga pasar una aserción de presencia por accidente.
+    """
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "".join(str(b.get("text") or "") for b in c if isinstance(b, dict))
+    return str(c or "")
+
+
 def toks(messages: list[dict]) -> int:
-    return sum(estimate_tokens(str(m.get("content") or "")) for m in messages)
+    # Sobre el texto reconstruido (no sobre el repr de la lista de bloques): así a3/b3
+    # comparan el tamaño del PROMPT, no el del contenedor con sus llaves y su cache_control.
+    return sum(estimate_tokens(content_text(m)) for m in messages)
 
 
 CONCLUSION = "CONCLUSIÓN Y RECOMENDACIÓN: procede la excepción de caducidad del medio de control."
@@ -164,7 +197,11 @@ def run(trace_dir: str) -> None:
           "paso metodológico del despacho" not in user2)
     # CP6: el índice de playbooks vive en el SYSTEM (capa L9 de la fachada), no en el
     # user — el marcador de recorte lo acompaña allí.
-    sys2 = fc.messages_seen[1][0]["content"]
+    # El system se lee con content_text (ver arriba) porque en esta cadena (claude-sonnet)
+    # llega partido en bloques de content por el prefix caching. La propiedad que se mide
+    # es la MISMA de siempre y sigue siendo exigente en los tres frentes: el índice está en
+    # el system, el marcador de recorte lo acompaña, y el índice NO se coló al user.
+    sys2 = content_text(fc.messages_seen[1][0])
     check("b5 · queda solo el índice de playbooks + marcador (en el system, capa L9)",
           pb_index in sys2 and cr.PLAYBOOKS_TRIMMED_MARKER in sys2
           and pb_index not in user2)
