@@ -6,10 +6,9 @@ import { ArrowLeft, ArrowRight, Check, Sparkles } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 import { CountrySelector, COUNTRY_NAME_BY_CODE } from "../_components/CountrySelector";
-import { TOOL_OPTIONS } from "../_components/toolOptions";
 import {
   WelcomeShell,
   WelcomeProgress,
@@ -46,10 +45,20 @@ type Status = {
   draft?: { responses: Record<string, AnswerValue>; idx: number; qid?: string | null } | null;
 };
 
-// Clave reservada dentro de `responses` para la selección de jurisdicción (paso local,
-// no viene de las preguntas del backend). Se extrae antes de mandar `complete`.
+// Claves reservadas dentro de `responses` para la selección de jurisdicción (paso local,
+// no viene de las preguntas del backend). Se extraen antes de mandar `complete`.
 const JURISDICTION_FIELD = "_jurisdicciones";
+// Países que el abogado escribe porque NO están en la lista. Existe por la regla dura del
+// producto: Mia no es de ningún país y se instala en cualquier despacho de cualquier
+// jurisdicción. La lista de casillas es una comodidad, jamás una pared: sin esta salida,
+// un despacho de Brasil, EE. UU., Portugal o Francia no podía terminar el alta.
+const JURISDICTION_OTHER_FIELD = "_jurisdicciones_otras";
 const JURISDICTION_QUESTION_ID = "_jurisdiction";
+// Modo general: es el código que ya usa el resolutor cuando no hay paquete jurídico para
+// una jurisdicción (no es un país). Se manda cuando el abogado SOLO escribió países fuera
+// de la lista, para que su elección quede registrada como una decisión suya y no como
+// "nunca configuró nada".
+const GENERIC_JURISDICTION = "generic";
 
 type CompletionResult = {
   soul_content: string;
@@ -63,7 +72,7 @@ type CompletionResult = {
 const BLOCK_LABEL: Record<string, string> = {
   identity: "Identidad",
   jurisdiction: "Contexto",
-  tools: "Herramientas",
+  criterio: "Tu criterio",
 };
 
 // Países para la pregunta ÚNICA de jurisdicción — orden alfabético (decisión de Pipe
@@ -80,19 +89,58 @@ const BLOCK_LABEL: Record<string, string> = {
 // reintroduce cuando exista la funcionalidad.
 const HIDDEN_QUESTION_IDS = new Set(["p19"]);
 
-// Solo P1 y P2 son obligatorias; el resto es opcional.
-const REQUIRED_IDS = new Set(["p1", "p2"]);
+// TODAS las preguntas son obligatorias (rediseño 2026-07-20). Antes 6 de 8 decían
+// "Opcional — puedes saltarla": quien contestaba solo lo obligatorio obtenía un perfil de
+// seis líneas que el sistema daba por bueno. Ese era el defecto de producto. Ahora el
+// cuestionario es más corto y cada pregunta se ganó su sitio, así que ninguna se salta.
+const REQUIRED_IDS = new Set(["p1", "p2", JURISDICTION_QUESTION_ID, "p6", "p20", "p21", "p22"]);
 
 // Tipos de input por pregunta (onboarding horizontal: sin conocimiento jurídico hardcodeado
-// fuera de la lista de países del paso de jurisdicción, que es deliberada).
-const TEXT_IDS = new Set(["p4", "p8", "p9"]);
-const TAG_IDS = new Set(["p3", "p6", "p7"]);
+// fuera de la lista de países del paso de jurisdicción, que es deliberada). Son el
+// FALLBACK tolerante: las preguntas con pantalla propia se resuelven antes, en el switch.
+const TEXT_IDS = new Set(["p22"]);
+const TAG_IDS = new Set(["p6", "p20", "p21"]);
 
-// TOOL_OPTIONS vive en ../_components/toolOptions.ts — compartida con MiDespachoSection
-// (C2: una sola fuente para que las dos pantallas nunca se contradigan entre sí).
+// Segundo campo de los pasos que fusionan dos datos en una sola pantalla (rediseño
+// 2026-07-20). El wizard guarda por `field`; estos pasos escriben además su campo
+// hermano con la MISMA llave canónica que usa el perfil — sin llaves inventadas.
+const SECOND_FIELD: Record<string, string> = {
+  p6: "jurisdiction.client_type",
+  p20: "autonomia.decide_solo",
+  // El paso de país guarda su segundo campo en una clave reservada (prefijo '_'): los
+  // países escritos a mano no son un campo del perfil, alimentan `jurisdiction.base`.
+  [JURISDICTION_QUESTION_ID]: JURISDICTION_OTHER_FIELD,
+};
 
-// Sugerencias genéricas (no jurisdicción, ramas del derecho ni tribunales).
-const VOICE_SUGGESTIONS = ["Técnico", "Argumentativo", "Conciso", "Formal", "Directo", "Analítico", "Detallado", "Estratégico"];
+// Las herramientas (antes p18) salieron del cuestionario en el rediseño 2026-07-20: no
+// activaban nada y "Conexiones" ya sabe la verdad de lo que está conectado. TOOL_OPTIONS
+// sigue viviendo en ../_components/toolOptions.ts para "Mi despacho", que sí las edita.
+
+// Sugerencias genéricas: son ARRANQUES editables, no una lista cerrada. Agnósticas de
+// jurisdicción a propósito — ni países, ni ramas del derecho, ni tribunales, ni tipos de
+// cliente precargados (regla dura: Mia no es de ningún país).
+const SUGGESTIONS: Record<string, string[]> = {
+  // "Radicar" es uso andino; en España/México/Argentina se dice "presentar". Los chips
+  // los ve TODO el mundo: se redactan en español neutro (regla dura: Mia no es de ningún
+  // país, y eso incluye cómo habla).
+  p20: [
+    "Todo lo que se presenta ante un tribunal",
+    "Escritos al cliente",
+    "Correos que salen del despacho",
+  ],
+  p21: [
+    "Citar sin verificar la fuente",
+    "Afirmar hechos que no estén en el expediente",
+    "Enviar algo al cliente sin que yo lo lea",
+    "Prometer un resultado",
+  ],
+};
+const DECIDE_SUGGESTIONS = [
+  "Resúmenes internos",
+  "Cronologías",
+  "Buscar y ordenar fuentes",
+  "Formato y estructura",
+];
 
 // ── Conversores tolerantes (incluyen fallback desde strings de onboardings viejos) ──
 function asText(value: AnswerValue | undefined): string {
@@ -119,17 +167,32 @@ function asLocationPair(value: AnswerValue | undefined): LocationPair {
   return { country: typeof value === "string" ? value : "", city: "" };
 }
 
-// Una pregunta está "completa" si cumple su requisito. Solo P1/P2 son obligatorias.
-function isComplete(question: Question, value: AnswerValue | undefined): boolean {
-  if (question.id === "p1") {
-    const n = asNamePair(value);
-    return Boolean(n.firm.trim() && n.lawyer.trim());
+// Una pregunta está "completa" si cumple su requisito. Los pasos que fusionan dos datos
+// exigen los dos: media respuesta deja el perfil a medias, que es justo lo que se corrige.
+function isComplete(question: Question, answers: Record<string, AnswerValue>): boolean {
+  const value = answers[question.field];
+  const second = SECOND_FIELD[question.id];
+  switch (question.id) {
+    case "p1": {
+      const n = asNamePair(value);
+      return Boolean(n.firm.trim() && n.lawyer.trim());
+    }
+    case "p2": {
+      const l = asLocationPair(value);
+      return Boolean(l.country.trim() && l.city.trim());
+    }
+    case JURISDICTION_QUESTION_ID:
+      // Basta con UNA de las dos vías: casilla marcada o país escrito a mano. El dato se
+      // pide (enruta normas y es de los pocos que Mia no puede inferir) pero no puede ser
+      // una pared para un despacho cuyo país no está en la lista.
+      return asList(value).length > 0 || asList(answers[JURISDICTION_OTHER_FIELD]).length > 0;
+    case "p22":
+      return asText(value).trim().length > 0;
+    default:
+      // Una pregunta que este frontend no conoce nunca bloquea el avance (fail-soft).
+      if (!REQUIRED_IDS.has(question.id)) return true;
+      return asList(value).length > 0 && (!second || asList(answers[second]).length > 0);
   }
-  if (question.id === "p2") {
-    const l = asLocationPair(value);
-    return Boolean(l.country.trim() && l.city.trim());
-  }
-  return true;
 }
 
 export default function OnboardingPage() {
@@ -212,6 +275,15 @@ export default function OnboardingPage() {
     setAnswers((a) => ({ ...a, [current.field]: value }));
   }
 
+  // Segundo campo de un paso fusionado (p6 → tipo de cliente, p20 → lo que decide sola).
+  // Escribe la llave canónica del perfil, la misma que edita "Mi despacho".
+  function setSecondAnswer(value: AnswerValue) {
+    if (!current) return;
+    const field = SECOND_FIELD[current.id];
+    if (!field) return;
+    setAnswers((a) => ({ ...a, [field]: value }));
+  }
+
   // Navegación con dirección: alimenta la transición direccional de StepTransition.
   function goNext() {
     const nextIdx = Math.min(total - 1, idx + 1);
@@ -233,10 +305,20 @@ export default function OnboardingPage() {
       // `jurisdictions` (códigos, para el enrutamiento de paquetes jurídicos) y como
       // `jurisdiction.base` (nombres, auto-llenado para que el SOUL.md y el resumen
       // sigan mostrando la jurisdicción — la pregunta descriptiva p5 ya no existe).
-      const { [JURISDICTION_FIELD]: jurisdictionValue, ...soulResponses } = answers;
-      const jurisdictions = asList(jurisdictionValue);
-      const countryNames = jurisdictions.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c);
+      // Los países escritos a mano solo pueden viajar por la SEGUNDA vía: no tienen
+      // código de paquete. Van al perfil igual, para que Mia sepa dónde trabaja el
+      // despacho aunque todavía no exista un paquete jurídico de ese país.
+      const {
+        [JURISDICTION_FIELD]: jurisdictionValue,
+        [JURISDICTION_OTHER_FIELD]: jurisdictionOtherValue,
+        ...soulResponses
+      } = answers;
+      const codes = asList(jurisdictionValue);
+      const otros = asList(jurisdictionOtherValue);
+      const countryNames = [...codes.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c), ...otros];
       if (countryNames.length > 0) soulResponses["jurisdiction.base"] = countryNames;
+      // Sin ningún código pero con países escritos: modo general explícito.
+      const jurisdictions = codes.length > 0 ? codes : otros.length > 0 ? [GENERIC_JURISDICTION] : [];
       const res = await apiSend<CompletionResult>("POST", "/api/onboarding/complete", {
         responses: soulResponses,
         ...(jurisdictions.length > 0 ? { jurisdictions } : {}),
@@ -346,8 +428,8 @@ export default function OnboardingPage() {
                 className="text-center text-2xl font-semibold tracking-tight sm:text-3xl"
               />
               <p className="mx-auto max-w-md text-sm text-muted-foreground">
-                Ya conozco tu despacho, tu jurisdicción y tus herramientas. Puedes revisarlas y
-                actualizarlas cuando quieras.
+                Ya sé quién eres, dónde trabajas y cómo quieres que trabaje. Puedes revisarlo y
+                cambiarlo cuando quieras.
               </p>
             </StaggerItem>
             <StaggerItem className="flex flex-wrap justify-center gap-3">
@@ -403,8 +485,8 @@ export default function OnboardingPage() {
             <StaggerItem>
               <p className="mx-auto max-w-md text-muted-foreground">
                 Para trabajar como a ti te gusta, primero quiero conocerte. Te haré {total}{" "}
-                preguntas cortas sobre tu despacho, tu jurisdicción y tus herramientas. Solo dos son
-                obligatorias; el resto las puedes saltar.
+                preguntas cortas: quién eres, dónde trabajas y cómo quieres que trabaje yo. Son
+                pocas y todas cuentan, así que no te pido saltarte ninguna.
               </p>
             </StaggerItem>
             <StaggerItem>
@@ -465,7 +547,7 @@ export default function OnboardingPage() {
   const value = answers[current.field];
   const pct = Math.round(((idx + 1) / total) * 100);
   const optional = !REQUIRED_IDS.has(current.id);
-  const canAdvance = isComplete(current, value);
+  const canAdvance = isComplete(current, answers);
 
   return (
     <WelcomeShell progress={<WelcomeProgress current={2} />} width="lg">
@@ -511,7 +593,13 @@ export default function OnboardingPage() {
             </StaggerItem>
 
             <StaggerItem>
-              <QuestionInput question={current} value={value} onChange={setAnswer} />
+              <QuestionInput
+                question={current}
+                value={value}
+                onChange={setAnswer}
+                secondValue={SECOND_FIELD[current.id] ? answers[SECOND_FIELD[current.id]] : undefined}
+                onChangeSecond={setSecondAnswer}
+              />
             </StaggerItem>
           </Stagger>
         </StepTransition>
@@ -630,15 +718,39 @@ function QuestionInput({
   question,
   value,
   onChange,
+  secondValue,
+  onChangeSecond,
 }: {
   question: Question;
   value: AnswerValue | undefined;
   onChange: (value: AnswerValue) => void;
+  secondValue?: AnswerValue;
+  onChangeSecond?: (value: AnswerValue) => void;
 }) {
   switch (question.id) {
-    // Paso local de jurisdicción — la única pregunta de país (multi-select de 21 países).
+    // Paso local de jurisdicción — la única pregunta de país. Las casillas son una
+    // comodidad para los países que Mia ya trae preparados; el campo libre de abajo es la
+    // garantía de que ningún despacho del mundo se queda fuera (regla dura: Mia no es de
+    // ningún país). Las dos vías valen igual para poder continuar.
     case JURISDICTION_QUESTION_ID:
-      return <CountrySelector value={asList(value)} onChange={onChange} />;
+      return (
+        <div className="space-y-5">
+          <CountrySelector value={asList(value)} onChange={onChange} />
+          <Field label="¿Trabajas con las reglas de otro país? Escríbelo aquí">
+            <TagInput
+              value={asList(secondValue)}
+              onChange={onChangeSecond ?? (() => {})}
+              suggestions={[]}
+              placeholder="Escribe el país y presiona Enter"
+              autoFocus={false}
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground/80">
+            Si tu país no está en la lista, escríbelo y seguimos. Trabajaré contigo igual,
+            apoyándome en las normas y documentos que tú me des.
+          </p>
+        </div>
+      );
     // P1 — dos campos: despacho + abogado.
     case "p1": {
       const n = asNamePair(value);
@@ -687,23 +799,69 @@ function QuestionInput({
       );
     }
 
-    // P3 — adjetivos de estilo (tags libres con sugerencias genéricas).
-    case "p3":
-      return <TagInput value={asList(value)} onChange={onChange} suggestions={VOICE_SUGGESTIONS} max={3} placeholder="Escribe un adjetivo y presiona Enter" />;
+    // P6 — un solo paso, dos datos: a quién defiende y en qué asuntos (fusión de las
+    // antiguas p6+p7). Sin lista precargada: chips libres. Es el único prior antes de que
+    // exista un documento; después Mia lo corrige sola leyendo los expedientes.
+    case "p6":
+      return (
+        <div className="space-y-4">
+          <Field label="A quién defiendes">
+            <TagInput
+              value={asList(secondValue)}
+              onChange={onChangeSecond ?? (() => {})}
+              suggestions={[]}
+              placeholder="Escribe y presiona Enter"
+            />
+          </Field>
+          <Field label="En qué asuntos">
+            <TagInput
+              value={asList(value)}
+              onChange={onChange}
+              suggestions={[]}
+              placeholder="Escribe y presiona Enter"
+              autoFocus={false}
+            />
+          </Field>
+        </div>
+      );
 
-    // P18 — herramientas (lista curada con descripción).
-    case "p18":
-      return <ToolsChecklist value={asList(value)} onChange={onChange} />;
+    // P20 — la línea de autonomía. Sin ella Mia solo tiene dos modos: pedir permiso para
+    // todo, o excederse. Los dos lados se piden juntos porque juntos definen la frontera.
+    case "p20":
+      return (
+        <div className="space-y-4">
+          <Field label="Reviso siempre antes de que salga">
+            <TagInput
+              value={asList(value)}
+              onChange={onChange}
+              suggestions={SUGGESTIONS.p20 ?? []}
+              placeholder="Escribe y presiona Enter"
+            />
+          </Field>
+          <Field label="Puedes resolverlo sin preguntarme">
+            <TagInput
+              value={asList(secondValue)}
+              onChange={onChangeSecond ?? (() => {})}
+              suggestions={DECIDE_SUGGESTIONS}
+              placeholder="Escribe y presiona Enter"
+              autoFocus={false}
+            />
+          </Field>
+        </div>
+      );
 
     // P19 (triad_mode) se retiró de la UI — Riesgo #27: no ofrecer lo no implementado.
+    // P3/P4/P18 (estilo en adjetivos, canales, herramientas) se retiraron del cuestionario
+    // en el rediseño 2026-07-20: se infieren del trabajo real o no cambian un borrador.
 
     default: {
       if (TEXT_IDS.has(question.id)) {
         return (
-          <Input
+          <Textarea
             value={asText(value)}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="Tu respuesta…"
+            placeholder="Escríbelo con tus palabras…"
+            rows={4}
             autoFocus
           />
         );
@@ -713,7 +871,7 @@ function QuestionInput({
           <TagInput
             value={asList(value)}
             onChange={onChange}
-            suggestions={[]}
+            suggestions={SUGGESTIONS[question.id] ?? []}
             placeholder="Escribe y presiona Enter"
           />
         );
@@ -739,112 +897,22 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function ToolsChecklist({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
-  const [customDraft, setCustomDraft] = useState("");
-  const curatedNames = new Set(TOOL_OPTIONS.map((t) => t.name));
-  const customTools = value.filter((v) => !curatedNames.has(v));
-
-  function toggle(name: string, checked: boolean) {
-    if (checked) onChange([...value, name]);
-    else onChange(value.filter((v) => v !== name));
-  }
-
-  function addCustom() {
-    const tool = customDraft.trim();
-    if (!tool || value.includes(tool)) {
-      setCustomDraft("");
-      return;
-    }
-    onChange([...value, tool]);
-    setCustomDraft("");
-  }
-
-  return (
-    <div className="space-y-3">
-      {TOOL_OPTIONS.map((tool) => {
-        const checked = value.includes(tool.name);
-        const disabled = Boolean(tool.comingSoon);
-        return (
-          <label
-            key={tool.name}
-            className={cn(
-              "flex gap-3 rounded-xl border px-4 py-3 transition-colors",
-              disabled
-                ? "cursor-not-allowed border-border bg-muted/40 opacity-70"
-                : checked
-                  ? "cursor-pointer border-primary/40 bg-primary/5"
-                  : "cursor-pointer border-border bg-card hover:border-primary/25",
-            )}
-          >
-            <input
-              type="checkbox"
-              checked={checked}
-              disabled={disabled}
-              onChange={(e) => toggle(tool.name, e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-[hsl(var(--primary))]"
-            />
-            <span className="min-w-0">
-              <span className="block text-sm font-medium">
-                {tool.name}
-                {tool.comingSoon ? (
-                  <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-normal text-warning">Próximamente</span>
-                ) : null}
-              </span>
-              <span className="mt-0.5 block text-sm text-muted-foreground">{tool.description}</span>
-            </span>
-          </label>
-        );
-      })}
-
-      {customTools.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {customTools.map((tool) => (
-            <button
-              key={tool}
-              type="button"
-              onClick={() => onChange(value.filter((v) => v !== tool))}
-              className="rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-85"
-            >
-              {tool} ×
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      <Field label="Otra herramienta">
-        <div className="flex gap-2">
-          <Input
-            value={customDraft}
-            onChange={(e) => setCustomDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addCustom();
-              }
-            }}
-            placeholder="Escribe el nombre y presiona Enter"
-          />
-          <Button type="button" variant="outline" onClick={addCustom} disabled={!customDraft.trim()} className="shrink-0">
-            Añadir
-          </Button>
-        </div>
-      </Field>
-    </div>
-  );
-}
-
 function TagInput({
   value,
   onChange,
   suggestions = [],
   max,
   placeholder = "Escribe y presiona Enter",
+  autoFocus = true,
 }: {
   value: string[];
   onChange: (value: string[]) => void;
   suggestions?: string[];
   max?: number;
   placeholder?: string;
+  // Los pasos con dos campos en la misma pantalla solo enfocan el primero: dos autofocus
+  // compiten y el cursor termina donde el abogado no está mirando.
+  autoFocus?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const atMax = typeof max === "number" && value.length >= max;
@@ -893,7 +961,7 @@ function TagInput({
             onBlur={() => addTag()}
             className="w-full bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
             placeholder={placeholder}
-            autoFocus
+            autoFocus={autoFocus}
           />
         )}
       </div>

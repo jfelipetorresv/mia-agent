@@ -11,6 +11,7 @@ import { apiGet, apiSend, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CountrySelector, COUNTRY_NAME_BY_CODE } from "./CountrySelector";
 import { TOOL_OPTIONS } from "./toolOptions";
@@ -34,6 +35,12 @@ type FullProfile = {
 // abogado edita después de la entrevista con exactamente las mismas opciones, desde la
 // MISMA fuente (C2: una sola lista, para que las dos pantallas nunca se contradigan).
 
+// Modo general: el código que ya usa el resolutor cuando no hay paquete jurídico para una
+// jurisdicción (no es un país). Mismo valor y mismo criterio que onboarding/page.tsx — se
+// manda cuando el despacho SOLO tiene países escritos a mano, para que su elección quede
+// registrada como decisión suya y no como "nunca configuró nada".
+const GENERIC_JURISDICTION = "generic";
+
 // ── Conversores tolerantes (mismo criterio que onboarding/page.tsx) ─────────────────
 function asNamePair(value: AnswerValue): { firm: string; lawyer: string } {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -51,6 +58,10 @@ function asLocationPair(value: AnswerValue): { country: string; city: string } {
   return { country: typeof value === "string" ? value : "", city: "" };
 }
 
+function asText(value: AnswerValue): string {
+  return typeof value === "string" ? value : "";
+}
+
 function asList(value: AnswerValue): string[] {
   if (Array.isArray(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -66,8 +77,19 @@ export default function MiDespachoSection() {
   const [firm, setFirm] = useState({ firm: "", lawyer: "" });
   const [location, setLocation] = useState({ country: "", city: "" });
   const [countryCodes, setCountryCodes] = useState<string[]>([]);
+  // Países escritos a mano (los que no están en la lista de casillas). Espejo exacto del
+  // paso de país del onboarding: si esta pantalla no los ofreciera, un despacho fuera de
+  // la lista podría darse de alta y luego perder su jurisdicción al editar el perfil.
+  const [otherCountries, setOtherCountries] = useState<string[]>([]);
   const [practiceAreas, setPracticeAreas] = useState<string[]>([]);
   const [clientType, setClientType] = useState<string[]>([]);
+  // Criterio (rediseño 2026-07-20): lo que la entrevista ahora sí pregunta. Si esta
+  // pantalla no lo reflejara, el abogado no podría corregir lo único que de verdad
+  // cambia cómo trabaja Mia — y las dos pantallas se contradirían.
+  const [revisoSiempre, setRevisoSiempre] = useState<string[]>([]);
+  const [decideSolo, setDecideSolo] = useState<string[]>([]);
+  const [nunca, setNunca] = useState<string[]>([]);
+  const [terminado, setTerminado] = useState("");
   const [tools, setTools] = useState<string[]>([]);
   const [tpNumber, setTpNumber] = useState("");
   const [preferredSources, setPreferredSources] = useState<string[]>([]);
@@ -87,8 +109,18 @@ export default function MiDespachoSection() {
         setLocation(asLocationPair(r["identity.location"]));
         setPracticeAreas(asList(r["jurisdiction.practice_areas"]));
         setClientType(asList(r["jurisdiction.client_type"]));
+        setRevisoSiempre(asList(r["autonomia.reviso_siempre"]));
+        setDecideSolo(asList(r["autonomia.decide_solo"]));
+        setNunca(asList(r["nunca"]));
+        setTerminado(asText(r["terminado"]));
         setTools(asList(r["memory.tools_that_survived"]));
-        setCountryCodes(full.jurisdictions || []);
+        const codes = (full.jurisdictions || []).filter((c) => c !== GENERIC_JURISDICTION);
+        setCountryCodes(codes);
+        // `jurisdiction.base` guarda los NOMBRES de todas las jurisdicciones del despacho.
+        // Los que no corresponden a una casilla marcada son los escritos a mano: se
+        // recuperan para que el abogado los vea y pueda cambiarlos, no para adivinarlos.
+        const fromCodes = new Set(codes.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c));
+        setOtherCountries(asList(r["jurisdiction.base"]).filter((n) => !fromCodes.has(n)));
         setTpNumber(full.extras?.tp_number || "");
         setPreferredSources(full.extras?.preferred_sources || []);
       } catch {
@@ -112,19 +144,31 @@ export default function MiDespachoSection() {
         "identity.location": { country: location.country, city: location.city },
         "jurisdiction.practice_areas": practiceAreas,
         "jurisdiction.client_type": clientType,
+        "autonomia.reviso_siempre": revisoSiempre,
+        "autonomia.decide_solo": decideSolo,
+        nunca,
+        terminado,
         "memory.tools_that_survived": tools,
       };
       // Mismo auto-llenado que onboarding/page.tsx finish(): la jurisdicción elegida
-      // también rellena `jurisdiction.base` con los NOMBRES (para el SOUL.md/resumen).
-      const countryNames = countryCodes.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c);
+      // también rellena `jurisdiction.base` con los NOMBRES (para el SOUL.md/resumen), y
+      // los países escritos a mano viajan por ahí — no tienen código de paquete.
+      const countryNames = [...countryCodes.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c), ...otherCountries];
       if (countryNames.length > 0) responses["jurisdiction.base"] = countryNames;
+      // Sin ningún código pero con países escritos: modo general explícito.
+      const jurisdictions =
+        countryCodes.length > 0
+          ? countryCodes
+          : otherCountries.length > 0
+            ? [GENERIC_JURISDICTION]
+            : [];
 
       const res = await apiSend<{ ok: boolean; summary: string; warning?: string }>(
         "PUT",
         "/api/profile/full",
         {
           responses,
-          jurisdictions: countryCodes,
+          jurisdictions,
           extras: { tp_number: tpNumber, preferred_sources: preferredSources },
         },
       );
@@ -186,8 +230,32 @@ export default function MiDespachoSection() {
           Esto le dice a Mia qué normas y jurisprudencia usar. Puedes elegir más de un país.
         </p>
         <CountrySelector value={countryCodes} onChange={setCountryCodes} />
+        <ChipsField
+          label="¿Trabajas con las reglas de otro país? Escríbelo aquí"
+          value={otherCountries}
+          onChange={setOtherCountries}
+        />
         <ChipsField label="Áreas de práctica" value={practiceAreas} onChange={setPracticeAreas} />
         <ChipsField label="Tipo de cliente" value={clientType} onChange={setClientType} />
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-sm font-semibold">Cómo quieres que trabaje</h3>
+        <p className="text-xs text-muted-foreground">
+          Es lo que más cambia mi forma de trabajar. Cámbialo cuando cambie tu criterio.
+        </p>
+        <ChipsField label="Reviso siempre contigo antes de que salga" value={revisoSiempre} onChange={setRevisoSiempre} />
+        <ChipsField label="Puedo resolverlo sin preguntarte" value={decideSolo} onChange={setDecideSolo} />
+        <ChipsField label="Nunca debo hacer esto" value={nunca} onChange={setNunca} />
+        <div className="space-y-1.5">
+          <Label htmlFor="despacho-terminado">Un escrito está listo cuando…</Label>
+          <Textarea
+            id="despacho-terminado"
+            value={terminado}
+            onChange={(e) => setTerminado(e.target.value)}
+            rows={3}
+          />
+        </div>
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">

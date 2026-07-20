@@ -52,7 +52,8 @@ from ...memory.trace_capture import TraceCapture
 from ...memory.wiki_manager import WikiManager
 from ...observability import audit
 from ...onboarding.soul_interview import (
-    SoulInterview, build_summary, derive_firm_profile, load_responses, soul_status,
+    KNOWN_FIELDS, SoulInterview, build_soul, build_summary, derive_firm_profile,
+    firm_name, load_responses, soul_status, validate_soul,
 )
 from ...onboarding.workspace import scaffold_matter_workspace
 from ...output.docx_export import draft_to_docx
@@ -606,6 +607,59 @@ def _validate_responses_shape(responses: dict) -> None:
             raise HTTPException(status_code=422, detail="El formato de tu perfil no es válido.")
 
 
+def _known_fields_only(responses: dict, *, origen: str) -> dict:
+    """Devuelve solo las llaves que el generador SABE leer. Ignora el resto y lo deja en
+    el registro del servidor; 422 SOLO si NINGUNA llave era reconocible.
+
+    El generador lee por CAMPO (`identity.name`…), no por id de pregunta: una llave
+    desconocida no explota, simplemente NO se lee — y el perfil sale vacío con un 200 OK
+    encima. Ese era el fallo silencioso, y sigue cortado: un payload 100 % ilegible (ids
+    de pregunta, un cliente de otra versión) no escribe nada.
+
+    Lo que NO puede hacer el guardián es cerrarle la puerta a quien ya entró. Rechazar el
+    payload entero por una llave sobrante dejaba fuera de su propio perfil a un despacho
+    ya configurado (BLOQUEANTE-1, 2026-07-20): un campo de una entrevista anterior bastaba
+    para que "Revisar mi perfil" devolviera 422 para siempre. Con llaves reconocibles de
+    por medio se guarda lo legible y se ignora el resto — ruidoso en el log, invisible
+    para el abogado (§G: jamás se le enseña notación con puntos)."""
+    known = {k: v for k, v in responses.items() if k in KNOWN_FIELDS}
+    unknown = sorted(k for k in responses if k not in KNOWN_FIELDS)
+    if not unknown:
+        return known
+    if not known:
+        logger.warning("perfil ilegible (%s): ninguna llave conocida — recibidas %s",
+                       origen, unknown)
+        raise HTTPException(
+            status_code=422,
+            detail=("No pude leer ninguno de los datos que me llegaron de tu despacho. "
+                    "Vuelve a abrir la pantalla de tu despacho e inténtalo de nuevo."),
+        )
+    logger.warning("perfil (%s): se ignoran llaves que el generador no lee: %s",
+                   origen, unknown)
+    return known
+
+
+def _reject_empty_profile(responses: dict) -> None:
+    """Falla si lo respondido no alcanza para un perfil real.
+
+    Dos condiciones, y el mensaje dice exactamente las dos: (1) tiene que venir el nombre
+    del despacho — encabeza el SOUL.md y va impreso en cada escrito; (2) el SOUL resultante
+    tiene que pasar `validate_soul`, que YA detectaba el perfil degenerado pero solo se
+    invocaba desde un test (el detector de humo estaba desconectado del endpoint).
+
+    La condición (1) es explícita a propósito: `validate_soul` solo comprueba que exista
+    la sección `## identity`, y esa sección aparece con cualquier dato de identidad (una
+    ciudad basta). Sin (1) se guardaba un perfil sin dueño titulado "Despacho" mientras el
+    mensaje afirmaba haber exigido el nombre (MAYOR-3, 2026-07-20).
+
+    Se valida sobre el SOUL construido en memoria: si no pasa, NO se escribe nada."""
+    if not firm_name(responses) or validate_soul(build_soul(responses)):
+        raise HTTPException(
+            status_code=422,
+            detail="Necesito al menos el nombre de tu despacho para crear tu perfil.",
+        )
+
+
 class ProfileExtras(BaseModel):
     tp_number: str | None = None
     preferred_sources: list[str] | None = None
@@ -669,8 +723,12 @@ async def put_profile_full(request: Request, body: ProfileFullBody):
 
     if body.responses is not None:
         _validate_responses_shape(body.responses)
+        # Simetría con el onboarding (Defecto B del diagnóstico): esta pantalla escribe la
+        # MISMA fuente canónica, así que lo que nadie lee no se guarda. No se exige aquí un
+        # perfil completo: un guardado parcial se fusiona sobre lo que ya hay.
+        editable = _known_fields_only(body.responses, origen="mi despacho")
         try:
-            await SoulInterview().update_soul(tid, body.responses)
+            await SoulInterview().update_soul(tid, editable)
         except Exception:
             logger.exception("no se pudo actualizar el perfil del despacho (tenant=%s)", tid)
             raise HTTPException(status_code=502, detail="No pudimos guardar tu perfil. Intenta de nuevo.")
@@ -1543,7 +1601,10 @@ async def _load_onboarding_draft(tid: str) -> dict | None:
 
 @router.get("/onboarding/questions")
 async def onboarding_questions(request: Request):
-    """Las 13 preguntas de la entrevista (id/block/field/question/example)."""
+    """Las preguntas de la entrevista (id/block/field/question/example).
+
+    Son 6: el frontend añade encima su paso local de jurisdicción (selector de países)
+    para un total de 7 pasos. El número no está cableado aquí — sale de `QUESTIONS`."""
     _tenant(request)
     return await SoulInterview().get_questions()
 
@@ -1577,6 +1638,14 @@ async def onboarding_complete(request: Request, body: OnboardingComplete):
     # '_jurisdicciones') jamás forman parte del perfil — el frontend ya las extrae,
     # pero una llamada directa al API no debe poder colarlas en responses.json.
     body.responses = {k: v for k, v in body.responses.items() if not str(k).startswith("_")}
+    # Guardián conectado (arreglo 2026-07-20): antes se llamaba `run_interview` a ciegas y
+    # cualquier payload devolvía 200 con un perfil de dos líneas. Ahora se valida ANTES de
+    # escribir: forma, se descartan las llaves que el generador no lee (422 solo si NO
+    # queda ninguna legible) y se exige que el perfil resultante tenga dueño. Si algo
+    # falla, no se toca el disco.
+    _validate_responses_shape(body.responses)
+    body.responses = _known_fields_only(body.responses, origen="onboarding")
+    _reject_empty_profile(body.responses)
     # Persistir la(s) jurisdicción(es) elegidas (Fase 0.C). Es la fuente del routing
     # jurisdiccional del SAT-Graph, calendario, chunker y PII (resolve_jurisdictions).
     if body.jurisdictions:
