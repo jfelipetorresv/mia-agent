@@ -10,9 +10,12 @@ de modelo fijada a 'nube' (cadena main = claude-sonnet→mia-local):
      CONCLUSIÓN del diagnóstico sobrevive al recorte (shrink_text protect_tail=True).
   c. doble fallo: la 2ª llamada también CONTEXT_TOO_LONG → se propaga la excepción original
      y hay UNA sola compresión por turno (contrato TurnLLMState).
-  d. unit tests de shrink_documents (reduce cantidad, trunca, marca, nunca deja 0 docs)
-     y shrink_text (protect_tail conserva el final) y budget_for.
+  d. unit tests de shrink_documents (recorta POR PRESUPUESTO —no por mitades—, APROVECHA
+     el cupo, prioriza lo más relevante, trunca, marca, nunca deja 0 docs) y shrink_text
+     (protect_tail conserva el final) y budget_for.
   e. nodo SIN shrink (finalize/EDIT) → sigue usando el camino del ContextCompressor.
+  f. camino de rescate CON material de AMPLIACIÓN presente (lectura adaptativa): lo que el
+     modelo pidió sobrevive al recorte y el prompt reducido aprovecha su presupuesto.
 
 HALT si falla (CLAUDE.md §G). Exit 0 = PASS · exit 1 = FAIL.
     .venv\\Scripts\\python.exe execution\\test_context_recovery.py
@@ -38,11 +41,19 @@ from mia import config                                     # noqa: E402
 from mia.agent import llm                                  # noqa: E402
 from mia.agents import context_recovery as cr              # noqa: E402
 from mia.agents import graph as graph_mod                  # noqa: E402
+from mia.agents import untrusted                           # noqa: E402
 from mia.agents.graph import MatterGraphBuilder            # noqa: E402
 from mia.memory.tokens import estimate_tokens              # noqa: E402
 from mia.memory.trace_capture import TraceCapture          # noqa: E402
 
 _results: list[tuple[str, bool]] = []
+
+
+def rendered_tokens(docs: list[dict]) -> int:
+    """Tokens de la sección 'Expediente' TAL COMO se renderiza (cabecera + sellos
+    <<<DOC n>>> + contenido). Es la única medida honesta del presupuesto: comparar
+    contra la suma cruda de los contenidos es lo que dejaba el recorte en la mitad."""
+    return estimate_tokens(untrusted.render_documents(docs))
 
 
 def check(name: str, ok: bool) -> None:
@@ -164,8 +175,24 @@ def run(trace_dir: str) -> None:
     check("a5 · el 2º prompt conserva al menos 1 documento con contenido útil",
           # CP-S1: los documentos van sellados (<<<DOC n>>>) en vez de "[doc n]".
           "<<<DOC 1>>>" in user2 and "hecho jurídico relevante" in user2)
-    check("a6 · la mitad de los documentos se descarta (doc 5..8 fuera)",
-          "[doc original 4]" not in user2 and "[doc original 7]" not in user2)
+    # RUPTURA ESPERADA del contrato viejo. Antes este check exigía "se tira la mitad"
+    # (doc 5..8 fuera) — codificaba el defecto, no la propiedad: `shrink_documents` partía
+    # por la mitad A CIEGAS, sin mirar si cabían. Con el recorte por presupuesto los 8
+    # extractos caben en el cupo del nodo (medido: 1195 de 1200 tokens renderizados) y
+    # ninguno se descarta; lo que se recorta es el LARGO. No se debilita nada: se sustituye
+    # por dos aserciones más exigentes —ninguna pieza de evidencia se pierde Y el contenido
+    # sí se acortó de verdad— que el check anterior no podía distinguir.
+    docs_2 = user2.split("Expediente:\n", 1)[1]
+    check("a6 · ya no se descarta evidencia que CABE: los 8 extractos siguen presentes",
+          all(f"[doc original {i}]" in user2 for i in range(8)))
+    check("a7b · pero el contenido sí se acortó (ningún documento entra íntegro)",
+          all(d["content"] not in docs_2 for d in docs))
+    budget_a = cr.budget_for("analysis", config.MIA_CONTEXT_WINDOW)
+    usado_a = estimate_tokens(docs_2)
+    check(f"a6b · el expediente reducido CABE en el presupuesto del nodo "
+          f"({usado_a} <= {budget_a})", usado_a <= budget_a)
+    check(f"a6c · y APROVECHA ese presupuesto en vez de quedarse en la mitad "
+          f"({usado_a * 100 // budget_a}% >= 80%)", usado_a >= int(budget_a * 0.8))
     check("a7 · los documents del estado NO se mutan (recorte sobre copias)",
           docs[0]["content"].endswith("relevante ") and len(docs) == 8)
     check("a8 · TurnLLMState registra la compresión del turno (una sola vez)",
@@ -248,13 +275,40 @@ def run(trace_dir: str) -> None:
           err2 is not None and fc.count("claude-sonnet") == 1 and shrink_calls["n"] == 1)
 
     # === d · unit tests de los helpers puros ===
+    # CONTRATO NUEVO de shrink_documents (sustituye al viejo "parte por la mitad"):
+    #   1. la CANTIDAD la fija el presupuesto, no una división a ciegas;
+    #   2. el presupuesto descuenta el peso del SELLADO, así que lo renderizado se acerca
+    #      al cupo en vez de quedarse en la mitad;
+    #   3. lo más relevante —incluido lo que el modelo PIDIÓ en la lectura adaptativa, que
+    #      llega al final de la lista— no es lo primero en caer.
     many = [{"id": f"d{i}", "content": "contenido jurídico útil " * 100} for i in range(8)]
+    entero = rendered_tokens(many)  # 4968 medido
+
+    holgado = cr.shrink_documents(many, budget_tokens=entero - 200)
+    check(f"d1 · con cupo casi suficiente NO se descarta ningún extracto (8→{len(holgado)}); "
+          "el recorte viejo habría tirado 4 sin mirar el presupuesto", len(holgado) == 8)
     small = cr.shrink_documents(many, budget_tokens=400)
-    check("d1 · shrink_documents reduce la cantidad a la mitad (8→4)", len(small) == 4)
+    mas_cupo = cr.shrink_documents(many, budget_tokens=800)
+    # Esta es la aserción que separa "recorte por presupuesto" de "recorte por mitades":
+    # con mitades ciegas los dos cupos dan 4 y 4, y este check no podría ponerse verde.
+    check(f"d1b · doblar el cupo conserva MÁS extractos ({len(small)}→{len(mas_cupo)}): "
+          "la cantidad la manda el presupuesto", len(mas_cupo) > len(small))
     check("d2 · shrink_documents trunca el contenido al presupuesto proporcional",
           all(estimate_tokens(d["content"]) < estimate_tokens(many[0]["content"]) for d in small))
     check("d3 · los documentos truncados llevan el sufijo marcador",
           all(d["content"].endswith("ver expediente completo]") for d in small))
+
+    # d2b/d2c · CHECK DE UTILIZACIÓN (el que faltaba y por eso el desperdicio era invisible).
+    # La aserción "<= presupuesto" sola mira el TECHO y no puede detectar jamás que se
+    # desperdicie la mitad del cupo; hace falta mirar también el SUELO.
+    for etiqueta, cupo in (("cupo apretado", 400), ("cupo casi suficiente", entero - 200)):
+        res = cr.shrink_documents(many, budget_tokens=cupo)
+        usado = rendered_tokens(res)
+        check(f"d2b · {etiqueta}: lo recortado CABE renderizado ({usado} <= {cupo})",
+              usado <= cupo)
+        check(f"d2c · {etiqueta}: y OCUPA el cupo, no la mitad "
+              f"({usado * 100 // cupo}% >= 80%)", usado >= int(cupo * 0.8))
+
     one = cr.shrink_documents([{"id": "d0", "content": "x" * 100000}], budget_tokens=100)
     check("d4 · nunca deja 0 documentos y conserva contenido útil",
           len(one) == 1 and len(one[0]["content"]) >= cr.MIN_DOC_TOKENS
@@ -263,6 +317,44 @@ def run(trace_dir: str) -> None:
           cr.shrink_documents([], budget_tokens=100) == [])
     check("d6 · los dicts de entrada no se mutan",
           many[0]["content"] == "contenido jurídico útil " * 100)
+
+    # d1c..d1f · PRIORIDAD: lo que el modelo pidió deja de ser lo primero en caer.
+    # La lectura adaptativa añade las ampliaciones AL FINAL de la lista, así que un recorte
+    # que se queda con el principio las tiraba primero. Escenario calcado del medido por el
+    # verificador: 8 iniciales + 12 ampliaciones, todas del mismo tamaño.
+    inicial = [{"id": f"INICIAL-{i}", "content": f"INICIAL-{i} :: " + "x" * 8000,
+                "score": 0.030 - i * 0.001} for i in range(8)]
+    ampliado = [{"id": f"AMPL-{i}", "content": f"AMPL-{i} :: " + "x" * 8000,
+                 "score": 0.032 - i * 0.001} for i in range(12)]
+    mezcla = inicial + ampliado
+    # Cupo elegido para que sobrevivan EXACTAMENTE 10 de 20, igual que en la medición del
+    # recorte viejo (`docs[:len//2]`): a igual número de supervivientes se compara qué
+    # sobrevive. Viejo: 2 de 12 ampliaciones. Aquí se exige el triple.
+    recortado = cr.shrink_documents(mezcla, budget_tokens=900)
+    vivos = [d["id"] for d in recortado]
+    viejas = sum(1 for d in mezcla[: len(mezcla) // 2] if d["id"].startswith("AMPL"))
+    n_ampl = sum(1 for i in vivos if i.startswith("AMPL"))
+    check(f"d1c · a igual número de supervivientes ({len(vivos)} de 20), lo que el modelo "
+          f"PIDIÓ ya no es lo primero en caer ({n_ampl} de 12 ampliaciones; el recorte por "
+          f"mitades dejaba {viejas})", len(vivos) == 10 and n_ampl >= 3 * viejas)
+    check("d1d · la salida conserva el ORDEN DE LLEGADA: la prioridad decide QUIÉN "
+          "sobrevive, nunca quién es el [doc 1]",
+          vivos == [d["id"] for d in mezcla if d["id"] in set(vivos)])
+    # Correspondencia sello ↔ pieza: si se rompe, cada [doc n] del modelo apunta a otra
+    # pieza que la que cuenta el guardián de citas.
+    bloques = untrusted.render_documents(recortado).split("<<<DOC ")[1:]
+    check("d1e · el bloque sellado n es exactamente el n-ésimo extracto entregado",
+          len(bloques) == len(recortado)
+          and all(b.startswith(f"{i + 1}>>>\n{recortado[i]['id']} ::")
+                  for i, b in enumerate(bloques)))
+    # Fail-soft: lo que el abogado adjunta a mano no trae `score`. Sin señal comparable NO
+    # se reordena — degradar el material del abogado por no traer score sería el error
+    # contrario y más grave.
+    sin_score = [{"id": f"S{i}", "content": "x" * 8000} for i in range(20)]
+    vivos_s = [d["id"] for d in cr.shrink_documents(sin_score, budget_tokens=900)]
+    check("d1f · sin señal de relevancia se conserva el orden de llegada tal cual",
+          0 < len(vivos_s) < 20
+          and vivos_s == [f"S{i}" for i in range(len(vivos_s))])
 
     txt = ("relato de hechos " * 500) + CONCLUSION
     kept = cr.shrink_text(txt, budget_tokens=300, protect_tail=True)
@@ -307,6 +399,33 @@ def run(trace_dir: str) -> None:
           and "[RESUMEN]" in fc.messages_seen[1][1]["content"])
     check("e3 · el cupo del turno también se consume por este camino",
           md_e.get("llm_turn", {}).get("compression_attempted") is True)
+
+    # === f · rescate CON material de AMPLIACIÓN presente (lectura adaptativa) ==========
+    # Este camino no se ejercitaba: los gates de la lectura adaptativa terminan en el
+    # `return` de agentic_expand y los de aquí usaban listas homogéneas. Es justo el cruce
+    # donde la función se anulaba a sí misma: la lectura agéntica AÑADE material (hace el
+    # recorte más probable) y el recorte tiraba primero lo añadido.
+    docs_f = [dict(d) for d in inicial + ampliado]
+    state_f = make_state(docs=docs_f)
+    fc = install({"claude-sonnet": [context_exc(), ok_response("DIAGNÓSTICO: con ampliación.")]})
+    out_f = asyncio.run(builder.analysis_node(state_f))
+    check("f1 · el turno completa tras el rescate con ampliaciones en el expediente",
+          out_f["metadata"].get("diagnosis") == "DIAGNÓSTICO: con ampliación.")
+    user_f = fc.messages_seen[1][1]["content"]
+    docs_f2 = user_f.split("Expediente:\n", 1)[1]
+    vistos = [d["id"] for d in docs_f if f"{d['id']} ::" in docs_f2]
+    ampl_vistas = sum(1 for i in vistos if i.startswith("AMPL"))
+    check(f"f2 · tras el rescate el modelo SIGUE viendo lo que pidió "
+          f"({ampl_vistas} de 12 ampliaciones en el prompt reducido)", ampl_vistas >= 6)
+    check("f3 · y sigue viendo material inicial (no se cambió un sesgo por el opuesto)",
+          len(vistos) - ampl_vistas >= 2)
+    usado_f = estimate_tokens(docs_f2)
+    check(f"f4 · el expediente reducido cabe en el presupuesto ({usado_f} <= {budget_a})",
+          usado_f <= budget_a)
+    check(f"f5 · y lo aprovecha ({usado_f * 100 // budget_a}% >= 80%): sin este check el "
+          "desperdicio de la mitad del cupo era invisible", usado_f >= int(budget_a * 0.8))
+    check("f6 · los documentos del estado NO se mutan en el rescate",
+          all(len(d["content"]) > 8000 for d in docs_f))
 
 
 def main() -> int:

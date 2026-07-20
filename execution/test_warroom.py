@@ -12,9 +12,10 @@ Verifica el motor de agents/warroom.py:
   · degradado por presupuesto (3 panelistas, sin ronda de réplicas);
   · guarda de "sin documentos";
   · PRESUPUESTO DE CONTEXTO: con un expediente enorme los prompts de las dos rondas y el del
-    moderador NO desbordan el tope propio de la Sala, el recorte se AVISA con números y el
-    conteo de [doc n] baja con el recorte (una cita a un extracto que el panel no vio se
-    marca [VERIFICAR]);
+    moderador NO desbordan el tope propio de la Sala, el recorte APROVECHA el cupo (no se
+    queda en la mitad), no descarta evidencia que quepa, se AVISA —con números cuando sí
+    hubo descarte— y el conteo de [doc n] baja con el recorte (una cita a un extracto que
+    el panel no vio se marca [VERIFICAR]);
   · ORDENAMIENTO APLICABLE: la Sala pasa la jurisdicción del despacho al prompt (del estado,
     de la metadata de investigación o de la configuración) y cae a 'generic' si no hay nada.
 
@@ -431,14 +432,47 @@ async def _checks() -> None:
                  "content": f"Extracto {i + 1}. " + "hecho probado " * (chars_doc // 14)}
                 for i in range(n_docs)]
     fitted_big, rep_big = warroom.fit_documents(big_docs, docs_budget)
+    usado_big = estimate_tokens(untrusted.render_documents(fitted_big))
     check("presupuesto: un expediente enorme se recorta y CABE en el tope de la Sala",
-          rep_big is not None
-          and estimate_tokens(untrusted.render_documents(fitted_big)) <= docs_budget)
-    check("presupuesto: el informe del recorte trae números reales (no se inventa nada)",
-          rep_big["total"] == n_docs and 0 < rep_big["kept"] < n_docs
-          and rep_big["tokens_after"] < rep_big["tokens_before"])
+          rep_big is not None and usado_big <= docs_budget)
+    # CHECK DE UTILIZACIÓN — el que faltaba. "<= presupuesto" mira solo el TECHO y no puede
+    # ponerse rojo jamás porque se desperdicie el cupo; medido antes de este frente, la Sala
+    # convergía en ~35.200 de 70.000 (50%) en TODOS los escenarios con recorte: truncaba a
+    # `budget//n` ignorando el peso de los sellos <<<DOC n>>> y la cabecera, se pasaba del
+    # tope por ese peso, y el bucle volvía a partir el expediente en dos. Un gate que solo
+    # mira el techo no ve el suelo.
+    check(f"presupuesto: el recorte APROVECHA el cupo, no lo desperdicia "
+          f"({usado_big} de {docs_budget} = {usado_big * 100 // docs_budget}% >= 80%)",
+          usado_big >= int(docs_budget * 0.8))
+    # RUPTURA ESPERADA del contrato viejo: antes se exigía `kept < total` porque el recorte
+    # partía el expediente por la mitad SIEMPRE. Con el reparto por presupuesto estos 40
+    # extractos caben acortándolos, así que no se descarta NINGUNO — que es justo el efecto
+    # de negocio buscado (el despacho pagó por recuperarlos). El descarte se sigue probando,
+    # con su propio escenario, en el bloque `b2`.
+    check("presupuesto: el informe trae números reales y no se descarta evidencia que cabe",
+          rep_big["total"] == n_docs and rep_big["kept"] == n_docs
+          and rep_big["tokens_after"] < rep_big["tokens_before"]
+          and rep_big["tokens_after"] == usado_big)
     check("presupuesto: el recorte conserva el orden del ranking (los más relevantes primero)",
           [d["id"] for d in fitted_big] == [d["id"] for d in big_docs[:rep_big["kept"]]])
+
+    # b2 · cupo tan estrecho que NO da ni para el mínimo útil de los 40 → ahí sí se
+    #      DESCARTAN extractos. Sigue cabiendo, sigue aprovechando el cupo y sigue
+    #      conservando el orden de llegada (subsecuencia del ranking, no una permutación:
+    #      si el orden cambiara, cada [doc n] apuntaría a otra pieza).
+    cupo_estrecho = docs_budget // 40
+    fitted_min, rep_min = warroom.fit_documents(big_docs, cupo_estrecho)
+    usado_min = estimate_tokens(untrusted.render_documents(fitted_min))
+    ids_min = [d["id"] for d in fitted_min]
+    check(f"presupuesto: con cupo insuficiente sí se descartan extractos "
+          f"({rep_min['kept']} de {rep_min['total']}) y lo que queda cabe "
+          f"({usado_min} <= {cupo_estrecho})",
+          0 < rep_min["kept"] < n_docs and usado_min <= cupo_estrecho)
+    check(f"presupuesto: incluso descartando, el cupo se aprovecha "
+          f"({usado_min * 100 // cupo_estrecho}% >= 80%)",
+          usado_min >= int(cupo_estrecho * 0.8))
+    check("presupuesto: descartar no reordena el expediente (subsecuencia del ranking)",
+          ids_min == [d["id"] for d in big_docs if d["id"] in set(ids_min)])
 
     # c · intervenciones reinyectadas (ronda de réplicas / moderador).
     turnos_largos = [{"round": 1, "name": f"P{i}", "stance_label": f"L{i}",
@@ -473,16 +507,51 @@ async def _checks() -> None:
               if e == "thinking" and "extracto" in p.get("message", "")]
     check("presupuesto: el recorte del expediente se avisa exactamente una vez",
           len(avisos) == 1)
-    check("presupuesto: el aviso lleva los NÚMEROS (cuántos de cuántos)",
-          bool(avisos) and str(rep_big["kept"]) in avisos[0] and str(n_docs) in avisos[0])
+    # Aquí NO se descartó ningún extracto (solo se acortaron), así que el aviso no puede
+    # anunciar "los N más relevantes de M": decirle al abogado que se dejó evidencia fuera
+    # cuando no se dejó es dato inventado igual que al revés.
+    check("presupuesto: sin descarte, el aviso dice que se analizan TODOS (sin inventar "
+          "un recorte de evidencia que no ocurrió)",
+          bool(avisos) and "todos" in avisos[0].lower()
+          and f"de {n_docs}" not in avisos[0])
     _jerga_aviso = ("token", "contexto", "presupuesto", "prompt", "chunk", "nodo", "ventana")
     check("presupuesto: el aviso está en llano, sin jerga técnica (§G)",
           bool(avisos) and not any(j in avisos[0].lower() for j in _jerga_aviso))
 
-    # f · el conteo de [doc n] sigue al recorte: citar un extracto que el panel NO vio es
-    #     una cita fantasma y tiene que salir marcada.
+    # f · sesión con DESCARTE real de extractos. Se fuerza con una ventana estrecha (el
+    #     escenario de un despacho cuyo motor de respaldo tiene poco contexto), porque con
+    #     la ventana normal estos 40 extractos ya caben acortándolos. Dos propiedades:
+    #     el conteo de [doc n] sigue al recorte —citar un extracto que el panel NO vio es
+    #     una cita fantasma y sale marcada— y el aviso lleva entonces los NÚMEROS.
+    ventana_normal = config.MIA_CONTEXT_WINDOW
+    config.MIA_CONTEXT_WINDOW = 8000
+    try:
+        cupo_sesion = max(1, int(context_recovery.budget_for(
+            warroom.WARROOM_PANELIST_NODE, config.MIA_CONTEXT_WINDOW)
+            * warroom.WARROOM_DOCS_SHARE))
+        _, rep_corta = warroom.fit_documents(big_docs, cupo_sesion)
+        ev_corta: list[tuple[str, dict]] = []
+        st_corta = _state(docs=big_docs)
+        # cita [doc 40]: un extracto que el descarte deja fuera del prompt del panel.
+        rb_corta = RecordingBuilder(cite_doc=n_docs)
+        res_corta = await run_warroom(rb_corta, st_corta, propose_panel(st_corta),
+                                      question="Estrategia",
+                                      emit=lambda e, p: ev_corta.append((e, p)))
+        peor_corta = max(p["tokens"] for p in rb_corta.prompts)
+        techo_corta = int(config.MIA_CONTEXT_WINDOW * 0.75)
+    finally:
+        config.MIA_CONTEXT_WINDOW = ventana_normal
+    check(f"presupuesto: con ventana estrecha el expediente SÍ pierde extractos "
+          f"({rep_corta['kept']} de {n_docs})", 0 < rep_corta["kept"] < n_docs)
     check("presupuesto: citar un extracto recortado ([doc 40]) se marca [VERIFICAR]",
-          all(MARK in t["text"] for t in res_big.debate))
+          all(MARK in t["text"] for t in res_corta.debate))
+    avisos_c = [p.get("message", "") for e, p in ev_corta
+                if e == "thinking" and "extracto" in p.get("message", "")]
+    check("presupuesto: con descarte, el aviso lleva los NÚMEROS (cuántos de cuántos)",
+          len(avisos_c) == 1 and str(rep_corta["kept"]) in avisos_c[0]
+          and str(n_docs) in avisos_c[0])
+    check(f"presupuesto: tampoco desborda con ventana estrecha "
+          f"(peor={peor_corta} tope={techo_corta})", peor_corta <= techo_corta)
     # Contraprueba: con el expediente pequeño, citar un extracto REAL no se marca — el gate
     # sigue distinguiendo, no está marcando todo por defecto.
     st_ok = _state()

@@ -504,12 +504,21 @@ def run_shrink_checks() -> None:
         fc = install({"claude-sonnet": [context_exc(), ok_response("DIAGNÓSTICO 3.")]})
         out3 = asyncio.run(builder.analysis_node(st3))
         user3 = fc.messages_seen[1][1]["content"]
+        # RUPTURA ESPERADA: este check exigía "mitad de docs fuera" porque `shrink_documents`
+        # partía el expediente en dos a ciegas. Desde el recorte POR PRESUPUESTO ya no se
+        # descarta evidencia que quepa: se acorta. La propiedad que e9 mide —que NO hubo
+        # early-exit y los documents se recortaron en la MISMA pasada que el knowledge— se
+        # exige ahora de forma DIRECTA (aparece el marcador de recorte de documento y ningún
+        # documento entra íntegro), que es más estricto: "el doc 3 no está" también se
+        # cumpliría por un recorte equivocado que tirase evidencia sin acortar nada.
+        docs3 = user3.split("Expediente:\n", 1)[1]
         check("e9 · SIN early-exit al 100%: además del knowledge, los documents se "
-              "recortan en la MISMA pasada (mitad de docs fuera, turno completo)",
+              "recortan en la MISMA pasada (turno completo)",
               out3["metadata"].get("diagnosis") == "DIAGNÓSTICO 3."
               and cr.KNOWLEDGE_TRIMMED_MARKER in user3
               and "[doc original 0]" in user3
-              and "[doc original 3]" not in user3 and "[doc original 5]" not in user3)
+              and cr.DOC_TRUNCATED_MARKER in docs3
+              and all(d["content"] not in docs3 for d in mid_docs))
     finally:
         config.MIA_CONTEXT_WINDOW = saved
 

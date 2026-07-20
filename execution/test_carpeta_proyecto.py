@@ -293,10 +293,21 @@ def api_checks(tid_a: str, tid_b: str, work: Path) -> None:
         # gire sin dormir agota sus vueltas en décimas de segundo y falla SIEMPRE aunque el
         # código de producción esté bien (fue exactamente la causa raíz de los dos checks
         # rojos de test_matter_folders_multi.py). Por eso el corte es por RELOJ.
-        # Presupuesto MEDIDO en esta máquina para el gate hermano, con 2 carpetas de 1
-        # archivo cada una: convergió en 9.8 s, 11.2 s, 8.2 s y 11.3 s. 60 s deja ~5x sobre
-        # el peor caso observado; el reloj solo se agota si algo está realmente roto.
-        deadline = time.monotonic() + 60.0
+        # Presupuesto MEDIDO. Las cifras viejas (9.8 / 11.2 / 8.2 / 11.3 s, gate hermano)
+        # se tomaron TODAS sobre la base de desarrollo, caliente y ya poblada — y por eso
+        # sobreestimaban el margen. Medido el 2026-07-20 sobre una base RECIÉN creada
+        # (schema.sql + migraciones, cero filas), que es como la estrena un despacho nuevo:
+        #   · base de desarrollo caliente ....... convergió en 5.6 s
+        #   · base fría, primer arranque ........ NO convergió dentro de 60 s (rojo)
+        #   · base fría, segunda pasada ......... convergió en 42.0 s
+        # El coste de la primera pasada en frío no es la indexación: es el atasco de
+        # trabajos de clasificación que el tramo del conector deja encolados y que el
+        # trabajador (concurrency=2) drena antes de llegar a los sync. 60 s no daba ~5x
+        # sobre eso, daba menos de 1.5x. 180 s ≈ 4x sobre los 42 s en frío.
+        # OJO — esto es PACIENCIA, no un umbral: el check exige igual files>=1 en ambas
+        # carpetas. Si la ingesta está rota el contador se queda en 0 y el check se pone
+        # ROJO igual, solo que más tarde. Alargar el reloj no deja pasar nada roto.
+        deadline = time.monotonic() + 180.0
         t0 = time.monotonic()
         files1 = files2 = 0
         elapsed = 0.0
@@ -384,6 +395,13 @@ def main() -> int:
     init_local_folders.apply()          # idempotente: tablas de la allowlist (016)
     init_matter_folders.apply()         # idempotente: columnas del expediente vinculado (025)
     init_projects_multifolder.apply()   # idempotente: kind/source_id/body (028)
+    # 034 NO es opcional: POST /api/matters/{id}/folders no indexa en caliente, ENCOLA un
+    # trabajo durable (matter_folders.py -> enqueue_job -> INSERT INTO durable_jobs). Sin
+    # esta migración la mitad HTTP del gate revienta con UndefinedTable en una base que no
+    # la tenga ya aplicada — que es el caso de cualquier base de desarrollo recién creada
+    # con init_db.py, porque init_db.py aplica schema.sql y NADA más. Verificado el
+    # 2026-07-20 contra una base virgen: sin esta línea el gate muere con exit 120.
+    init_durable_jobs.apply()           # idempotente: cola local de trabajos (034)
 
     (ROOT / ".tmp").mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="carpetaproyecto_", dir=str(ROOT / ".tmp")))
