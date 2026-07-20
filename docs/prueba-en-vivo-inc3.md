@@ -15,13 +15,13 @@
 Abre **PowerShell** y ejecuta cada bloque en orden. Cada comando lleva una línea de qué hace.
 
 **1. Encender la base de datos de MIA** (la instancia portable, puerto 55432 — sin ella todo da error).
+Pega esto **como una sola línea** (no lo cortes en varios renglones o PowerShell da error de "Token inesperado"):
 ```powershell
-& "D:\Inteligencia Artificial\Mia-Super Agent\tools\postgres16-portable\pgsql\bin\pg_ctl.exe" `
-  -D "D:\Inteligencia Artificial\Mia-Super Agent\tools\pgdata-portable" `
-  -o "-p 55432" -l "D:\Inteligencia Artificial\Mia-Super Agent\tools\pgdata-portable\server.log" start
+& "D:\Inteligencia Artificial\Mia-Super Agent\tools\postgres16-portable\pgsql\bin\pg_ctl.exe" -D "D:\Inteligencia Artificial\Mia-Super Agent\tools\pgdata-portable" -o "-p 55432" -l "D:\Inteligencia Artificial\Mia-Super Agent\tools\pgdata-portable\server.log" start
 ```
 Usa la carpeta de binarios `postgres16-portable` (la que **sí** funciona), no la `-full`. Si dice
-"another server might be running" es que ya estaba encendida — perfecto, sigue.
+"another server might be running" es que ya estaba encendida — perfecto, sigue. Para comprobar que
+acepta conexiones de verdad: `& "D:\Inteligencia Artificial\Mia-Super Agent\tools\postgres16-portable\pgsql\bin\pg_isready.exe" -h 127.0.0.1 -p 55432` (debe decir "accepting connections").
 
 **2. Aplicar las novedades de la base (solo la primera vez que pruebes esta rama).** Esto instala
 en tu base los cambios 045 y 046 que trae el incremento 3 (procedencia de documentos y la "duda"
