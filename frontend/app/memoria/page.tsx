@@ -27,6 +27,10 @@ import {
 import { apiGet, apiSend, apiUploadMany, ApiError, plainMessage } from "@/lib/api";
 import GuideInterviewWizard from "../_components/GuideInterviewWizard";
 import MiDespachoSection from "../_components/MiDespachoSection";
+import { PageShell } from "@/app/_components/PageShell";
+import { Card, cardVariants } from "@/components/ui/card";
+import { staggerStyle } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import MiaMarkdown from "@/components/MiaMarkdown";
 import { Input } from "@/components/ui/input";
@@ -49,14 +53,10 @@ type Tab = "despacho" | "wiki" | "saber" | "sugerencias";
 export default function MemoriaPage() {
   const [tab, setTab] = useState<Tab>("despacho");
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10 md:px-8">
-      <div className="mb-8 animate-slide-up">
-        <h1 className="text-2xl font-semibold tracking-tight">Conocimiento</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Lo que Mia sabe de tu despacho y cómo lo va aprendiendo contigo. Mia propone; tú decides.
-        </p>
-      </div>
-
+    <PageShell
+      title="Conocimiento"
+      subtitle="Lo que Mia sabe de tu despacho y cómo lo va aprendiendo contigo. Mia propone; tú decides."
+    >
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList className="mb-6 h-auto flex-wrap justify-start gap-1">
           <TabsTrigger value="despacho" className="gap-1.5">
@@ -90,7 +90,7 @@ export default function MemoriaPage() {
           <Sugerencias />
         </TabsContent>
       </Tabs>
-    </div>
+    </PageShell>
   );
 }
 
@@ -131,21 +131,21 @@ function Wiki() {
   if (loading) {
     return (
       <div className="space-y-3">
-        <Skeleton className="h-16 w-full rounded-xl" />
-        <Skeleton className="h-16 w-full rounded-xl" />
-        <Skeleton className="h-16 w-full rounded-xl" />
+        <Skeleton className="h-16 w-full rounded-lg" />
+        <Skeleton className="h-16 w-full rounded-lg" />
+        <Skeleton className="h-16 w-full rounded-lg" />
       </div>
     );
   }
 
   if (items.length === 0) {
     return (
-      <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+      <Card variant="dashed" className="animate-slide-up px-6 py-16 text-center">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <BookOpen className="h-6 w-6" />
         </div>
-        <h2 className="text-lg font-medium">Aún no hay criterios aprendidos</h2>
-        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+        <h2 className="text-title">Aún no hay criterios aprendidos</h2>
+        <p className="mx-auto mt-2 max-w-sm text-body text-muted-foreground">
           A medida que trabajen asuntos juntos, Mia irá consolidando aquí los criterios
           jurídicos de tu despacho: cómo analizas cada tema y qué posiciones defiendes.
         </p>
@@ -155,7 +155,7 @@ function Wiki() {
             Ir a mis asuntos
           </Link>
         </Button>
-      </div>
+      </Card>
     );
   }
 
@@ -163,14 +163,17 @@ function Wiki() {
     <div>
       <ul className="space-y-3">
         {items.map((c, i) => (
-          <li key={c.name} className="animate-slide-up" style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}>
+          <li key={c.name} className="animate-slide-up" style={staggerStyle(i)}>
             <button
               onClick={() => open(c)}
-              className="group flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-card px-5 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md"
+              className={cn(
+                cardVariants({ interactive: true }),
+                "group flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:border-primary/35",
+              )}
             >
               <div className="min-w-0">
-                <div className="truncate font-medium">{c.name}</div>
-                <div className="mt-0.5 text-sm text-muted-foreground">
+                <div className="truncate text-section">{c.name}</div>
+                <div className="mt-0.5 text-body text-muted-foreground">
                   {c.case_count} {c.case_count === 1 ? "caso" : "casos"} · {c.last_updated || "sin fecha"}
                 </div>
               </div>
@@ -181,7 +184,7 @@ function Wiki() {
                     style={{ width: `${Math.round((c.confidence || 0) * 100)}%` }}
                   />
                 </div>
-                <div className="mt-1 text-right text-xs text-muted-foreground">
+                <div className="mt-1 text-right text-meta nums text-muted-foreground">
                   {Math.round((c.confidence || 0) * 100)}% consolidado
                 </div>
               </div>
@@ -199,7 +202,7 @@ function Wiki() {
             </DialogDescription>
           </DialogHeader>
           {markdown ? (
-            <div className="rounded-lg bg-muted/50 p-4 font-serif text-sm leading-relaxed text-foreground">
+            <div className="rounded-lg bg-muted/50 p-4 font-serif text-body leading-relaxed text-foreground">
               <MiaMarkdown text={markdown} />
             </div>
           ) : (
@@ -530,7 +533,7 @@ function Saber() {
 
       {importMsg ? (
         <p
-          className={`mb-2 rounded-md px-3 py-2 text-sm ${
+          className={`mb-2 rounded-md px-3 py-2 text-body ${
             importError ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success"
           }`}
         >
@@ -538,24 +541,24 @@ function Saber() {
         </p>
       ) : null}
       {importDetail.length > 0 ? (
-        <ul className="mb-3 space-y-0.5 text-sm text-muted-foreground">
+        <ul className="mb-3 space-y-0.5 text-body text-muted-foreground">
           {importDetail.map((d, i) => <li key={i}>· {d}</li>)}
         </ul>
       ) : null}
 
       {loading ? (
         <div className="space-y-3">
-          <Skeleton className="h-16 w-full rounded-xl" />
-          <Skeleton className="h-16 w-full rounded-xl" />
-          <Skeleton className="h-16 w-full rounded-xl" />
+          <Skeleton className="h-16 w-full rounded-lg" />
+          <Skeleton className="h-16 w-full rounded-lg" />
+          <Skeleton className="h-16 w-full rounded-lg" />
         </div>
       ) : items.length === 0 ? (
-        <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+        <Card variant="dashed" className="animate-slide-up px-6 py-16 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <BookMarked className="h-6 w-6" />
           </div>
-          <h2 className="text-lg font-medium">Mia aún no tiene guías del despacho</h2>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+          <h2 className="text-title">Mia aún no tiene guías del despacho</h2>
+          <p className="mx-auto mt-2 max-w-sm text-body text-muted-foreground">
             Aquí viven las guías de trabajo de tu despacho: cómo contestar una demanda,
             cómo estructurar un recurso. Impórtalas (.md, .txt o Word), escríbelas tú mismo
             o deja que Mia te ayude a extraerlas con unas preguntas.
@@ -574,7 +577,7 @@ function Saber() {
               Crear con Mia
             </Button>
           </div>
-        </div>
+        </Card>
       ) : (
         <ul className="space-y-3">
           {items.map((p, i) => {
@@ -583,17 +586,19 @@ function Saber() {
             return (
               <li
                 key={p.id}
-                className={`flex animate-slide-up items-start gap-4 rounded-xl border border-border bg-card px-5 py-4 shadow-sm ${
-                  archived ? "opacity-60" : ""
-                }`}
-                style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+                className={cn(
+                  cardVariants(),
+                  "flex animate-slide-up items-start gap-4 px-5 py-4",
+                  archived && "opacity-60",
+                )}
+                style={staggerStyle(i)}
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                   <FileText className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="truncate font-medium">{p.title}</span>
+                    <span className="truncate text-section">{p.title}</span>
                     <Badge variant="secondary">{originLabel(p.origin)}</Badge>
                     {healthBadge(p.health_status)}
                     {p.protected ? (
@@ -604,7 +609,7 @@ function Saber() {
                     ) : null}
                     {archived ? <Badge variant="warning">Archivada</Badge> : null}
                   </div>
-                  <div className="mt-0.5 text-sm text-muted-foreground">{p.summary}</div>
+                  <div className="mt-0.5 text-body text-muted-foreground">{p.summary}</div>
                   {skill ? (
                     <div className="mt-2 flex items-center gap-2">
                       <div className="h-1.5 w-24 shrink-0 rounded-full bg-muted">
@@ -613,7 +618,7 @@ function Saber() {
                           style={{ width: `${Math.round((skill.approval_rate || 0) * 100)}%` }}
                         />
                       </div>
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-meta nums text-muted-foreground">
                         {Math.round((skill.approval_rate || 0) * 100)}% aprobado · usada {skill.activations}{" "}
                         {skill.activations === 1 ? "vez" : "veces"}
                       </span>
@@ -709,7 +714,7 @@ function Saber() {
               <Skeleton className="h-4 w-2/3" />
             </div>
           ) : (
-            <div className="whitespace-pre-wrap rounded-lg bg-muted/50 p-4 font-serif text-sm leading-relaxed text-foreground">
+            <div className="whitespace-pre-wrap rounded-lg bg-muted/50 p-4 font-serif text-body leading-relaxed text-foreground">
               {viewing?.content}
             </div>
           )}
@@ -748,7 +753,7 @@ function Saber() {
               />
             </div>
           </div>
-          {editError ? <p className="text-sm text-destructive">{editError}</p> : null}
+          {editError ? <p className="text-body text-destructive">{editError}</p> : null}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setEditing(null)} disabled={editSaving}>
               Cancelar
@@ -774,15 +779,15 @@ function Saber() {
               <Skeleton className="h-14 w-full rounded-lg" />
             </div>
           ) : versions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Esta guía todavía no tiene versiones anteriores.</p>
+            <p className="text-body text-muted-foreground">Esta guía todavía no tiene versiones anteriores.</p>
           ) : (
             <ul className="space-y-2">
               {versions.map((v) => (
-                <li key={v.id} className="rounded-lg border border-border bg-card px-3 py-2.5">
+                <li key={v.id} className={cn(cardVariants(), "px-3 py-2.5")}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{v.title}</div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
+                      <div className="truncate text-label">{v.title}</div>
+                      <div className="mt-0.5 text-meta text-muted-foreground">
                         {v.changed_by === "mia" ? "Cambio de Mia" : "Cambio del abogado"} · {fmtDateTime(v.created_at)}
                         {v.reason ? ` · ${v.reason}` : ""}
                       </div>
@@ -795,7 +800,7 @@ function Saber() {
               ))}
             </ul>
           )}
-          {restoreError ? <p className="text-sm text-destructive">{restoreError}</p> : null}
+          {restoreError ? <p className="text-body text-destructive">{restoreError}</p> : null}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setHistoryFor(null)}>
               Cerrar
@@ -962,9 +967,9 @@ function Sugerencias() {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         {reviewMsg ? (
-          <p className="text-sm text-muted-foreground">{reviewMsg}</p>
+          <p className="text-body text-muted-foreground">{reviewMsg}</p>
         ) : (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-body text-muted-foreground">
             Mia revisa su trabajo reciente y te propone mejoras. Puedes pedirle que revise ahora.
           </p>
         )}
@@ -991,8 +996,8 @@ function Sugerencias() {
   if (loading) {
     return (
       <div className="space-y-3">
-        <Skeleton className="h-24 w-full rounded-xl" />
-        <Skeleton className="h-24 w-full rounded-xl" />
+        <Skeleton className="h-24 w-full rounded-lg" />
+        <Skeleton className="h-24 w-full rounded-lg" />
       </div>
     );
   }
@@ -1001,16 +1006,16 @@ function Sugerencias() {
     return (
       <div className="space-y-4">
         {reviewBar}
-        <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+        <Card variant="dashed" className="animate-slide-up px-6 py-16 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Lightbulb className="h-6 w-6" />
           </div>
-          <h2 className="text-lg font-medium">Mia aún no propone mejoras</h2>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+          <h2 className="text-title">Mia aún no propone mejoras</h2>
+          <p className="mx-auto mt-2 max-w-sm text-body text-muted-foreground">
             Cuando Mia detecte formas de mejorar sus guías o de ordenar el conocimiento del
             despacho, te las propondrá aquí. Nada cambia sin tu aprobación.
           </p>
-        </div>
+        </Card>
       </div>
     );
   }
@@ -1019,32 +1024,32 @@ function Sugerencias() {
     <div className="space-y-3">
       {reviewBar}
       {msg ? (
-        <p className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{msg}</p>
+        <p className="rounded-md bg-warning/10 px-3 py-2 text-body text-warning">{msg}</p>
       ) : null}
       {report ? (
-        <div className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm">
-          <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        <Card className="animate-slide-up px-5 py-4">
+          <div className="mb-2 flex items-center gap-2 text-section">
             <Lightbulb className="h-4 w-4 text-primary" />
             Resumen semanal
           </div>
-          <p className="whitespace-pre-wrap font-serif text-sm leading-relaxed text-foreground">{report}</p>
-        </div>
+          <p className="whitespace-pre-wrap font-serif text-body leading-relaxed text-foreground">{report}</p>
+        </Card>
       ) : null}
       <ul className="space-y-3">
         {items.map((p, i) => (
           <li
             key={p.id}
-            className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm"
-            style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+            className={cn(cardVariants(), "animate-slide-up px-5 py-4")}
+            style={staggerStyle(i)}
           >
             <Badge variant="secondary" className="mb-2">{p.type}</Badge>
             {p.target ? (
-              <div className="mb-1 text-sm font-medium">Procedimiento que se modificaría: {p.target}</div>
+              <div className="mb-1 text-label">Procedimiento que se modificaría: {p.target}</div>
             ) : null}
-            <div className="mb-2 whitespace-pre-wrap text-sm">{p.suggestion}</div>
-            <div className="text-sm text-muted-foreground">{p.reason}</div>
+            <div className="mb-2 whitespace-pre-wrap text-body">{p.suggestion}</div>
+            <div className="text-body text-muted-foreground">{p.reason}</div>
             {p.source_matters && p.source_matters.length > 0 ? (
-              <div className="mt-1.5 text-xs text-muted-foreground">
+              <div className="mt-1.5 text-meta text-muted-foreground">
                 Aprendí esto trabajando en: {p.source_matters.join(", ")}
               </div>
             ) : null}
@@ -1102,21 +1107,21 @@ function Sugerencias() {
       </Dialog>
       {conflicts.length > 0 ? (
         <div>
-          <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          <h3 className="mb-2 mt-6 text-section text-muted-foreground">
             Criterios que se contradicen
           </h3>
           <ul className="space-y-3">
             {conflicts.map((c, i) => (
               <li
                 key={c.id}
-                className="animate-slide-up rounded-xl border border-warning/40 bg-card px-5 py-4 shadow-sm"
-                style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+                className={cn(cardVariants(), "animate-slide-up border-warning/40 px-5 py-4")}
+                style={staggerStyle(i)}
               >
-                <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
+                <div className="mb-1 flex items-center gap-2 text-section">
                   <GitCompareArrows className="h-4 w-4 text-warning" />
                   Estas dos guías dicen lo contrario
                 </div>
-                <p className="mb-3 text-sm text-muted-foreground">
+                <p className="mb-3 text-body text-muted-foreground">
                   Se parecen tanto que Mia iba a unirlas, pero ordenan cosas opuestas. No las va a
                   unir: eso dejaría un criterio que nadie escribió. Dime cuál es el criterio del
                   despacho hoy.
@@ -1128,18 +1133,18 @@ function Sugerencias() {
                     return (
                       <div key={side} className="flex flex-col rounded-lg border border-border bg-muted/30 p-3">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="truncate text-sm font-medium">{v.title}</span>
+                          <span className="truncate text-section">{v.title}</span>
                           <Badge variant="secondary">{originLabel(v.procedencia)}</Badge>
                         </div>
-                        <div className="mt-0.5 text-xs text-muted-foreground">
+                        <div className="mt-0.5 text-meta text-muted-foreground">
                           {v.fecha ? `Actualizada el ${v.fecha}` : "Sin fecha"}
                         </div>
-                        <div className="mt-2 text-sm">
+                        <div className="mt-2 text-body">
                           <span className="text-muted-foreground">Esta dice: </span>
                           {v.dice}
                         </div>
                         {v.extracto ? (
-                          <p className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-background/60 p-2 font-serif text-xs leading-relaxed text-muted-foreground">
+                          <p className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-sm bg-background/60 p-2 font-serif text-meta leading-relaxed text-muted-foreground">
                             {v.extracto}
                           </p>
                         ) : null}
@@ -1169,7 +1174,7 @@ function Sugerencias() {
                   >
                     Dejar las dos
                   </Button>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-meta text-muted-foreground">
                     La que no elijas se archiva y puedes reactivarla cuando quieras. Si dejas las
                     dos, Mia las conserva y no vuelve a proponer unirlas.
                   </span>
@@ -1181,7 +1186,7 @@ function Sugerencias() {
       ) : null}
       {cleanups.length > 0 ? (
         <div>
-          <h3 className="mb-2 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          <h3 className="mb-2 mt-6 text-section text-muted-foreground">
             Orden del conocimiento
           </h3>
           <ul className="space-y-3">
@@ -1191,16 +1196,16 @@ function Sugerencias() {
               return (
                 <li
                   key={c.id}
-                  className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm"
-                  style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+                  className={cn(cardVariants(), "animate-slide-up px-5 py-4")}
+                  style={staggerStyle(i)}
                 >
-                  <div className="mb-2 text-sm">
+                  <div className="mb-2 text-body">
                     Mia propone ordenar el conocimiento del despacho:
                     {merges.length > 0 ? ` unir ${merges.length} pareja${merges.length === 1 ? "" : "s"} de guías muy parecidas` : ""}
                     {merges.length > 0 && deletions.length > 0 ? " y" : ""}
                     {deletions.length > 0 ? ` archivar ${deletions.length} guía${deletions.length === 1 ? "" : "s"} sin uso` : ""}.
                   </div>
-                  <ul className="mb-3 space-y-1 text-sm text-muted-foreground">
+                  <ul className="mb-3 space-y-1 text-body text-muted-foreground">
                     {merges.map((m, j) => <li key={`m${j}`}>· {m.target_title || m.reason}</li>)}
                     {deletions.map((d, j) => <li key={`d${j}`}>· Archivar: {d.title}</li>)}
                   </ul>

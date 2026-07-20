@@ -10,10 +10,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, FileText, Save, Send, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  ChevronDown,
+  Download,
+  FileText,
+  Save,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import { apiDownload, apiGet, apiSend, streamPost } from "@/lib/api";
 import MicButton from "../../_components/MicButton";
 import FuentesPanel from "../../_components/FuentesPanel";
+import CitationReview, { type CitaDetalle, type Verification } from "../../_components/CitationReview";
+import { SectionTitle } from "../../_components/SectionTitle";
 import { Button } from "@/components/ui/button";
 import MiaMarkdown from "@/components/MiaMarkdown";
 import { Input } from "@/components/ui/input";
@@ -30,7 +42,15 @@ import { useDictation } from "@/lib/useDictation";
 import { cn } from "@/lib/utils";
 
 type Matter = { name?: string; kind?: string };
-type Msg = { role: "user" | "mia"; text: string };
+
+// Lo que el guardián de citas le adjunta a la respuesta del proyecto. El backend lo
+// manda en el evento 'reply' bajo la clave `verificacion` (ver la capa SSE); su forma
+// es la MISMA que ya usa la revisión del borrador de un asunto, más el contador de
+// referencias a documentos que no existen. Se le suma `fantasmas` para no arrastrar la
+// lista completa hasta la pantalla: aquí solo se necesita cuántas son.
+type InformeCitas = Verification & { fantasmas: number };
+
+type Msg = { role: "user" | "mia"; text: string; revision?: InformeCitas | null };
 type Output = { id: string; title: string; created_at?: string };
 type DelegationProposal = {
   agente?: string;
@@ -44,6 +64,30 @@ type DelegationProposal = {
 // respuesta de Mia — respuestas cortas (confirmaciones, aclaraciones) no son un
 // archivo que valga la pena conservar aparte.
 const SAVE_THRESHOLD = 600;
+
+// El informe llega por la red: se normaliza antes de pintarlo. Un campo que no venga
+// se cuenta como 0 y una lista malformada queda vacía — nunca se INVENTA un respaldo
+// ni una cifra que el backend no haya mandado, y un informe roto jamás tumba el chat
+// (sin informe, la respuesta se sigue viendo).
+function normalizarInforme(raw: unknown): InformeCitas | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0);
+  const detalle = Array.isArray(r.detalle)
+    ? (r.detalle.filter(
+        (d) => d && typeof d === "object" && typeof (d as CitaDetalle).cita === "string",
+      ) as CitaDetalle[])
+    : [];
+  const df = r.docs_fantasma;
+  return {
+    citas: num(r.citas),
+    marcadas: num(r.marcadas),
+    respaldadas: num(r.respaldadas),
+    anotadas: num(r.anotadas),
+    detalle,
+    fantasmas: df && typeof df === "object" ? num((df as Record<string, unknown>).fantasmas) : 0,
+  };
+}
 
 function fmtDate(s?: string): string {
   if (!s) return "";
@@ -132,6 +176,9 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
     const payload = data as {
       message?: string;
       reply?: string;
+      // Informe del guardián de citas. Viaja junto al texto ya marcado, en el mismo
+      // evento: el texto y su revisión no pueden separarse nunca.
+      verificacion?: unknown;
       propuesta?: DelegationProposal;
     };
     if (event === "thinking") {
@@ -159,6 +206,7 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
         copy[copy.length - 1] = {
           role: "mia",
           text: payload.reply || "No pude generar una respuesta.",
+          revision: payload.reply ? normalizarInforme(payload.verificacion) : null,
         };
         return copy;
       });
@@ -357,6 +405,7 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
                       )}
                     </div>
                   </div>
+                  {m.role === "mia" && m.revision ? <RevisionCitas informe={m.revision} /> : null}
                   {m.role === "mia" && m.text.length > SAVE_THRESHOLD ? (
                     <Button
                       variant="outline"
@@ -409,7 +458,7 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
 
         {/* Archivos del proyecto */}
         <aside className="flex shrink-0 flex-col border-t border-border bg-card/40 px-4 py-4 lg:border-t-0 lg:border-l lg:overflow-y-auto">
-          <h3 className="mb-2 text-sm font-semibold">Archivos del proyecto</h3>
+          <SectionTitle level="h3" title="Archivos del proyecto" className="mb-2" />
           {saveNotice ? (
             <div className="mb-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
               {saveNotice}
@@ -532,6 +581,108 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ── Lo que Mia pudo confirmar en su respuesta ────────────────────────────────
+// En un ASUNTO el abogado ve esto en la pantalla de aprobar el borrador. En un
+// PROYECTO no hay esa parada: la respuesta se entrega de una vez. Así que la
+// revisión de citas tiene que caber aquí mismo, bajo la respuesta, sin robarle
+// el protagonismo — cerrada por defecto, abierta cuando el abogado quiera ver
+// cita por cita (la lista la pinta CitationReview, el mismo componente del
+// borrador: si el resaltado o el detalle divergen, el gate se rompe visualmente).
+function plural(n: number, uno: string, varios: string): string {
+  return n === 1 ? uno : varios;
+}
+
+function RevisionCitas({ informe }: { informe: InformeCitas }) {
+  const [abierto, setAbierto] = useState(false);
+  const porConfirmar = informe.marcadas + informe.anotadas;
+  const expandible = informe.citas > 0 && informe.detalle.length > 0;
+  const alerta = porConfirmar > 0 || informe.fantasmas > 0;
+
+  // Sin citas y sin referencias colgando no hay nada que revisar: una línea al pie,
+  // no una caja. Se dice igual — que Mia miró es información para el abogado.
+  if (informe.citas === 0 && informe.fantasmas === 0) {
+    return (
+      <p className="ml-11 text-meta text-muted-foreground">
+        Sin citas de normas ni sentencias que confirmar en esta respuesta.
+      </p>
+    );
+  }
+
+  const titular =
+    porConfirmar > 0
+      ? plural(porConfirmar, "1 cita por confirmar", `${porConfirmar} citas por confirmar`)
+      : informe.citas > 0
+        ? plural(
+            informe.citas,
+            "1 cita revisada, con respaldo en el material",
+            `${informe.citas} citas revisadas, todas con respaldo en el material`,
+          )
+        : "Revisa las referencias a documentos";
+
+  const Icon = alerta ? AlertTriangle : CheckCircle2;
+
+  const cabecera = (
+    <>
+      <Icon className={cn("mt-px h-4 w-4 shrink-0", alerta ? "text-warning" : "text-success")} />
+      <span className="flex-1 text-label text-foreground">{titular}</span>
+      {expandible ? (
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            abierto && "rotate-180",
+          )}
+          aria-hidden
+        />
+      ) : null}
+    </>
+  );
+
+  return (
+    <div
+      className={cn(
+        "ml-11 max-w-[75%] rounded-lg border px-3 py-2.5",
+        alerta ? "border-warning/30 bg-warning/5" : "border-border bg-card/60",
+      )}
+    >
+      {expandible ? (
+        <button
+          type="button"
+          onClick={() => setAbierto((v) => !v)}
+          aria-expanded={abierto}
+          className="flex w-full items-start gap-2 text-left"
+        >
+          {cabecera}
+        </button>
+      ) : (
+        <div className="flex items-start gap-2">{cabecera}</div>
+      )}
+
+      {informe.fantasmas > 0 ? (
+        <p className="mt-1.5 text-meta text-warning">
+          {plural(
+            informe.fantasmas,
+            "1 referencia apunta a un documento que no está entre los que leyó.",
+            `${informe.fantasmas} referencias apuntan a documentos que no están entre los que leyó.`,
+          )}
+        </p>
+      ) : null}
+
+      {alerta ? (
+        <p className="mt-1.5 text-meta text-muted-foreground">
+          En un proyecto Mia responde de una vez, sin pasarte un borrador para aprobar. Por eso
+          deja señalado en el texto lo que no pudo confirmar contra el material que leyó.
+        </p>
+      ) : null}
+
+      {expandible && abierto ? (
+        <div className="mt-3 border-t border-border/60 pt-3">
+          <CitationReview verification={informe} />
+        </div>
+      ) : null}
     </div>
   );
 }

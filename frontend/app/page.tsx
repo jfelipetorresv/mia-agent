@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Plus, FolderOpen, ChevronRight, FileClock, ArrowRight } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
@@ -38,8 +38,31 @@ function fmtDate(s?: string): string {
   }
 }
 
+// useSearchParams() exige un límite <Suspense> en App Router (si no, rompe el
+// prerender). El contenido real vive en AsuntosPageContent; este export solo
+// monta el límite. Mismo patrón que app/asuntos/[id]/page.tsx.
 export default function AsuntosPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto max-w-3xl px-6 py-10 md:px-8">
+          <Skeleton className="mb-8 h-10 w-48" />
+          <div className="space-y-3">
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+          </div>
+        </div>
+      }
+    >
+      <AsuntosPageContent />
+    </Suspense>
+  );
+}
+
+function AsuntosPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [matters, setMatters] = useState<Matter[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -60,6 +83,16 @@ export default function AsuntosPage() {
   useEffect(() => {
     load();
   }, []);
+
+  // El buscador de comandos (Ctrl+K → "Nuevo asunto") llega aquí como "/?nuevo=1".
+  // Abrimos el diálogo de una vez y borramos la señal de la URL: así un refresco
+  // de la página no vuelve a abrirlo solo.
+  useEffect(() => {
+    if (searchParams.get("nuevo") === "1") {
+      setShowModal(true);
+      router.replace("/", { scroll: false });
+    }
+  }, [searchParams, router]);
 
   async function create() {
     if (!name.trim()) {
@@ -89,13 +122,16 @@ export default function AsuntosPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Asuntos</h1>
           <p className="mt-1 text-sm text-muted-foreground">
+            {/* La diferencia con un proyecto vive aquí, en el subtítulo permanente, y
+                no solo en el estado vacío: en un asunto Mia siempre termina en un
+                borrador que el abogado aprueba. */}
             {loading
               ? "Cargando tu despacho…"
               : matters.length === 0
-                ? "Tu espacio de trabajo con Mia."
+                ? "Aquí Mia siempre termina en un borrador que tú apruebas."
                 : pendientes > 0
                   ? `${matters.length} en curso · ${pendientes} con borrador esperando tu revisión`
-                  : `${matters.length} en curso`}
+                  : `${matters.length} en curso · Mia siempre termina en un borrador que tú apruebas`}
           </p>
         </div>
         <Button onClick={() => setShowModal(true)} className="gap-2">
@@ -117,8 +153,9 @@ export default function AsuntosPage() {
           </div>
           <h2 className="text-lg font-medium">Crea tu primer asunto</h2>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            Un asunto es un caso de tu despacho: sube el expediente, haz tu consulta y
-            Mia te prepara un diagnóstico y un borrador para tu aprobación.
+            Un asunto es un caso de tu despacho: conectas carpetas, subes el expediente y
+            conversas con Mia — y todo termina en un borrador que tú apruebas antes de que
+            salga. Si prefieres que te responda directo, sin ese paso, usa un proyecto.
           </p>
           <Button onClick={() => setShowModal(true)} className="mt-6 gap-2">
             <Plus className="h-4 w-4" />

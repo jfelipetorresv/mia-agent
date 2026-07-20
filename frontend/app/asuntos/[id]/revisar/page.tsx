@@ -19,6 +19,9 @@ import {
 } from "@/components/ui/dialog";
 import CitationReview, { type Verification } from "../../../_components/CitationReview";
 import { renderInline } from "@/components/MiaMarkdown";
+import { PageShell } from "@/app/_components/PageShell";
+import { cardVariants } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 type DraftResponse = { draft: string; verification?: Verification | null };
 
@@ -38,9 +41,13 @@ function VerificationReport({ v }: { v: Verification }) {
   const porVerificar = v.marcadas + v.anotadas;
 
   return (
+    // `mt-section` (3rem) y no `mt-4`: la revisión de citas es una SECCIÓN
+    // distinta del borrador, no un pie del mismo bloque. Pegada a 16 px se leía
+    // como parte del texto que el abogado acaba de leer — justo en la pantalla
+    // donde tiene que separar "lo que Mia escribió" de "lo que falta verificar".
     <section
       aria-label="Revisión de citas"
-      className={`mt-4 rounded-xl border px-5 py-4 ${
+      className={`mt-section rounded-lg border px-5 py-4 ${
         porVerificar > 0 ? "border-warning/30 bg-warning/5" : "border-border bg-card/60"
       }`}
     >
@@ -92,11 +99,11 @@ function EscalamientoBanner({ categorias }: { categorias: DetonadorCategoria[] }
     <div
       role="note"
       aria-label="Requiere tu decisión antes de aprobar"
-      className="mb-4 flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/5 px-5 py-4 animate-slide-up"
+      className="mb-block flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 px-5 py-4 animate-slide-up"
     >
       <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
       <div>
-        <p className="font-medium text-warning">Requiere tu decisión antes de aprobar</p>
+        <p className="text-section text-warning">Requiere tu decisión antes de aprobar</p>
         <div className="mt-2 flex flex-wrap gap-2">
           {categorias.map((cat) => (
             <Badge key={cat} variant="warning">
@@ -104,7 +111,7 @@ function EscalamientoBanner({ categorias }: { categorias: DetonadorCategoria[] }
             </Badge>
           ))}
         </div>
-        <p className="mt-2 text-sm text-muted-foreground">
+        <p className="mt-2 text-body text-muted-foreground">
           Mia no calcula términos ni plazos: los datos procesales los confirmas tú antes de presentar.
         </p>
       </div>
@@ -238,10 +245,14 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
 
   if (draft === null) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4 px-8 py-10">
+      // Mismo contenedor y mismo padding que el resto del producto: esta era la
+      // única pantalla con `px-8 py-10` mientras las demás usaban
+      // `px-6 py-10 md:px-8`, así que al entrar a revisar el borrador el
+      // contenido saltaba de sitio.
+      <PageShell className="space-y-4">
         <Skeleton className="h-8 w-56" />
-        <Skeleton className="h-[50vh] w-full rounded-xl" />
-      </div>
+        <Skeleton className="h-[50vh] w-full rounded-lg" />
+      </PageShell>
     );
   }
 
@@ -251,12 +262,12 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
         <div className="animate-slide-up">
           <button
             onClick={() => router.push(`/asuntos/${matterId}`)}
-            className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            className="flex items-center gap-1 text-meta text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-3 w-3" />
             Volver al asunto
           </button>
-          <h1 className="mt-1 text-xl font-semibold tracking-tight">Revisar borrador</h1>
+          <h1 className="mt-1 text-title">Revisar borrador</h1>
         </div>
         <div className="text-right">
           <Button variant="outline" onClick={downloadWord} disabled={downloading} className="gap-2">
@@ -264,39 +275,43 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
             {downloading ? "Preparando…" : "Descargar en Word"}
           </Button>
           {downloadMsg ? (
-            <p role="alert" className="mt-1 text-xs text-warning">{downloadMsg}</p>
+            <p role="alert" className="mt-1 text-meta text-warning">{downloadMsg}</p>
           ) : null}
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-6 py-8 md:px-8">
+      <div className="flex-1 overflow-auto px-6 py-10 md:px-8">
         <div className="mx-auto max-w-3xl animate-slide-up" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
           <EscalamientoBanner categorias={detonadores} />
           {editing ? (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-block md:grid-cols-2">
               <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Propuesta de Mia
-                </p>
-                <div className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-card p-6 font-serif text-[16px] leading-relaxed shadow-sm">
+                <p className="mb-2 text-label text-muted-foreground">Propuesta de Mia</p>
+                {/* `text-body` (15/24 en Newsreader) en vez del `text-[16px]`
+                    suelto que había: es el rol de lectura del sistema y el
+                    borrador es LA superficie de lectura sostenida del producto. */}
+                <div
+                  className={cn(
+                    cardVariants(),
+                    "max-h-[60vh] overflow-auto whitespace-pre-wrap p-6 font-serif text-body leading-relaxed",
+                  )}
+                >
                   {renderDraft(draft)}
                 </div>
               </div>
               <div>
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Tu versión
-                  </p>
+                  <p className="text-label text-muted-foreground">Tu versión</p>
                   {text !== draft ? (
                     <div className="flex items-center gap-2">
-                      <span className="rounded-full bg-accent px-2 py-0.5 text-xs text-muted-foreground">
+                      <span className="rounded-full bg-accent px-2 py-0.5 text-meta text-muted-foreground">
                         Editaste el borrador
                       </span>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => setText(draft)}
-                        className="h-7 px-2 text-xs"
+                        className="h-7 px-2 text-meta"
                       >
                         Restaurar propuesta de Mia
                       </Button>
@@ -307,12 +322,12 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   aria-label="Tu versión del borrador"
-                  className="h-[60vh] w-full rounded-xl border border-input bg-card p-6 font-serif text-[16px] leading-relaxed shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                  className="h-[60vh] w-full rounded-lg border border-input bg-card p-6 font-serif text-body leading-relaxed outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
             </div>
           ) : (
-            <div className="whitespace-pre-wrap rounded-xl border border-border bg-card p-8 font-serif text-[16px] leading-relaxed shadow-sm">
+            <div className={cn(cardVariants(), "whitespace-pre-wrap p-8 font-serif text-body leading-relaxed")}>
               {renderDraft(text)}
             </div>
           )}
@@ -322,7 +337,7 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
 
       <div className="border-t border-border bg-background/80 px-6 py-4 backdrop-blur md:px-8">
         {actionMsg ? (
-          <p role="alert" className="mb-2 text-center text-sm text-warning animate-fade-in">{actionMsg}</p>
+          <p role="alert" className="mb-2 text-center text-body text-warning animate-fade-in">{actionMsg}</p>
         ) : null}
         {porVerificar > 0 ? (
           <div className="mb-3 flex items-center justify-center gap-2">
@@ -371,16 +386,20 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
           </Button>
         </div>
         {gateCitasPendiente ? (
-          <p className="mt-2 text-center text-xs text-muted-foreground">
+          <p className="mt-2 text-center text-meta text-muted-foreground">
             Confirma primero que verificaste las citas marcadas.
           </p>
         ) : null}
         {versionVacia ? (
-          <p className="mt-2 text-center text-xs text-warning">
+          <p className="mt-2 text-center text-meta text-warning">
             Tu versión está vacía — escribe el texto o restaura la propuesta de Mia antes de aprobar.
           </p>
         ) : null}
-        <p className="mt-2 text-center text-xs text-muted-foreground/80">
+        {/* SIN modificador de opacidad. Antes era `text-muted-foreground/80`, que
+            hundía el contraste por debajo de WCAG AA justo en el aviso de
+            responsabilidad de la pantalla donde el abogado aprueba: el texto que
+            menos se puede permitir ser ilegible era el peor de leer. */}
+        <p className="mt-2 text-center text-meta text-muted-foreground">
           Tú tienes la última palabra: nada se envía ni se aplica sin tu aprobación.
         </p>
       </div>
@@ -411,7 +430,7 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
             className="min-h-[110px]"
           />
           {rejectError ? (
-            <p role="alert" className="text-sm text-warning">{rejectError}</p>
+            <p role="alert" className="text-body text-warning">{rejectError}</p>
           ) : null}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setRejectOpen(false)} disabled={rejectBusy}>
@@ -436,8 +455,8 @@ export default function RevisarPage({ params }: { params: { id: string } }) {
           className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background/90 backdrop-blur animate-fade-in"
         >
           <CheckCircle2 className="h-16 w-16 text-success" />
-          <p className="text-lg font-semibold">Borrador aprobado</p>
-          <p className="text-sm text-muted-foreground">Mia aprende de cada decisión tuya.</p>
+          <p className="text-title">Borrador aprobado</p>
+          <p className="text-body text-muted-foreground">Mia aprende de cada decisión tuya.</p>
         </div>
       ) : null}
     </div>

@@ -42,7 +42,10 @@ import { apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cardVariants } from "@/components/ui/card";
+import { staggerStyle } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { PageShell } from "@/app/_components/PageShell";
 import AsistentesSection from "@/app/_components/AsistentesSection";
 import AutomationsSection from "@/app/_components/AutomationsSection";
 import BancoOroSection from "@/app/_components/BancoOroSection";
@@ -219,20 +222,20 @@ export default function ConfigurarPage() {
 
   if (error) {
     return (
-      <div className="mx-auto max-w-3xl px-6 py-10 md:px-8">
-        <p className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{error}</p>
-      </div>
+      <PageShell>
+        <p className="rounded-md bg-warning/10 px-3 py-2 text-body text-warning">{error}</p>
+      </PageShell>
     );
   }
   if (!s) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4 px-6 py-10 md:px-8">
+      <PageShell className="space-y-4">
         <Skeleton className="h-9 w-56" />
         <Skeleton className="h-3 w-full rounded-full" />
-        <Skeleton className="h-24 w-full rounded-xl" />
-        <Skeleton className="h-24 w-full rounded-xl" />
-        <Skeleton className="h-24 w-full rounded-xl" />
-      </div>
+        <Skeleton className="h-24 w-full rounded-lg" />
+        <Skeleton className="h-24 w-full rounded-lg" />
+        <Skeleton className="h-24 w-full rounded-lg" />
+      </PageShell>
     );
   }
 
@@ -248,14 +251,15 @@ export default function ConfigurarPage() {
         <li
           key={p.id}
           className={cn(
-            "animate-slide-up rounded-xl border px-5 py-4 shadow-sm transition-colors",
+            cardVariants(),
+            "animate-slide-up px-5 py-4 transition-colors",
             p.estado === "listo"
-              ? "border-border bg-muted/40"
+              ? "bg-muted/40"
               : p.estado === "omitido"
-                ? "border-border bg-card/60"
-                : "border-border bg-card",
+                ? "bg-card/60"
+                : "",
           )}
-          style={{ animationDelay: `${100 + i * 45}ms`, animationFillMode: "backwards" }}
+          style={staggerStyle(i, { base: 100 })}
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -276,20 +280,20 @@ export default function ConfigurarPage() {
                   ) : p.estado === "omitido" ? (
                     <Minus className="h-3.5 w-3.5" />
                   ) : (
-                    <span className="text-xs font-semibold">{i + 1}</span>
+                    <span className="text-meta font-semibold nums">{i + 1}</span>
                   )}
                 </span>
-                <span className={cn("font-medium", p.estado === "listo" && "text-muted-foreground")}>
+                <span className={cn("text-section", p.estado === "listo" && "text-muted-foreground")}>
                   {p.titulo}
                 </span>
                 <span className="sr-only">Estado: {ESTADO_TEXTO[p.estado]}</span>
                 {p.estado === "omitido" ? (
-                  <span className="text-xs text-muted-foreground">(para después)</span>
+                  <span className="text-meta text-muted-foreground">(para después)</span>
                 ) : null}
               </div>
-              <p className="mt-1.5 pl-[34px] text-sm text-muted-foreground">{p.detalle}</p>
+              <p className="mt-1.5 pl-[34px] text-body text-muted-foreground">{p.detalle}</p>
               {p.guia && abierta === p.id ? (
-                <div className="ml-[34px] mt-3 space-y-2.5 rounded-lg bg-muted/60 px-4 py-3 text-sm animate-fade-in">
+                <div className="ml-[34px] mt-3 space-y-2.5 rounded-lg bg-muted/60 px-4 py-3 text-body animate-fade-in">
                   <p>
                     <span className="font-medium">¿Qué es?</span>{" "}
                     <span className="text-muted-foreground">{p.guia.que_es}</span>
@@ -331,7 +335,7 @@ export default function ConfigurarPage() {
               {p.estado !== "listo" ? (
                 <button
                   onClick={() => toggleSkip(p)}
-                  className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="rounded-md px-2 py-1 text-meta text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   {p.estado === "omitido" ? "Retomar" : "Dejar para después"}
                 </button>
@@ -344,15 +348,10 @@ export default function ConfigurarPage() {
   );
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10 md:px-8">
-      <header className="animate-slide-up">
-        <h1 className="text-2xl font-semibold tracking-tight">Configuración</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{s.mensaje}</p>
-      </header>
+    <PageShell title="Configuración" subtitle={s.mensaje}>
+      {skipMsg ? <p className="mt-4 rounded-md bg-warning/10 px-3 py-2 text-body text-warning">{skipMsg}</p> : null}
 
-      {skipMsg ? <p className="mt-4 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{skipMsg}</p> : null}
-
-      <Tabs value={tab} onValueChange={handleTabChange} className="mt-8">
+      <Tabs value={tab} onValueChange={handleTabChange} className="mt-block">
         <TabsList className="h-auto flex-wrap justify-start gap-1">
           <TabsTrigger value="primeros-pasos" className="gap-1.5">
             {completo ? (
@@ -394,7 +393,7 @@ export default function ConfigurarPage() {
         {/* ── Primeros pasos ────────────────────────────────────────── */}
         <TabsContent value="primeros-pasos" className="animate-fade-in">
           {completo ? (
-            <div className="mt-6 flex items-center gap-2 rounded-xl border border-success/25 bg-success/10 px-4 py-3 text-sm font-medium text-success">
+            <div className="mt-6 flex items-center gap-2 rounded-lg border border-success/25 bg-success/10 px-4 py-3 text-body font-medium text-success">
               <PartyPopper className="h-4 w-4" />
               Ya completaste los primeros pasos
             </div>
@@ -414,7 +413,7 @@ export default function ConfigurarPage() {
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span className="shrink-0 text-sm font-medium tabular-nums text-muted-foreground">
+                <span className="shrink-0 text-label nums text-muted-foreground">
                   {s.completados} de {s.total}
                 </span>
               </div>
@@ -423,23 +422,21 @@ export default function ConfigurarPage() {
           {pasosList}
 
           {s.secciones && s.secciones.length ? (
-            <section className="mt-10">
-              <h2 className="mb-1 flex items-center gap-2 text-base font-semibold tracking-tight">
-                <Map className="h-4 w-4 text-primary" />
-                ¿Qué hace cada sección de Mia?
-              </h2>
-              <p className="mb-4 text-sm text-muted-foreground">
-                El mapa de la casa: para qué sirve cada pantalla que ves en el menú.
-              </p>
+            <section className="mt-section">
+              <SectionTitle
+                icon={Map}
+                title="¿Qué hace cada sección de Mia?"
+                hint="El mapa de la casa: para qué sirve cada pantalla que ves en el menú."
+              />
               <ul className="space-y-2">
                 {s.secciones.map((sec) => (
                   <li key={sec.titulo}>
-                    <details className="group rounded-xl border border-border bg-card shadow-sm transition-colors hover:border-primary/25">
-                      <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 font-medium [&::-webkit-details-marker]:hidden">
+                    <details className={cn(cardVariants(), "group transition-colors hover:border-primary/25")}>
+                      <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 text-section [&::-webkit-details-marker]:hidden">
                         {sec.titulo}
                         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
                       </summary>
-                      <div className="space-y-1.5 border-t border-border px-4 py-3 text-sm text-muted-foreground">
+                      <div className="space-y-1.5 border-t border-border px-4 py-3 text-body text-muted-foreground">
                         <p>{sec.que_es}</p>
                         <p>{sec.para_que}</p>
                       </div>
@@ -450,7 +447,7 @@ export default function ConfigurarPage() {
             </section>
           ) : null}
 
-          <p className="mt-8 text-sm text-muted-foreground">
+          <p className="mt-section text-body text-muted-foreground">
             Cada paso te lleva a la pantalla donde se hace. Cuando actives Telegram,
             también podrás pedirle ayuda a Mia desde el celular.
           </p>
@@ -470,7 +467,7 @@ export default function ConfigurarPage() {
           {/* Los ayudantes externos son otra cosa que Mia "puede usar", así que viven
               aquí y no en un tab propio: lo que cambia es que son programas del propio
               equipo del abogado y que Mia solo los llama si él se lo pide por su nombre. */}
-          <section id="asistentes" className="mt-12 scroll-mt-6">
+          <section id="asistentes" className="mt-section scroll-mt-6">
             <SectionTitle
               icon={Bot}
               title="Ayudantes externos"
@@ -503,19 +500,19 @@ export default function ConfigurarPage() {
           </section>
 
           {/* ── Procesos de fondo (información secundaria, plegada) ──── */}
-          <details className="mt-12 group rounded-xl border border-border bg-card shadow-sm">
-            <summary className="flex cursor-pointer items-center gap-3 px-5 py-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          <details className={cn(cardVariants(), "mt-section group")}>
+            <summary className="flex cursor-pointer items-center gap-3 px-5 py-4 text-section [&::-webkit-details-marker]:hidden">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
                 <HeartPulse className="h-4 w-4" />
               </span>
               <span className="flex-1">
                 Procesos de fondo
-                <span className="ml-2 text-xs font-normal text-muted-foreground">(La salud de Mia)</span>
+                <span className="ml-2 text-meta font-normal text-muted-foreground">(La salud de Mia)</span>
               </span>
               <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
             </summary>
             <div className="border-t border-border px-5 py-4">
-              <p className="mb-4 text-sm text-muted-foreground">
+              <p className="mb-4 text-body text-muted-foreground">
                 Cómo va el conocimiento que Mia construye de tu despacho y sus procesos de fondo.
               </p>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -524,12 +521,12 @@ export default function ConfigurarPage() {
                 <StatCard icon={Lightbulb} label="Habilidades activas" value={brain.skills_active} delay={2} />
                 <StatCard icon={FileText} label="Habilidades archivadas" value={brain.skills_archived} delay={3} />
               </div>
-              <p className="mt-3 text-sm text-muted-foreground">Próxima consolidación: {fmt(brain.next_consolidation)}</p>
+              <p className="mt-3 text-body text-muted-foreground">Próxima consolidación: {fmt(brain.next_consolidation)}</p>
 
               {jobs.length > 0 ? (
                 <ul className="mt-5 space-y-2">
                   {jobs.map((j, i) => (
-                    <li key={i} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-sm">
+                    <li key={i} className={cn(cardVariants(), "flex items-center justify-between gap-3 px-4 py-3 text-body")}>
                       <span className="flex items-center gap-2.5">
                         <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
                         {j.label}
@@ -562,6 +559,6 @@ export default function ConfigurarPage() {
           <ProteccionDatosSection />
         </TabsContent>
       </Tabs>
-    </div>
+    </PageShell>
   );
 }

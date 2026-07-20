@@ -1,9 +1,11 @@
 "use client";
 
 // Mia · pestaña "Proyectos" (Bloque A · Ola A4). Lista + creación en dos pasos.
-// Un Proyecto es un espacio de trabajo libre estilo Claude Cowork: carpetas
-// conectadas + chat con Mia sobre esas fuentes + archivos que Mia produce. Sin
-// diagnóstico ni aprobación de borrador — eso es exclusivo de Asuntos.
+// ÚNICA diferencia real con un Asunto: en un Proyecto Mia responde directo y el
+// abogado guarda lo que ella produce; en un Asunto todo termina en un borrador que
+// el abogado aprueba. Todo lo demás es idéntico — conectar carpetas NO distingue a
+// los dos: ambos usan el mismo FuentesPanel (ver app/asuntos/[id]/page.tsx). Los
+// textos de esta pantalla no deben insinuar lo contrario.
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -113,11 +115,14 @@ export default function ProyectosPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Proyectos</h1>
           <p className="mt-1 text-sm text-muted-foreground">
+            {/* La diferencia con un asunto vive aquí, en el subtítulo permanente, y no
+                solo en el estado vacío: en un proyecto Mia responde directo, sin
+                borrador que aprobar. */}
             {loading
               ? "Cargando tus proyectos…"
               : proyectos.length === 0
-                ? "Un espacio de trabajo libre para investigar con Mia."
-                : `${proyectos.length} en curso`}
+                ? "Aquí Mia te responde directo, sin borrador que aprobar."
+                : `${proyectos.length} en curso · Mia responde directo, sin borrador que aprobar`}
           </p>
         </div>
         <Button onClick={openModal} className="gap-2">
@@ -139,9 +144,10 @@ export default function ProyectosPage() {
           </div>
           <h2 className="text-lg font-medium">Crea tu primer proyecto</h2>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            Un proyecto es distinto de un asunto: conectas las carpetas que quieras, conversas
-            con Mia sobre esos documentos y guardas lo que ella te vaya produciendo. No hay
-            diagnóstico ni borrador para aprobar — es un espacio de trabajo libre.
+            Un proyecto se parece a un asunto en todo — conectas carpetas y conversas con Mia
+            sobre tus documentos — salvo en una cosa: aquí Mia te responde directo y guardas
+            lo que produce, sin borrador que aprobar. Cuando necesites ese borrador, abre un
+            asunto.
           </p>
           <Button onClick={openModal} className="mt-6 gap-2">
             <Plus className="h-4 w-4" />

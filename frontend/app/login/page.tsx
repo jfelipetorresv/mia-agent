@@ -30,7 +30,16 @@ export default function LoginPage() {
     try {
       const res = await apiSend<AuthResponse>("POST", "/api/auth/login", { email, password });
       setToken(res.token);
-      router.replace("/");
+      // Se aterriza en el PANEL, no en Asuntos: es la pantalla que responde
+      // «¿qué me toca hoy?» y por eso también encabeza la navegación.
+      //
+      // El despacho que aún no terminó su perfil NO se queda aquí: `OnboardingGate`
+      // (montado en el layout raíz) consulta el estado del onboarding en cada ruta
+      // que no sea /login, /register, /onboarding ni /activar, y reemplaza el
+      // destino por /onboarding si falta. /dashboard queda gobernado por esa misma
+      // regla, igual que lo estaba "/" — por eso el cambio de destino no altera en
+      // nada el viaje de la primera vez.
+      router.replace("/dashboard");
     } catch (err: unknown) {
       // Solo se muestran mensajes que VIENEN del backend (ApiError, en llano);
       // un error de red del navegador ("Failed to fetch") jamás llega a pantalla.

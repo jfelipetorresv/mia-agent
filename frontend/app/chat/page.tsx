@@ -26,12 +26,22 @@ type Message = { role: Role; content: string };
 type Atajo = { kind: "guia" | "agente"; id: string; label: string; texto: string };
 
 // Ejemplos que ENSEÑAN qué puede hacer Mia (empty state). Cada uno toca una
-// capacidad real: sus asuntos, un recordatorio, la configuración y una consulta libre.
+// capacidad real: sus asuntos, un recordatorio, la configuración y lo que Mia ya
+// sabe del despacho.
+//
+// AGNÓSTICOS DE JURISDICCIÓN — obligatorio. Estos textos los ve CUALQUIER despacho de
+// CUALQUIER país el primer día, antes de configurar nada, así que no pueden nombrar una
+// figura jurídica, una rama del derecho, un tipo de trámite, un órgano judicial ni una
+// moneda de ningún ordenamiento concreto. Preguntan por el PROPIO trabajo del abogado y
+// por el estado de Mia, que existen en todas partes. (Antes había aquí una figura del
+// derecho administrativo de un solo país y una llamada a un órgano judicial: se
+// eliminaron.) Al añadir un ejemplo nuevo, leelo como si fueras un despacho del otro
+// lado del mundo: si tiene que traducir el concepto, no sirve.
 const EXAMPLES = [
   { icon: FolderOpen, text: "¿Qué asuntos tengo pendientes?" },
-  { icon: BellRing, text: "Recuérdame llamar al juzgado mañana a las 9" },
+  { icon: BellRing, text: "Recuérdame revisar mis plazos mañana a las 9" },
   { icon: Settings2, text: "¿Qué me falta para terminar de configurar a Mia?" },
-  { icon: Sparkles, text: "Explícame la caducidad de la acción contractual" },
+  { icon: Sparkles, text: "¿Qué has aprendido del despacho hasta ahora?" },
 ];
 
 function saludoDelDia(): string {
@@ -76,7 +86,10 @@ export default function ChatPage() {
 
   // Consent-first: PRE-LLENA el cuadro de mensaje con el texto del atajo. El abogado lo
   // revisa y edita antes de enviar — nunca se auto-envía.
-  function useAtajo(texto: string) {
+  // Se llama `aplicarAtajo` y NO `useAtajo`: es un manejador de clic corriente, no un
+  // hook. Con el nombre anterior la regla `react-hooks/rules-of-hooks` lo tomaba por
+  // hook y marcaba error al invocarlo dentro de onClick.
+  function aplicarAtajo(texto: string) {
     setInput(texto);
     inputRef.current?.focus();
   }
@@ -244,14 +257,15 @@ export default function ChatPage() {
         <div className="flex-1 overflow-auto">
           {empty ? (
             <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col items-center justify-center px-4 py-16 text-center">
-              <div className="relative mb-6 animate-slide-up">
-                <div className="absolute inset-0 rounded-3xl bg-primary/30 blur-2xl" aria-hidden />
-                <div className="relative flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-lg">
-                  <Scale className="h-8 w-8" />
-                </div>
+              {/* Avatar de Mia — MISMA forma y mismo acabado que en el hilo
+                  (rounded-full, color plano): el objeto no cambia de identidad al
+                  pasar de la pantalla vacía a la conversación. Sin halo desenfocado
+                  detrás ni degradado: son decoración, no información. */}
+              <div className="mb-6 flex h-16 w-16 animate-slide-up items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <Scale className="h-8 w-8" />
               </div>
               <h1
-                className="text-gradient-brand animate-slide-up text-3xl font-semibold tracking-tight"
+                className="animate-slide-up text-display"
                 style={{ animationDelay: "60ms", animationFillMode: "backwards" }}
               >
                 {saludoDelDia()}. Soy Mia.
@@ -284,7 +298,7 @@ export default function ChatPage() {
                   {atajos.map((a) => (
                     <button
                       key={`${a.kind}-${a.id}`}
-                      onClick={() => useAtajo(a.texto)}
+                      onClick={() => aplicarAtajo(a.texto)}
                       title="Se agrega a tu cuadro de mensaje para que lo revises antes de enviar"
                       className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3.5 py-1.5 text-xs font-medium text-card-foreground shadow-sm backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
                     >
@@ -317,7 +331,7 @@ export default function ChatPage() {
                           aria-hidden
                         />
                       ) : null}
-                      <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-sm">
+                      <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
                         <Scale className="h-4 w-4" />
                       </div>
                     </div>
@@ -389,7 +403,10 @@ export default function ChatPage() {
                 <Send className="h-4 w-4" />
               </Button>
             </div>
-            <p className="mt-2 text-center text-xs text-muted-foreground/80">
+            {/* Aviso de responsabilidad del producto: se lee SIEMPRE. Sin modificador
+                de opacidad (lo dejaba por debajo del contraste mínimo AA) y con el
+                token de texto meta, no con un tamaño suelto. */}
+            <p className="mt-2 text-center text-meta text-muted-foreground">
               Mia propone; tú decides. Revisa siempre antes de usar.
             </p>
           </div>

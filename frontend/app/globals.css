@@ -21,13 +21,35 @@
     --secondary-foreground: 0 0% 2%;
 
     --muted: 180 12% 94%;
-    --muted-foreground: 210 2% 45%;
+    /* Accesibilidad, no cosmética: 45% daba 4.57:1 sobre --background, sin
+       margen; con cualquier modificador de opacidad caía a ~3.6:1, por debajo
+       del 4.5:1 de WCAG AA. A 40% da 5.52:1 sobre --background y 5.77:1 sobre
+       --card, y aguanta. (La cifra "~5.7" que decía antes este comentario era
+       la de la TARJETA atribuida al FONDO; ambas pasan AA, pero la prosa citaba
+       la superficie equivocada. Recalculado con la fórmula de luminancia
+       relativa de WCAG 2.1 sobre los valores resueltos.)
+       PROHIBIDO aplicar modificadores de opacidad a clases de texto
+       (text-muted-foreground/80, /70, text-foreground/60…): reintroducen
+       exactamente el fallo de contraste que este token corrige, y lo hacían
+       justo en los textos de garantía jurídica ("Mia propone; tú decides").
+       Si un texto debe verse más apagado, se usa un token más claro, nunca
+       opacidad. */
+    --muted-foreground: 210 2% 40%;
 
     --accent: 180 15% 92%; /* superficie sutil de hover */
     --accent-foreground: 0 0% 2%;
 
     --cta: 160 100% 42%; /* verde vibrante de marca — legible en claro */
     --cta-foreground: 0 0% 4%;
+    /* Extremos del degradado del CTA principal. Antes eran hex crudos
+       (#98e4bf → #00f5a2) escritos dentro de .bg-gradient-cta: el único color
+       del producto fuera del sistema de tokens, y justo en el botón que más
+       importa. Estos dos valores son la conversión exacta de esos hex, así que
+       el CTA se ve idéntico a antes; ahora, además, se puede cambiar desde un
+       solo sitio. NO se redefinen en .dark: el degradado del CTA es el mismo
+       verde de marca en ambos temas, por decisión de diseño. */
+    --cta-gradient-from: 150.8 58.4% 74.5%; /* = #98E4BF */
+    --cta-gradient-to: 159.7 100% 48%; /* = #00F5A2 */
     /* Verde oscuro SOLO para texto/bordes de CTA en tema claro. El 23% no es
        arbitrario: la insignia no se pinta sobre blanco sino sobre bg-cta/15, que
        aclara el fondo. Medido sobre ese fondo compuesto da 5.10:1 en reposo y
@@ -47,7 +69,36 @@
     --input: 180 10% 89%;
     --ring: 180 100% 25%;
 
-    --radius: 0.75rem;
+    /* Radio de las SUPERFICIES (tarjetas, paneles, diálogos) = rounded-lg.
+       Los otros dos peldaños (6px controles pequeños, 10px controles) están en
+       tailwind.config.ts. Tres valores, no siete. */
+    --radius: 0.875rem; /* 14px */
+
+    /* ELEVACIÓN — dos niveles y nada más.
+       flat   = borde hairline, sin sombra. Es el defecto: una tarjeta solo se
+                eleva si la elevación comunica jerarquía real.
+       raised = profundidad de dos capas (sombra de contacto + sombra amplia)
+                + realce superior. Tintada al color de la marca/fondo, nunca
+                negro puro. Antes convivían tres elevaciones para el mismo
+                objeto (sin sombra / shadow-sm / card-depth).
+       shadow-md, shadow-lg y shadow-2xl salen del vocabulario del producto. */
+    /* Sombra transparente, no `none`: Tailwind compone box-shadow como lista
+       (ring + shadow) y un `none` dentro de la lista invalida la declaración
+       entera. `0 0 #0000` se ve igual y es CSS válido. */
+    --elev-flat: 0 0 #0000;
+    --elev-raised:
+      0 1px 2px hsl(var(--foreground) / 0.04),
+      0 14px 32px -16px hsl(var(--foreground) / 0.2),
+      inset 0 1px 0 hsl(var(--primary) / 0.18);
+
+    /* ESPACIADO — respiración. La app medía gap-2 ×183 contra gap-6 ×4: era
+       densidad de cabina en superficies de lectura. Dos tokens bastan. */
+    --space-block: 1.5rem; /* separación entre bloques dentro de una sección */
+    --space-section: 3rem; /* separación entre secciones de una pantalla */
+
+    /* Curva única de movimiento (la misma MIA_EASE de app/_welcome/motion.ts).
+       Disponible aquí para estilos en línea y animaciones a mano. */
+    --ease-mia: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .dark {
@@ -89,6 +140,14 @@
     --border: 180 10% 15%;
     --input: 180 10% 17%;
     --ring: 180 55% 52%;
+
+    /* Elevación en oscuro: la sombra se tinta al color de FONDO (negro con
+       tinte teal), no a negro puro. Sobre una superficie oscura una sombra
+       negra pura ensucia el borde en vez de dar profundidad. */
+    --elev-raised:
+      0 1px 2px hsl(var(--background) / 0.5),
+      0 18px 38px -16px hsl(var(--background) / 0.72),
+      inset 0 1px 0 hsl(0 0% 100% / 0.05);
   }
 }
 
@@ -112,11 +171,130 @@
   * {
     scrollbar-color: hsl(var(--border)) transparent;
   }
-  /* Titulares con la tipografía de despliegue de marca (aprox. web de Flama). */
+  /* Titulares con la tipografía de despliegue de marca (aprox. web de Flama).
+     Antes esta regla cubría solo h1 y h2: el h3 se quedaba en Hind, así que el
+     nivel 3 cambiaba de TIPOGRAFÍA sin cambiar de TAMAÑO — el peor de los dos
+     mundos. Ahora los cuatro niveles de titular comparten familia y la
+     jerarquía la marca el tamaño (text-display / text-title / text-section). */
   h1,
-  h2 {
+  h2,
+  h3,
+  h4 {
     font-family: var(--font-display);
     letter-spacing: -0.01em;
+  }
+
+  /* Enlace familia ↔ rol tipográfico. Va en @layer base a propósito:
+     - los tamaños/pesos los pone la utilidad de Tailwind (capa utilities, gana);
+     - la familia la pone esto (capa base, cede ante cualquier utilidad);
+     - por eso `class="text-body font-serif"` sigue dando Newsreader, que es lo
+       que necesita el texto jurídico. */
+  .text-display,
+  .text-title,
+  .text-section {
+    font-family: var(--font-display);
+  }
+  .text-body,
+  .text-label,
+  .text-meta {
+    font-family: var(--font-sans);
+  }
+
+  /* Peldaño `label` (13/18/500) aplicado a los CONTROLES, que es a lo que el
+     propio token se asigna ("etiqueta de campo, botón, pestaña").
+     ¿Por qué una clase de primitiva y no la utilidad `text-label` directamente
+     en el botón? Porque `cn()` usa tailwind-merge y tailwind-merge NO conoce
+     esta escala: cualquier `text-*` que no sea un tamaño estándar lo clasifica
+     como COLOR. Comprobado con el paquete del repo (tailwind-merge 3.6):
+         twMerge("text-label", "text-muted-foreground") === "text-muted-foreground"
+     Es decir, poner `text-label` en el botón haría que
+     `<Button className="text-muted-foreground">` perdiera su TAMAÑO sin avisar
+     — y ese patrón está vivo en el menú lateral y en el conmutador de tema.
+     Con esta clase el tamaño viaja en un nombre que tailwind-merge no toca.
+     La fuente de verdad sigue siendo el token: se aplica con @apply, nunca con
+     cifras sueltas. Y al vivir en la capa base, cualquier utilidad de tamaño
+     posterior (el `text-section` del botón grande) la sigue ganando.
+     Ojo al detalle de @apply: arrastra TAMBIÉN la regla de familia de arriba
+     (`.text-label { font-family: var(--font-sans) }`), así que el control queda
+     en sans en lugar de heredar la familia del contenedor. Es lo correcto —la
+     escala asigna sans a `label`— y sigue siendo pisable con `font-serif`
+     (utilidad > base). Comprobado en el CSS servido y sobre los 19 usos vivos
+     de `font-serif`: ninguno envuelve hoy a un botón, así que hoy no cambia
+     ninguna pantalla; es un seguro para mañana. */
+  .type-control {
+    @apply text-label;
+  }
+
+  /* ACCESIBILIDAD — respeto de `prefers-reduced-motion`, obligatorio.
+     Hasta ahora solo la bienvenida lo respetaba (app/_welcome/motion.ts); el
+     resto del producto seguía moviéndose para quien pide que no se mueva. La
+     regla universal apaga el movimiento de ADORNO: entradas, acordeones,
+     desplazamientos y todas las transiciones.
+
+     EXCEPCIÓN DELIBERADA — los indicadores de "en curso".
+     "Movimiento reducido" significa quitar el movimiento decorativo, NO apagar
+     la única señal de que Mia está trabajando. Congelarlos deja al abogado
+     mirando una rueda detenida, sin poder distinguir "analizando" de
+     "colgado": reenvía la consulta o cierra la pantalla. Por eso los seis
+     indicadores infinitos del producto —rueda de carga, esqueletos de carga,
+     halo del avatar, puntos de escritura, anillo de la sala y cursor del
+     typewriter— conservan su bucle infinito, pero se les sustituye el keyframe
+     por una respiración de sola OPACIDAD:
+       · cero desplazamiento, cero rotación y cero escala, que es justo lo que
+         hacían `animate-bounce`, `animate-ping` y `animate-pulse-soft` y lo
+         que esta preferencia pide eliminar;
+       · 1 → 0.45 → 1 en 1.6 s con ease-in-out: cambio continuo y suave, no un
+         parpadeo (`animate-blink` caía a opacidad 0 con step-end; aquí ya no);
+       · el elemento nunca desaparece, así que sigue leyéndose como "hay algo
+         ahí y está vivo".
+     No se toca `transform` en esta regla: varios de estos indicadores van
+     colocados con una transformación propia (`-translate-x-1/2`,
+     `translate-y-0.5`) y borrarla los descolocaría.
+     Los 0.01 ms (en vez de 0) del resto son la práctica habitual para que el
+     motor trate la animación como ejecutada. AVISO: la versión anterior de
+     este comentario los justificaba con los eventos
+     `animationend`/`transitionend`; se comprobó que en este frontend no existe
+     ni un listener de esos eventos, así que ese motivo era ficticio aunque la
+     práctica siga siendo sana. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+    }
+
+    .animate-spin,
+    .animate-pulse,
+    .animate-pulse-soft,
+    .animate-bounce,
+    .animate-ping,
+    .animate-blink {
+      animation-name: mia-en-curso !important;
+      animation-duration: 1.6s !important;
+      animation-timing-function: ease-in-out !important;
+      animation-iteration-count: infinite !important;
+      animation-direction: normal !important;
+      animation-fill-mode: none !important;
+      animation-play-state: running !important;
+    }
+  }
+}
+
+/* Respiración de "en curso" para movimiento reducido (ver el bloque de arriba).
+   Fuera de `@layer` a propósito: un @keyframes no pertenece a ninguna capa de
+   cascada y así queda visible para la regla que lo usa. */
+@keyframes mia-en-curso {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
   }
 }
 
@@ -148,7 +326,11 @@
   /* Degradado de marca para los CTA principales (aprobar, ver asuntos…): siempre
      verde de marca con texto negro encima, sea cual sea el tema. */
   .bg-gradient-cta {
-    background-image: linear-gradient(135deg, #98e4bf, #00f5a2);
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--cta-gradient-from)),
+      hsl(var(--cta-gradient-to))
+    );
   }
   /* Texto/insignias de CTA sobre fondo tenue (bg-cta/15): en claro usa el verde
      oscuro --cta-strong para cumplir WCAG AA (≥4.5:1); en oscuro es el mismo
@@ -160,18 +342,38 @@
   .glow-teal {
     box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 0 18px hsl(var(--primary) / 0.35);
   }
-  /* Profundidad de dos capas para tarjetas: sombra de contacto + sombra amplia,
-     más un realce superior sutil (hairline teal en claro, blanco/5 en dark). */
-  .card-depth {
-    box-shadow:
-      0 1px 2px hsl(var(--foreground) / 0.04),
-      0 14px 32px -16px hsl(var(--foreground) / 0.2),
-      inset 0 1px 0 hsl(var(--primary) / 0.18);
+  /* ---- Elevación: DOS niveles ------------------------------------------
+     `.elev-flat`   → borde hairline y ninguna sombra. Es el nivel por defecto
+                      de una superficie: si la elevación no comunica jerarquía
+                      real, no hay elevación.
+     `.elev-raised` → la profundidad de tarjeta de siempre, ahora tintada al
+                      fondo en oscuro en vez de a negro puro.
+     Equivalen a las utilidades `shadow-flat` / `shadow-raised` de Tailwind;
+     úsese cualquiera de las dos formas, pero solo estas dos.
+     `.card-depth` se conserva como alias del nivel elevado porque hay pantallas
+     vivas que lo usan; en código nuevo, `shadow-raised`.
+     Fuera del vocabulario: shadow-sm, shadow-md, shadow-lg, shadow-xl,
+     shadow-2xl. Lo que pide "más sombra" casi siempre pide más espacio. */
+  /* Longhands a propósito, no el atajo `border: 1px solid …`: las utilidades de
+     usuario se emiten DESPUÉS de las de Tailwind, así que el atajo pisaría el
+     color de `elev-flat border-primary` en silencio (reescribe las tres
+     propiedades de golpe). Con longhands, quien pida otro color lo conserva. */
+  .elev-flat {
+    box-shadow: var(--elev-flat);
+    border-width: 1px;
+    border-style: solid;
+    border-color: hsl(var(--border));
   }
-  .dark .card-depth {
-    box-shadow:
-      0 1px 2px hsl(0 0% 0% / 0.35),
-      0 18px 38px -16px hsl(0 0% 0% / 0.5),
-      inset 0 1px 0 hsl(0 0% 100% / 0.05);
+  .elev-raised,
+  .card-depth {
+    box-shadow: var(--elev-raised);
+  }
+
+  /* Cifras alineadas en columna (importes, plazos, contadores, tablas): sin
+     tabular-nums los dígitos bailan al actualizarse y una cifra deja de
+     leerse como un dato. Aplíquese a cualquier número que el abogado compare. */
+  .nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
   }
 }
