@@ -284,7 +284,7 @@ def question_complexity(query_text: str) -> float:
 
 
 def plan_reading(stats: dict | None, query_text: str,
-                 budget_tokens: int | None) -> ReadingPlan:
+                 budget_tokens: int | None, *, agentic: bool = False) -> ReadingPlan:
     """Deriva cuánto leer del expediente en este turno. Función PURA (offline, testeable).
 
     `stats` viene de `matter_chunk_stats`; `budget_tokens` es el presupuesto REAL del
@@ -308,6 +308,22 @@ def plan_reading(stats: dict | None, query_text: str,
     el PISO, nunca el techo — un dict vacío no puede acabar pidiéndole a la base 160
     fragmentos y 600 candidatos. Sin presupuesto declarado (`None`) tampoco rompe: se
     trata como presupuesto mínimo, que también deja el plan en el piso.
+
+    `agentic=True` (solo cuando la lectura agéntica va a correr DE VERDAD en este turno:
+    ver `agentic_reading_available`) cambia UNA cosa: la primera lectura arranca CORTA,
+    en `MIA_AGENTIC_READING_SEED_TOP_K` (el piso histórico por defecto), porque quien
+    decide cuánto más hace falta es el modelo con la herramienta, no esta función. Todo
+    lo demás —colchón, candidatos, reparto por pieza— se deriva igual, del top_k nuevo.
+    Dos garantías por construcción: el arranque corto NUNCA lee más que el plan clásico
+    (se acota con él) y NUNCA baja del piso `MIA_RETRIEVAL_MIN_TOP_K`.
+
+    Esto acota la PRIMERA lectura, no el turno. El turno agéntico puede acabar leyendo
+    hasta `SEED_TOP_K + MAX_EXPANSIONS × MAX_TOP_K`, que está configurado para alcanzar
+    `MIA_RETRIEVAL_MAX_TOP_K` — todo lo que el camino clásico puede llegar a leer. Arrancar
+    corto cambia CUÁNDO se pide el material, no cuánto se puede llegar a ver.
+
+    `agentic=False` es el default y no toca ni un byte del cálculo de hoy: el parámetro
+    es keyword-only y el único bloque que lo mira está detrás de un `if agentic`.
     """
     if not isinstance(stats, dict):
         stats = {}
@@ -324,6 +340,18 @@ def plan_reading(stats: dict | None, query_text: str,
     capacity = int(target_tokens // avg_chunk_tokens)
     top_k = max(config.MIA_RETRIEVAL_MIN_TOP_K,
                 min(capacity, config.MIA_RETRIEVAL_MAX_TOP_K))
+    if agentic:
+        # ARRANQUE CORTO. Se acota con `top_k` para que el modo agéntico jamás lea MÁS que
+        # el clásico. NO se reimpone aquí el piso `MIA_RETRIEVAL_MIN_TOP_K`: las dos ramas
+        # de abajo (con y sin material medido) lo aplican ya sobre CUALQUIER valor que
+        # llegue, así que repetirlo aquí sería una línea que ningún fallo puede poner roja
+        # — y una guarda que no puede fallar no es una guarda. Que el piso se sostiene
+        # también con un arranque corto mal configurado lo custodia el gate `a5b`.
+        # `target_tokens` deja de ser el techo del presupuesto y pasa a ser lo que la
+        # lectura corta ocupa de verdad: si siguiera anunciando el techo, la traza del
+        # turno diría que se reservó un sitio que nadie usó.
+        top_k = min(int(config.MIA_AGENTIC_READING_SEED_TOP_K),
+                    config.MIA_RETRIEVAL_MAX_TOP_K, top_k)
     # No tiene sentido pedir 160 fragmentos a un asunto que tiene 12 — pero tampoco se
     # baja del piso histórico: pedir 8 sobre un asunto de 3 fragmentos devuelve 3.
     if n_chunks:
@@ -331,6 +359,10 @@ def plan_reading(stats: dict | None, query_text: str,
     else:
         # Material sin medir: no se sabe que haya NADA que leer. Se pide el piso.
         top_k = config.MIA_RETRIEVAL_MIN_TOP_K
+    if agentic:
+        # Va DESPUÉS del piso a propósito: `target_tokens` tiene que describir lo que se
+        # va a leer de verdad, no lo que se pidió antes de que el piso lo corrigiera.
+        target_tokens = max(1, int(top_k * avg_chunk_tokens))
 
     # Colchón: el dedup y el tope por documento descartan filas DESPUÉS de la consulta.
     fetch_k = max(top_k, int(math.ceil(top_k * config.MIA_RETRIEVAL_OVERFETCH)))
@@ -351,6 +383,9 @@ def plan_reading(stats: dict | None, query_text: str,
     # Las notas del despacho escalan con la MISMA señal de complejidad, pero su sección
     # tiene un presupuesto duro propio (KNOWLEDGE_BUDGET_FRACTION = 15% de la ventana)
     # que se aplica al renderizarlas: este número solo decide cuántas se piden.
+    # El arranque corto NO las toca a propósito: la herramienta del bucle solo busca en el
+    # EXPEDIENTE, así que una nota del despacho que se deje de leer aquí no la puede pedir
+    # nadie después. Recortar lo irrecuperable no sería ahorrar, sería leer peor.
     knowledge_top_k = max(
         config.MIA_KNOWLEDGE_MIN_TOP_K,
         min(int(round(config.MIA_KNOWLEDGE_MIN_TOP_K * complexity)),
@@ -971,6 +1006,82 @@ class ExpansionRequest:
     reason: str
 
 
+# ── ¿Puede este despacho usar la lectura agéntica? (se decide ANTES de gastar) ────
+# Prefijos de alias que NO admiten herramientas. Es el espejo EXACTO de la regla de
+# `agent/llm._invoke`, que descarta `tools` con un warning en los aliases `cli-*` porque
+# el CLI headless de la suscripción no habla tool-calling.
+#
+# Por qué se comprueba aquí y no se descubre sobre la marcha: sin herramientas el modelo
+# no puede pedir nada, contesta texto y el bucle termina en la primera ronda — pero la
+# llamada YA SE PAGÓ, con toda la lectura inicial dentro (medido: decenas de miles de
+# tokens por turno en un asunto grande, a cambio de nada). Antes eso degradaba en
+# silencio. Ahora es explícito: si la cadena activa no admite herramientas, el turno
+# entero se va por el camino clásico —lectura adaptativa de siempre, cero llamadas del
+# bucle— en vez de leer corto y no poder ampliar, que sería el peor resultado posible.
+_TOOLLESS_ALIAS_PREFIXES = ("cli-",)
+_warned_no_tools = False
+
+
+def alias_supports_tools(alias: str) -> bool:
+    """True si ese alias de modelo acepta herramientas (ver `_TOOLLESS_ALIAS_PREFIXES`)."""
+    return not str(alias or "").startswith(_TOOLLESS_ALIAS_PREFIXES)
+
+
+def chain_supports_tools(task: Optional[str] = None) -> bool:
+    """True si el modelo que ATENDERÁ este `task` admite herramientas.
+
+    Se mira la CABEZA de la cadena de fallback, no la cadena entera: es el proveedor que
+    se usa en el camino normal (los siguientes solo entran si el primero falla). Una
+    cadena que empieza por `cli-*` significa que en el camino normal no hay herramientas.
+
+    Sin red y sin coste: `resolve_fallback_chain` es resolución local de configuración.
+    Fail-soft hacia el lado BARATO: si no se puede averiguar, se responde False y el turno
+    se comporta como hoy. Preferimos apagar una mejora opcional antes que cobrarle al
+    despacho una llamada que quizá no sirva para nada.
+    """
+    try:
+        from ..agent import llm  # diferido: mismo criterio que `wiki_notes` (sin ciclos)
+
+        chain = llm.resolve_fallback_chain(task or config.MIA_AGENTIC_READING_TASK)
+    except Exception:  # noqa: BLE001 — averiguar el motor jamás puede tumbar el turno
+        logger.warning("no se pudo determinar si el motor admite herramientas; la lectura "
+                       "agéntica se omite en este turno", exc_info=True)
+        return False
+    return bool(chain) and alias_supports_tools(chain[0])
+
+
+def agentic_reading_available() -> bool:
+    """¿Corre HOY la lectura agéntica en esta instalación? Se pregunta ANTES de leer.
+
+    Tres condiciones, todas necesarias: la instalación la activó, el tope de ampliaciones
+    no la anula, y el motor configurado admite herramientas. Importa que se decida antes
+    de la PRIMERA lectura y no después, porque de esta respuesta depende cuánto se lee de
+    entrada (`plan_reading(agentic=...)`): arrancar corto solo es correcto si después se
+    va a poder ampliar.
+
+    Con la bandera apagada —el default— sale por la primera línea: no resuelve cadenas, no
+    importa `llm` y no toca nada. La equivalencia con el producto de hoy es la forma del
+    código, no una promesa del comentario.
+    """
+    global _warned_no_tools
+    if not config.MIA_AGENTIC_READING:
+        return False
+    if config.MIA_AGENTIC_READING_MAX_EXPANSIONS <= 0:
+        return False
+    if not chain_supports_tools(config.MIA_AGENTIC_READING_TASK):
+        if not _warned_no_tools:
+            _warned_no_tools = True
+            logger.warning(
+                "lectura agéntica activada pero el motor de la tarea '%s' no admite "
+                "herramientas: no se paga ninguna llamada del bucle y el turno sigue por "
+                "la lectura de siempre. Para aprovecharla, apunte "
+                "MIA_AGENTIC_READING_TASK a una tarea cuya cadena no empiece por 'cli-' "
+                "(este aviso se emite una sola vez por proceso)",
+                config.MIA_AGENTIC_READING_TASK)
+        return False
+    return True
+
+
 def reading_tools() -> list[dict]:
     """Herramientas que se le ofrecen al modelo en el bucle de lectura (copia nueva)."""
     return [json.loads(json.dumps(_READING_TOOL_SCHEMA))]
@@ -1058,6 +1169,7 @@ async def agentic_expand(
     max_top_k: Optional[int] = None,
     default_top_k: Optional[int] = None,
     task: Optional[str] = None,
+    supports_tools: Optional[bool] = None,
 ) -> tuple[list[dict], dict]:
     """Deja que el modelo AMPLÍE la lectura inicial, y devuelve (documentos, traza).
 
@@ -1069,14 +1181,21 @@ async def agentic_expand(
     Topes, todos duros:
       · `max_expansions` rondas como máximo (la primera lectura no cuenta).
       · `budget_tokens` de conversación: al agotarse se corta y se sigue con lo que haya.
+        Cuenta lo que se ENVÍA de verdad, incluido el reenvío del historial en cada ronda
+        —que es la parte que más pesa—, no solo el material nuevo.
       · `max_top_k` fragmentos por ampliación.
       · Un fragmento ya leído nunca se cuenta ni se paga dos veces (`seen`).
 
-    FAIL-SOFT ABSOLUTO. Si el modelo no soporta herramientas (los aliases `cli-*` las
-    descartan), si la llamada revienta, si la respuesta no tiene la forma esperada o si
-    la base falla, se devuelve el material reunido hasta ese momento —que en el peor caso
-    es EXACTAMENTE `docs`, el camino clásico— y la traza dice por qué. Este bucle jamás
-    tumba el turno del abogado.
+    ANTES DE GASTAR NADA se comprueba que el motor admita herramientas (`supports_tools`,
+    que por defecto lo resuelve `chain_supports_tools`). Si no las admite, el bucle no
+    hace UNA sola llamada: devuelve `docs` y la traza dice 'sin_herramientas'. Antes se
+    descubría después de pagar la llamada —con toda la lectura inicial dentro— y el turno
+    se comía ese coste en silencio a cambio de cero ampliaciones.
+
+    FAIL-SOFT ABSOLUTO. Si la llamada revienta, si la respuesta no tiene la forma esperada
+    o si la base falla, se devuelve el material reunido hasta ese momento —que en el peor
+    caso es EXACTAMENTE `docs`, el camino clásico— y la traza dice por qué. Este bucle
+    jamás tumba el turno del abogado.
 
     La traza no es decorado: es cómo se mide después si de verdad cuesta menos. Lleva
     cuántas ampliaciones se pidieron, con qué consulta y motivo, cuánto material nuevo
@@ -1098,6 +1217,14 @@ async def agentic_expand(
         # Sin material inicial no hay nada sobre lo que razonar qué falta (y un asunto sin
         # documentos ya se salta la recuperación entera aguas arriba).
         return out, trace
+    if supports_tools is None:
+        supports_tools = chain_supports_tools(task)
+    if not supports_tools:
+        # Detectado ANTES de la llamada: cero tokens gastados en un bucle que no puede
+        # ampliar. El llamador de producción ya lo sabía (`agentic_reading_available`) y
+        # ni siquiera llega aquí; esta guarda protege a cualquier otro llamador.
+        trace["stop"] = "sin_herramientas"
+        return out, trace
 
     try:
         seen = {str(r.get("id")) for r in out
@@ -1106,13 +1233,22 @@ async def agentic_expand(
             {"role": "system", "content": _READING_SYSTEM_PROMPT},
             {"role": "user", "content": _reading_first_message(question, out)},
         ]
-        spent = sum(_estimate_tokens(m.get("content")) for m in messages)
         tools = reading_tools()
+        spent = 0
         stopped = ""
         for _ in range(max_expansions):
-            if spent >= budget_tokens:
+            # Coste REAL de esta ronda: en cada llamada se reenvía la conversación ENTERA
+            # (el sistema, lo ya leído y el eco de cada ampliación anterior), y ese reenvío
+            # es la parte que más pesa. Contando solo el material nuevo, el presupuesto
+            # acotaba una cifra que NO es la que se paga y dejaba de morder justo en el
+            # caso en que hace falta: el gate `e3c` compara el envío real contra este tope
+            # y se pone rojo si se rebasa. Se comprueba ANTES de llamar, que es cuando
+            # todavía se puede no gastar.
+            round_tokens = sum(_estimate_tokens(m.get("content")) for m in messages)
+            if spent + round_tokens >= budget_tokens:
                 stopped = "presupuesto"
                 break
+            spent += round_tokens
             resp = await _reading_llm_call(messages, tools, task)
             message = resp.choices[0].message
             tool_calls = getattr(message, "tool_calls", None)
@@ -1158,14 +1294,13 @@ async def agentic_expand(
                     trace["requests"].append(
                         {"consulta": untrusted.sanitize_field(req.query, 200),
                          "pedidos": req.top_k, "motivo": req.reason, "nuevos": n_fresh})
+                # El payload NO se suma aquí al gasto: se pagará cuando se reenvíe, al
+                # principio de la ronda siguiente. Si no hay ronda siguiente, nunca llegó
+                # al modelo y cobrarlo sería inventar coste.
                 messages.append({"role": "tool",
                                  "tool_call_id": str(getattr(tc, "id", "") or ""),
                                  "content": payload})
-                spent += _estimate_tokens(payload)
             trace["expansions"] += 1
-            if spent >= budget_tokens:
-                stopped = "presupuesto"
-                break
         else:
             stopped = "tope_ampliaciones"
         trace["stop"] = stopped or "tope_ampliaciones"

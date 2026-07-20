@@ -180,27 +180,107 @@ MIA_AGENTIC_READING = _env_flag("MIA_AGENTIC_READING")
 # La primera lectura NO cuenta: sigue siendo la de `plan_reading` (arrancar con las manos
 # vacías desperdicia un turno entero en pedir lo que ya sabemos que hace falta).
 # 0 desactiva el bucle aunque la bandera esté encendida.
+#
+# ESTE NÚMERO Y `MAX_TOP_K` FIJAN EL TECHO DE LECTURA DEL CAMINO AGÉNTICO:
+#     SEED_TOP_K + MAX_EXPANSIONS × MAX_TOP_K
+# y ese techo TIENE que alcanzar `MIA_RETRIEVAL_MAX_TOP_K`, que es todo lo que el camino
+# clásico puede llegar a leer. Si se queda corto, encender la bandera deja de cambiar
+# CUÁNDO se lee y pasa a recortar cuánto se PUEDE llegar a leer: en un asunto grande eso
+# no es ahorro, es ver menos expediente. Con 8 + 4 × 30 = 128 = MIA_RETRIEVAL_MAX_TOP_K
+# los dos caminos alcanzan el mismo material y la única diferencia vuelve a ser el CUÁNDO.
+# El gate `e7` de test_lectura_agentica custodia la relación y se pone rojo si alguien baja
+# cualquiera de los tres números (o si sube el riel clásico sin subir estos).
+#
+# POR QUÉ 4 RONDAS DE 30 Y NO 10 DE 12, que darían el mismo techo aritmético: en cada ronda
+# se reenvía la conversación ENTERA, así que el coste del bucle crece con el CUADRADO de las
+# rondas. Con 10×12 el presupuesto del bucle lo corta antes de llegar al techo, que pasa a
+# existir solo en la multiplicación — comprobado poniéndolo a propósito: `e7` se pone rojo.
+# Pocas rondas grandes llegan al mismo material por mucho menos. La cifra exacta del peor
+# caso con estos valores la imprime la sección E del gate en cada corrida; no se copia aquí
+# para que no envejezca.
 MIA_AGENTIC_READING_MAX_EXPANSIONS = int(
-    os.getenv("MIA_AGENTIC_READING_MAX_EXPANSIONS", "3"))
+    os.getenv("MIA_AGENTIC_READING_MAX_EXPANSIONS", "4"))
 # Presupuesto del BUCLE, como fracción del presupuesto del nodo consumidor. Es el techo de
-# la conversación de lectura (lo ya leído + lo que traiga cada ampliación). Al agotarse se
-# sigue con lo que haya: el bucle se corta, el turno JAMÁS se cae.
+# la conversación de lectura, contando lo que de verdad se envía: en CADA ronda se reenvía
+# el historial completo, y eso es lo que se acumula contra este número (ver `agentic_expand`
+# — contar solo el material nuevo dejaba el presupuesto acotando una cifra que no era la
+# que se pagaba). Al agotarse se sigue con lo que haya: el bucle se corta, el turno JAMÁS
+# se cae.
 MIA_AGENTIC_READING_BUDGET_FRACTION = float(
     os.getenv("MIA_AGENTIC_READING_BUDGET_FRACTION", "0.50"))
-# Tope de fragmentos que puede traer UNA ampliación (el modelo propone, esto acota).
-MIA_AGENTIC_READING_MAX_TOP_K = int(os.getenv("MIA_AGENTIC_READING_MAX_TOP_K", "12"))
+# Tope de fragmentos que puede traer UNA ampliación (el modelo propone, esto acota). Es el
+# otro factor del techo: ver la nota de MIA_AGENTIC_READING_MAX_EXPANSIONS. No es lo que se
+# pide por defecto — eso es DEFAULT_TOP_K, que sigue en 8.
+MIA_AGENTIC_READING_MAX_TOP_K = int(os.getenv("MIA_AGENTIC_READING_MAX_TOP_K", "30"))
 # Cuántos pedir cuando el modelo no dice cuántos.
 MIA_AGENTIC_READING_DEFAULT_TOP_K = int(
     os.getenv("MIA_AGENTIC_READING_DEFAULT_TOP_K", "8"))
+# ARRANQUE CORTO · con la bandera ENCENDIDA la primera lectura deja de derivarse del
+# presupuesto y arranca cerca del piso histórico; las AMPLIACIONES hacen el resto.
+#
+# Es la pieza SIN LA CUAL el bucle sería solo coste añadido: sin ella la pregunta fácil
+# leía el plan adaptativo COMPLETO y encima pagaba la llamada del bucle para oír
+# "suficiente" — lo peor de los dos mundos. Con ella, la fácil lee el piso y no paga
+# ampliaciones; la difícil arranca igual de corta y sube pidiendo.
+# CUIDADO con leer esto como "ahorro" a secas: el ahorro solo se materializa cuando el
+# modelo se da por satisfecho pronto. Si amplía en todas las rondas, el turno acaba
+# leyendo el techo (128) y cuesta MÁS que la lectura clásica de esa misma pregunta —
+# porque leyó más material, no porque desperdicie. Las dos cifras, la buena y la mala,
+# están medidas en test_lectura_agentica, sección E, y se recalculan al correr el gate.
+# Nunca puede quedar por encima de lo que habría leído el plan adaptativo (se acota con
+# él en `plan_reading`) ni por debajo del piso `MIA_RETRIEVAL_MIN_TOP_K`.
+MIA_AGENTIC_READING_SEED_TOP_K = int(
+    os.getenv("MIA_AGENTIC_READING_SEED_TOP_K", str(MIA_RETRIEVAL_MIN_TOP_K)))
 # `task` con el que se llama al modelo del bucle (elige la CADENA de proveedores en
 # agent/llm.py). Se deja configurable y no cableado porque el coste del bucle depende de
 # esto: una instalación puede apuntarlo a una tarea auxiliar barata sin tocar código. Un
 # task desconocido cae a la cadena de 'main' (resolve_fallback_chain), nunca falla.
-# AVISO MEDIDO, no supuesto: en la política 'suscripcion' (la de por defecto) la cadena
-# empieza por un alias `cli-*`, y `llm._invoke` DESCARTA las herramientas en esos aliases
-# (avisa por log). El modelo responde texto sin pedir nada y el bucle termina en la
-# primera ronda sin ampliar: correcto y fail-soft, pero el bucle NO aporta ahí.
+# MEDIDO, no supuesto: en la política 'suscripcion' (la de por defecto) la cadena empieza
+# por un alias `cli-*`, y `llm._invoke` DESCARTA las herramientas en esos aliases. El
+# modelo nunca ve la herramienta, no puede pedir nada y el bucle no amplía jamás.
+# Eso ya NO degrada en silencio: `retrieval.agentic_reading_available()` lo detecta ANTES
+# de gastar la llamada y el turno se va por el camino clásico entero (lectura adaptativa
+# de siempre + cero llamadas del bucle). Ver esa función.
 MIA_AGENTIC_READING_TASK = os.getenv("MIA_AGENTIC_READING_TASK", "main").strip() or "main"
+
+# ── CUÁNDO ENCENDER `MIA_AGENTIC_READING`, en llano ──────────────────────────────
+# QUÉ CAMBIA DE VERDAD, sin titular bonito. Encendida, la primera lectura arranca en el
+# piso y el modelo pide el resto. Eso NO es un ahorro garantizado: es un ahorro
+# CONDICIONADO a que el modelo se dé por satisfecho pronto.
+#   · Modelo que dice "suficiente" de entrada (pregunta puntual): MEDIDO 4,3 veces más
+#     barato que leer de golpe el plan adaptativo.
+#   · Modelo que amplía en TODAS las rondas (el peor caso): MEDIDO 3,7 veces más CARO que
+#     la lectura clásica de esa misma pregunta puntual. No es desperdicio — acabó leyendo
+#     128 fragmentos donde la clásica leía 55 — pero se paga.
+#   · El TECHO es el mismo por los dos caminos (128 fragmentos): la bandera nunca recorta
+#     cuánto expediente puede llegar a ver Mia, solo cambia CUÁNDO lo pide.
+# Las tres cifras salen de la sección E de execution/test_lectura_agentica.py y se
+# recalculan solas al correr el gate; si alguien mueve los topes, cambian.
+#
+# ENCENDERLA conviene cuando se cumplen las TRES:
+#   1. El motor del despacho admite herramientas. Hoy: políticas 'nube', 'openrouter' o
+#      'soberano' con un modelo que hable tool-calling — o `MIA_AGENTIC_READING_TASK`
+#      apuntado a una tarea cuya cadena NO empiece por un alias `cli-*`. Con la política
+#      'suscripcion' tal cual, encenderla no hace nada: el propio sistema lo detecta y
+#      sigue por el camino clásico sin cobrar de más, pero tampoco se gana nada.
+#   2. Los asuntos son GRANDES (cientos de fragmentos) Y la mayoría de preguntas del día
+#      a día NO necesita el expediente entero. Ahí el plan adaptativo lee mucho en CADA
+#      turno y el arranque corto se lo ahorra. En un asunto de 20 fragmentos el plan ya
+#      lee poco y el bucle solo añade una llamada. Y ojo con la otra mitad de la
+#      condición: si en un asunto grande casi toda pregunta acaba necesitándolo todo, la
+#      bandera no ahorra nada — paga rondas de conversación para llegar al mismo sitio.
+#   3. La mezcla de preguntas del despacho es desigual: muchas puntuales ("qué fecha
+#      tiene el auto") y algunas de análisis. El bucle cobra la llamada extra en TODAS
+#      para ahorrar lectura en las puntuales; si todas las preguntas son de análisis
+#      profundo, el balance se estrecha.
+# DEJARLA APAGADA cuando: el motor es la suscripción por CLI; los asuntos son pequeños;
+# se quiere el comportamiento exacto y auditado de hoy (apagada, el turno es byte por
+# byte el de siempre); o no se ha medido nada todavía. Es el default y no hay prisa.
+# CÓMO SABER SI VALIÓ LA PENA: la traza `agentic_reading` de cada turno lleva ampliaciones
+# pedidas, fragmentos nuevos y motivo del corte. Si el corte es casi siempre 'suficiente'
+# con 0 ampliaciones, el despacho está pagando una llamada por turno para leer el piso:
+# eso puede ser justo lo que se quiere (ahorro) o señal de que el arranque es demasiado
+# corto para sus asuntos — súbase `MIA_AGENTIC_READING_SEED_TOP_K` antes que apagarla.
 
 # Política de modelo POR DEFECTO (CP2 · decisión #27). Valores: "suscripcion" (CLI de
 # Claude Code del abogado, sin billing por API) · "nube" (API Anthropic vía proxy) ·

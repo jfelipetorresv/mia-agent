@@ -293,21 +293,41 @@ def _expansion_plan(plan, top_k: int):
 
 
 async def _read_matter_agentic(tenant_id: str, matter_id: str, msg: str,
-                               qvec: list[float], plan) -> tuple[list[dict], Optional[dict]]:
+                               qvec: list[float], plan, *,
+                               enabled: Optional[bool] = None,
+                               ) -> tuple[list[dict], Optional[dict]]:
     """Lee el expediente y, SI la instalación lo activó, deja que el modelo pida más.
 
-    Devuelve (documentos, traza) donde la traza es None cuando la lectura agéntica está
-    apagada — que es el default y el único estado en el que este producto ha vivido hasta
-    hoy. CON LA BANDERA APAGADA lo único que ocurre de más es evaluar un booleano: los
-    documentos son, byte por byte, los que devolvía `_read_matter_adaptive`. Eso no es
-    una promesa de comentario, es la forma del código: el `return` de abajo está antes de
-    cualquier otra cosa.
+    Devuelve (documentos, traza) donde la traza es None cuando la lectura agéntica no
+    corre — que es el default y el único estado en el que este producto ha vivido hasta
+    hoy. APAGADA, lo único que ocurre de más es evaluar un booleano: los documentos son,
+    byte por byte, los que devolvía `_read_matter_adaptive`. Eso no es una promesa de
+    comentario, es la forma del código: el `return` de abajo está antes de cualquier otra
+    cosa.
 
-    Con la bandera encendida la primera lectura NO cambia (sigue siendo la de
-    `plan_reading`): lo agéntico son las AMPLIACIONES. Ver `retrieval.agentic_expand`.
+    ENCENDIDA la primera lectura ARRANCA CORTA (el `plan` que recibe ya viene del piso:
+    `plan_reading(..., agentic=True)`) y las AMPLIACIONES hacen el resto: la pregunta fácil
+    se queda en el piso y no pide nada; la difícil sube pidiendo lo que necesita. Ver
+    `retrieval.agentic_expand`.
+
+    Dónde está —y dónde NO está— el ahorro, medido en la sección E de
+    test_lectura_agentica: cuando el modelo se da por satisfecho pronto, el turno cuesta
+    varias veces menos que leer de golpe el plan adaptativo. Cuando amplía en todas las
+    rondas, cuesta MÁS que el clásico, porque acaba leyendo hasta el techo
+    (`SEED_TOP_K + MAX_EXPANSIONS × MAX_TOP_K`, configurado para igualar el riel clásico
+    `MIA_RETRIEVAL_MAX_TOP_K`). Se lee más y se paga más; no se pierde material. Lo que
+    esta función garantiza no es un ahorro universal: es que el tamaño de la lectura deje
+    de ser una adivinanza fijada antes de leer.
+
+    `enabled` lo decide el llamador PORQUE TIENE QUE DECIDIRLO ANTES: de esa respuesta
+    depende el tamaño de la primera lectura, así que no puede consultarse aquí, cuando
+    ya se leyó. Si no se pasa, se resuelve igual (`agentic_reading_available`) para que
+    esta función siga siendo correcta por sí sola.
     """
     docs = await _read_matter_adaptive(tenant_id, matter_id, msg, qvec, plan)
-    if not config.MIA_AGENTIC_READING:
+    if enabled is None:
+        enabled = retrieval.agentic_reading_available()
+    if not enabled:
         return docs, None
 
     async def _read_more(query: str, top_k: int) -> list[dict]:
@@ -330,8 +350,11 @@ async def _read_matter_agentic(tenant_id: str, matter_id: str, msg: str,
 
     budget = int(max(1, _retrieval_budget_tokens()
                      * config.MIA_AGENTIC_READING_BUDGET_FRACTION))
+    # `supports_tools=True` no es un atajo: el llamador YA lo verificó (es parte de
+    # `enabled`) y volver a resolver la cadena aquí sería preguntar dos veces lo mismo.
     docs, trace = await retrieval.agentic_expand(msg, docs, read_more=_read_more,
-                                                 budget_tokens=budget)
+                                                 budget_tokens=budget,
+                                                 supports_tools=True)
     logger.info("lectura agéntica: %s ampliaciones, %s fragmentos nuevos, corte por '%s' "
                 "(%s/%s tokens del bucle)", trace.get("expansions"), trace.get("added"),
                 trace.get("stop"), trace.get("tokens_spent"), trace.get("budget_tokens"))
@@ -1143,17 +1166,23 @@ class MatterGraphBuilder:
         stats = await retrieval.matter_chunk_stats(state["tenant_id"], state["matter_id"])
         plan = None
         docs: list[dict] = []
-        # LECTURA AGÉNTICA (opt-in, `MIA_AGENTIC_READING`): tras la primera lectura el
-        # modelo puede PEDIR más material en vez de que nadie adivine un número. Apagada
-        # —el default— `_read_matter_agentic` devuelve exactamente lo de siempre y una
-        # traza vacía (None). Ver el bloque de `retrieval.agentic_expand`.
+        # LECTURA AGÉNTICA (opt-in, `MIA_AGENTIC_READING`): en vez de que nadie adivine un
+        # número, la primera lectura arranca CORTA y el modelo PIDE lo que le falte. Se
+        # decide ANTES de planificar —y no después de leer— porque de eso depende cuánto
+        # se lee de entrada: arrancar corto solo vale si después se puede ampliar. Si la
+        # instalación no la activó, o su motor no admite herramientas, `agentic_on` es
+        # False y el turno es exactamente el de siempre (plan adaptativo completo, traza
+        # None, cero llamadas extra). Ver `retrieval.agentic_reading_available`.
         agentic: Optional[dict] = None
         if stats.get("n_chunks"):
             vecs = await asyncio.to_thread(embeddings.embed_texts, [msg])
             qvec = vecs[0] if vecs else [0.0] * config.EMBED_DIM
-            plan = retrieval.plan_reading(stats, msg, _retrieval_budget_tokens())
+            agentic_on = retrieval.agentic_reading_available()
+            plan = retrieval.plan_reading(stats, msg, _retrieval_budget_tokens(),
+                                          agentic=agentic_on)
             docs, agentic = await _read_matter_agentic(
-                state["tenant_id"], state["matter_id"], msg, qvec, plan)
+                state["tenant_id"], state["matter_id"], msg, qvec, plan,
+                enabled=agentic_on)
         # CP3 (Riesgo #16): conocimiento del despacho (knowledge_chunks). Se REUSA el
         # embedding del mensaje si ya se generó para el expediente (cero llamadas extra
         # a Voyage). Si el asunto no tiene documentos, se embebe SOLO cuando el tenant
