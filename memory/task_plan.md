@@ -1,6 +1,6 @@
 # Mia — task_plan.md
 # Fases del proyecto · objetivos por módulo · checklists
-# Última actualización: 2026-07-17 (sesión 49)
+# Última actualización: 2026-07-20 (sesión 50)
 
 Leyenda: [x] completado · [ ] pendiente · [~] en progreso
 
@@ -397,5 +397,91 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
 - [x] Verificación visual en vivo (capa 3 parcial): chat/atajos y memoria/salud de guías = PASA
 - [ ] **Capa 3 EN VIVO de Pipe (resto)** — MCP e2e (LiteLLM arriba + stdio-live real), Pinecone
       real (llaves + índice dim 1024), banco de oro e2e, delegación D3 (Riesgo #66)
-- [ ] Ajuste opcional: cupo de agentes en `list_shortcuts` (≥6 guías) — no confirmado como
-      bloqueante
+- [x] Ajuste: cupo de agentes en `list_shortcuts` (≥6 guías) — HECHO en la sesión 50 (`aaa3d1a`):
+      las personas del despacho tienen cupo reservado antes del corte, conservando el tope total.
+      Con 6 o más guías activas, ningún agente aparecía nunca en el chat vacío
+
+## Sesión 50 (2026-07-20) — Lectura del expediente · guardián de citas · jurisdicción · perfil · selector
+Rama `feat/fase1-inc1-cleanup-scaffolding`. **18 commits, NINGUNO pusheado.** (Entre la sesión 49 y
+esta hubo trabajo el 18 y el 19 de julio sin registrar aquí; su detalle está en `HANDOFF.md`.)
+
+- [x] **Lectura adaptativa del expediente** — muere el literal `top_k=8`; el tamaño se deriva del
+      material indexado, del presupuesto real del nodo y de la exigencia de la pregunta. Piso
+      inviolable en 8. Dedup, tope por documento y expansión contigua (apagada). `hnsw.ef_search`
+      fijado en la misma transacción (con el 40 de fábrica, subir candidatos degradaba el recall sin
+      avisar). Cobertura **0.22**, provisional y escrita como tal en `config.py` — decisions.md #37.
+      Gate `test_retrieval_adaptativa` 59/59 (nuevo) — `00c4c17`
+- [x] **Guardián de citas cableado a PROYECTOS** + emisión del SSE movida para que el texto salga
+      DESPUÉS de verificarse (decisions.md #39). Gates `test_projects` 59/59,
+      `doc_citation_guard` 38/38 — `9516833`
+- [x] **El guardián deja de certificar en verde citas inventadas** (defecto PREEXISTENTE que ya
+      afectaba a los asuntos): cotejo por piezas con igualdad exacta en vez de substring
+      bidireccional — decisions.md #40 — `9516833`
+- [x] **Ordenamiento aplicable + política de procedencia en L3**, en dos ramas, con cero literales de
+      país en el código. Gate `jurisdiction_agnostic` 104/104 (era 75) — `03d861f`
+- [x] **Rediseño de interfaz por capas** — tokens (escala semántica de seis roles, contraste subido
+      donde caía bajo el mínimo accesible, regla global de movimiento reducido), primitivas (`Card`,
+      `PageShell`, `SectionTitle`, `lib/motion.ts`) y pantallas. **El Panel deja de ser un marcador de
+      ceros** y no inventa ceros cuando la fuente falla. Recorrido headless de las 11 rutas: cero
+      errores de consola, cero peticiones fallidas — `444d3a1`
+- [x] **Andamiaje de lectura agéntica, APAGADO por defecto** (decisión de Pipe, decisions.md #38);
+      apagado = comportamiento idéntico al actual, verificado de forma independiente. Segunda pasada:
+      techo subido de 44 a 128 (igualando el riel clásico) y el check de ahorro deja de ser incapaz de
+      ponerse rojo. Gate `test_lectura_agentica` 66/66 (nuevo) — `513a50b`, `f791596`
+- [x] **Perfil del despacho rediseñado** — pregunta criterio (qué se revisa siempre, qué no debe hacer
+      nunca, cuándo se da un escrito por terminado), no datos censales. El validador del fallo
+      silencioso queda cableado al endpoint. **Frente rechazado por su verificador y rehecho.** Gates
+      `soul_guard` 47/47, `profile_full` 51/51, `onboarding_horizontal` 13/13 (estaba 7/11),
+      `e2e` 58/58 — `c980704` (diseño en `872a7ec`)
+- [x] **Causa raíz de las 2 suites rojas de carpetas** (esperas que no aguardaban la convergencia,
+      demostrada por falsificación) + **cobertura nueva de "carpeta vinculada a un PROYECTO"**
+      (`test_carpeta_proyecto.py` 31/31, el escenario que falló en producción) + **presupuesto propio
+      de la Sala de estrategia** (desbordaba de verdad: 212.000 sobre un tope de 150.000) y la Sala
+      deja de quedarse muda sobre la norma. Gates `warroom` 79/79, `matter_folder` 37/37,
+      `matter_folders_multi` 30/30 — `91bd2e0`
+- [x] **El recorte por presupuesto** deja de partir por mitades ciegas, de desperdiciar la mitad del
+      cupo (utilización 50 % → 99 % medida) y de tirar primero lo que el modelo pidió (2 → 6 de 12).
+      Check nuevo de **utilización** (una restricción con máximo también necesita mínimo) — `3063df5`
+- [x] **Selector de países honesto** — consulta `GET /api/jurisdictions`, conserva los 21 y marca solo
+      en positivo; promesa recortada a fuentes oficiales y forma de citar (decisions.md #41 y #42).
+      8 barreras ejecutables, incluida la prohibición de prometer festivos, plazos o cálculo. Gates
+      `onboarding_horizontal` 18/18 (era 13), `onboarding_jurisdictions` 10/10 (era 7) — `6e0cacc`
+- [x] **Tres puertas de calidad que estaban verdes sin probar nada**, diagnosticadas y arregladas
+      (`b5` roto desde el 17-jul, la medida del prompt contando el envoltorio) + barrido de las 116
+      suites buscando la clase peligrosa: **no hay falsos positivos** — `fb30664`, `479f78f`
+- [x] **Meta-gate `execution/test_gates_no_ciegos.py`** (Riesgo #80) — prueba las pruebas con análisis
+      sintáctico, verifica su propia premisa, y la aserción **negativa** tumba la entrega mientras la
+      positiva solo avisa. Inventario: 120 suites, 11 expuestas, **cero de la clase silenciosa**;
+      5 avisos en `test_assistant.py`. Falsificado con 4 casos, incluida una suite inmune que **no**
+      debe reportarse. Coste 0,5 s sin red ni base — `f2bbec2`
+- [x] **Bloqueante de entorno cerrado** — migraciones 044/045/046 aplicadas por el runner real:
+      41/44 → **44/44**. La 044 (salud de guías) nunca había corrido
+- [x] **Primera prueba EN VIVO contra un modelo real** en varias sesiones (manual y puntual, no un
+      banco de casos): un despacho sin país pasó de recibir cinco artículos de un país concreto a cero
+      artículos, cero códigos, cero países
+- [x] HALT verdes al cierre: `test_rls` 19/19 · `check_env_pins` 10/10
+- [ ] **Ampliar el guardián a citas abreviadas** (Riesgo #75) — `arts. N y ss.` va en el código (es
+      transversal al Civil Law hispano); **las siglas concretas de cada código van en el pack**
+- [ ] **Banco de casos + benchmark ciego contra el modelo vivo** (Riesgo #76) — es la brecha de fondo:
+      ningún gate corre contra un modelo real
+- [ ] **Segundo paso de la lectura agéntica**: que el bucle pueda **reformular** la consulta al ver los
+      primeros resultados, no solo pedir más de lo mismo. Y medir con modelo real **antes** de encender
+      la bandera
+- [ ] **Meter el meta-gate en la rutina** — `test_gates_no_ciegos.py` ya existe (`f2bbec2`), cuesta
+      0,5 s y cabe en cualquier pre-commit, pero **no está en ninguna tanda automática todavía**. Y
+      resolver sus 5 avisos abiertos en `test_assistant.py`
+- [ ] **Sección `## aprendido` del perfil**, que se llene sola desde el trabajo real vía `update_soul`
+      — paso 7 de `docs/diseno-soul-onboarding.md`, lo único del rediseño sin implementar
+- [ ] **Re-contar la línea base real de gates**: existen **116** suites en `execution/`, no las 84
+      heredadas; ~32 nunca entraron a vigilancia
+- [ ] `extendTailwindMerge` con la escala tipográfica: hoy un token de tamaño combinado con uno de
+      color **pierde el tamaño en silencio** (arreglo de una línea, no aplicado)
+- [ ] Riesgos abiertos señalados por verificadores (#79): comentario obsoleto en `warroom.py:78-81`,
+      margen cero del estimador de la Sala, `init_durable_jobs` dentro de un bloque de aserciones,
+      fragmentación del reparto (~50 tokens, sin medir si sostienen una cita)
+- [ ] Borrar los despachos de prueba: `verificacion.visual@local.test`, `despacho.conpais@local.test`,
+      `alta.nueva@local.test`
+- [ ] **De Pipe (no es código):** aprobar el **push** de los 18 commits · decidir entre **profundidad
+      en un ordenamiento** o **anchura verificable en varios** (hoy el producto insinúa lo segundo y
+      entrega lo primero) · registrar las apps OAuth de Gmail/Outlook/OneDrive (pendiente de sesiones
+      anteriores) · decidir qué hacer con los `Informe-Lucy-*.json` del escritorio (son de `lexter-os`)

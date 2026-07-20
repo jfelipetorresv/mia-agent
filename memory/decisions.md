@@ -1,6 +1,6 @@
 # Mia — decisions.md
 # Decisiones arquitectónicas con razonamiento completo
-# Última actualización: 2026-07-17 (sesión 48)
+# Última actualización: 2026-07-20 (sesión 50)
 # (Estas decisiones NO se re-discuten — ver CLAUDE.md sección D)
 
 ---
@@ -658,3 +658,154 @@ argumenta no sirve; uno que aprende y no recuerda, tampoco.
 - **Un test puede estar protegiendo un defecto.** El comportamiento peligroso de `dreams` estaba
   fijado por un test que exigía justo eso ("Nudges actualiza SOUL"); hubo que invertirlo. Un gate
   verde no prueba que el diseño sea correcto: prueba que no ha cambiado.
+
+## #37 — 2026-07-20 · Cuánto lee Mia del expediente se DERIVA, no se cablea
+
+**Decisión.** Muere el literal `top_k=8`. En cada turno el tamaño de lectura se calcula a partir de
+tres señales: cuánto material hay indexado, cuánto cabe en el presupuesto REAL del nodo que lo va a
+consumir, y qué tan exigente es la pregunta (heurística determinista, sin modelo). Piso inviolable
+en 8 fragmentos; el techo lo pone el presupuesto, no un número escrito a mano.
+
+**Razonamiento.** Con 743.600 caracteres indexados, Mia leía 8 fragmentos: el **1,3 % del material**.
+El diagnóstico de Pipe —"no revisa bien la información"— no era un fallo de análisis: es que casi no
+leía. El presupuesto real del nodo más exigente admite ~480.000 caracteres. El cuello de botella era
+un literal, no la arquitectura.
+
+**Los dos números que se calibraron, y por qué esos.**
+- **Cobertura 0.22.** Con 0.35 (valor de fábrica del diseño) el gasto de IA por turno se multiplicaba
+  **entre 11 y 20 veces**; se le presentó a Pipe antes de fijarlo, no como default. Se probó **0.15** y
+  rompía la promesa que custodia el gate `a1`: en un expediente grande Mia debe leer una **fracción
+  real** del material, no una muestra simbólica. 0.22 (~7×) es el punto que conserva la promesa sin el
+  gasto. **Es provisional y así está escrito en `backend/mia/config.py`.**
+- **`MAX_TOP_K` deliberadamente holgado.** Un techo que muerde siempre aplasta la adaptabilidad y
+  devuelve el producto a lo que se acaba de quitar: un número fijo. El riel existe para acotar el daño
+  en el caso extremo, no para gobernar el caso normal.
+
+**Trampa cerrada que habría arruinado el cambio en silencio.** `hnsw.ef_search` nunca se fijaba: con
+el valor de fábrica de pgvector (40), subir los candidatos por encima de ~40 **degrada el recall sin
+avisar**. Se habría entregado "Mia lee más" mientras leía peor. Ahora se fija en la misma transacción.
+
+## #38 — 2026-07-20 · Lectura agéntica: que el modelo PIDA el material que le falta (decisión de Pipe)
+
+**Decisión de Pipe**, textual, ante el coste de la lectura adaptativa:
+
+> *"no se puede establecer como funciona Claude code o codex? al fin y al cabo su motor será uno de ellos"*
+
+**Es superior a las tres opciones que se le ofrecieron.** En vez de calcular de antemano cuánto leer
+—una adivinanza fijada antes de mirar el material—, la búsqueda se expone como HERRAMIENTA y el modelo
+pide ampliaciones hasta tener lo suficiente. Una pregunta trivial cuesta poco, una difícil lee lo que
+necesite, y nadie tiene que acertar una proporción.
+
+**Estado: andamiaje construido y APAGADO POR DEFECTO.** Con la bandera apagada el comportamiento es
+idéntico al actual, verificado de forma independiente haciendo explotar a propósito las tres piezas del
+bucle: el turno apagado no las roza.
+
+**Lo que garantiza el diseño, medido — y lo que NO.**
+
+| Escenario | Fragmentos | Coste relativo |
+|---|---|---|
+| fácil · clásico | 55 | 13.410 |
+| fácil · agéntico | 8 | 3.154 |
+| fácil · PEOR caso (modelo que amplía siempre) | 128 | 50.125 |
+| difícil · clásico | 128 | 30.936 |
+| difícil · agéntico | 32 | 14.244 |
+
+Con un modelo que se conforma: **4,3× más barato** en la fácil, 2,2× en la difícil. Con uno que amplía
+siempre: **3,7× más CARO** que la fácil clásica. **Lo que el diseño garantiza no es un ahorro universal:
+es que el tamaño de la lectura deje de ser una adivinanza, y que el daño esté acotado** — nunca lee más
+que el riel clásico (128), nunca rebasa su presupuesto.
+
+**Detalles de forma que son decisión, no accidente.**
+- **Se implementa imitando `mcp/turn.py`**, que ya hace un sub-turno de herramientas en este producto,
+  en vez de inventar otro patrón.
+- **Todo lo recuperado —inicial y cada ampliación— pasa por el mismo sellado de contenido no confiable.**
+  No hay puerta trasera.
+- **4 rondas de 30 y no 10 de 12**, que dan el mismo techo aritmético: en cada ronda se reenvía la
+  conversación entera, así que el coste crece con el **cuadrado** de las rondas. Con 10×12 el presupuesto
+  corta antes del techo — un techo que solo existiría en la multiplicación. Por eso el gate lo mide
+  CORRIENDO el bucle, no multiplicando constantes.
+- **El techo se subió hasta IGUALAR el riel clásico (128).** La versión anterior leía 44 y lo llamaba
+  ahorro, justo cuando su comentario recomendaba encenderla en los asuntos grandes: riesgo de calidad
+  disfrazado de ahorro. La bandera ya no cambia cuánto se puede llegar a leer, solo **cuándo se pide**.
+
+**SIN PROBAR (y es lo que decide si sirve):** que un modelo REAL sepa decir "suficiente". Por eso nace
+apagada. Además, en la política por defecto ('suscripcion') el bucle no aporta nada: la cadena arranca
+por un alias que descarta las herramientas.
+
+## #39 — 2026-07-20 · El texto de un proyecto se EMITE después de verificarse
+
+**Decisión.** Al cablear el guardián de citas al grafo de proyectos se **movió el punto de emisión del
+evento SSE**: el texto sale a la pantalla DESPUÉS de pasar por el nodo verificador. Y se quitan
+`messages` e `history` de `work_node` para que el checkpoint y el turno siguiente conserven el texto
+**verificado**, no el crudo.
+
+**Razonamiento.** El grafo de proyectos era `intake → delegación → work → fin`: un proyecto podía
+afirmar normas y jurisprudencia sin una sola marca `[VERIFICAR]`, protegido únicamente por una
+instrucción de prompt — que es una sugerencia al modelo, no un control. Comprobado en vivo: cinco citas
+de articulado concreto salieron sin marcar. **Añadir el nodo verificador sin mover el punto de emisión
+lo habría dejado decorativo**: verificando un texto que el abogado ya tenía delante.
+
+**Corolario general:** un control que actúa después de la entrega no es un control. Cuando se inserta un
+guardián en un flujo que ya emite, hay que mover la emisión, no solo insertar el guardián.
+
+## #40 — 2026-07-20 · Marcar de más es inofensivo; respaldar de más destruye el producto
+
+**Decisión.** Ante cualquier duda, el sistema marca `[VERIFICAR]`. Nunca declara "Con respaldo" sobre
+una coincidencia que no sea exacta.
+
+**Razonamiento — el defecto que lo obligó (PREEXISTENTE, ya vivo en el flujo de asuntos).** El cotejo de
+respaldo era substring bidireccional y no respetaba fronteras numéricas: con *"Decreto 1082 de 2015"* en
+el expediente, un *"Decreto 108"* **inventado por el modelo** salía marcado **"Con respaldo"**, con visto
+verde y **atribuido a un archivo y un folio reales**. Igual con *"Ley 143"* dentro de *"Ley 1437 de 2011"*
+y *"Sentencia C-35"* dentro de *"C-355 de 2006"*. Es la regla dura del producto al revés. **Cierre:**
+comparación por piezas con igualdad exacta de cada una y tolerancia solo a conectores.
+
+**Es una regla de diseño, no un arreglo puntual.** Se aplicó dos veces el mismo día, en frentes que no se
+tocan: al decidir el cotejo de respaldo, y al **recortar la promesa del selector de países** (#42) — donde
+lo que no se puede sostener se deja de prometer en vez de prometerse con matices.
+
+**Lección de método que va con ella:** el test que decía cubrir este caso solo ejercitaba la dirección ya
+blindada. **Un test verde no prueba lo que su título anuncia.** Lo encontró un verificador adversarial
+ejecutando una sonda, no leyendo el código.
+
+## #41 — 2026-07-20 · El selector de países conserva los 21 y marca solo en POSITIVO
+
+**Decisión.** El paso de país del alta consulta `GET /api/jurisdictions` y **marca en positivo** los
+ordenamientos con material real instalado. Se conserva la lista completa de 21 en orden alfabético. Los
+no preparados **no llevan sello negativo**.
+
+**Razonamiento — el defecto, visto en una captura, no leyendo código.** Las 21 casillas estaban cableadas
+a mano y no consultaban nada. Un despacho chileno marcaba Chile, creía que MIA traía el derecho chileno
+cargado, y no había nada. Riesgo comercial directo: es lo que quema a un primer cliente de otro país.
+
+**Las dos alternativas y por qué se descartaron:**
+- **Ordenar primero los preparados** convierte el producto en colombiano de facto, y el gate ya prohíbe
+  destacar ningún país (regla dura: MIA no es de ningún país).
+- **Reducir la lista a lo instalado** dejaría **una sola casilla**, que grita exactamente lo mismo.
+
+**El encuadre correcto: la lista de 21 no es un catálogo de capacidades, es un autocompletar.** El defecto
+no era tener 21 casillas: era que se veían idénticas y no consultaban nada. El peso de la honestidad lo
+lleva una frase que reacciona a lo que se acaba de marcar. Sellar en negativo los no preparados
+convertiría el alta en una pantalla de disculpas.
+
+**Barreras ejecutables, no solo texto (8 checks nuevos):** que el selector consulte el endpoint; que la
+marca **no** sea un literal cableado (compara los códigos del archivo contra las opciones — escribir un
+Set a mano lo pone rojo); fail-soft comprobado abortando el endpoint en vivo; y la correspondencia inversa
+(todo paquete instalado debe tener su casilla).
+
+## #42 — 2026-07-20 · La promesa del selector se recorta a lo defendible: fuentes oficiales y forma de citar
+
+**Decisión.** Elegir país promete **solo dos cosas**: las fuentes oficiales de ese ordenamiento y su forma
+de citar. Se retiró todo lo demás del encargo original.
+
+**Razonamiento — se leyó el paquete antes de prometerlo, y dos de las tres promesas no se sostenían.**
+- **Festivos judiciales: NO.** `holidays.json` está marcado incompleto (faltan los trasladables y los de
+  base pascual) y **el resolutor de plazos ni siquiera está cableado a esos datos**. Prometerlo sería una
+  mentira con **consecuencia procesal**. `term_catalog` tiene dos entradas y `recess` está vacío.
+- **Formatos de identificación: NO, y no por incompletos.** No son un beneficio de elegir país, porque
+  **el anonimizador aplica todos los paquetes siempre** (decisión #33: secreto profesional sobre
+  precisión). Prometerlo describiría mal cómo funciona el producto.
+
+**Lo más valioso del cambio fue recortar la promesa, no construir la marca.** El razonamiento queda
+escrito en el propio componente —qué SÍ y qué NO se puede prometer, y bajo qué condición se podría
+ampliar— y hay una prohibición ejecutable de volver a prometer festivos, plazos o cálculo.

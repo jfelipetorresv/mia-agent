@@ -1,6 +1,6 @@
 # Mia — progress.md
 # DIARIO DE OBRA · qué se construyó · errores · tests · resultados
-# Última actualización: 2026-07-17 (sesión 49)
+# Última actualización: 2026-07-20 (sesión 50)
 
 ---
 
@@ -2790,3 +2790,220 @@ confirmado visualmente) y de memoria/salud de guías (sana/revisar visible) = **
 `test_mcp` con el caso stdio-live real, no en SKIP), Pinecone real (llaves + índice dim 1024),
 banco de oro e2e, delegación D3 (Riesgo #66); ajuste opcional del cupo de agentes en
 `list_shortcuts` (≥6 guías, no confirmado como bloqueante).
+
+---
+
+## Sesión 50 — 2026-07-20 — Mia lee el expediente de verdad, no puede afirmar sin respaldo, y no es de ningún país
+
+> **Nota de continuidad.** Entre la sesión 49 (2026-07-17) y esta hubo trabajo el **18 y el 19 de
+> julio** (Fase 1, incrementos 1-3, y el primer arranque en vivo) que **nunca se registró en este
+> diario**. Su detalle está en `HANDOFF.md`, entradas del 18-jul (incrementos 1 y 2), 19-jul
+> (incremento 3) y 19-jul (2ª sesión). La numeración sigue el contador de este archivo, no el número
+> real de sesiones transcurridas.
+
+Rama `feat/fase1-inc1-cleanup-scaffolding`. **18 commits, NINGUNO pusheado** (Pipe aprueba el push).
+Método: un escritor por archivo, frentes disjuntos, verificador adversarial independiente al cierre de
+cada frente. **~40 agentes, cinco workflows, cero colisiones de archivos.**
+
+### Lo construido, por frente
+
+**(1) Lectura adaptativa del expediente** (`00c4c17`). Con 743.600 caracteres indexados Mia leía 8
+fragmentos — el **1,3 % del material**. No es que analizara mal: es que casi no leía. Muere el literal
+`top_k=8`; el tamaño de lectura se deriva del material indexado, del presupuesto real del nodo que lo
+consume y de la exigencia de la pregunta (heurística determinista, sin modelo). Piso inviolable en 8.
+Además dedup, tope por documento y expansión a fragmentos contiguos (apagada por defecto). **Trampa
+cerrada:** `hnsw.ef_search` nunca se fijaba; con el valor de fábrica de pgvector (40), subir candidatos
+por encima de ~40 **degrada el recall sin avisar** — se habría entregado "Mia lee más" mientras leía
+peor. Cobertura en **0.22** por decisión de Pipe (ver decisions.md #37). Gate `test_retrieval_adaptativa`
+59/59 (nuevo).
+
+**(2) Guardián de citas cableado a proyectos + el falso respaldo** (`9516833`). `verification_node` solo
+existía en el grafo de asuntos: un proyecto podía afirmar normas sin una sola marca `[VERIFICAR]`.
+Comprobado en vivo: cinco citas de articulado salieron sin marcar. **Se movió el punto de emisión del
+evento SSE** para que el texto salga DESPUÉS de verificarse (sin eso, el nodo habría sido decorativo —
+decisions.md #39). Y el defecto **más grave de la sesión, PREEXISTENTE**: el guardián certificaba en
+verde citas inventadas (decisions.md #40). Gates `test_projects` 59/59 · `doc_citation_guard` 38/38.
+
+**(3) Ordenamiento aplicable y procedencia** (`03d861f`). La jurisdicción **nunca llegaba al modelo**:
+vivía en un comentario y en una frase que decía "según la jurisdicción del despacho" sin decir cuál. Con
+el hueco abierto, el modelo lo rellenaba con lo que más ha visto. Ahora L3 declara el ordenamiento en dos
+ramas (sin ordenamiento: prohibición de nombrar articulado, códigos, corporaciones o bases normativas de
+un país, y razonamiento en el plano de la institución jurídica; con ordenamiento: cita el suyo con
+normalidad y lo ajeno va declarado como extranjero). Más una **política de procedencia**: no se atribuye
+al expediente ni al despacho nada que no haya llegado sellado en ese turno. Cero literales de país en el
+código. Gate `jurisdiction_agnostic` 104/104 (era 75).
+
+**(4) Rediseño de interfaz por capas** (`444d3a1`). Auditoría previa: el 89 % del producto era texto de 14
+y 12 puntos con un h3 del mismo tamaño que el cuerpo, 23 recetas de tarjeta a mano, siete radios (dos
+idénticos al renderizar), tres anchos sin regla, y **ninguna animación respetaba "reducir movimiento"**
+salvo la bienvenida. Capa 1 tokens (escala semántica de seis roles, contraste subido donde caía bajo el
+mínimo accesible — eran justo los avisos de responsabilidad). Capa 2 primitivas (`Card` rescatada,
+`PageShell`, `SectionTitle`, `lib/motion.ts`). Capa 3 pantallas: **el Panel deja de ser un marcador de
+ceros** y consume lo que ya existía construido y sin exponer. Recorrido headless de las 11 rutas: cero
+errores de consola, cero peticiones fallidas (antes había dos).
+
+**(5) Andamiaje de lectura agéntica, APAGADO por defecto** (`513a50b`, `f791596`). Decisión de Pipe
+(decisions.md #38). Se implementa imitando `mcp/turn.py`; todo lo recuperado pasa por el mismo sellado de
+contenido no confiable. La segunda pasada corrigió tres sobreventas que encontró un verificador: leía un
+tercio del riel clásico y lo llamaba ahorro (techo subido de 44 a **128**, igualando el clásico); el check
+de ahorro **no podía ponerse rojo** porque el guion del modelo falso decidía la respuesta (se añadió el
+peor caso y el check AFIRMA que ese caso es más caro); y el presupuesto del bucle no contaba el reenvío
+del historial, que es la parte que más pesa. Gate `lectura_agentica` 66/66 (nuevo).
+
+**(6) Perfil del despacho: pregunta criterio, no datos censales** (`c980704`, diseño en `872a7ec`). Tres
+defectos cerrados: el endpoint aceptaba cualquier cosa y devolvía 200 con un perfil de dos líneas (el
+validador **existía y funcionaba, pero solo se invocaba en un test** — detector de humo desconectado);
+seis de las ocho preguntas eran opcionales; y preguntaba el estilo mientras el resumen decía "tu estilo no
+te lo pregunto". Fuera: estilo en adjetivos, canales, herramientas. Dentro: qué se revisa siempre y qué
+puede resolver sola, qué no debe hacer nunca, y cuándo se da un escrito por terminado. Mismo número de
+pasos. **Frente RECHAZADO por su verificador y rehecho** (ver §Errores). Gates `soul_guard` 47/47 ·
+`profile_full` 51/51 · `onboarding_horizontal` 13/13 (estaba 7/11).
+
+**(7) Carpetas + Sala de estrategia** (`91bd2e0`). Las dos suites de carpetas llevaban **sesiones en rojo**
+sin causa identificada, arrastradas de una auditoría a la siguiente: la causa era de espera, no de
+producto — las comprobaciones no aguardaban a que la indexación convergiera. Demostrado por falsificación
+(bajando el plazo a 0,05 s se ponen en rojo exactamente los dos checks que fallaban). Y lo más importante:
+**no existía ni un solo test de "carpeta vinculada a un PROYECTO"**, que es justo el escenario que falló en
+producción con Pipe delante → `test_carpeta_proyecto.py` (31 comprobaciones). La Sala: presupuesto propio
+(falsificado, el prompt real llegaba a 212.000 frente a un tope de 150.000 — desbordaba de verdad) y deja
+de quedarse muda sobre la norma (`ux.py` descartaba el ordenamiento del despacho). Gates `warroom` 79/79 ·
+`carpeta_proyecto` 31/31 (nuevo) · `matter_folder` 37/37 · `matter_folders_multi` 30/30.
+
+**(8) El recorte por presupuesto** (`3063df5`). Tres defectos en `shrink_documents`, que usan facts,
+analysis, draft, work y la Sala: partía por **mitades ciegas** sin mirar el presupuesto (deuda vieja
+documentada); **desperdiciaba la mitad del cupo** por no descontar el peso del sellado (de 200.000 se
+quedaba en 35.000 teniendo 70.000 — utilización medida **del 50 % al 99 %**); y **tiraba primero lo que el
+modelo había pedido** (de 12 ampliaciones sobrevivían 2; ahora 6). La salida conserva el orden de llegada:
+la prioridad decide quién se queda, nunca quién es el `[doc 1]` — el ancla de las citas no se mueve.
+**Coste dicho, no escondido:** los nodos entregan ahora cerca del 100 % de su presupuesto en vez del 50 %.
+
+**(9) Selector de países honesto** (`6e0cacc`). Defecto **visto en una captura, no leyendo código**:
+21 países cableados a mano sin consultar nada, y material real para uno. Ver decisions.md #41 y #42.
+Gates `onboarding_horizontal` 18/18 (era 13) · `onboarding_jurisdictions` 10/10 (era 7).
+
+**(10) Meta-gate: una barrera contra las puertas de calidad que aprueban sin mirar** (`f2bbec2`). Prueba
+las pruebas. Recorre `execution/` con **análisis sintáctico, no expresiones regulares**, porque hay tres
+cosas que una regex no puede: distinguir la aguja del pajar (`d["content"] not in docs` es sano;
+`x not in d["content"]` es el defecto), **seguir el valor por una variable intermedia** —la forma exacta
+del fallo real de `b5`— y reconocer el arreglo para no castigar a quien ya lo aplicó. **Verifica su propia
+premisa:** si mañana amplían el caching a otro mensaje, se pone rojo pidiendo que lo ensanchen en vez de
+tranquilizar sobre una premisa caducada. **Asimetría deliberada:** la aserción negativa tumba la entrega;
+la positiva solo se inventaría como aviso — si ambas tumbaran, el gate nacería rojo sobre cinco sitios hoy
+sanos y el primero que lo viera lo desactivaría. Inventario: **120 suites, 11 expuestas, CERO de la clase
+silenciosa**; 5 avisos, todos en `test_assistant.py`. Falsificado con cuatro casos, incluido una suite
+**inmune** con la misma aserción palabra por palabra que **no** debe reportarse. Coste 0,5 s, sin red ni
+base. **Puntos ciegos escritos en el propio archivo:** no ejecuta nada y solo mira una clase de ceguera.
+
+**(11) Arreglos menores de producto** (`aaa3d1a`, `96d3449`). Los agentes del despacho no salían nunca
+como chips en el chat vacío (el corte a 6 guías se aplicaba ANTES de anexar a las personas): capacidad
+construida que el abogado no podía ver. Y tres componentes (`MissionBoard`, `MicButton`,
+`MailboxSectionLoader`) **literalmente desaparecían en tema oscuro** por usar la paleta cruda de Tailwind
+sin un solo token; se renderizan en pantallas primarias.
+
+### Errores y hallazgos (lo de mayor rendimiento de la sesión)
+
+**La verificación adversarial encontró seis defectos graves en trabajo que sus propios autores daban por
+bueno. Dos frentes fueron RECHAZADOS y rehechos** (el perfil del despacho, con dos bloqueantes y una
+regresión de producto; y la lectura agéntica, aprobada con reservas por sobrevender el ahorro).
+
+1. **El guardián certificaba en verde citas inventadas** (preexistente) — decisions.md #40.
+2. **El recorte desperdiciaba la mitad del cupo** y tiraba primero lo que el modelo pidió.
+3. **El Panel inventaba ceros** cuando fallaba la fuente de cifras: *"0 borradores · 0 horas · USD 0.00"*,
+   indistinguible de un dato real. **Un cero es una afirmación, no un dato ausente.** Era además una
+   regresión: el código anterior se quedaba en esqueleto — feo, pero nunca mentía.
+4. **"Reducir movimiento" congelaba los indicadores de trabajo en curso**: el abogado no podía distinguir
+   *"analizando"* de *"colgada"*, y habría reenviado la consulta. La regla global se había escrito sin
+   medir su radio real (`animate-spin` en 19 archivos).
+5. **El perfil dejaba fuera al propio dueño** con un 422 sin salida, y a cualquier despacho de un país no
+   listado sin poder darse de alta — cerrando mercados enteros. **Un guardián no puede cerrarle la puerta
+   a quien ya entró.**
+6. **El dedup borraba la fuente primaria** cuando otro documento del expediente la transcribía: la pieza
+   original desaparecía con su archivo y su folio.
+
+**Dos atribuciones falsas propias, corregidas midiendo** (no razonando):
+- `test_retrieval_knowledge` cayó de 36 a 35 justo tras tocar la recuperación. La causa estaba en **otro
+  frente** (la capa nueva de prompt engordó el system 419 tokens y agotó un margen que ese test se había
+  dado a propósito). Worktree limpio en HEAD + medición. **La proximidad temporal no es causalidad.**
+- `b5` de `test_context_recovery` se achacó a la capa de jurisdicción **generalizando desde el caso gemelo
+  `e5`**, que sí era de ventana. Neutralizando la capa, `b5` seguía rojo: la causa real era el commit
+  `e8ce3b3` del **17 de julio** (el `content` del system pasó de cadena a lista de bloques, y
+  `'pb_index in sys2'` dejó de preguntar "contiene este texto"). **Una causa confirmada no se extiende por
+  analogía.**
+
+**Tres puertas de calidad verdes que no probaban nada, en una sola semana** (`fb30664`, `479f78f`): `b5`
+roto desde el 17-jul sin que constara; `soul-legacy-3` verde encima de un error real; y la medida del
+prompt contando el envoltorio (`str(content)`, o sea el repr con llaves y metadatos) en vez del texto —
+falso positivo **latente**, no activo. El barrido posterior de las 116 suites confirmó, **con base y no
+por ausencia de búsqueda**, que no hay falsos positivos: se buscó específicamente la clase peligrosa
+(aserciones negativas del tipo "esto NO debe aparecer") y no existe ninguna en `execution/`.
+
+**Bloqueante de entorno cerrado:** las migraciones **044, 045 y 046 no constaban en el ledger** — la 044
+(salud de guías) **nunca había corrido**. `/health` reportaba 41 de 44 y el blindaje del instalador habría
+frenado el arranque en la máquina de un cliente. Aplicadas por el runner real: **44 de 44**.
+
+### La prueba en vivo contra un modelo real
+
+Primera vez en varias sesiones que se prueba con MIA encendida y un modelo de verdad.
+
+| Escenario | Antes | Después |
+|---|---|---|
+| Despacho **sin país**, expediente vacío, pregunta por requisitos de validez de un contrato | Cinco artículos de un país concreto, transcripción verbatim, ofrecimiento de consultar una base normativa nacional, y remate: era *"conocimiento consolidado del despacho"* — con el despacho vacío | **Cero artículos, cero códigos, cero países.** Razona la institución jurídica y pide el ordenamiento para poder citar |
+| Despacho **con país configurado**, misma pregunta | — | Cita su norma con normalidad, **cada cita con su marca**, y declara que sale *"de mi memoria jurídica general, no de un texto que me hayas cargado"* |
+
+**Matiz honesto 1:** el guardián determinista detectó **1 de 5** citas; las otras cuatro las marcó el
+modelo obedeciendo la instrucción — justo aquello de lo que el guardián existe para no depender. El
+resultado fue correcto, pero por la razón equivocada.
+**Matiz honesto 2:** la fuga original **no se pudo reproducir** en tres intentos con el código anterior.
+No es que no existiera —está capturada—: es **intermitente**, lo que la hace más peligrosa, no menos.
+
+### Tests (capa 1)
+
+**HALT verdes al cierre:** `test_rls` 19/19 · `check_env_pins` 10/10.
+Verdes tras los cambios: `retrieval_adaptativa` 59/59 (nuevo) · `lectura_agentica` 66/66 (nuevo) ·
+`carpeta_proyecto` 31/31 (nuevo) · `context_recovery` 52/52 · `warroom` 79/79 · `projects` 59/59 ·
+`doc_citation_guard` 38/38 · `jurisdiction_agnostic` 104/104 · `argument_engine` 66/66 ·
+`retrieval_knowledge` 36/36 · `document_pipeline` 45/45 · `untrusted_content` 28/28 ·
+`context_references` 43/43 · `prompt_builder` 46/46 · `e2e` 58/58 · `soul_guard` 47/47 ·
+`profile_full` 51/51 · `onboarding_horizontal` 18/18 · `onboarding_jurisdictions` 10/10 ·
+`matter_folder` 37/37 · `matter_folders_multi` 30/30 · `despacho_atajos` PASS · `tsc` exit 0.
+
+**Prueba de mutación aplicada en todos los frentes nuevos** (cinco, seis y tres mutaciones según el
+frente): cada una pone en rojo su check. Un agente descubrió además que su propia mutación no probaba
+nada porque `"" in texto` siempre es cierto — **hasta la falsificación necesita falsificarse.**
+
+**NO se corrió la regresión completa** (no cabe): por tramos, las suites tocadas y sus adyacentes.
+**La línea base heredada de "84 suites" no es cierta:** el barrido manual contó **116** suites en
+`execution/` y el inventario automático del meta-gate, ya con las nuevas, cuenta **120**. Más de treinta
+nunca entraron a vigilancia.
+
+### Estado del entorno (verificado al cerrar)
+
+- Base portable ARRIBA en `127.0.0.1:55432` (binarios `postgres16-portable`, NO el `-full`). **44/44
+  migraciones.**
+- Cerebro en `:8000` con todo el código del día cargado (se reinició al final). **NO recarga en caliente.**
+  Motor LiteLLM en `:4000`. Pantalla en `:3100` (sí recarga en caliente).
+- **Los servicios SÍ sobreviven** lanzados con el mecanismo de fondo del harness (`run_in_background`); lo
+  que muere es `Start-Process`. Esto destrabó la verificación visual, dada por imposible durante sesiones.
+  Para probar código nuevo sin reiniciar la instancia en uso: **levantar una segunda en otro puerto**
+  (se usó `:8010`).
+- Despachos de prueba creados y **pendientes de borrar**: `verificacion.visual@local.test`,
+  `despacho.conpais@local.test`, `alta.nueva@local.test`.
+
+### NO verificado — honestidad
+
+- **Ningún gate corre contra un modelo real.** La prueba en vivo fue manual y puntual, no un banco de
+  casos. **Es la brecha de fondo del proyecto** y la señalaron todos los verificadores.
+- **La lectura agéntica nunca ha corrido con un modelo real.** Por eso nace apagada.
+- **Coste y latencia reales por turno: no medidos.** Las cifras del repo son estimaciones del propio gate,
+  con un estimador heurístico de tokens (todas las conclusiones de presupuesto heredan ese error).
+- **El paso de país con campo libre** se verificó por código y por captura, no recorrido a mano por una
+  persona.
+- **`next build` no se corrió** (regla del repo). Sí `tsc`.
+
+**Próximo:** ampliar el guardián a citas abreviadas (`arts. N y ss.`, siglas de código — las formas
+transversales van en el código, **las siglas concretas de cada código van en el pack**); banco de casos +
+benchmark ciego contra el modelo vivo; segundo paso de la lectura agéntica (que el bucle pueda
+**reformular** la consulta, no solo pedir más de lo mismo); sección `## aprendido` del perfil, que se llene
+sola vía `update_soul` (paso 7 de `docs/diseno-soul-onboarding.md`, lo único del rediseño sin implementar);
+y los riesgos nuevos #75-#80 de bugs-and-risks.md. **De Pipe:** aprobar el push de los 18 commits y decidir
+entre profundidad en un ordenamiento o anchura verificable en varios.

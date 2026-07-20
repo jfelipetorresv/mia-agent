@@ -148,6 +148,16 @@ Dos memorias separadas:
   El abogado ve "asunto", "revisar borrador", "Mia está investigando".
 - HALT si el test execution/test_rls.py falla. No avanzar hasta
   que pase.
+- HALT si execution/test_gates_no_ciegos.py falla. Es el meta-gate
+  que impide que una puerta de calidad apruebe sin mirar: detecta
+  aserciones que quedaron ciegas por el formato del mensaje de
+  sistema. Las peligrosas son las negativas ("esta jerga NO debe
+  aparecer", "este dato NO debe filtrarse"), porque al romperse se
+  quedan VERDES para siempre. En julio de 2026 hubo tres puertas
+  verdes que no probaban nada, una rota tres días sin constar.
+  Cuesta 0,5 s: va en el tramo rápido junto a test_rls y
+  check_env_pins, no en la regresión completa (que no cabe y se
+  corre por tramos, así que en la práctica no se corre).
 
 ---
 

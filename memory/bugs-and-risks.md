@@ -1,6 +1,140 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-07-17 (sesión 49)
+# Última actualización: 2026-07-20 (sesión 50)
+
+## Actualización 2026-07-20 — Sesión 50 (lectura del expediente · guardián de citas · jurisdicción · perfil · selector)
+
+**Cerrados y VERIFICADOS hoy:** migraciones 044/045/046 fuera del ledger · las dos suites de carpetas en
+rojo desde hacía sesiones · la ausencia total de cobertura de "carpeta vinculada a un proyecto" · el
+recorte por presupuesto que partía por mitades ciegas. **Nuevos: #75-#80.**
+
+### 🟢 Riesgo — Migraciones 044, 045 y 046 ausentes del ledger; la 044 nunca había corrido (CERRADO 2026-07-20)
+`/health` reportaba **41 de 44**. La 045 y la 046 se habían aplicado a mano en la sesión anterior sorteando
+el landmine de `setup_db.ps1`, así que el registro nunca se escribió; y **la 044 (salud de guías) no había
+corrido nunca**. **Consecuencia real:** el blindaje del instalador —que frena el arranque si la base no
+terminó de actualizarse— habría **frenado el arranque en la máquina de un cliente**, no en la de dev, donde
+las tablas ya existían. **Cierre:** aplicadas por el runner real; verificado en vivo `migrations_expected:44,
+migrations_applied:44`. **Regla que queda:** toda migración se aplica **por el runner**; aplicarla a mano
+para sortear un script roto deja el ledger mintiendo, y el síntoma solo aparece en casa del cliente.
+
+### 🟢 Riesgo — Las 2 suites de carpetas llevaban sesiones en rojo sin causa identificada (CERRADO 2026-07-20, `91bd2e0`)
+`test_matter_folder` y `test_matter_folders_multi` se arrastraban como deuda de una auditoría a la
+siguiente. **La causa era de espera, no de producto:** las comprobaciones no aguardaban a que la indexación
+convergiera. **Demostrado por falsificación**, no por razonamiento: bajando el plazo de espera a 0,05 s se
+ponen en rojo **exactamente** los dos checks que llevaban fallando. Hoy 37/37 y 30/30.
+
+### 🟢 Riesgo — No existía ni un solo test de "carpeta vinculada a un PROYECTO" (CERRADO 2026-07-20, `91bd2e0`)
+Los cinco fallos conocidos de carpetas eran todos de **asuntos**. El escenario sin cubrir era justamente
+**el que falló en producción con Pipe delante**. Cierre: `test_carpeta_proyecto.py`, 31 comprobaciones
+(vincular, indexar, contar, re-indexar y desvincular conservando lo indexado).
+
+### 🟢 Riesgo — El recorte por presupuesto partía por mitades ciegas (CERRADO 2026-07-20, `3063df5`)
+Deuda vieja, ya documentada en el traspaso anterior. `shrink_documents` —que usan facts, analysis, draft,
+work y la Sala de estrategia— hacía `docs[:len//2]` **sin mirar el presupuesto**. Además no descontaba el
+peso del sellado, así que lo renderizado siempre pasaba el tope y el bucle volvía a partir en dos:
+**de 200.000 se quedaba en 35.000 teniendo 70.000 disponibles**. Y tiraba primero lo que el modelo había
+pedido, anulando la lectura agéntica (de 12 ampliaciones sobrevivían 2). Cierre medido: utilización del
+cupo **del 50 % al 99 %**, y 6 de 12 ampliaciones supervivientes. **El gate que faltaba:** la aserción vieja
+solo miraba el techo ("no desbordar") y era **estructuralmente incapaz** de ver que se desperdiciaba la
+mitad; el check nuevo de **utilización** es el único que atrapa dos de las seis mutaciones.
+**Regla que queda:** toda restricción con un máximo debe preguntarse si también necesita un mínimo.
+
+### 🔴 Riesgo #75 — El guardián de citas detectó 1 de 5 en la prueba en vivo y no cubre formas abreviadas
+En la primera prueba contra un modelo real, de las cinco citas que salieron marcadas **el guardián
+determinista solo detectó una**: las otras cuatro las marcó el modelo **obedeciendo la instrucción del
+prompt** — que es exactamente aquello de lo que el guardián existe para no depender. El resultado fue
+correcto, pero **por la razón equivocada**. **Causa conocida:** hoy es un escáner de patrones sobre el
+texto final y no cubre las formas abreviadas (`arts. N y ss.`, siglas de código).
+**Por qué importa:** una instrucción de prompt es una sugerencia al modelo, no un control; el día que el
+modelo no obedezca, no habrá red.
+**Acción, en dos planos.** (a) Inmediato: ampliar los patrones — las formas `arts. N y ss.` son
+transversales al Civil Law hispano y van **en el código**; **las siglas concretas de cada código van en el
+pack de jurisdicción, nunca en el código** (regla dura de agnosticismo). (b) De fondo, y es la pregunta
+mejor: **si el guardián debería operar sobre lo que el modelo AFIRMA en vez de sobre lo que ESCRIBE** —
+exigiendo que toda cita venga acompañada de su ancla al material sellado, en vez de buscarla a posteriori
+con expresiones regulares.
+
+### 🔴 Riesgo #76 — Ningún gate corre contra un modelo real (LA BRECHA DE FONDO)
+**La señalaron todos los verificadores de la sesión, en todos los frentes.** Todo el banco de pruebas corre
+con modelos dobles: los gates prueban el cableado y las instrucciones, **no el comportamiento**. Lo que
+queda sin probar es justo lo que decide si el producto sirve: que la instrucción de ordenamiento **suprima
+de verdad el prior del modelo**; que la lectura agéntica **sepa decir "suficiente"**; que el guardián
+alcance a lo que un modelo real escribe. La prueba en vivo de esta sesión fue **manual y puntual**, no un
+banco de casos, y aun así cambió el veredicto de dos frentes.
+**Acción:** banco de casos reales del despacho + **benchmark ciego** contra el modelo vivo. Es el pendiente
+de mayor valor del proyecto y no se cierra con más gates offline.
+
+### 🔴 Riesgo #77 — Festivos judiciales incompletos y el cálculo de plazos no los usa ⚖️
+Se descubrió **leyendo el paquete de jurisdicción** para decidir qué podía prometer el selector de países:
+`holidays.json` está marcado incompleto (faltan los trasladables y los de base pascual), `term_catalog`
+tiene **dos entradas**, `recess` está **vacío**, y **el resolutor de plazos ni siquiera está cableado a esos
+datos**. **Por qué es grave y no cosmético:** un plazo mal calculado tiene **consecuencia procesal directa**
+— es de los pocos errores de este producto que no se pueden deshacer.
+**Lo que lo acota hoy:** el producto **no lo promete** (decisions.md #42) y hay una prohibición ejecutable
+en el gate del selector de anunciar festivos, plazos o cálculo. Es decir: el riesgo es de **capacidad
+ausente**, no de capacidad que engaña.
+**Acción:** completar los datos y cablear el resolutor **antes** de volver a prometerlo, y nunca al revés.
+
+### 🔴 Riesgo #78 — La fuga de jurisdicción es INTERMITENTE, no constante
+La fuga está **capturada en vivo** (un despacho vacío y sin país recibió cinco citas de articulado de un
+país concreto, transcripción verbatim y el ofrecimiento de consultar una base normativa nacional, rematando
+que era *"conocimiento consolidado del despacho"*). Pero el agente que endureció el prompt **no pudo
+reproducirla en tres intentos** con el código anterior.
+**La lectura correcta no es que no existiera: es que aparece a veces.** Y una fuga que aparece **una de cada
+varias veces es justo la que se cuela a un escrito firmado** — la que nadie ve en las pruebas y aparece el
+día del cliente. **Corolario que ya está aplicado:** una instrucción de prompt no es un control; el guardián
+determinista es irrenunciable. **Acción:** entra en el banco de casos del #76 con repeticiones, no con un
+intento — un solo pase en verde no dice nada sobre un fenómeno intermitente.
+
+### 🟡 Riesgo #79 — Cuatro puntos señalados por verificadores y no cerrados hoy
+Ninguno es bloqueante; se dejan anotados para que no se pierdan.
+1. **Comentario obsoleto en `backend/mia/agents/warroom.py:78-81`**: afirma que el recorte parte por la
+   mitad, que **ya no es cierto** tras `3063df5`. Un comentario que miente sobre el mecanismo es una trampa
+   para el siguiente que lo lea.
+2. **Margen cero del estimador de tokens de la Sala de estrategia**: el presupuesto nuevo se calcula al
+   filo, sin holgura para el error del propio estimador (que es heurístico — Riesgo #5).
+3. **`init_durable_jobs` aplicado dentro de un bloque de aserciones** en `test_matter_folders_multi.py`:
+   una precondición del entorno metida donde va una comprobación; si el bloque cambia, la preparación
+   desaparece en silencio.
+4. **Fragmentación del reparto**: los trozos quedan en ~50 tokens y **nadie ha medido si un trozo de ese
+   tamaño sostiene una cita**. Es la pregunta de calidad que el cambio de recorte deja abierta.
+
+### 🟡 Riesgo #80 — Puertas de calidad que están verdes y no prueban nada (mitigado con meta-gate, no cerrado)
+**Tres en una sola semana**, y una de ellas rota **tres días sin que constara**:
+`b5` de `test_context_recovery` (roto desde el 17-jul por el cambio de formato del mensaje de sistema:
+`'pb_index in sys2'` dejó de preguntar "contiene este texto" y pasó a preguntar "es este texto uno de los
+bloques", que siempre da falso); `soul-legacy-3` verde encima de un error real (no ejercitaba el endpoint);
+y la medida del prompt contando el envoltorio (`str(content)`, el repr con llaves y metadatos) en vez del
+texto — falso positivo **latente**, no activo.
+**Por qué es el riesgo más caro de todos:** un gate en rojo que nadie mira es malo; **un gate en verde que
+no prueba nada es peor, porque afirma una seguridad que no existe** y toda la línea base se apoya en él.
+Se suma que la línea base heredada de **"84 suites ALL PASS" no es cierta**: el barrido manual contó
+**116** suites en `execution/` y el inventario automático del meta-gate, ya con las nuevas, cuenta **120**.
+Es decir, más de treinta nunca entraron a vigilancia.
+**Lo que ya se hizo:** barrido de las 116 suites con una sonda que **cuenta las conversiones reales**, no
+razonando; se buscó específicamente la clase peligrosa —aserciones **negativas** del tipo "esto NO debe
+aparecer", que al romperse se quedan verdes para siempre— y **no existe ninguna** en `execution/`. Es una
+conclusión con base, no una ausencia de búsqueda.
+**Lo que se construyó como barrera permanente (`f2bbec2`):** el meta-gate
+`execution/test_gates_no_ciegos.py`, que **prueba las pruebas**. Recorre `execution/` con análisis
+sintáctico, no con expresiones regulares, porque hay tres cosas que una regex no puede: distinguir la
+aguja del pajar (`d["content"] not in docs` es sano; `x not in d["content"]` es el defecto), **seguir el
+valor por una variable intermedia** —que es la forma exacta del fallo real de `b5`— y reconocer el arreglo
+para no castigar a quien ya lo aplicó. **Verifica su propia premisa:** corre la conversión sobre mensajes
+sintéticos y, si mañana amplían el caching a otro mensaje, se pone **rojo pidiendo que lo ensanchen** en
+vez de seguir tranquilizando sobre una premisa caducada. **Asimetría deliberada:** la aserción **negativa**
+tumba la entrega sin excepción; la positiva solo se inventaría como aviso, porque al romperse se pone roja
+sola. (Si ambas tumbaran, el gate nacería rojo sobre cinco sitios hoy sanos y el primero que lo viera lo
+desactivaría — exactamente el fracaso que viene a impedir.) Inventario automático: **120 suites, 11
+expuestas, CERO de la clase silenciosa**; 5 avisos, todos en `test_assistant.py`, con archivo, línea y
+arreglo. Falsificado con cuatro casos, incluido una suite **inmune** con la misma aserción negativa palabra
+por palabra que **no debe** reportarse. Coste 0,5 s, sin red ni base de datos.
+**Sus puntos ciegos, escritos en el propio archivo:** no ejecuta nada, el seguimiento del valor es de
+módulo, y **solo mira una clase de ceguera** — no detecta un test decorativo en general. El riesgo queda
+🟡, no cerrado: la barrera cubre la clase que costó tres gates esta semana, no el problema entero.
+**Regla que queda:** **prueba de mutación obligatoria** — un check nuevo no vale hasta que se demuestra que
+puede ponerse rojo. Y hasta la falsificación necesita falsificarse (una mutación de esta sesión daba verde
+porque `"" in texto` siempre es cierto).
 
 ## Actualización 2026-07-17 — Sesión 49 (los 8 riesgos de la sesión 48)
 Cerrados POR CÓDIGO, con gate verde: **#68, #69, #70, #71, #72, #73** (detalle en cada uno ↓).
