@@ -80,6 +80,81 @@ MIA_MODEL = os.getenv("MIA_MODEL", "claude-sonnet")
 # Ventana de contexto del modelo principal (tokens). La usa el ContextCompressor
 # (2c) para el umbral del 55%. Default 200k (claude-sonnet); configurable por entorno.
 MIA_CONTEXT_WINDOW = int(os.getenv("MIA_CONTEXT_WINDOW", "200000"))
+
+# --- Lectura adaptativa del expediente (recuperación) ---------------------------
+# El tamaño de lectura del expediente DEJA de ser un literal y se DERIVA en cada turno
+# de tres señales: cuánto material hay indexado en el asunto, cuánto cabe en el
+# presupuesto real del nodo que va a consumirlo (agents/context_recovery.budget_for
+# sobre MIA_CONTEXT_WINDOW) y qué tan exigente es la pregunta. Estas constantes son los
+# DIALES de esa derivación, no el tamaño en sí. Ninguna depende de país, corte, moneda
+# ni idioma: son proporciones y conteos.
+#
+# Fracción del presupuesto del nodo que la recuperación puede llegar a ocupar. El resto
+# queda para el prompt del sistema, la consulta del abogado y la respuesta. Es el margen
+# que impide que "leer más" desemboque en un CONTEXT_TOO_LONG en cada turno.
+#
+# DECISIÓN DEL DUEÑO (2026-07-20): con 0.35 el gasto de IA por turno subía entre 11 y 20
+# veces frente al literal de 8 que había antes. Se baja a 0.22 — ~7 veces más lectura que
+# antes en vez de ~20, conservando la promesa que el gate `a1` de test_retrieval_adaptativa
+# custodia: en un expediente grande Mia lee una FRACCIÓN REAL del material (>10%), no una
+# muestra simbólica. Se probó 0.15 y rompía justo esa promesa: recorta el gasto, pero
+# devuelve el producto al problema que este bloque vino a resolver.
+# Se ajusta AQUÍ y no en MIA_RETRIEVAL_MAX_TOP_K a propósito: un techo bajo hace que los
+# tres niveles de exigencia saturen en el mismo valor y la lectura vuelva a ser, de hecho,
+# un número fijo.
+# Valor PROVISIONAL: el rediseño acordado es la lectura agéntica (ver HANDOFF.md), donde el
+# modelo pide más material cuando le falta y nadie tiene que fijar una proporción.
+MIA_RETRIEVAL_COVERAGE_FRACTION = float(
+    os.getenv("MIA_RETRIEVAL_COVERAGE_FRACTION", "0.22"))
+# Tope duro de la fracción anterior una vez aplicado el multiplicador de complejidad.
+# Garantía estructural: COVERAGE * complejidad nunca supera esto, así el plan de lectura
+# no puede desbordar por diseño el presupuesto del nodo.
+MIA_RETRIEVAL_MAX_COVERAGE_FRACTION = float(
+    os.getenv("MIA_RETRIEVAL_MAX_COVERAGE_FRACTION", "0.80"))
+# Piso histórico: lo que Mia leía ANTES de la lectura adaptativa. Nunca se pide menos.
+MIA_RETRIEVAL_MIN_TOP_K = int(os.getenv("MIA_RETRIEVAL_MIN_TOP_K", "8"))
+# Riel de seguridad (no es el límite principal: el límite principal es el presupuesto).
+# Acota el coste por turno — los mismos fragmentos entran a varios nodos del grafo.
+#
+# DECISIÓN DEL DUEÑO (2026-07-20). Medido con los defaults reales, un techo de 160
+# multiplicaba el gasto de IA por turno entre 11 y 20 veces frente al literal de 8 que
+# había antes. Se le presentaron los números y respondió que la forma correcta no es
+# elegir un techo, sino que el modelo PIDA más material cuando le falte —como hacen las
+# herramientas agénticas de código—, porque así una pregunta trivial cuesta poco y una
+# difícil lee lo que necesite, sin que nadie adivine un número. Tiene razón: ver la nota
+# de "lectura agéntica" en HANDOFF.md, que es el rediseño pendiente.
+# El recorte de gasto se aplicó en MIA_RETRIEVAL_COVERAGE_FRACTION, no aquí: este riel se
+# deja holgado a propósito para que siga siendo lo que dice ser —una red de seguridad— y no
+# el límite operativo. Un riel que muerde en todos los casos aplasta la adaptabilidad.
+MIA_RETRIEVAL_MAX_TOP_K = int(os.getenv("MIA_RETRIEVAL_MAX_TOP_K", "128"))
+# Se piden más filas de las que se van a entregar porque el dedup y el tope por documento
+# descartan algunas: sin este colchón, "leer 100" acababa entregando 70.
+MIA_RETRIEVAL_OVERFETCH = float(os.getenv("MIA_RETRIEVAL_OVERFETCH", "1.5"))
+# Candidatos por lista (vector y full-text) antes de fusionar con RRF, como múltiplo de
+# lo que se va a entregar. Más candidatos = mejor fusión, más trabajo en la base.
+MIA_RETRIEVAL_CANDIDATE_MULTIPLIER = float(
+    os.getenv("MIA_RETRIEVAL_CANDIDATE_MULTIPLIER", "3.0"))
+MIA_RETRIEVAL_MIN_CANDIDATES = int(os.getenv("MIA_RETRIEVAL_MIN_CANDIDATES", "20"))
+MIA_RETRIEVAL_MAX_CANDIDATES = int(os.getenv("MIA_RETRIEVAL_MAX_CANDIDATES", "600"))
+# Cuánto del total entregado puede salir de UN mismo documento (0 < f <= 1). Evita que
+# los N fragmentos sean todos de la misma pieza habiendo varias relevantes.
+MIA_RETRIEVAL_MAX_PER_DOCUMENT_FRACTION = float(
+    os.getenv("MIA_RETRIEVAL_MAX_PER_DOCUMENT_FRACTION", "0.5"))
+# Solape con el que la ingesta corta los fragmentos (ingest: size=1200, overlap=150).
+# El dedup lo usa para recortar la repetición literal entre fragmentos contiguos.
+MIA_RETRIEVAL_OVERLAP_CHARS = int(os.getenv("MIA_RETRIEVAL_OVERLAP_CHARS", "150"))
+# Similitud (Jaccard sobre n-gramas de palabras) a partir de la cual dos fragmentos se
+# consideran el mismo material y solo sobrevive el mejor rankeado.
+MIA_RETRIEVAL_DEDUP_SIMILARITY = float(
+    os.getenv("MIA_RETRIEVAL_DEDUP_SIMILARITY", "0.85"))
+# Vecinos contiguos por fragmento recuperado (ord-r .. ord+r). 0 = apagado (default):
+# la función existe y está probada, pero se enciende por instalación tras medirla.
+MIA_RETRIEVAL_NEIGHBOR_RADIUS = int(os.getenv("MIA_RETRIEVAL_NEIGHBOR_RADIUS", "0"))
+# Notas del despacho: tope al escalado por complejidad. La sección tiene además su
+# propio presupuesto DURO (KNOWLEDGE_BUDGET_FRACTION) que este número no puede violar.
+MIA_KNOWLEDGE_MIN_TOP_K = int(os.getenv("MIA_KNOWLEDGE_MIN_TOP_K", "4"))
+MIA_KNOWLEDGE_MAX_TOP_K = int(os.getenv("MIA_KNOWLEDGE_MAX_TOP_K", "10"))
+
 # Política de modelo POR DEFECTO (CP2 · decisión #27). Valores: "suscripcion" (CLI de
 # Claude Code del abogado, sin billing por API) · "nube" (API Anthropic vía proxy) ·
 # "soberano" (todo local en Ollama) · "openrouter" (CP-OR: la propia cuenta de OpenRouter

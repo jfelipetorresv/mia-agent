@@ -58,6 +58,7 @@ from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
 from ..onboarding.ficha_loader import load_ficha_context
 from ..policy import budget as policy_budget
+from ..jurisdiction.pack import GENERIC_CODE
 from . import (context_recovery, delegate_intent, delegate_proposal, delegation,
                reasoning_filter, research, retrieval, untrusted, verification)
 from .state import HITL_OUTCOME, MatterState
@@ -99,6 +100,14 @@ _RESEARCH_MAX_CONCURRENT = 4
 # la pausa del ayudante y el texto saldría del equipo sin que nadie hubiera visto la
 # propuesta. Ver la segunda barrera en `_delegation_approved` (los payloads no se solapan).
 DELEGATION_NODE = "delegation"
+
+# Nodo que SELLA la respuesta de un PROYECTO (guardián de citas) y, por lo mismo, el
+# único que la entrega. Lo comparten el grafo y la capa SSE (`routes/stream.py`): el
+# evento 'reply' se emite desde ESTE nodo, nunca desde 'work'. La constante vive aquí
+# —una sola fuente de verdad— porque si los dos archivos se desincronizaran, el
+# navegador volvería a recibir el texto SIN las marcas [VERIFICAR] y el guardián sería
+# decorativo (no hay streaming token a token: el texto sale completo, una sola vez).
+PROJECT_VERIFICATION_NODE = "verificacion"
 
 # Tipo del interrupt de delegación; viaja en el payload hasta el SSE para que la pantalla
 # sepa qué está pintando. Cada interrupt del grafo se AUTO-IDENTIFICA.
@@ -185,6 +194,68 @@ KNOWLEDGE_BUDGET_FRACTION = 0.15
 # en la misma pasada (la compresión es una sola por turno: no se puede desperdiciar
 # en una reducción insuficiente).
 SHRINK_EARLY_EXIT_FRACTION = 0.85
+
+# ── Lectura adaptativa del expediente ────────────────────────────────────────
+# Nodos que embeben los documentos recuperados en su propio user prompt. El techo de
+# lectura se deriva del MÁS ESTRECHO de sus presupuestos: los mismos fragmentos entran a
+# los tres, así que dimensionar la lectura por el más holgado condenaría al más apretado
+# a recortar en cada turno (y la compresión es UNA sola por turno).
+RETRIEVAL_BUDGET_NODES = ("facts", "analysis", "work")
+
+
+def _retrieval_budget_tokens() -> int:
+    """Presupuesto real (tokens) contra el que se dimensiona la lectura del expediente.
+
+    No es un número inventado: es el mismo `budget_for` que usan los shrink de
+    facts/analysis/work sobre MIA_CONTEXT_WINDOW. `plan_reading` se queda además con
+    una FRACCIÓN de este presupuesto (MIA_RETRIEVAL_COVERAGE_FRACTION), no con todo:
+    el resto es el sitio del prompt del sistema, la consulta y la respuesta.
+    """
+    return min(context_recovery.budget_for(node, config.MIA_CONTEXT_WINDOW)
+               for node in RETRIEVAL_BUDGET_NODES)
+
+
+async def _read_matter_adaptive(tenant_id: str, matter_id: str, msg: str,
+                                qvec: list[float], plan) -> list[dict]:
+    """Lee el expediente según el plan: recupera, quita repetición y reparte por pieza.
+
+    Orden y porqué de cada paso:
+      1. RRF pidiendo `fetch_k` (más de lo que se entrega: los pasos 2 y 3 descartan).
+      2. Dedup: los fragmentos se solapan por construcción (la ingesta corta con 150
+         caracteres de solape) — sin esto, "leer el doble" es en parte releer.
+      3. Vecinos contiguos, si la instalación los activó. Se piden ANTES del reparto y
+         con el objetivo reducido para que el material añadido siga cabiendo en el plan.
+      4. Tope por documento y corte a `top_k`.
+      5. Segundo dedup: los vecinos también solapan entre sí y con sus anclas.
+
+    Fail-soft: cualquier paso posterior al RRF que falle deja los documentos como los
+    devolvió la base (peor calidad, nunca un turno caído).
+    """
+    rows = await retrieval.retrieve_rrf(tenant_id, matter_id, msg, qvec,
+                                        top_k=plan.fetch_k, candidates=plan.candidates)
+    if not rows:
+        return []
+    try:
+        rows = retrieval.dedupe_chunks(rows)
+        radius = max(0, config.MIA_RETRIEVAL_NEIGHBOR_RADIUS)
+        target = plan.top_k
+        if radius > 0:
+            target = max(1, plan.top_k // (1 + 2 * radius))
+        selected = retrieval.enforce_document_diversity(rows, target,
+                                                        plan.max_per_document)
+        if radius > 0:
+            selected = await retrieval.expand_neighbors(tenant_id, matter_id, selected,
+                                                        radius=radius)
+            selected = retrieval.dedupe_chunks(selected)[:plan.top_k]
+        docs = selected
+    except Exception:  # noqa: BLE001 — pulir lo recuperado nunca puede tumbar el turno
+        logger.warning("no se pudo depurar el material recuperado (matter=%s); se usa "
+                       "el resultado crudo de la búsqueda", matter_id, exc_info=True)
+        docs = rows[:plan.top_k]
+    logger.info("lectura del expediente: %s fragmentos de %s disponibles "
+                "(pedidos %s, candidatos %s, complejidad %.2f)",
+                len(docs), plan.n_chunks, plan.top_k, plan.candidates, plan.complexity)
+    return docs
 
 
 def _last_user_message(state: MatterState) -> str:
@@ -362,6 +433,78 @@ def _render_knowledge(notes: list, window: int) -> str:
     if not parts:
         return ""
     return KNOWLEDGE_HEADER + "\n" + "\n\n".join(parts)
+
+
+# ── PROYECTOS · de dónde sale el RESPALDO de una cita ────────────────────────
+# El grafo de proyecto no tiene especialista de investigación, así que nunca existe
+# `research_sources` (el respaldo del flujo de asunto). Sin fuentes, el guardián
+# marcaría [VERIFICAR] absolutamente TODAS las citas: fail-safe, pero inútil — el
+# abogado no podría CONFIRMAR nada, que es justo lo que se le pide a Mia.
+#
+# Decisión de producto: en un proyecto respalda el material que el propio abogado
+# suministró y que Mia SÍ leyó en este turno (documentos del proyecto recuperados en
+# el intake + notas del despacho). Lo que el abogado aporta directo se toma por
+# fidedigno; lo que Mia AFIRMA sin que aparezca en ese material se marca.
+#
+# Cómo: el MISMO escáner determinista recorre el material y cada cita que encuentra
+# allí se vuelve una fuente de respaldo con su `referencia` — exactamente la forma
+# que espera `verification.annotate_draft(sources=...)`.
+#
+# GUARDA ANTI "FALSO RESPALDADA" (lo único peor que el ruido sería afirmar que algo
+# está confirmado cuando no lo está): el match de `verification._backing_source` es
+# por INCLUSIÓN normalizada en ambos sentidos, así que una clave terminada en número
+# suelto ("Resolución 123", "Expediente 45-67") respaldaría por prefijo a otra
+# distinta ("Resolución 1234"). Esas claves se DESCARTAN: solo se admite como
+# respaldo la cita del material que se cierra sola — con año al final ("… de 1998")
+# o con el cuerpo normativo nombrado ("artículo 12 del código de procedimiento" —
+# el nombre real del cuerpo lo pone cada ordenamiento, aquí nunca). Descartar una clave
+# solo produce una marca de más, que es la dirección segura.
+_BARE_NUMBER_TAIL_RE = re.compile(r"\d\s*$")
+_YEAR_TAIL_RE = re.compile(r"\bde\s+\d{4}\s*$", re.IGNORECASE)
+# Tope del índice de respaldo: un proyecto con muchas fuentes no puede convertir la
+# verificación en un escaneo cuadrático sobre miles de claves.
+_PROJECT_SOURCES_MAX = 400
+
+
+def _project_material_sources(state: MatterState, patterns: list) -> list[dict]:
+    """Citas presentes LITERALMENTE en el material que el proyecto leyó este turno.
+
+    Devuelve la lista en el shape de `agents/research.py` que consume el verificador:
+    [{"tipo", "referencia", "titulo"}]. Determinista, sin red ni DB. Se llama desde el
+    hilo de trabajo de `_verify_draft` (es CPU-bound: regex sobre texto de terceros).
+    """
+    sources: list[dict] = []
+    seen: set[str] = set()
+    grupos = (
+        ("expediente", state.get("documents") or []),
+        ("nota del despacho", state.get("knowledge") or []),
+    )
+    for tipo, items in grupos:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "")
+            if not content:
+                continue
+            if tipo == "expediente":
+                titulo = untrusted.document_origin(item)
+            else:
+                titulo = str(item.get("source_path") or item.get("source") or "").strip()
+            for c in verification.scan_citations(content, patterns):
+                ref = str(c.get("citation") or "").strip()
+                if not ref:
+                    continue
+                # Guarda anti "falso respaldada" (ver el bloque de arriba).
+                if _BARE_NUMBER_TAIL_RE.search(ref) and not _YEAR_TAIL_RE.search(ref):
+                    continue
+                key = ref.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                sources.append({"tipo": tipo, "referencia": ref, "titulo": titulo})
+                if len(sources) >= _PROJECT_SOURCES_MAX:
+                    return sources
+    return sources
 
 
 # ── Dictamen de la Sala de estrategia → el borrador (Principio A) ────────────
@@ -559,7 +702,7 @@ class MatterGraphBuilder:
         abogado sin los adjuntos. Aplica a los DOS caminos, también al explícito.
 
         POR QUÉ EL TEXTO NO PASA POR `security/anonymize` (sigue vigente de CP-HUB): rompería
-        el encargo (un ayudante no puede buscar "el radicado RADICADO_1"), daría falsa
+        el encargo (un ayudante no puede buscar "el asunto IDENTIFICADOR_1"), daría falsa
         seguridad (anonymize no es infalible en prosa libre, y prometerlo hace que el abogado
         escriba con MÁS confianza) y su caso de uso es otro (exportación masiva que nadie
         mira). Aquí el abogado ve el texto: lo escribió él, o lo aprobó de un clic.
@@ -867,6 +1010,42 @@ class MatterGraphBuilder:
             content = reasoning_filter.strip_reasoning(content)
         return content, getattr(resp, "usage", None)
 
+    # ── ORDENAMIENTO APLICABLE · una sola resolución por turno ───────────────
+    # Mia no es de ningún país: razona bajo el ordenamiento que el despacho declaró. Si
+    # no se le DICE cuál es, el prompt entra (con razón) en su rama restrictiva y no
+    # puede nombrar articulado de ningún país.
+    #
+    # Antes, ese dato solo aparecía en el turno cuando corría el especialista de
+    # investigación, que es quien lo dejaba escrito en la metadata. Consecuencia: en un
+    # PROYECTO —que no tiene especialista de investigación— jamás llegaba, y en un ASUNTO
+    # llegaba tarde (hechos ya había hablado). Un despacho con su ordenamiento
+    # perfectamente configurado se quedaba sin poder citar SU propia norma.
+    #
+    # Por eso se resuelve aquí, en el intake: es el PRIMER nodo de los dos grafos, corre
+    # una sola vez por turno y su resultado viaja por el checkpoint a todos los demás. La
+    # resolución toca la base una vez; el resto del turno la lee del estado (incluida la
+    # investigación, que antes repetía la consulta).
+    async def _turn_jurisdictions(self, state: MatterState) -> list[str]:
+        """Códigos de ordenamiento del despacho para este turno. NUNCA lanza.
+
+        Si el estado ya los trae (turno reanudado tras una pausa, o nodo posterior al
+        intake) se reusan tal cual: cero consultas extra. Ante cualquier fallo se
+        devuelve el código genérico, que es exactamente la rama restrictiva del prompt —
+        el default seguro. Nunca se adivina un ordenamiento, y nunca se cae el turno del
+        abogado por no haber podido leer una configuración.
+        """
+        existing = state.get("jurisdictions")
+        if existing:
+            return [str(c) for c in existing if str(c or "").strip()] or [GENERIC_CODE]
+        try:
+            codes = await research.resolve_jurisdictions_for(state["tenant_id"])
+        except Exception:  # noqa: BLE001 — fail-soft: el turno no depende de esto
+            logger.warning("no se pudo resolver el ordenamiento del despacho; se sigue "
+                           "en modo genérico (sin citar norma de ningún país)",
+                           exc_info=True)
+            return [GENERIC_CODE]
+        return codes or [GENERIC_CODE]
+
     # ── 1 · intake ──────────────────────────────────────────────────────────
     async def intake_node(self, state: MatterState) -> dict:
         # CP-E2: si el turno trae referencias @expediente/@carpeta expandidas, la
@@ -874,15 +1053,22 @@ class MatterGraphBuilder:
         # referencias ni los adjuntos sellados) para no ensuciar la búsqueda; los
         # especialistas sí ven el mensaje completo con la evidencia adjunta.
         msg = state.get("retrieval_query") or _last_user_message(state)
-        # Sin documentos indexados no hay nada que recuperar: evitamos la llamada
-        # a embeddings (Voyage) por completo. Si los hay, embebemos y hacemos RRF.
+        # LECTURA ADAPTATIVA · cuánto expediente se lee en este turno NO es un literal:
+        # se deriva de cuánto material hay (stats), cuánto cabe en el presupuesto real
+        # del nodo que lo va a consumir y qué tan exigente es la pregunta. Ver
+        # `retrieval.plan_reading`. Sin documentos indexados (n_chunks == 0) no hay nada
+        # que recuperar y se evita la llamada a embeddings (Voyage) por completo —
+        # mismo gate que antes hacía `matter_has_chunks`.
         qvec: Optional[list[float]] = None
-        if await retrieval.matter_has_chunks(state["tenant_id"], state["matter_id"]):
+        stats = await retrieval.matter_chunk_stats(state["tenant_id"], state["matter_id"])
+        plan = None
+        docs: list[dict] = []
+        if stats.get("n_chunks"):
             vecs = await asyncio.to_thread(embeddings.embed_texts, [msg])
             qvec = vecs[0] if vecs else [0.0] * config.EMBED_DIM
-            docs = await retrieval.retrieve_rrf(state["tenant_id"], state["matter_id"], msg, qvec)
-        else:
-            docs = []
+            plan = retrieval.plan_reading(stats, msg, _retrieval_budget_tokens())
+            docs = await _read_matter_adaptive(
+                state["tenant_id"], state["matter_id"], msg, qvec, plan)
         # CP3 (Riesgo #16): conocimiento del despacho (knowledge_chunks). Se REUSA el
         # embedding del mensaje si ya se generó para el expediente (cero llamadas extra
         # a Voyage). Si el asunto no tiene documentos, se embebe SOLO cuando el tenant
@@ -894,7 +1080,12 @@ class MatterGraphBuilder:
             if qvec is None:
                 vecs = await asyncio.to_thread(embeddings.embed_texts, [msg])
                 qvec = vecs[0] if vecs else [0.0] * config.EMBED_DIM
-            knowledge = await retrieval.retrieve_knowledge_rrf(state["tenant_id"], msg, qvec)
+            # Las notas escalan con la misma señal de complejidad que el expediente,
+            # pero su sección conserva intacto su presupuesto duro del 15% al render.
+            know_k = (plan.knowledge_top_k if plan is not None
+                      else config.MIA_KNOWLEDGE_MIN_TOP_K)
+            knowledge = await retrieval.retrieve_knowledge_rrf(
+                state["tenant_id"], msg, qvec, top_k=know_k)
         md = dict(state.get("metadata") or {})
         if "turn_started_at" not in md:
             md["turn_started_at"] = time.perf_counter()
@@ -915,8 +1106,12 @@ class MatterGraphBuilder:
         # partición en el bloque de comentarios de _plan_delegation. No-op (None) en la
         # inmensa mayoría de los turnos.
         plan = await self._plan_delegation(state)
+        # El ordenamiento del despacho entra al estado AQUÍ y de aquí lo toman todos los
+        # especialistas (los del asunto y el del proyecto) al componer su prompt. Ver el
+        # bloque de _turn_jurisdictions.
+        juris = await self._turn_jurisdictions(state)
         return {"documents": docs, "knowledge": knowledge, "metadata": md,
-                "delegation_request": plan}
+                "delegation_request": plan, "jurisdictions": juris}
 
     # ── 2 · facts (CP9 · especialista de HECHOS) ─────────────────────────────
     async def facts_node(self, state: MatterState) -> dict:
@@ -956,7 +1151,9 @@ class MatterGraphBuilder:
         paralelo (+ verificación de citas por rama + síntesis); con una sola corre en un
         único paso, idéntico a antes de CP-E5. La decisión es transparente al abogado."""
         md = dict(state.get("metadata") or {})
-        jurisdictions = await research.resolve_jurisdictions_for(state["tenant_id"])
+        # Mismo ordenamiento que ya vieron hechos y el resto del turno: se lee del estado
+        # (lo dejó el intake) en vez de volver a consultar la configuración del despacho.
+        jurisdictions = await self._turn_jurisdictions(state)
         if len(jurisdictions) >= _RESEARCH_FANOUT_MIN_JURISDICTIONS:
             return await self._research_swarm(state, md, jurisdictions)
         return await self._research_single(state, md, jurisdictions)
@@ -1360,12 +1557,18 @@ class MatterGraphBuilder:
         _accum_usage(md, usage)
         return {"draft": draft, "hitl_status": "pending", "metadata": md}
 
-    async def _verify_draft(self, state: MatterState, md: dict, text: str) -> str:
+    async def _verify_draft(self, state: MatterState, md: dict, text: str,
+                            *, project_material: bool = False) -> str:
         """Pasa el especialista de verificación sobre `text` y deja el informe en md.
 
         El escaneo corre en asyncio.to_thread (revisión capa 2, M2): es CPU-bound
         sobre texto que puede venir de documentos de terceros — nunca debe ocupar el
-        event loop del servidor."""
+        event loop del servidor.
+
+        `project_material` (PROYECTOS): sin nodo de investigación no hay
+        `research_sources`, así que el respaldo sale del material que el propio
+        proyecto leyó en este turno (ver `_project_material_sources`). En el flujo de
+        asunto queda en False y todo se comporta exactamente igual que antes."""
         extra = await research.citation_patterns_for(state["tenant_id"])  # fail-soft
         # num_documents = rango válido de referencias [doc n] que vio el modelo. Habilita el
         # guardián de [doc n] fantasma (un [doc k] fuera de rango es un documento inventado):
@@ -1375,14 +1578,31 @@ class MatterGraphBuilder:
         #    (CP-E2: misma numeración desde 1 en el mismo prompt). Así no se marca como
         #    fantasma una cita legítima a un adjunto; solo un [doc k] por encima de TODO
         #    lo sellado es fantasma seguro (fail-safe: sub-marcar antes que falso positivo).
+        # LIMITACIÓN CONOCIDA (dirección segura, la misma en asuntos y proyectos): si el
+        # rescate por contexto recortó la lista (draft_node/_shrink, work_node/_shrink), el
+        # modelo vio MENOS sellos <<<DOC n>>> de los que cuenta aquí `state["documents"]`.
+        # El efecto es SUB-marcar (un [doc k] inalcanzable podría no marcarse), nunca
+        # inventar respaldo. Se deja así a propósito: preferimos la marca de menos aquí
+        # antes que marcar como fantasma una referencia legítima a un adjunto.
         num_documents = max(
             len(state.get("documents") or []),
             verification.highest_sealed_doc_index(_last_user_message(state)),
         )
-        annotated, report = await asyncio.to_thread(
-            verification.annotate_draft, text,
-            sources=md.get("research_sources"), extra_patterns=extra,
-            num_documents=num_documents)
+
+        def _scan() -> tuple[str, dict]:
+            sources = md.get("research_sources")
+            if project_material and not sources:
+                try:
+                    sources = _project_material_sources(
+                        state, verification.compile_patterns(extra)) or None
+                except Exception:  # noqa: BLE001 — derivar respaldo jamás tumba el turno
+                    logger.debug("verificación: no se pudo derivar el respaldo del material "
+                                 "del proyecto; se marcará de más", exc_info=True)
+                    sources = None
+            return verification.annotate_draft(
+                text, sources=sources, extra_patterns=extra, num_documents=num_documents)
+
+        annotated, report = await asyncio.to_thread(_scan)
         md["verification"] = report
         return annotated
 
@@ -1400,17 +1620,20 @@ class MatterGraphBuilder:
 
     # ── work (Bloque A · PROYECTO: espacio de trabajo libre, sin HITL) ───────
     async def work_node(self, state: MatterState) -> dict:
-        """Único especialista del grafo de PROYECTO (build_project_graph): usa las
-        fuentes conectadas al proyecto (documents recuperados por intake_node, mismo
+        """Único especialista CON LLM del grafo de PROYECTO (build_project_graph): usa
+        las fuentes conectadas al proyecto (documents recuperados por intake_node, mismo
         RRF que el asunto) y el conocimiento del despacho para lo que el abogado pida
-        en el turno. Sin diagnóstico/borrador formal ni verification/hitl_checkpoint/
-        finalize — la respuesta se entrega COMPLETA en un solo turno.
+        en el turno. Sin diagnóstico/borrador formal ni hitl_checkpoint/finalize — la
+        respuesta se entrega COMPLETA en un solo turno, sin pausa de revisión. Lo que
+        SÍ comparte con el asunto es el especialista de verificación de citas, que corre
+        justo después (reply_verification_node) y es quien entrega el texto.
 
         Escribe la respuesta en su propio campo `reply` del estado (MatterState) — un
         canal separado de `draft`, que es del flujo de asunto con revisión (HITL). Así
         un proyecto nunca deja un "borrador" fantasma que GET /matters/{id}/draft
         pudiera confundir con uno pendiente de aprobar. La capa SSE (stream.py) expone
-        este texto al abogado bajo el evento 'reply'.
+        ese texto al abogado bajo el evento 'reply' — pero tomándolo del nodo de
+        verificación, nunca de aquí (aquí todavía está sin marcar).
 
         H6 (Bloque A): `state['history']` trae los turnos previos del proyecto (ya
         recortados por stream.py). Se antepone al mensaje del abogado como bloque
@@ -1478,16 +1701,47 @@ class MatterGraphBuilder:
             model=_persona_alias(state))
         md.update(stage="work", final_status="done")
         _accum_usage(md, usage)
-        # H6: el turno de este proyecto (mensaje del abogado + reply nueva) se AÑADE al
-        # historial recibido — así el checkpoint que queda en END trae la conversación
-        # completa hasta aquí, y el próximo turno la encuentra vía graph.aget_state en
-        # stream.py (ANTES de que prepare_new_turn borre el checkpoint). El recorte a
-        # presupuesto sensato lo hace stream.py al leerlo de vuelta, no aquí.
-        new_history = list(history)
-        new_history.append({"role": "abogado", "text": msg})
-        new_history.append({"role": "mia", "text": reply})
-        return {"reply": reply, "metadata": md, "history": new_history,
-                "messages": [{"role": "assistant", "content": reply}]}
+        # El texto sale de aquí CRUDO: quien lo sella es el nodo de verificación que
+        # viene después (reply_verification_node), y es ESE el que escribe `history` y
+        # `messages`. Este nodo NO puede escribirlos:
+        #  · `messages` tiene reducer de append (state.py) — si los escribiera aquí,
+        #    en el checkpoint convivirían las DOS versiones y cualquier consumidor
+        #    leería primero la cruda, sin marcas.
+        #  · `history` es la memoria del proyecto (H6): dejar aquí el texto sin marcar
+        #    haría que el turno siguiente le reinyecte al modelo sus propias citas sin
+        #    verificar, y las marcas se perderían turno a turno.
+        return {"reply": reply, "metadata": md}
+
+    # ── PROYECTO · verificación de la respuesta (mismo especialista determinista) ──
+    async def reply_verification_node(self, state: MatterState) -> dict:
+        """Sin LLM: el MISMO escáner de citas del asunto, aplicado al canal `reply`.
+
+        Cierra el hueco de los proyectos: hasta aquí una respuesta de proyecto podía
+        afirmar normas y jurisprudencia sin una sola marca [VERIFICAR] — lo único que
+        la contenía era una instrucción de prompt, que es una petición al modelo, no
+        un candado. Nunca borra texto: solo AÑADE marcas donde una cita quedó sin
+        marca y sin respaldo en el material del proyecto.
+
+        Es también el nodo que ENTREGA el texto: escribe `reply` anotado, la memoria
+        del proyecto (`history`, H6) y `messages`, todo con la versión YA verificada
+        (ver el comentario de work_node). La capa SSE (stream.py) emite el evento
+        'reply' desde ESTE nodo — si lo emitiera desde 'work', el navegador recibiría
+        el texto crudo y este nodo sería decorativo."""
+        md = dict(state.get("metadata") or {})
+        annotated = await self._verify_draft(state, md, state.get("reply") or "",
+                                             project_material=True)
+        md["stage"] = "verification"
+        # H6: el turno de este proyecto (mensaje del abogado + respuesta VERIFICADA) se
+        # AÑADE al historial recibido — así el checkpoint que queda en END trae la
+        # conversación completa hasta aquí, y el próximo turno la encuentra vía
+        # graph.aget_state en stream.py (ANTES de que prepare_new_turn borre el
+        # checkpoint). El recorte a presupuesto sensato lo hace stream.py al leerlo de
+        # vuelta, no aquí.
+        new_history = list(state.get("history") or [])
+        new_history.append({"role": "abogado", "text": _last_user_message(state)})
+        new_history.append({"role": "mia", "text": annotated})
+        return {"reply": annotated, "metadata": md, "history": new_history,
+                "messages": [{"role": "assistant", "content": annotated}]}
 
     # ── 7 · hitl_checkpoint (interrupt PRIMERO, decisión #10) ────────────────
     async def hitl_checkpoint_node(self, state: MatterState) -> dict:
@@ -1647,16 +1901,24 @@ class MatterGraphBuilder:
         return g.compile(checkpointer=checkpointer)
 
     def build_project(self, checkpointer: Any):
-        """Compila el grafo de un PROYECTO (Bloque A): START → intake → work → END.
+        """Compila el grafo de un PROYECTO (Bloque A):
+        START → intake → delegation → work → verificacion → END.
 
         Reusa intake_node LITERAL (mismo retrieval RRF de documents del proyecto +
         knowledge del despacho) — un proyecto recupera sus fuentes exactamente igual
-        que un asunto. Sin draft/verification/hitl_checkpoint/finalize: el turno
-        siempre corre completo en una sola pasada, sin pausa de revisión."""
+        que un asunto. Sin draft/hitl_checkpoint/finalize: el turno siempre corre
+        completo en una sola pasada, sin pausa de revisión.
+
+        El guardián de citas SÍ está: un proyecto puede afirmar normas y jurisprudencia
+        igual que un asunto, así que pasa por el MISMO especialista determinista antes
+        de que su texto llegue al abogado. El nodo va DESPUÉS de work (no dentro) para
+        que la pantalla pueda decir "Mia está verificando…" y para que el informe de
+        citas viaje al abogado con la misma forma que en un asunto."""
         g = StateGraph(MatterState)
         g.add_node("intake", self.intake_node)
         g.add_node(DELEGATION_NODE, self.delegation_node)
         g.add_node("work", self.work_node)
+        g.add_node(PROJECT_VERIFICATION_NODE, self.reply_verification_node)
 
         g.add_edge(START, "intake")
         # CP-HUB2: el proyecto también delega (y también pregunta antes). Un proyecto no
@@ -1666,7 +1928,8 @@ class MatterGraphBuilder:
         # proyectos habrían perdido la invocación explícita que ya tenían.
         g.add_edge("intake", DELEGATION_NODE)
         g.add_edge(DELEGATION_NODE, "work")
-        g.add_edge("work", END)
+        g.add_edge("work", PROJECT_VERIFICATION_NODE)
+        g.add_edge(PROJECT_VERIFICATION_NODE, END)
 
         return g.compile(checkpointer=checkpointer)
 
