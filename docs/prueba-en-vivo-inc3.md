@@ -34,9 +34,13 @@ Al final imprime el resultado del **gate de seguridad `test_rls`** (ver punto 4 
 > por error el PostgreSQL del sistema (puerto 5432), no el de MIA (55432). Ver "Si algo falla".
 
 **3. Abrir MIA** (enciende cerebro + pantalla y abre el navegador solo en `http://localhost:3100`).
+La vía recomendada es **doble-clic en `Abrir Mia.cmd`** (en la carpeta `mia`): así MIA queda
+corriendo en TU sesión y no se apaga sola. Equivale a ejecutar:
 ```powershell
 & "D:\Inteligencia Artificial\Mia-Super Agent\mia\scripts\start_all.ps1"
 ```
+> Importante: si MIA la enciende un asistente desde otra sesión (p. ej. Claude Code), los
+> servicios pueden morir cuando esa sesión termina. Para trabajar, ábrela tú con el doble-clic.
 Deja abiertas las ventanas negras (puedes minimizarlas). El **DurableWorker** —el motor que
 procesa la ingesta de documentos en segundo plano— **arranca solo dentro del cerebro de MIA**;
 no hay que encender nada aparte.
@@ -97,6 +101,14 @@ Todo pasa **dentro de un asunto**: entra a un asunto (o crea uno) y súbele docu
 - **`setup_db.ps1` dice que falta pgvector** → falsa alarma: su chequeo previo mira el PostgreSQL
   del sistema (5432), no el de MIA. Las migraciones sí van al 55432. Si te bloquea, avísame y lo
   aplicamos por otra vía.
+- **`ChunkLoadError: Loading chunk app/layout failed`** en el navegador → el caché de compilación
+  quedó desfasado (pasa si se editaron archivos del frontend con el servidor caído, o si se
+  relanzó MIA varias veces). Solución: cierra MIA, **borra la carpeta `frontend\.next`**, vuelve a
+  abrirla y haz **Ctrl+Shift+R** en el navegador (tu navegador guarda los archivos viejos).
+- **"Conectar carpeta" no hace nada / "no se pudo vincular"** → casi siempre es que el **cerebro
+  (8000) está apagado**: el explorador de carpetas recorre tu disco *a través* del servidor local
+  de MIA. No es un fallo del programa ni una limitación del navegador; enciende MIA y reintenta.
+  (Leer las carpetas tampoco necesita el Motor de IA, solo MIA corriendo e internet.)
 - **La API no arranca / "pins alterados"** → el gate `check_env_pins.py` (protección del entorno)
   aborta si algo del `.venv` cambió de versión. Avísame el número que reporta.
 - **El chat muestra un error genérico aunque el backend responda** → si hay otra herramienta
