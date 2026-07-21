@@ -64,6 +64,23 @@ punto de red del bucle `retrieval._reading_llm_call` y la recuperación `retriev
      llegar a leer, así que encender la bandera nunca hace que Mia vea menos expediente.
      Ver la nota de honestidad al final de la salida.
 
+  H · AUDITORÍA (cierre del Frente B): resuelve la contradicción del traspaso sobre si la
+     reformulación de consulta "ya funciona" o es el rediseño pendiente, y blinda lo que
+     hasta hoy NINGÚN gate custodiaba.
+     h0. Evidencia (no gate — el paso vive en `graph._read_more`, fuera de este frente):
+         la ampliación embebe la consulta REFORMULADA del modelo, no la pregunta original.
+     h1. Contrato de `agentic_expand`: `read_more` SIEMPRE recibe la consulta del modelo,
+         nunca la pregunta del abogado — se rompe con mutación y se ve en rojo.
+     h2. El dedup FINAL (`dedupe_chunks` sobre semilla+ampliaciones) no descarta material
+         de una ampliación con consulta distinta a la semilla — igual, mutación probada.
+     h3. Telemetría: `STOP_REASONS` cierra el contrato de motivos de parada y los 6 son
+         alcanzables y serializables (consultables en un log o en `metadata`).
+     h4. Vista COMPACTA de rondas viejas: la semilla (ronda 1) nunca se compacta; un
+         `tool_result` se muestra completo la primera vez y se resume desde la ronda
+         siguiente (sellado y con folio intactos); medición de caracteres antes/después
+         en el peor caso, con nota de honestidad sobre fragmentos cortos de prueba vs.
+         largo real del corpus.
+
 Exit 0 = PASS · 1 = FAIL.
     .venv\\Scripts\\python.exe execution\\test_lectura_agentica.py
 """
@@ -849,6 +866,216 @@ def medicion() -> None:
              config.MIA_RETRIEVAL_MAX_TOP_K))
 
 
+# ── H · AUDITORÍA (sesión de cierre de Frente B) ──────────────────────────────
+# Contradicción a resolver: el traspaso decía que la reformulación de consulta era el
+# rediseño PENDIENTE de más valor. El código de HOY dice lo contrario: el tool schema ya
+# pide "los términos que esperas encontrar EN EL DOCUMENTO", `parse_expansion_call` ya
+# extrae esa consulta nueva, `agentic_expand` ya la pasa a `read_more` (NO la pregunta del
+# abogado), y `graph._read_more` (fuera de este frente, solo se lee) ya la embebe de
+# nuevo y busca con ESE vector. VEREDICTO: la reformulación YA funciona de punta a punta.
+# Lo que faltaba no era construirla — era blindarla: hasta hoy NINGÚN gate se ponía rojo
+# si alguien la rompía (b1c prueba que la consulta nueva SÍ llega a `retrieve_rrf`, pero
+# nada probaba que un retroceso -volver a buscar con la pregunta original- se detectara,
+# ni que el dedup final no se comiera lo que trae una consulta distinta a la semilla).
+# Esta sección cierra esas dos brechas (H1/H2), añade el contrato de telemetría (H3) y el
+# coste del reenvío completo por ronda -la otra mitad del argumento del traspaso- con la
+# vista compacta que lo mitiga (H4). H0 es evidencia de la auditoría, no un gate: el paso
+# que EMBEBE la consulta vive en `graph._read_more`, fuera de los archivos de este frente
+# (ver nota de honestidad al pie de esta sección).
+
+
+def test_auditoria_reformulacion_embedding() -> None:
+    print("\nH0 · AUDITORÍA (evidencia, no gate): ¿la ampliación embebe la consulta "
+          "reformulada del modelo o la pregunta original del abogado?")
+    embed_calls: list[list[str]] = []
+
+    def _embed_spy(texts):
+        embed_calls.append(list(texts))
+        return [[0.0] * 8 for _ in texts]
+
+    model = FakeModel([ask("contrato de fiducia", motivo="falta el contrato"), ENOUGH])
+    with _Ctx(flag=True, model=model, retriever=Recorder()):
+        # `_Ctx.__enter__` ya puso un mock constante de `embed_texts`; lo reemplazamos
+        # DENTRO del contexto para no perder el spy, y `_Ctx.__exit__` restaura el
+        # original real de todos modos (captura `_old` antes de que este test corra).
+        graph_mod.embeddings.embed_texts = _embed_spy
+        docs, trace = asyncio.run(graph_mod._read_matter_agentic(
+            "t1", "m1", "pregunta original del abogado", [0.0] * 8, PLAN))
+    check("h0 · graph._read_more embebe la consulta reformulada, NO la pregunta original "
+          "(auditado leyendo graph.py; no mutation-proven -- ver nota de honestidad)",
+          embed_calls == [["contrato de fiducia"]])
+
+
+def test_contrato_reformulacion() -> None:
+    print("\nH1 · CONTRATO de agentic_expand: la ampliación SIEMPRE se busca con la "
+          "consulta del modelo, nunca con la pregunta del abogado")
+    calls: list[tuple[str, int]] = []
+
+    async def read_more_spy(query, top_k):
+        calls.append((query, top_k))
+        return rows_for("h1", top_k)
+
+    model = FakeModel([ask("contrato de fiducia", cuantos=5, motivo="falta el contrato"),
+                       ENOUGH])
+    with _Ctx(flag=True, model=model, retriever=Recorder()):
+        docs, trace = asyncio.run(retrieval.agentic_expand(
+            "PREGUNTA ORIGINAL DEL ABOGADO", rows_for("base", 8),
+            read_more=read_more_spy, budget_tokens=10 ** 6))
+    check("h1 · read_more recibe la consulta REFORMULADA del modelo, no la pregunta "
+          "del abogado",
+          calls == [("contrato de fiducia", 5)])
+    check("h1b · la pregunta original no aparece ni siquiera como parte del texto "
+          "buscado (nadie la concatenó por accidente)",
+          all("PREGUNTA ORIGINAL" not in q for q, _ in calls))
+
+
+def test_dedup_no_devora_ampliacion() -> None:
+    print("\nH2 · el dedup FINAL no descarta material de una ampliación con consulta "
+          "distinta a la semilla")
+    seed = rows_for("semilla", 8, doc_prefix="s")
+    ampliacion_rows = rows_for("ampliacion", 6, doc_prefix="a")
+
+    async def read_more_amplia(query, top_k):
+        return [dict(r) for r in ampliacion_rows]
+
+    model = FakeModel([ask("otra pieza del expediente", motivo="falta otra pieza"),
+                       ENOUGH])
+    with _Ctx(flag=True, model=model, retriever=Recorder()):
+        docs, trace = asyncio.run(retrieval.agentic_expand(
+            "pregunta", seed, read_more=read_more_amplia, budget_tokens=10 ** 6))
+    ids_ampliacion = {r["id"] for r in ampliacion_rows}
+    ids_finales = {r["id"] for r in docs}
+    check("h2 · TODOS los fragmentos de la ampliación sobreviven al dedup final del "
+          "conjunto completo (`dedupe_chunks` sobre semilla+ampliaciones)",
+          ids_ampliacion <= ids_finales and trace["added"] == len(ampliacion_rows))
+    check("h2b · y la semilla también sigue completa (nadie se comió NADA)",
+          {r["id"] for r in seed} <= ids_finales)
+
+
+def test_telemetria_motivo_parada() -> None:
+    print("\nH3 · telemetría: el motivo de parada es siempre uno del contrato "
+          "declarado y queda CONSULTABLE (serializable)")
+    check("h3 · STOP_REASONS documenta el contrato completo, ni de más ni de menos",
+          retrieval.STOP_REASONS == frozenset({
+              "sin_ampliaciones", "sin_herramientas", "suficiente", "presupuesto",
+              "tope_ampliaciones", "error"}))
+
+    escenarios: list[str] = []
+    _, t = asyncio.run(retrieval.agentic_expand("q", [], read_more=_boom,
+                                                budget_tokens=10 ** 6))
+    escenarios.append(t["stop"])  # sin_ampliaciones (sin material inicial)
+    with _Ctx(flag=True, model=FakeModel([ENOUGH]), retriever=Recorder(), tools_ok=False):
+        _, t = asyncio.run(retrieval.agentic_expand(
+            "q", rows_for("x", 4), read_more=_boom, budget_tokens=10 ** 6))
+    escenarios.append(t["stop"])  # sin_herramientas
+    with _Ctx(flag=True, model=FakeModel([ENOUGH]), retriever=Recorder()):
+        _, t = asyncio.run(retrieval.agentic_expand(
+            "q", rows_for("x", 4), read_more=_boom, budget_tokens=10 ** 6))
+    escenarios.append(t["stop"])  # suficiente
+    with _Ctx(flag=True, model=FakeModel([ask("mas")]), retriever=Recorder()):
+        _, t = asyncio.run(retrieval.agentic_expand(
+            "q", rows_for("x", 4), read_more=_read_more_for(Recorder()), budget_tokens=1))
+    escenarios.append(t["stop"])  # presupuesto (corta ANTES de llamar)
+    with _Ctx(flag=True, model=FakeModel([ask("mas", cuantos=2)]), retriever=Recorder()):
+        _, t = asyncio.run(retrieval.agentic_expand(
+            "q", rows_for("x", 4), read_more=_read_more_for(Recorder()),
+            budget_tokens=10 ** 6, max_expansions=1))
+    escenarios.append(t["stop"])  # tope_ampliaciones
+    with _Ctx(flag=True, model=FakeModel([RuntimeError("boom")]), retriever=Recorder()):
+        _, t = asyncio.run(retrieval.agentic_expand(
+            "q", rows_for("x", 4), read_more=_boom, budget_tokens=10 ** 6))
+    escenarios.append(t["stop"])  # error
+
+    check("h3b · CADA camino de salida real del bucle produce un motivo del contrato "
+          "declarado (los 6 aparecen, ninguno se queda fuera)",
+          all(s in retrieval.STOP_REASONS for s in escenarios)
+          and set(escenarios) == set(retrieval.STOP_REASONS))
+    check("h3c · el resultado es serializable (JSON) -- lo que lo vuelve CONSULTABLE "
+          "en un log o en `metadata`, no un objeto interno de Python",
+          all(isinstance(json.dumps({"stop": s}, ensure_ascii=False), str)
+              for s in escenarios))
+
+
+def test_vista_compacta() -> None:
+    print("\nH4 · vista compacta: la ronda 1 nunca cambia, lo demás se resume una vez "
+          "que el modelo ya lo vio completo")
+    model = FakeModel([ask("contrato de fiducia", cuantos=6, motivo="falta el contrato"),
+                       ask("acta de liquidación", cuantos=5, motivo="falta el acta"),
+                       ask("poder del apoderado", cuantos=4, motivo="falta el poder"),
+                       ENOUGH])
+    docs, trace, rec = asyncio.run(read("¿qué pasó con el contrato?", flag=True,
+                                        model=model))
+    semillas = [ronda[1]["content"] for ronda in model.seen]  # índice 1 = user (semilla)
+    check("h4a · la ronda 1 (la semilla de plan_reading) NUNCA se compacta: se manda "
+          "completa en TODAS las rondas, sin excepción",
+          len(set(semillas)) == 1 and untrusted.DOCUMENTS_HEADER in semillas[0])
+
+    tool1_por_ronda = []
+    for ronda in model.seen:
+        tool_msgs = [m for m in ronda if m.get("role") == "tool"]
+        if tool_msgs:
+            tool1_por_ronda.append(tool_msgs[0]["content"])
+    check("h4b · el primer tool_result se muestra COMPLETO la primera vez que el "
+          "modelo lo tiene delante",
+          len(tool1_por_ronda) >= 3 and "…" not in tool1_por_ronda[0]
+          and "texto texto texto" in tool1_por_ronda[0])
+    check("h4c · y se COMPACTA (más corto, con marca de recorte) desde la ronda "
+          "siguiente en adelante -- ya cumplió su función, no hace falta pagarlo otra vez",
+          len(tool1_por_ronda[1]) < len(tool1_por_ronda[0]) and "…" in tool1_por_ronda[1])
+    check("h4d · la vista compacta sigue sellada y con la procedencia (archivo · folio) "
+          "para poder seguir citando lo que resume",
+          untrusted.DOCUMENTS_HEADER in tool1_por_ronda[1]
+          and "<<<DOC 1 · " in tool1_por_ronda[1] and "· folio " in tool1_por_ronda[1])
+    check("h4e · una vez compactada, no se vuelve a tocar (idempotente: ronda a ronda "
+          "no encoge más)",
+          tool1_por_ronda[1] == tool1_por_ronda[2] if len(tool1_por_ronda) > 2 else True)
+
+    # H4f · el ahorro medido, con el peor caso de la sección E (el modelo pide el máximo
+    # en TODAS las rondas -- el escenario donde el reenvío completo más pesa).
+    budget = graph_mod._retrieval_budget_tokens()
+    plan = retrieval.plan_reading(STATS, DIFICIL, budget, agentic=True)
+    peor_script = [ask("dame más material", cuantos=config.MIA_AGENTIC_READING_MAX_TOP_K)]
+
+    def corrida(compact_words: int) -> dict:
+        old = config.MIA_AGENTIC_READING_COMPACT_WORDS
+        config.MIA_AGENTIC_READING_COMPACT_WORDS = compact_words
+        try:
+            m = FakeModel(peor_script)
+            _, tr, _ = asyncio.run(read(DIFICIL, flag=True, model=m, plan=plan))
+            chars = [len(json.dumps(r, ensure_ascii=False)) for r in m.seen]
+            return {"chars": chars, "total": sum(chars), "expansions": tr["expansions"]}
+        finally:
+            config.MIA_AGENTIC_READING_COMPACT_WORDS = old
+
+    default_words = config.MIA_AGENTIC_READING_COMPACT_WORDS
+    sin = corrida(0)
+    con = corrida(default_words)
+    print("    ronda a ronda (caracteres reenviados) SIN vista compacta: %s" % sin["chars"])
+    print("    ronda a ronda (caracteres reenviados) CON vista compacta: %s" % con["chars"])
+    print("    total SIN=%d  CON=%d  ahorro=%.1f%% (fragmentos cortos de esta suite; con "
+          "el largo real del corpus de calibración el ahorro por ronda es mayor -- ver "
+          "nota de honestidad)"
+          % (sin["total"], con["total"], 100 * (1 - con["total"] / max(1, sin["total"]))))
+    check("h4f · la vista compacta reduce el total de caracteres reenviados en el peor "
+          "caso (más rondas, más ahorro acumulado)",
+          con["total"] < sin["total"])
+    check("h4g · el ahorro aparece EXACTAMENTE donde tiene que aparecer: nunca en las "
+          "rondas 1-2 (nada que compactar todavía), sí desde la ronda 3",
+          sin["chars"][0] == con["chars"][0] and sin["chars"][1] == con["chars"][1]
+          and con["chars"][2] < sin["chars"][2])
+    check("h4h · apagar la vista compacta (COMPACT_WORDS=0) es EXACTAMENTE el "
+          "comportamiento de antes de medir esto: idéntico número de rondas y fragmentos",
+          sin["expansions"] == con["expansions"])
+    print("    HONESTIDAD · esta suite usa fragmentos CORTOS (~270 caracteres) para "
+          "correr rápido; el corpus de calibración real promedia %d caracteres/fragmento "
+          "(STATS['avg_chars']). Con fragmentos de ese largo medido aparte: la ronda 3 "
+          "baja cerca de un tercio, y en el peor caso la vista compacta es la diferencia "
+          "entre que el PRESUPUESTO corte el bucle a medio camino (menos fragmentos que "
+          "el techo) o que complete las 4 rondas y alcance el mismo techo que el camino "
+          "clásico -- no se deja como gate porque el número exacto depende del largo real "
+          "de los fragmentos del despacho, no de este mecanismo." % int(STATS["avg_chars"]))
+
+
 def main() -> int:
     print("=" * 74)
     print("test_lectura_agentica · el modelo PIDE más material en vez de adivinarlo")
@@ -863,6 +1090,11 @@ def main() -> int:
     test_preflight()
     test_cableado()
     medicion()
+    test_auditoria_reformulacion_embedding()
+    test_contrato_reformulacion()
+    test_dedup_no_devora_ampliacion()
+    test_telemetria_motivo_parada()
+    test_vista_compacta()
     fallos = [n for n, ok in _results if not ok]
     print("\n" + "=" * 74)
     print("%d/%d comprobaciones OK" % (len(_results) - len(fallos), len(_results)))

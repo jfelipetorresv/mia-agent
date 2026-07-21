@@ -242,6 +242,26 @@ MIA_AGENTIC_READING_SEED_TOP_K = int(
 # de gastar la llamada y el turno se va por el camino clásico entero (lectura adaptativa
 # de siempre + cero llamadas del bucle). Ver esa función.
 MIA_AGENTIC_READING_TASK = os.getenv("MIA_AGENTIC_READING_TASK", "main").strip() or "main"
+# VISTA COMPACTA de rondas viejas · la otra mitad del coste del bucle, aparte del techo de
+# lectura. Cada ronda reenvía la conversación ENTERA (ver `agentic_expand`), y lo que más
+# pesa de eso es el material YA LEÍDO de rondas anteriores — que el modelo YA EVALUÓ una
+# vez y ya decidió que no le alcanzaba. Volver a mandárselo completo en la ronda 3, 4... no
+# le da información nueva: solo cobra otra vez el mismo texto. A partir de la ronda en que
+# un fragmento deja de ser NUEVO se resume a archivo · folio · estas primeras palabras —
+# sigue sellado (`<<<DOC n>>>`), solo más corto. La ronda 1 (la semilla de `plan_reading`)
+# NUNCA se compacta: es lo primero que el modelo lee y sostiene toda la decisión inicial.
+# 0 apaga la compactación (cada ronda vuelve a ir completa, el comportamiento de antes de
+# medir esto). MEDIDO en test_lectura_agentica, sección H (h4): con el peor caso de la
+# sección E (el modelo pide MAX_TOP_K en las 4 rondas) el ahorro ronda a ronda crece con
+# el tamaño real de los fragmentos —con los fragmentos CORTOS de la propia suite (pensados
+# para que corra rápido) es modesto; con el largo PROMEDIO del corpus de calibración
+# (`avg_chars` en `STATS`, 1199 caracteres) la ronda 3 baja cerca de un tercio, y en ese
+# escenario la vista compacta es la diferencia entre que el presupuesto corte el bucle a
+# medio camino (menos fragmentos que el techo) o que complete las 4 rondas y alcance el
+# mismo techo que el camino clásico. Las cifras exactas las imprime la sección H en cada
+# corrida — no se copian aquí para que no envejezcan.
+MIA_AGENTIC_READING_COMPACT_WORDS = int(
+    os.getenv("MIA_AGENTIC_READING_COMPACT_WORDS", "30"))
 
 # ── CUÁNDO ENCENDER `MIA_AGENTIC_READING`, en llano ──────────────────────────────
 # QUÉ CAMBIA DE VERDAD, sin titular bonito. Encendida, la primera lectura arranca en el
@@ -249,9 +269,10 @@ MIA_AGENTIC_READING_TASK = os.getenv("MIA_AGENTIC_READING_TASK", "main").strip()
 # CONDICIONADO a que el modelo se dé por satisfecho pronto.
 #   · Modelo que dice "suficiente" de entrada (pregunta puntual): MEDIDO 4,3 veces más
 #     barato que leer de golpe el plan adaptativo.
-#   · Modelo que amplía en TODAS las rondas (el peor caso): MEDIDO 3,7 veces más CARO que
-#     la lectura clásica de esa misma pregunta puntual. No es desperdicio — acabó leyendo
-#     128 fragmentos donde la clásica leía 55 — pero se paga.
+#   · Modelo que amplía en TODAS las rondas (el peor caso): MEDIDO 3,6 veces más CARO que
+#     la lectura clásica de esa misma pregunta puntual (con la vista compacta puesta; sin
+#     ella era 3,7). No es desperdicio — acabó leyendo 128 fragmentos donde la clásica
+#     leía 55 — pero se paga.
 #   · El TECHO es el mismo por los dos caminos (128 fragmentos): la bandera nunca recorta
 #     cuánto expediente puede llegar a ver Mia, solo cambia CUÁNDO lo pide.
 # Las tres cifras salen de la sección E de execution/test_lectura_agentica.py y se

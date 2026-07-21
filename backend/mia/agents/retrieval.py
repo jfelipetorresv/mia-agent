@@ -996,6 +996,21 @@ _READ_FAILED = "(no se pudo consultar el expediente ahora mismo; sigue con lo qu
 # no es una búsqueda: es un intento de empujar texto arbitrario al siguiente prompt.
 _MAX_QUERY_CHARS = 500
 
+# Motivos de parada posibles del bucle (telemetría honesta). Cerrado a propósito: si se
+# añade un motivo nuevo hay que declararlo aquí, y `test_lectura_agentica` (h3) lo exige
+# — así ningún camino de salida nuevo puede dejar `trace["stop"]` en un valor que el
+# frente del banco de casos no sepa interpretar. Se consulta desde `graph._read_matter_agentic`
+# (log + `state['metadata']['agentic_reading']`), que es lo que hace este campo CONSULTABLE
+# en vivo y no solo un dato interno del bucle.
+STOP_REASONS = frozenset({
+    "sin_ampliaciones",   # no había material inicial sobre el que razonar qué falta
+    "sin_herramientas",   # el motor activo no admite tool-calling: ni una llamada
+    "suficiente",         # el modelo no pidió más (el corte "bueno": la pregunta se cerró)
+    "presupuesto",        # el bucle se quedó sin presupuesto de tokens de conversación
+    "tope_ampliaciones",  # se agotaron las rondas sin que el modelo dijera basta
+    "error",              # la llamada o la respuesta reventaron: fail-soft al material reunido
+})
+
 
 @dataclass(frozen=True)
 class ExpansionRequest:
@@ -1159,6 +1174,37 @@ def _reading_first_message(question: str, docs: list[dict]) -> str:
             "\n\nMaterial que ya tienes:\n" + untrusted.render_documents(docs))
 
 
+def _truncate_words(text: Any, n: int) -> str:
+    """Recorta `text` a sus primeras `n` palabras. `n <= 0` no recorta (vista completa)."""
+    s = str(text or "")
+    if n <= 0:
+        return s
+    words = s.split()
+    if len(words) <= n:
+        return s
+    return " ".join(words[:n]) + " […]"
+
+
+def _compact_preview(rows: list[dict], words: int) -> str:
+    """Vista COMPACTA de fragmentos que el modelo YA VIO completos en una ronda anterior.
+
+    Mismo sellado (`<<<DOC n · archivo · folio>>>`) y misma procedencia que
+    `untrusted.render_documents`; lo único que cambia es que `content` se recorta a las
+    primeras `words` palabras. No es una segunda oportunidad de lectura —esa ya la tuvo,
+    completa, la ronda en la que este material entró por primera vez— es un recordatorio
+    de QUÉ ya tiene (para que el modelo no vuelva a pedirlo) sin pagar su texto completo
+    una segunda, tercera o cuarta vez en cada reenvío de la conversación.
+    """
+    preview = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        r2 = dict(r)
+        r2["content"] = _truncate_words(r2.get("content"), words)
+        preview.append(r2)
+    return untrusted.render_documents(preview)
+
+
 async def agentic_expand(
     question: str,
     docs: list[dict],
@@ -1182,7 +1228,11 @@ async def agentic_expand(
       · `max_expansions` rondas como máximo (la primera lectura no cuenta).
       · `budget_tokens` de conversación: al agotarse se corta y se sigue con lo que haya.
         Cuenta lo que se ENVÍA de verdad, incluido el reenvío del historial en cada ronda
-        —que es la parte que más pesa—, no solo el material nuevo.
+        —que es la parte que más pesa—, no solo el material nuevo. Esa parte se recorta
+        sola: un `tool_result` se manda COMPLETO la primera vez que el modelo lo tiene
+        delante y se COMPACTA (archivo · folio · primeras `MIA_AGENTIC_READING_COMPACT_WORDS`
+        palabras, sellado intacto) en cuanto deja de ser nuevo. La semilla (ronda 1) nunca
+        se compacta. Ver `_compact_preview` y test_lectura_agentica sección H4.
       · `max_top_k` fragmentos por ampliación.
       · Un fragmento ya leído nunca se cuenta ni se paga dos veces (`seen`).
 
@@ -1236,7 +1286,31 @@ async def agentic_expand(
         tools = reading_tools()
         spent = 0
         stopped = ""
+        # Vista COMPACTA de rondas viejas (coste del reenvío, la otra mitad del problema).
+        # `compacted_upto` es el índice de `messages` ANTES del cual ya no queda nada por
+        # compactar; `prev_batch_start` es dónde EMPEZÓ el material que la ronda anterior
+        # añadió (y que, por tanto, el modelo está a punto de ver por PRIMERA vez en la
+        # llamada que sigue). `full_rows` recuerda, por índice de mensaje, las filas
+        # ORIGINALES detrás de un `tool` sellado con contenido completo — sin eso no hay
+        # con qué reconstruir la vista corta más tarde (el string ya renderizado no se
+        # puede "des-truncar").
+        compacted_upto = len(messages)  # nunca compacta el índice 0/1: system + semilla
+        prev_batch_start: Optional[int] = None
+        full_rows: dict[int, list[dict]] = {}
+        compact_words = config.MIA_AGENTIC_READING_COMPACT_WORDS
         for _ in range(max_expansions):
+            if prev_batch_start is not None and compact_words > 0:
+                # Lo que la ronda ANTERIOR añadió ya cumplió su función: el modelo tuvo
+                # la llamada que sigue (la que está a punto de dispararse) para leerlo
+                # COMPLETO y decidir si le alcanza. A partir de la ronda siguiente ese
+                # material es historia, no lectura pendiente — se resume a
+                # archivo · folio · primeras `compact_words` palabras. El sellado
+                # (`<<<DOC n>>>`) se conserva íntegro: sigue siendo DATOS, solo más corto.
+                for i in range(compacted_upto, prev_batch_start):
+                    rows_i = full_rows.get(i)
+                    if rows_i is not None:
+                        messages[i]["content"] = _compact_preview(rows_i, compact_words)
+                compacted_upto = prev_batch_start
             # Coste REAL de esta ronda: en cada llamada se reenvía la conversación ENTERA
             # (el sistema, lo ya leído y el eco de cada ampliación anterior), y ese reenvío
             # es la parte que más pesa. Contando solo el material nuevo, el presupuesto
@@ -1258,6 +1332,7 @@ async def agentic_expand(
                 # inicial. Aquí es donde el coste se ajusta solo.
                 stopped = "suficiente"
                 break
+            prev_batch_start = len(messages)
             messages.append({
                 "role": "assistant",
                 "content": message.content or "",
@@ -1266,6 +1341,7 @@ async def agentic_expand(
             for tc in tool_calls:
                 req = parse_expansion_call(tc, max_top_k=max_top_k,
                                            default_top_k=default_top_k)
+                fresh: list[dict] = []
                 if req is None:
                     payload = _TOOL_UNAVAILABLE
                 else:
@@ -1297,9 +1373,15 @@ async def agentic_expand(
                 # El payload NO se suma aquí al gasto: se pagará cuando se reenvíe, al
                 # principio de la ronda siguiente. Si no hay ronda siguiente, nunca llegó
                 # al modelo y cobrarlo sería inventar coste.
+                msg_idx = len(messages)
                 messages.append({"role": "tool",
                                  "tool_call_id": str(getattr(tc, "id", "") or ""),
                                  "content": payload})
+                if fresh:
+                    # Solo los `tool` con material real quedan registrados para poder
+                    # compactarse más adelante; `_NOTHING_NEW`/`_TOOL_UNAVAILABLE`/
+                    # `_READ_FAILED` ya son cortos y no tienen filas detrás que resumir.
+                    full_rows[msg_idx] = fresh
             trace["expansions"] += 1
         else:
             stopped = "tope_ampliaciones"
