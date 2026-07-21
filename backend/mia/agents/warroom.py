@@ -75,9 +75,13 @@ WARROOM_MODERATOR_NODE = "warroom_moderator"
 # material derivado y se pueden resumir sin perder el anclaje probatorio.
 WARROOM_DOCS_SHARE = 0.70
 
-# Pasadas máximas del recorte del expediente. `shrink_documents` reduce la CANTIDAD a la mitad
-# y trunca el contenido restante; con un expediente enorme una sola pasada puede no bastar
-# (el sello <<<DOC n>>> de cada bloque también ocupa). Cota dura para no ciclar.
+# Pasadas máximas del recorte del expediente. `shrink_documents` conserva los que QUEPAN en
+# el presupuesto (no "la mitad" — ver su docstring en context_recovery.py) y trunca el
+# contenido de los más extensos; el apriete a la mitad solo ocurre DENTRO de esa función
+# cuando el material ya cabía y el desbordamiento venía de otra parte del prompt. Aun así,
+# con un expediente enorme una sola pasada de `fit_documents` puede no bastar (el sello
+# <<<DOC n>>> de cada bloque también ocupa y desplaza el punto de corte). Cota dura para no
+# ciclar.
 _MAX_SHRINK_PASSES = 4
 
 # Piso de una intervención reinyectada: por debajo de esto la réplica deja de ser inteligible
@@ -272,6 +276,27 @@ async def _turn_jurisdictions(state: Any) -> list[str]:
 
 # ── presupuesto de contexto de la Sala (recorte SIEMPRE avisado con números) ──
 
+# MENOR 2 · margen de seguridad frente al estimador. `estimate_tokens` (memory/tokens.py) es
+# ceil(len/4) y su propio docstring avisa que NO iguala el tokenizador real: en español
+# corrido el promedio ronda 3,5-3,8 caracteres/token (no 4), así que el estimador SUBESTIMA lo
+# que el tokenizador real va a contar — en el extremo de 3,5 chars/token hasta un 4/3.5 ≈ 1,43,
+# es decir ~15% más de lo estimado. `fit_documents`/`fit_turns` comparaban contra el
+# presupuesto EXACTO del nodo (`if before <= budget_tokens`, sin colchón): un expediente que el
+# estimador dice que "cabe" podía seguir desbordando el tokenizador real y disparar
+# CONTEXT_TOO_LONG en la cadena de respaldo — justo lo que este presupuesto propio de la Sala
+# existe para evitar (ver el bloque de constantes más arriba). Se reserva este porcentaje del
+# presupuesto ANTES de comparar y de recortar. NO se toca `memory/tokens.py`: otros
+# consumidores (facts/analysis/draft en context_recovery) ya están calibrados a su estimación
+# cruda tal cual, y bajarle el rendimiento ahí los desajustaría a ellos sin que lo pidieran.
+_ESTIMATOR_SAFETY_MARGIN = 0.15
+
+
+def _effective_budget(budget_tokens: int) -> int:
+    """Presupuesto REAL contra el que `fit_documents`/`fit_turns` comparan y recortan, tras
+    reservar `_ESTIMATOR_SAFETY_MARGIN` del tope nominal del nodo. Nunca baja de 1."""
+    return max(1, int(budget_tokens * (1 - _ESTIMATOR_SAFETY_MARGIN)))
+
+
 def _rendered_doc_tokens(docs: list) -> int:
     """Tokens estimados de la sección 'Expediente' TAL COMO se va a renderizar (sellos
     <<<DOC n>>> incluidos) — no de la suma cruda de los contenidos."""
@@ -288,23 +313,28 @@ def fit_documents(docs: list, budget_tokens: int) -> tuple[list, Optional[dict]]
 
     Reusa `context_recovery.shrink_documents` (el mismo helper puro de los nodos del grafo),
     que conserva el orden del ranking: los primeros son los más relevantes y los índices
-    [doc 1..n] siguen siendo estables entre rondas."""
+    [doc 1..n] siguen siendo estables entre rondas.
+
+    Compara y recorta contra `_effective_budget(budget_tokens)`, no contra el tope nominal:
+    el estimador de tokens subestima (ver `_ESTIMATOR_SAFETY_MARGIN`), así que comparar contra
+    el tope exacto dejaba pasar expedientes que el tokenizador real sí desborda."""
     if not docs:
         return [], None
+    budget = _effective_budget(budget_tokens)
     before = _rendered_doc_tokens(docs)
-    if before <= budget_tokens:
+    if before <= budget:
         return list(docs), None
     # `shrink_documents` copia con dict(d): un documento que no sea dict (vía distinta al
     # RRF) se normaliza al shape mínimo — se renderiza igual y el recorte no revienta.
     kept = [d if isinstance(d, dict) else {"content": str(d)} for d in docs]
     after = before
     for _ in range(_MAX_SHRINK_PASSES):
-        kept = context_recovery.shrink_documents(kept, budget_tokens)
+        kept = context_recovery.shrink_documents(kept, budget)
         after = _rendered_doc_tokens(kept)
-        if after <= budget_tokens or len(kept) <= 1:
+        if after <= budget or len(kept) <= 1:
             break
     return kept, {"kept": len(kept), "total": len(docs), "tokens_before": before,
-                  "tokens_after": after, "budget": budget_tokens}
+                  "tokens_after": after, "budget": budget}
 
 
 def fit_turns(turns: list[dict], budget_tokens: int) -> tuple[list[dict], Optional[dict]]:
@@ -315,13 +345,17 @@ def fit_turns(turns: list[dict], budget_tokens: int) -> tuple[list[dict], Option
     No DESCARTA intervenciones: una sala a la que le falta una postura entera deja de ser un
     contraste de posturas. Se acorta cada una por su inicio (`context_recovery.shrink_text`)
     con un reparto por partes iguales y un piso de legibilidad. Los dicts se COPIAN: el turno
-    que viaja al contrato público (debate/SSE) conserva su texto íntegro."""
+    que viaja al contrato público (debate/SSE) conserva su texto íntegro.
+
+    Compara y recorta contra `_effective_budget(budget_tokens)` (mismo colchón que
+    `fit_documents` — ver `_ESTIMATOR_SAFETY_MARGIN`)."""
     if not turns:
         return [], None
+    budget = _effective_budget(budget_tokens)
     before = sum(estimate_tokens(str(t.get("text") or "")) for t in turns)
-    if before <= budget_tokens:
+    if before <= budget:
         return list(turns), None
-    per_turn = max(budget_tokens // len(turns), _MIN_TURN_TOKENS)
+    per_turn = max(budget // len(turns), _MIN_TURN_TOKENS)
     out: list[dict] = []
     for t in turns:
         nt = dict(t)
@@ -329,7 +363,7 @@ def fit_turns(turns: list[dict], budget_tokens: int) -> tuple[list[dict], Option
         out.append(nt)
     after = sum(estimate_tokens(str(t.get("text") or "")) for t in out)
     return out, {"kept": len(out), "total": len(turns), "tokens_before": before,
-                 "tokens_after": after, "budget": budget_tokens}
+                 "tokens_after": after, "budget": budget}
 
 
 # ── construcción de panelistas sintéticos ────────────────────────────────────

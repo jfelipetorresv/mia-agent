@@ -275,7 +275,13 @@ async def connector_checks(a: str, b: str, matter_a: str, work: Path) -> None:
 
         # Re-aplica el backfill de la 028 (idempotente, mismo SQL que corrió en producción).
         init_projects_multifolder.apply()
-        init_durable_jobs.apply()
+        # 034 envuelta: si la migración lanza, la suite antes moría muda (crash sin
+        # diagnóstico) en vez de reportar un FAIL legible con la causa.
+        try:
+            init_durable_jobs.apply()
+            check("034 (init_durable_jobs) se aplica sin error", True)
+        except Exception as e:
+            check(f"034 (init_durable_jobs) se aplica sin error [excepción: {e}]", False)
 
         check("backfill H3: expediente con historial AMBIGUO (A desvinculada + B activa) "
               "conserva su documento viejo con source_id NULL — no se colapsa bajo B",

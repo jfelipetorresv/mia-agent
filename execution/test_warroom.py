@@ -423,6 +423,31 @@ async def _checks() -> None:
     check("presupuesto: un expediente que CABE no se recorta ni se avisa",
           fitted_small == pequeno and rep_small is None)
 
+    # a2 · MENOR 2 — margen de seguridad frente al estimador (`_ESTIMATOR_SAFETY_MARGIN`).
+    # `estimate_tokens` subestima frente al tokenizador real; sin colchón, un expediente que
+    # "cabe" contra el tope NOMINAL podía seguir desbordando el tokenizador real y disparar
+    # CONTEXT_TOO_LONG en la cadena de respaldo. Mutación (demostrada en el traspaso de esta
+    # sesión): con `_ESTIMATOR_SAFETY_MARGIN = 0.0` (o comparando contra `budget_tokens` sin
+    # pasar por `_effective_budget`) el check de la franja de abajo se pone en rojo — el caso
+    # de prueba está construido PARA caer justo donde el margen y solo el margen actúa.
+    budget_margen = 10_000
+    tope_efectivo = warroom._effective_budget(budget_margen)
+    check("MENOR 2: el presupuesto efectivo reserva un margen bajo el tope nominal",
+          0 < tope_efectivo < budget_margen)
+    # Contenido cuyo renderizado cae DENTRO de la franja del margen: por debajo del tope
+    # NOMINAL (antes de este frente, fit_documents lo dejaba pasar sin tocar) pero por ENCIMA
+    # del tope EFECTIVO (lo que el colchón exige recortar).
+    objetivo_chars = ((budget_margen + tope_efectivo) // 2) * 4
+    doc_margen = [{"id": "dm1", "content": "hecho probado " * (objetivo_chars // 14)}]
+    antes_margen = estimate_tokens(untrusted.render_documents(doc_margen))
+    check(f"MENOR 2: el expediente de prueba cae en la franja del margen "
+          f"(efectivo={tope_efectivo} < antes={antes_margen} <= nominal={budget_margen})",
+          tope_efectivo < antes_margen <= budget_margen)
+    _, rep_margen = warroom.fit_documents(doc_margen, budget_margen)
+    check("MENOR 2: fit_documents SÍ recorta un expediente que solo desborda el tope "
+          "EFECTIVO (sin el margen, este caso pasaría de largo sin avisar)",
+          rep_margen is not None)
+
     # b · expediente ~3x el presupuesto de documentos de la Sala.
     docs_budget = max(1, int(context_recovery.budget_for(
         warroom.WARROOM_PANELIST_NODE, config.MIA_CONTEXT_WINDOW) * warroom.WARROOM_DOCS_SHARE))
@@ -622,6 +647,32 @@ async def _checks() -> None:
     await run_warroom(rb_md, st_md, propose_panel(st_md))
     check("ordenamiento: se toma el que la investigación dejó en la metadata",
           all("XX" in p["system"] for p in rb_md.prompts))
+
+    # ── 12 · MENOR 5: piso de contenido mínimo por documento ─────────────────
+    # `context_recovery.MIN_DOC_TOKENS` (medido y documentado junto a esa constante) es lo
+    # que SIEMPRE sobrevive de un extracto tras el recorte. Con un cupo tan estrecho que fuerza
+    # el piso, la cita jurisprudencial debe conservarse COMPLETA (ficha + ratio decidendi) —
+    # no cortada a mitad de la regla citada, que es lo que la volvía inservible con el piso
+    # viejo. Mutación (demostrada en el traspaso de esta sesión, reversión temporal a 50 en
+    # context_recovery.py): con el piso viejo el segundo check de abajo se pone en rojo — la
+    # cita se trunca antes de "sostuvo que" y pierde el ratio decidendi.
+    _cita_jurisprudencial = (
+        "Corporación Judicial Suprema, Sala Primera de lo Civil, sentencia n.° 12345 de 14 "
+        "de marzo de 2024, M.P. Juana Pérez Gómez, sostuvo que la caducidad de la acción no "
+        "opera cuando la notificación al demandado no se practicó conforme a las reglas del "
+        "debido proceso, pues el término solo corre desde el conocimiento efectivo del acto "
+        "por parte del afectado."
+    )
+    check("MENOR 5: MIN_DOC_TOKENS cubre una cita jurisprudencial completa medida "
+          "(ficha + ratio decidendi, 89 tokens estimados)",
+          context_recovery.MIN_DOC_TOKENS >= estimate_tokens(_cita_jurisprudencial))
+    doc_cita = {"id": "jur1", "content": _cita_jurisprudencial}
+    relleno = {"id": "relleno", "content": "hecho probado " * 3000}
+    recortado_piso = context_recovery.shrink_documents([doc_cita, relleno], budget_tokens=60)
+    contenido_piso = next((d["content"] for d in recortado_piso if d["id"] == "jur1"), "")
+    check("MENOR 5: bajo el cupo mínimo, la cita sobrevive COMPLETA (no se corta a mitad "
+          "del ratio decidendi)",
+          "el término solo corre desde el conocimiento efectivo del acto" in contenido_piso)
 
 
 def main() -> int:
