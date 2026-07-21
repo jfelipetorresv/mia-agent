@@ -37,13 +37,18 @@ podía gastar sin ningún techo. Ahora cada corrida:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import math
+import statistics
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .. import config, embeddings
+from ..agent import prompt_builder
+from ..agents import verification
 from ..agents.checkpointer import open_checkpointer
 from ..agents.graph import build_matter_graph
 from ..agents.state import initial_state, thread_id_for
@@ -61,6 +66,287 @@ from .scoring import (
 logger = logging.getLogger("mia.eval.harness")
 
 _DRAFT_PREVIEW_CHARS = 1200  # cuánto borrador se guarda en la corrida (evita ficheros enormes)
+
+
+# ── FALSOS BLOQUEOS (F1 · Frente C) ───────────────────────────────────────────
+# La métrica que falta y la más importante que nadie mide (decisión del dueño del
+# producto, 2026-07-21): un guardián que marca TODO es tan inútil como uno que no marca
+# nada. Un falso bloqueo es una marca [VERIFICAR] puesta sobre una afirmación que SÍ
+# estaba correctamente respaldada.
+def false_block_signal(verification_report: Any, sources: Any) -> dict:
+    """Falsos bloqueos: citas que el MODELO marcó espontáneamente con [VERIFICAR]
+    (estado 'marcada' en el informe de `agents.verification.annotate_draft`) pero que YA
+    estaban respaldadas por el corpus recuperado en el turno — el modelo se autolimitó
+    sobre algo que sí tenía soporte.
+
+    POR QUÉ SOLO 'marcada' — `annotate_draft` clasifica cada cita en un `elif` en
+    cascada (marcada → respaldada → anotada): una cita que YA trae su propia marca
+    nunca se evalúa contra el corpus, así que "¿estaba respaldada de todos modos?" es
+    una pregunta abierta SOLO para esa clase. Las 'anotadas' (el GUARDIÁN insertó la
+    marca) por construcción YA fallaron ESE MISMO chequeo de respaldo — no pueden ser
+    un falso bloqueo bajo la misma regla de cotejo que las produjo.
+
+    LIMITACIÓN DECLARADA (dirección segura — nunca infla el número): solo comprueba
+    respaldo por CORPUS (`sources`, el mismo cotejo que usa la disciplina de citas), no
+    por ANCLA al expediente (eso exige la posición exacta de la cita en el texto, que el
+    informe no conserva). Una cita autolimitada que solo estaba respaldada por el
+    expediente (no por el corpus) NO se cuenta aquí como falso bloqueo: se subestima
+    antes que inventar un defecto. Si se necesita la cifra completa, el informe de
+    verificación tendría que conservar posiciones — pedido para el frente de
+    verificación/citas, no de este módulo.
+
+    Puro: no toca DB, red ni reloj.
+    """
+    report = verification_report if isinstance(verification_report, dict) else {}
+    detalle = report.get("detalle")
+    marcadas_detalle = [d for d in (detalle or [])
+                        if isinstance(d, dict) and d.get("estado") == "marcada"]
+    n_marcadas = len(marcadas_detalle)
+    if n_marcadas == 0:
+        return {"citas_marcadas": 0, "falsos_bloqueos": 0, "tasa_falsos_bloqueos": 0.0,
+                "detalle": []}
+    index = verification._tokenize_index(
+        verification.source_index(sources if isinstance(sources, list) else None))
+    culpables = [str(d.get("cita") or "") for d in marcadas_detalle
+                if verification._backing_source_tokenized(str(d.get("cita") or ""), index)
+                is not None]
+    n_falsos = len(culpables)
+    return {
+        "citas_marcadas": n_marcadas,
+        "falsos_bloqueos": n_falsos,
+        "tasa_falsos_bloqueos": round(n_falsos / n_marcadas, 4),
+        "detalle": culpables[:10],
+    }
+
+
+# ── ABSTENCIÓN honesta (F1 · Frente C) ────────────────────────────────────────
+# Frases GENÉRICAS del español jurídico (sin léxico de país ni de un ordenamiento
+# concreto — mismo criterio de agnosticismo que `scoring.provenance_signal`) que
+# indican que Mia reconoció EXPLÍCITAMENTE que no puede respaldar algo. Calibradas para
+# no atrapar nada más: todas ligan una negación de posibilidad a la idea de respaldo,
+# fundamento o verificación.
+ABSTENTION_PHRASES: tuple[str, ...] = (
+    "no puedo respaldar esta afirmacion",
+    "no puedo verificar esta afirmacion",
+    "no cuento con elementos suficientes",
+    "no cuento con fundamento suficiente",
+    "no es posible fundamentar esta conclusion",
+    "no hay soporte documental suficiente",
+    "no hay respaldo suficiente en el expediente",
+    "hace falta que el despacho aporte",
+    "se requiere que el despacho aporte",
+    "sin el expediente completo no es posible",
+    "no cuento con normas confirmadas para",
+)
+
+
+def abstention_signal(diagnosis: str, draft: str) -> dict:
+    """TASA DE ABSTENCIÓN (F1 · Frente C): ¿Mia reconoció, en este turno, que NO puede
+    respaldar algo? Determinista y puro — mismo estilo que `scoring.provenance_signal`.
+
+    Deliberadamente CONSERVADOR (subestima antes que inventar): una abstención dicha con
+    otras palabras no se detecta. No es lo mismo que `reached_draft=False` (eso es un
+    FALLO: el turno no llegó a producir nada); esto mide la abstención HONESTA dentro de
+    un turno que SÍ completó — la señal de disciplina que el dueño del producto pidió
+    medir (un sistema que nunca dice "no puedo" es sospechoso, no ejemplar).
+    """
+    texto = verification._normalize((diagnosis or "") + " \n " + (draft or ""))
+    hallazgos = [p for p in ABSTENTION_PHRASES if verification._normalize(p) in texto]
+    return {"abstiene": bool(hallazgos), "frases_detectadas": hallazgos}
+
+
+# ── versión del baseline (F1 · "sin eso, comparar dos corridas es engañarse") ──
+def prompt_version_hash() -> str:
+    """Hash del prompt vigente. Hashea el CÓDIGO FUENTE de `agent.prompt_builder` (las
+    diez capas del prompt, CLAUDE.md §C) — ante cualquier cambio de ese módulo el hash
+    cambia, así que dos corridas con hashes distintos NO son comparables sin releer qué
+    cambió (deriva de prompt).
+
+    LIMITACIÓN DECLARADA: no cubre instrucciones de prompt que vivan en otro módulo (p.
+    ej. fragmentos ad hoc de `agents/graph.py`); es una aproximación declarada del
+    prompt PRINCIPAL, no un hash exhaustivo de todo lo que el modelo llega a ver. Sin
+    fuente legible (empaquetado sin fuente, `__file__` ausente) → 'desconocido', nunca
+    un hash inventado que aparente una estabilidad que no existe.
+    """
+    try:
+        src = Path(prompt_builder.__file__).read_bytes()
+    except Exception:  # noqa: BLE001 — sin fuente legible, se dice, no se inventa
+        return "desconocido"
+    return hashlib.sha256(src).hexdigest()[:16]
+
+
+def served_models_signal(case_results: list[dict]) -> dict:
+    """Modelos SERVIDOS en esta corrida, agregados desde `usage.models` de cada caso
+    (ya lo persiste `spend_guard.CaseUsage`, ver `harness.run_case`).
+
+    GRANULARIDAD DECLARADA: es el ALIAS de la política (p. ej. 'claude-sonnet'), no el
+    snapshot exacto del proveedor (p. ej. 'claude-sonnet-4-6') — `eval.spend_guard.
+    _alias_and_cost` solo sustituye el alias por `resp.model` cuando ese valor YA es una
+    de las claves de `metrics.usage.PRICES_PER_MTOK` (que son alias, no snapshots de
+    proveedor), así que el snapshot real no sobrevive hasta aquí. Si se necesita el pin
+    exacto de proveedor, `eval.spend_guard` tendría que exponer el `resp.model` crudo
+    por separado del alias de tarifa — pedido para Frente A, no de este módulo.
+    """
+    conteo: dict[str, int] = {}
+    for c in case_results:
+        usage = c.get("usage")
+        models = usage.get("models") if isinstance(usage, dict) else None
+        if isinstance(models, dict):
+            for alias, n in models.items():
+                conteo[str(alias)] = conteo.get(str(alias), 0) + int(n or 0)
+    return conteo
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Percentil por interpolación lineal entre rangos (sin dependencias externas).
+    Lista vacía → 0.0 (nunca lanza; la latencia se REPORTA, nunca bloquea — ver
+    `build_quality_panel`)."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return round(float(ordered[0]), 1)
+    k = (len(ordered) - 1) * (pct / 100.0)
+    f, c = math.floor(k), math.ceil(k)
+    if f == c:
+        return round(float(ordered[int(k)]), 1)
+    return round(float(ordered[int(f)] * (c - k) + ordered[int(c)] * (k - f)), 1)
+
+
+def build_quality_panel(case_results: list[dict]) -> dict:
+    """Panel de calidad del banco (F1 · Frente C, decisión del dueño del producto
+    2026-07-21: "con 3 números no se puede decidir nada"). Reporta, sobre la lista de
+    corridas que se le pase (sirve igual para el examen "antes/después" de `run_suite`,
+    casos DISTINTOS, que para `run_case_n`, el MISMO caso repetido N veces):
+
+      · COBERTURA/PRECISIÓN del respaldo — de todas las citas, cuántas quedaron
+        confirmadas (`cobertura_respaldo`); de las que terminaron marcadas [VERIFICAR],
+        cuántas eran necesarias (`precision_respaldo`, el complemento de los falsos
+        bloqueos — ver `false_block_signal`);
+      · TASA DE DETECCIÓN por vía — guardián determinista (anotó por su cuenta) vs
+        modelo obediente (se marcó solo), como fracción de las citas del conjunto;
+      · FRECUENCIA DE FUGA DE JURISDICCIÓN — tasa sobre las N corridas de esta lista
+        (reusa `scoring.jurisdiction_leak_signal`; nunca un booleano de una sola pasada);
+      · TASA DE ABSTENCIÓN — ver `abstention_signal`;
+      · ÉXITO DE TAREA — llegó a borrador CON cierre de diagnóstico;
+      · LATENCIA p50/p95 — se MIDE y se REPORTA; NINGÚN campo de este panel es un gate
+        por tiempo (decisión explícita del dueño del producto, 2026-07-21: "no tienen
+        que ser 10 minutos... puede ser más si el resultado es brutal y de calidad");
+      · COSTE POR TURNO — media, desviación, mínimo, máximo (con N pequeño la
+        variabilidad ES el resultado, no ruido a esconder) — y tokens/llamadas.
+
+    Puro: no toca DB, red ni reloj — agrega lo que cada `case_result` YA trae. Casos que
+    NUNCA corrieron de verdad (cortados por el tope antes de `run_case`, sin
+    `elapsed_ms`/`usage.cost_usd` reales) se cuentan en `n` pero se EXCLUYEN de latencia
+    y coste — meter un 0 falso ahí falsearía la media hacia abajo.
+    """
+    n = len(case_results)
+    if n == 0:
+        return {"n": 0}
+
+    sum_citas = sum_respaldadas = sum_marcadas = sum_anotadas = 0
+    sum_falsos = sum_marcas_evaluables = 0
+    n_con_fuga = n_con_abstencion = n_con_exito = n_errores = 0
+    latencias: list[float] = []
+    costes: list[float] = []
+    tokens_total = 0
+    llamadas_total = 0
+
+    for c in case_results:
+        if c.get("error"):
+            n_errores += 1
+        score = c.get("score") or {}
+        citas = int(score.get("citas", 0) or 0)
+        sum_citas += citas
+        sum_respaldadas += int(score.get("citas_respaldadas", 0) or 0)
+        sum_marcadas += int(score.get("citas_marcadas", 0) or 0)
+        sum_anotadas += int(score.get("citas_sin_respaldo", 0) or 0)
+
+        fb = c.get("false_block") or {}
+        sum_falsos += int(fb.get("falsos_bloqueos", 0) or 0)
+        sum_marcas_evaluables += int(fb.get("citas_marcadas", 0) or 0)
+
+        # C-MAY1: se AGREGA la señal persistida por `run_case` sobre el TEXTO COMPLETO. Solo
+        # como retrocompatibilidad (fixtures o corridas viejas sin la señal) se recalcula
+        # sobre el preview — que subestima, porque solo ve _DRAFT_PREVIEW_CHARS.
+        jl = c.get("jurisdiction_leak")
+        if not isinstance(jl, dict):
+            jl = jurisdiction_leak_signal(
+                f"{c.get('diagnosis_preview') or ''}\n{c.get('draft_preview') or ''}")
+        if jl.get("leak"):
+            n_con_fuga += 1
+
+        abst = c.get("abstention")
+        if not isinstance(abst, dict):
+            abst = abstention_signal(c.get("diagnosis_preview") or "",
+                                     c.get("draft_preview") or "")
+        if abst.get("abstiene"):
+            n_con_abstencion += 1
+
+        if bool(c.get("reached_draft")) and bool(score.get("has_diagnosis_closing")):
+            n_con_exito += 1
+
+        if "elapsed_ms" in c:
+            latencias.append(float(c.get("elapsed_ms") or 0.0))
+        usage = c.get("usage")
+        if isinstance(usage, dict) and "cost_usd" in usage:
+            costes.append(float(usage.get("cost_usd") or 0.0))
+            tokens_total += int(usage.get("total_tokens", 0) or 0)
+            llamadas_total += int(usage.get("calls", 0) or 0)
+
+    total_marcas = sum_marcadas + sum_anotadas  # toda cita que terminó con [VERIFICAR]
+
+    # PRECISIÓN DE RESPALDO con clamp [0,1] (C-MEN). El numerador (falsos bloqueos) sale del
+    # bucket 'marcada' del informe de verificación; el denominador (total_marcas) de
+    # score.citas_marcadas+citas_sin_respaldo — DOS fuentes de conteo distintas que pueden
+    # desincronizarse. Sin clamp, `falsos > total_marcas` imprimía un negativo imposible en
+    # silencio. Se acota a [0,1] y la desincronía se DECLARA en vez de esconderse: un número
+    # imposible tiene que ser VISIBLE, no un negativo mudo.
+    _prec_raw = (1.0 - sum_falsos / total_marcas) if total_marcas else 1.0
+    _prec_desync = sum_falsos > total_marcas
+    precision_respaldo = round(max(0.0, min(1.0, _prec_raw)), 4)
+
+    return {
+        "n": n,
+        "n_con_error": n_errores,
+        "respaldo": {
+            "citas_totales": sum_citas,
+            "citas_respaldadas": sum_respaldadas,
+            "cobertura_respaldo": round(sum_respaldadas / sum_citas, 4) if sum_citas else 1.0,
+            "falsos_bloqueos": sum_falsos,
+            "citas_marcadas_evaluables": sum_marcas_evaluables,
+            "precision_respaldo": precision_respaldo,
+            "precision_respaldo_desincronizada": _prec_desync,
+        },
+        "deteccion": {
+            "tasa_guardian_determinista": (round(sum_anotadas / sum_citas, 4)
+                                           if sum_citas else 0.0),
+            "tasa_modelo_obediente": (round(sum_marcadas / sum_citas, 4)
+                                      if sum_citas else 0.0),
+        },
+        "fuga_jurisdiccion": {"n_con_fuga": n_con_fuga, "tasa": round(n_con_fuga / n, 4)},
+        "abstencion": {"n_con_abstencion": n_con_abstencion,
+                      "tasa": round(n_con_abstencion / n, 4)},
+        "exito_tarea": {"n_con_exito": n_con_exito, "tasa": round(n_con_exito / n, 4)},
+        "latencia_ms": {
+            "n_medidos": len(latencias),
+            "p50": _percentile(latencias, 50),
+            "p95": _percentile(latencias, 95),
+            "media": round(statistics.fmean(latencias), 1) if latencias else 0.0,
+            "min": round(min(latencias), 1) if latencias else 0.0,
+            "max": round(max(latencias), 1) if latencias else 0.0,
+        },
+        "coste_usd": {
+            "n_medidos": len(costes),
+            "total": round(sum(costes), 6),
+            "media": round(statistics.fmean(costes), 6) if costes else 0.0,
+            "desviacion": round(statistics.pstdev(costes), 6) if len(costes) > 1 else 0.0,
+            "min": round(min(costes), 6) if costes else 0.0,
+            "max": round(max(costes), 6) if costes else 0.0,
+        },
+        "tokens_totales": tokens_total,
+        "llamadas_totales": llamadas_total,
+    }
 
 
 @contextmanager
@@ -282,6 +568,19 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         # políticas gratis (cli-*, motor local) el coste es 0 pero los tokens SÍ se cuentan.
         "usage": case_usage.as_dict() if case_usage is not None else None,
     }
+    # FALSOS BLOQUEOS (F1 · Frente C): ¿alguna marca [VERIFICAR] espontánea del modelo
+    # cayó sobre una cita que YA estaba respaldada por el corpus? Ver `false_block_signal`.
+    result["false_block"] = false_block_signal(md.get("verification"), sources)
+    # ABSTENCIÓN honesta (F1 · Frente C): ¿el turno reconoció que no puede respaldar algo?
+    result["abstention"] = abstention_signal(diagnosis, draft)
+    # FUGA DE JURISDICCIÓN (F1 · Frente C · C-MAY1): se calcula sobre el TEXTO COMPLETO del
+    # turno (diagnóstico + borrador), NO sobre el preview truncado a _DRAFT_PREVIEW_CHARS.
+    # El preview de 1200 es para MOSTRAR, no para MEDIR: un borrador real de ~15k caracteres
+    # evaluado sobre su 8% inicial diría "no hay fuga" por construcción. Se persiste aquí,
+    # donde el texto entero todavía existe, con el MISMO patrón que la abstención; el panel
+    # (`build_quality_panel`) y `jurisdiction_leak_rate` la AGREGAN en vez de recalcularla
+    # tarde sobre el preview.
+    result["jurisdiction_leak"] = jurisdiction_leak_signal(f"{diagnosis}\n{draft}")
     # Traza de la LECTURA AGÉNTICA (opt-in, `config.MIA_AGENTIC_READING`): cuántas
     # ampliaciones pidió el modelo, con qué motivo y por qué paró (`agents.graph` la escribe
     # en `metadata["agentic_reading"]` — ver `_turn.intake_node`). Antes se calculaba y se
@@ -367,8 +666,13 @@ def jurisdiction_leak_rate(results: list[dict]) -> dict:
     n = len(results)
     detalle: list[dict] = []
     for r in results:
-        texto = f"{r.get('diagnosis_preview') or ''}\n{r.get('draft_preview') or ''}"
-        sig = jurisdiction_leak_signal(texto)
+        # C-MAY1: se prefiere la señal persistida por `run_case` sobre el TEXTO COMPLETO;
+        # el preview (subestima, solo _DRAFT_PREVIEW_CHARS) es únicamente el respaldo para
+        # resultados viejos que no la traen.
+        sig = r.get("jurisdiction_leak")
+        if not isinstance(sig, dict):
+            texto = f"{r.get('diagnosis_preview') or ''}\n{r.get('draft_preview') or ''}"
+            sig = jurisdiction_leak_signal(texto)
         detalle.append({"matter_id": r.get("matter_id"), **sig})
     con_fuga = sum(1 for d in detalle if d["leak"])
     return {
@@ -491,6 +795,12 @@ def build_report(run_id: str, case_results: list[dict], *,
     `spend` es la foto del tope (`EvalSpendGuard.snapshot()`) y `corte` el motivo por el que
     la corrida se detuvo, si se detuvo. Ambos viajan al reporte PERSISTIDO: un corte que no
     queda escrito es un corte que nadie puede auditar después.
+
+    `report["panel"]` (F1 · Frente C, ver `build_quality_panel`) y `report["version"]`
+    (F1 — versionar el baseline: hash del prompt + modelos servidos, ver
+    `prompt_version_hash`/`served_models_signal`) viajan AL LADO del resumen de siempre:
+    ningún consumidor del resumen viejo se rompe, y quien quiera decidir algo tiene el
+    panel completo en vez de tres números.
     """
     n = len(case_results)
     reached = sum(1 for c in case_results if c.get("reached_draft"))
@@ -507,6 +817,11 @@ def build_report(run_id: str, case_results: list[dict], *,
         "run_id": run_id,
         "cases": case_results,
         "spend": spend or {},
+        "panel": build_quality_panel(case_results),
+        "version": {
+            "prompt_hash": prompt_version_hash(),
+            "modelos_servidos": served_models_signal(case_results),
+        },
         "summary": {
             "n_casos": n,
             "n_llegaron_a_borrador": reached,
@@ -572,7 +887,13 @@ def _eval_dir(base_dir: Optional[str] = None) -> Path:
 
 def persist_report(report: dict, *, base_dir: Optional[str] = None) -> Path:
     """Escribe la corrida en `mia-data/eval-runs/{run_id}/` (cases.jsonl + summary.json).
-    Datos SINTÉTICOS (no de cliente) → JSONL en disco basta, sin tabla RLS. Devuelve el dir."""
+    Datos SINTÉTICOS (no de cliente) → JSONL en disco basta, sin tabla RLS. Devuelve el dir.
+
+    VERSIONAR EL BASELINE (F1): `panel` y `version` (hash del prompt + modelos servidos)
+    viajan al disco junto al resumen — sin eso, comparar dos corridas de fechas distintas
+    es engañarse: un cambio de modelo o de prompt invalida la comparación y solo se puede
+    saber leyendo lo que quedó escrito aquí, no lo que se recuerde de memoria.
+    """
     import json
 
     run_dir = _eval_dir(base_dir) / report["run_id"]
@@ -584,7 +905,9 @@ def persist_report(report: dict, *, base_dir: Optional[str] = None) -> Path:
         json.dumps({"run_id": report["run_id"], "summary": report.get("summary", {}),
                     # el estado del TOPE viaja al disco: si la corrida se cortó, el motivo
                     # tiene que poder leerse después sin haber estado mirando la consola.
-                    "spend": report.get("spend", {})},
+                    "spend": report.get("spend", {}),
+                    "panel": report.get("panel", {}),
+                    "version": report.get("version", {})},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

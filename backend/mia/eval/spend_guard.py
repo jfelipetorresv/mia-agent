@@ -170,6 +170,34 @@ EVAL_MAX_OUTPUT_TOKENS = 8_192
 # y no con la del alias pedido, porque `_alias_and_cost` liquida con el alias SERVIDO
 # (`resp.model`), que puede ser más caro que el pedido.
 _WORST_RATES = (3.00, 15.00)
+
+# ── CACHÉ DE PROMPT: la escritura se factura MÁS CARA que la entrada normal (A1) ──────
+# `agent/llm._messages_with_cache` marca el prefijo estable del system para el prefix caching
+# de Anthropic con `cache_control: {"type": "ephemeral", "ttl": "1h"}` (llm.py ~L516-522).
+# Tarifa vigente de Anthropic sobre el precio de ENTRADA del modelo:
+#   · escritura de caché de 1 h  → 2.00x   (la que usa MIA)
+#   · escritura de caché de 5 min→ 1.25x
+#   · lectura de caché           → 0.10x   (ABARATA: nunca encarece)
+# Estos tres números son la razón por la que el coste no se puede seguir calculando con
+# `metrics.usage.cost_usd`, que tarifa TODO el prompt a la tarifa de entrada normal.
+CACHE_WRITE_MULTIPLIER_1H = 2.00
+CACHE_WRITE_MULTIPLIER_5M = 1.25
+CACHE_READ_MULTIPLIER = 0.10
+# Con qué multiplicador se LIQUIDA una escritura de caché. MIA solo emite `ttl: "1h"`, así que
+# 2.00x es el valor exacto, no una aproximación; si algún día se emitieran bloques de 5 min,
+# seguiría siendo la cota alta de los dos (nunca se sub-factura).
+CACHE_WRITE_MULTIPLIER = CACHE_WRITE_MULTIPLIER_1H
+
+# ¿CÓMO VIENEN LOS CAMPOS? (medido en el LiteLLM instalado, no supuesto —
+# `litellm/llms/anthropic/chat/transformation.py::calculate_usage`, L810-856):
+#     prompt_tokens = input_tokens + cache_read_input_tokens      ← la LECTURA va DENTRO
+#     cache_creation_input_tokens                                  ← la ESCRITURA va FUERA
+#     total_tokens  = prompt_tokens + completion_tokens            ← la escritura NO se cuenta
+# De ahí los dos defectos que cierra A1, en direcciones OPUESTAS:
+#   · la LECTURA se cobraba a 1.00x cuando cuesta 0.10x  → se SOBRE-facturaba;
+#   · la ESCRITURA se cobraba a 0.00x cuando cuesta 2.00x → se SUB-facturaba, y eso es lo que
+#     impedía certificar el tope (una sub-facturación rompe la cota, una sobre-facturación no).
+_CACHE_READ_INSIDE_PROMPT_TOKENS = True
 # Colchón de entrada: el andamiaje del protocolo (roles, delimitadores, plantilla de tools)
 # añade tokens que no están en el payload que se serializa aquí.
 _PROMPT_OVERHEAD_TOKENS = 1_024
@@ -910,7 +938,12 @@ def active_guard() -> Optional[EvalSpendGuard]:
 
 
 def _alias_and_cost(resp: Any, chain_alias: str) -> tuple[str, int, int, int, float]:
-    """Alias servido y coste REAL de una respuesta. Sin `usage` legible → tokens 0."""
+    """Alias servido y coste REAL de una respuesta. Sin `usage` legible → tokens 0.
+
+    A1 — el coste sale de `real_call_cost`, que desglosa la caché de prompt (escritura al
+    doble, lectura a la décima parte), no de `metrics.usage.cost_usd`, que tarifa todo el
+    prompt a la entrada normal y por eso no veía ni un centavo de las escrituras de caché.
+    """
     from ..metrics import usage as usage_metrics
 
     alias = chain_alias
@@ -927,8 +960,15 @@ def _alias_and_cost(resp: Any, chain_alias: str) -> tuple[str, int, int, int, fl
 
     prompt = _int(getattr(u, "prompt_tokens", 0))
     completion = _int(getattr(u, "completion_tokens", 0))
-    total = _int(getattr(u, "total_tokens", 0)) or (prompt + completion)
-    return alias, prompt, completion, total, usage_metrics.cost_usd(alias, prompt, completion)
+    # Se reutiliza el extractor de PRODUCCIÓN (`metrics.usage._cache_tokens`) a propósito: ya
+    # cubre las DOS formas en que LiteLLM expone la caché (passthrough de Anthropic y estilo
+    # OpenAI en `prompt_tokens_details.cached_tokens`). Duplicarlo aquí crearía dos verdades.
+    cache_read, cache_creation = usage_metrics._cache_tokens(u)
+    # La ESCRITURA de caché no está en `total_tokens` (LiteLLM no la suma): se añade para que
+    # la telemetría del banco no reporte menos tokens de los que de verdad se facturaron.
+    total = (_int(getattr(u, "total_tokens", 0)) or (prompt + completion)) + cache_creation
+    return alias, prompt, completion, total, real_call_cost(
+        alias, prompt, completion, cache_read, cache_creation)
 
 
 def upper_bound_call_cost(alias: str, messages: Any, *, max_tokens: Optional[int] = None,
@@ -958,7 +998,65 @@ def upper_bound_call_cost(alias: str, messages: Any, *, max_tokens: Optional[int
         prompt_tokens = 1_000_000
     completion_tokens = min(int(max_tokens or EVAL_MAX_OUTPUT_TOKENS), EVAL_MAX_OUTPUT_TOKENS)
     in_rate, out_rate = _WORST_RATES
-    return round((prompt_tokens * in_rate + completion_tokens * out_rate) / 1_000_000.0, 6)
+    # A1 — LA ENTRADA SE RESERVA AL PRECIO DE ESCRITURA DE CACHÉ. El prefijo estable del prompt
+    # sale marcado para el prefix caching de 1 h, y esa ESCRITURA se factura al DOBLE de la
+    # entrada normal. Como cada token del prompt acaba en exactamente uno de los tres cubos
+    # —entrada normal (1.00x), lectura de caché (0.10x) o escritura de caché (2.00x)— el peor
+    # caso posible es "todo el prompt es escritura", o sea `prompt_tokens * in_rate * 2.00`.
+    # Sigue siendo una COTA SUPERIOR y no una sobre-reserva ciega: la lectura ABARATA, así que
+    # una corrida con caché caliente liquida MUY por debajo de esta reserva y se devuelve el
+    # sobrante en `settle()`; lo que no puede volver a pasar es que el coste real supere lo
+    # reservado, que es lo único que rompe el tope.
+    return round((prompt_tokens * in_rate * CACHE_WRITE_MULTIPLIER
+                  + completion_tokens * out_rate) / 1_000_000.0, 6)
+
+
+def real_call_cost(alias: str, prompt_tokens: int, completion_tokens: int,
+                   cache_read_tokens: int = 0, cache_creation_tokens: int = 0) -> float:
+    """Coste REAL de un intento, con la caché de prompt DESGLOSADA (A1).
+
+    `metrics.usage.cost_usd` tarifa todo el prompt a la entrada normal, lo que es correcto para
+    el panel del abogado pero falso para el banco: no ve `cache_creation_input_tokens` (que
+    cuesta el DOBLE) y cobra `cache_read_input_tokens` a precio completo (cuesta la DÉCIMA
+    parte). Se liquida aquí, en el guardián, y no allí, para no cambiar ni una semántica del
+    código de producción — ver el bloque de constantes de arriba para el porqué de cada factor.
+
+    Ojo a la ARITMÉTICA de los campos (medida en LiteLLM, no supuesta): la lectura ya está
+    DENTRO de `prompt_tokens`, así que hay que restarla para no cobrarla dos veces; la
+    escritura está FUERA, así que hay que sumarla o no se cobra nunca.
+    """
+    from ..metrics import usage as usage_metrics
+
+    in_rate, out_rate = usage_metrics.PRICES_PER_MTOK.get(
+        alias, usage_metrics.UNKNOWN_ALIAS_RATES)
+    read = max(0, int(cache_read_tokens or 0))
+    creation = max(0, int(cache_creation_tokens or 0))
+    # Entrada NO cacheada = lo que queda de `prompt_tokens` al sacarle la lectura.
+    normal_in = max(0, int(prompt_tokens or 0) - (read if _CACHE_READ_INSIDE_PROMPT_TOKENS else 0))
+    usd = (normal_in * in_rate
+           + read * in_rate * CACHE_READ_MULTIPLIER
+           + creation * in_rate * CACHE_WRITE_MULTIPLIER
+           + int(completion_tokens or 0) * out_rate) / 1_000_000.0
+    return round(usd, 8)
+
+
+def _reserva_no_gastada(exc: BaseException) -> bool:
+    """¿Se puede DEMOSTRAR que este fallo no llegó a facturar nada? (A2)
+
+    Delega en `agent.error_classifier.provider_never_reached` —el clasificador que ya existe—
+    en vez de inventar aquí una segunda taxonomía de errores de red. Si el clasificador no se
+    puede importar o revienta, la respuesta es NO: se cobra la reserva. Un fallo del control de
+    gasto nunca puede terminar en "devuélvele el dinero" (mismo criterio fail-closed que el
+    resto del módulo).
+    """
+    try:
+        from ..agent.error_classifier import provider_never_reached
+
+        return bool(provider_never_reached(exc))
+    except Exception:  # noqa: BLE001 — no poder demostrarlo NO autoriza a devolver
+        logger.warning("no se pudo clasificar el fallo del proveedor: se cobra la reserva",
+                       exc_info=True)
+        return False
 
 
 def _capped_kwargs(kwargs: dict) -> dict:
@@ -1005,11 +1103,19 @@ def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None) -> 
     started = time.perf_counter()
     try:
         resp = _original_invoke(client, alias, kwargs, task)
-    except BaseException:
-        # Final incierto: la reserva se queda cobrada (invariante D).
-        guard.settle(reservation, None)
+    except BaseException as exc:
+        # A2 — INCIERTO se cobra (invariante D), pero NO-ENVIADO se devuelve.
+        # Una corrida cuyas 10 llamadas murieron ANTES de conectar cobró USD 0.5785 sin gastar
+        # un centavo real: más que la corrida que sí funcionó. Es fail-safe, pero quema el
+        # presupuesto de la sesión por nada, y con `--repeat 10` eso se multiplica por diez.
+        # `provider_never_reached` sólo dice True cuando se puede DEMOSTRAR que el proveedor no
+        # recibió la petición; el final dudoso (timeout de lectura, conexión reseteada a mitad)
+        # sigue cobrándose exactamente igual que antes, que es la parte que protege.
+        no_gastado = reservation is not None and _reserva_no_gastada(exc)
+        guard.settle(reservation, 0.0 if no_gastado else None)
         guard.note_call(alias=alias, prompt_tokens=0, completion_tokens=0, total_tokens=0,
-                        cost_usd=reservation.estimate if reservation else 0.0,
+                        cost_usd=0.0 if no_gastado
+                        else (reservation.estimate if reservation else 0.0),
                         seconds=time.perf_counter() - started)
         raise
     seconds = time.perf_counter() - started
@@ -1111,6 +1217,20 @@ def _guarded_embed_texts(texts: list[str]) -> Any:
             vectors = _original_embed_texts(texts)
         except BaseException:
             # Final incierto: la reserva del PEOR caso se queda cobrada (invariante D).
+            #
+            # A-MEN (asimetría CONSCIENTE, declarada 2026-07-21) — a diferencia del LLM
+            # (`_guarded_invoke`, que usa `provider_never_reached` para DEVOLVER la reserva cuando
+            # se demuestra que el proveedor no llegó a recibir la petición), aquí toda falla —de
+            # red o no— se COBRA por el peor caso reservado. Es deliberado y va en la dirección
+            # SEGURA (nunca se devuelve de más, jamás abre un hueco de sobregasto): no se aplica
+            # la distinción no-conecto/incierto por dos razones. (1) `embed_texts` envuelve una
+            # cadena propia (LiteLLM con su reintento interno, o el respaldo por SDK `voyageai`),
+            # así que la excepción que sale aquí no es la de UN intento físico aislado —que es la
+            # precondición para que `provider_never_reached` sea fiable— sino la del último de
+            # hasta `EMBED_MAX_ATTEMPTS`; y (2) el ahorro sería marginal (la tarifa de embeddings
+            # es ~25x más barata por token que el LLM). Si algún día se quisiera cerrar también
+            # aquí, habría que forzar `num_retries=0` en la envoltura interna (ya se hace) y
+            # clasificar el fallo de CADA intento por separado, como en el LLM.
             guard.settle(reservation, None)
             guard.note_call(alias=alias, prompt_tokens=0, completion_tokens=0, total_tokens=0,
                             cost_usd=reservation.estimate if reservation else 0.0,

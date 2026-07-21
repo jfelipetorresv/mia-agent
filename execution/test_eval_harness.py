@@ -428,7 +428,17 @@ async def db_checks() -> None:
         # contra un modelo de verdad (fuera de alcance aquí — ver notas_honestas).
         fuga_case = next(c for c in cases_mod.RISK_CASES
                          if c.id == "fuga-jurisdiccion-contrato-sin-pais")
-        n_results = await harness.run_case_n(tenant, fuga_case, 3, tenant_allow_real=False)
+        # A-MAY2: `run_case_n` reconstruye un guardián por DEFECTO si no se le pasa uno y no
+        # encuentra uno activo — y ese default apunta al LIBRO DE SALDOS REAL (sesión
+        # 'inapp-<fecha>'). Aunque aquí hay un guardián activo cuya propagación por ContextVar
+        # bastaría, se pasa guard= EXPLÍCITO con un ledger DESECHABLE para cerrar la fuga EN
+        # ORIGEN, sin depender de que el contexto viaje intacto a través de cada asyncio.run.
+        from mia.eval import spend_guard as _sg  # noqa: E402
+        guard_n = _sg.EvalSpendGuard(
+            session_id="test-eval-harness-run_case_n",
+            ledger_path=Path(tempfile.mkdtemp(prefix="mia-harness-ledger-n-")) / "ledger.json")
+        n_results = await harness.run_case_n(tenant, fuga_case, 3, tenant_allow_real=False,
+                                             guard=guard_n)
         matter_ids.extend(r["matter_id"] for r in n_results if r.get("matter_id"))
         check("e2e run_case_n: corre el caso 3 veces, con matter_id nuevo cada vez",
               len(n_results) == 3 and len({r["matter_id"] for r in n_results}) == 3)

@@ -531,12 +531,24 @@ def _messages_with_cache(messages: list[dict], alias: str) -> list[dict]:
 
 
 def _get_client() -> Any:
-    """Cliente OpenAI apuntado al proxy LiteLLM. Import diferido (como embeddings.py)."""
+    """Cliente OpenAI apuntado al proxy LiteLLM. Import diferido (como embeddings.py).
+
+    A-BLOQ (2026-07-21) · `max_retries=0`: MIA hace SUS PROPIOS reintentos (uno por intento,
+    cada uno reservado y contado por separado por el guardián de gasto — ver
+    `_call_with_retries` y `eval.spend_guard`). El SDK de OpenAI/LiteLLM reintenta 2 veces por
+    dentro por defecto y sólo expone el ERROR FINAL: un `APIConnectionError` de "no conecté"
+    podía llegar tras 2 POST que SÍ alcanzaron al proveedor (y pudieron facturar), y el
+    clasificador, viendo sólo el último, devolvía la reserva por dinero ya gastado. Con
+    `max_retries=0` cada petición física es un intento único: si sale un error de conexión, es
+    que ESE —el único— intento no salió, así que "no conecté" vuelve a ser cierto por
+    construcción y `provider_never_reached` no abre un hueco. Los reintentos legítimos siguen
+    ocurriendo, pero los hace MIA (reservados) en vez del SDK (invisibles)."""
     global _client
     if _client is None:
         from openai import OpenAI  # diferido: solo al primer call_llm real
 
-        _client = OpenAI(base_url=config.LITELLM_BASE_URL, api_key=config.LITELLM_API_KEY)
+        _client = OpenAI(base_url=config.LITELLM_BASE_URL, api_key=config.LITELLM_API_KEY,
+                         max_retries=0)
     return _client
 
 

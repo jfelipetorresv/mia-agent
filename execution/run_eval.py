@@ -142,6 +142,64 @@ def _print_spend(spend: dict) -> None:
             print(f"    - [{r.get('estado')}] {r.get('ruta')}")
 
 
+def _print_version(version: dict) -> None:
+    """Versión del baseline (F1): con qué prompt y qué modelo corrió esto. Sin esto, dos
+    corridas de fechas distintas no se pueden comparar de buena fe (deriva de proveedor
+    o de prompt)."""
+    if not version:
+        return
+    modelos = version.get("modelos_servidos") or {}
+    modelos_txt = ", ".join(f"{k}×{v}" for k, v in sorted(modelos.items())) or "(sin llamadas)"
+    print(f"  Versión — hash de prompt: {version.get('prompt_hash')} · modelos servidos: "
+          f"{modelos_txt}")
+
+
+def _print_panel(panel: dict) -> None:
+    """Panel de calidad en llano (F1 · Frente C): los números que SÍ dejan decidir algo,
+    explicados para quien no programa. La latencia se informa pero NUNCA es un veredicto
+    de pasa/no pasa — decisión del dueño del producto."""
+    if not panel or not panel.get("n"):
+        return
+    n = panel["n"]
+    resp = panel.get("respaldo", {})
+    det = panel.get("deteccion", {})
+    fuga = panel.get("fuga_jurisdiccion", {})
+    abst = panel.get("abstencion", {})
+    exito = panel.get("exito_tarea", {})
+    lat = panel.get("latencia_ms", {})
+    coste = panel.get("coste_usd", {})
+    print(f"\n  --- Panel de calidad (sobre {n} corrida(s), {panel.get('n_con_error', 0)} con "
+          f"error) ---")
+    print(f"  Respaldo de citas: {resp.get('citas_respaldadas', 0)}/{resp.get('citas_totales', 0)}"
+          f" confirmadas ({resp.get('cobertura_respaldo', 1.0):.0%} de cobertura) · "
+          f"precisión de las marcas [VERIFICAR]: {resp.get('precision_respaldo', 1.0):.0%} "
+          f"(falsos bloqueos: {resp.get('falsos_bloqueos', 0)} de "
+          f"{resp.get('citas_marcadas_evaluables', 0)} marcas propias del modelo evaluables)")
+    if resp.get("precision_respaldo_desincronizada"):
+        # C-MEN: si las dos fuentes de conteo (falsos del informe vs marcas del score) no
+        # cuadran, el número se acotó a [0,1]; el desajuste se DICE, no se esconde.
+        print("  AVISO — precisión de respaldo DESINCRONIZADA: los falsos bloqueos superan las "
+              "marcas contadas (dos fuentes de conteo distintas). El número se acotó a [0,1]; "
+              "revisar el informe de verificación frente al score.")
+    print(f"  Quién detectó la falta de respaldo: guardián determinista "
+          f"{det.get('tasa_guardian_determinista', 0.0):.0%} de las citas · modelo obediente "
+          f"(se marcó solo) {det.get('tasa_modelo_obediente', 0.0):.0%} de las citas")
+    print(f"  Fuga de jurisdicción: {fuga.get('n_con_fuga', 0)}/{n} corridas "
+          f"({fuga.get('tasa', 0.0):.0%}) · Abstención honesta ('no puedo respaldar esto'): "
+          f"{abst.get('n_con_abstencion', 0)}/{n} ({abst.get('tasa', 0.0):.0%}) · "
+          f"Éxito de tarea (llegó a borrador con cierre): {exito.get('n_con_exito', 0)}/{n} "
+          f"({exito.get('tasa', 0.0):.0%})")
+    if lat.get("n_medidos"):
+        print(f"  Latencia (informativa, NUNCA un gate): p50={lat.get('p50', 0.0)/1000:.1f}s · "
+              f"p95={lat.get('p95', 0.0)/1000:.1f}s · rango "
+              f"[{lat.get('min', 0.0)/1000:.1f}s – {lat.get('max', 0.0)/1000:.1f}s]")
+    if coste.get("n_medidos"):
+        print(f"  Coste por turno: media USD {coste.get('media', 0.0):.4f} · desviación USD "
+              f"{coste.get('desviacion', 0.0):.4f} · rango [USD {coste.get('min', 0.0):.4f} – "
+              f"USD {coste.get('max', 0.0):.4f}] · tokens totales: "
+              f"{panel.get('tokens_totales', 0)} · llamadas: {panel.get('llamadas_totales', 0)}")
+
+
 def _print_summary(report: dict) -> None:
     s = report.get("summary", {})
     print(f"\n=== Corrida {report['run_id']} ===")
@@ -151,6 +209,8 @@ def _print_summary(report: dict) -> None:
     print(f"  Costo total: USD {float(s.get('costo_total_usd') or 0.0):.4f} · tokens: "
           f"{s.get('tokens_totales')} · duración total: "
           f"{float(s.get('duracion_total_ms') or 0.0) / 1000:.1f}s")
+    _print_version(report.get("version", {}))
+    _print_panel(report.get("panel", {}))
     _print_spend(report.get("spend", {}))
     if s.get("corte"):
         print(f"  CORTE: {s['corte']}")
@@ -211,8 +271,12 @@ def _load_report(run_id: str) -> dict:
             line = line.strip()
             if line:
                 cases.append(json.loads(line))
-    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8")).get("summary", {})
-    return {"run_id": run_id, "cases": cases, "summary": summary}
+    disk = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    # `version` (F1 — hash de prompt + modelos servidos) puede faltar en corridas viejas
+    # (persistidas antes de este frente): {} en vez de KeyError, para no romper --compare
+    # contra un baseline guardado antes de que esto existiera.
+    return {"run_id": run_id, "cases": cases, "summary": disk.get("summary", {}),
+            "version": disk.get("version", {})}
 
 
 def _make_guard(args) -> spend_guard.EvalSpendGuard:
@@ -278,8 +342,12 @@ async def _run_repeat(case_id: str, n: int,
         results = await harness.run_case_n(tenant_id, case, n, guard=guard)
         matter_ids = [r.get("matter_id") for r in results if r.get("matter_id")]
         leak = harness.jurisdiction_leak_rate(results)
+        # F1 — con N repeticiones del MISMO caso, la variabilidad (coste, latencia,
+        # falsos bloqueos...) ES parte del resultado, no ruido a esconder: mismo panel
+        # que usa `run_suite`, aquí agregado sobre las N corridas de este caso.
+        panel = harness.build_quality_panel(results)
         return {"case_id": case_id, "n": n, "results": results, "leak": leak,
-                "spend": guard.snapshot()}
+                "panel": panel, "spend": guard.snapshot()}
     finally:
         await pool.close_pool()
         _drop_eval_tenant(tenant_id, matter_ids)
@@ -293,6 +361,7 @@ def _print_repeat_summary(result: dict) -> None:
         print(f"  AVISO: se pidieron {result['n']} corridas y solo se hicieron {leak['n']} "
               "(el tope de gasto cortó). La tasa de abajo es sobre esas, no sobre las pedidas.")
     _print_spend(result.get("spend", {}))
+    _print_panel(result.get("panel", {}))
     print(f"  Fuga de jurisdicción detectada en {leak['n_con_fuga']}/{leak['n']} corridas "
           f"(tasa {leak['tasa']:.0%}). INTERMITENTE por diseño: una sola pasada limpia NO "
           "certifica que no vuelva a pasar.")
@@ -429,6 +498,23 @@ def _main() -> int:
 
     if args.compare:
         before, after = _load_report(args.compare[0]), _load_report(args.compare[1])
+        # F1 — "ante cualquier cambio de modelo o de prompt el benchmark hay que
+        # re-correrlo (deriva de proveedor)": comparar dos corridas con hash de prompt o
+        # modelos servidos distintos es engañarse. Se AVISA, no se bloquea (--compare
+        # sigue siendo útil para ver el detalle), porque una corrida vieja sin `version`
+        # (persistida antes de este frente) no debe convertirse en un error duro.
+        v_antes, v_despues = before.get("version") or {}, after.get("version") or {}
+        h_antes, h_despues = v_antes.get("prompt_hash"), v_despues.get("prompt_hash")
+        m_antes = sorted((v_antes.get("modelos_servidos") or {}).keys())
+        m_despues = sorted((v_despues.get("modelos_servidos") or {}).keys())
+        if h_antes and h_despues and h_antes != h_despues:
+            print(f"  AVISO — el PROMPT cambió entre corridas (hash {h_antes} → {h_despues}): "
+                  "esta comparación mide el efecto del cambio de prompt, no solo del código; "
+                  "no es una comparación limpia de 'antes/después' del mismo prompt.")
+        if m_antes and m_despues and m_antes != m_despues:
+            print(f"  AVISO — el MODELO servido cambió entre corridas ({m_antes} → "
+                  f"{m_despues}): la diferencia puede venir del proveedor, no del cambio "
+                  "que se está evaluando (deriva de proveedor).")
         result = compare_reports(before, after)
         print(f"\n=== Comparación {args.compare[0]} → {args.compare[1]} ===")
         print(f"  Veredicto: {result['overall'].upper()}  "

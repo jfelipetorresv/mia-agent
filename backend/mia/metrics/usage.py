@@ -88,6 +88,35 @@ def cost_usd(alias: str, prompt_tokens: int, completion_tokens: int) -> float:
     return (prompt_tokens * in_rate + completion_tokens * out_rate) / 1_000_000.0
 
 
+def cost_usd_cached(alias: str, prompt_tokens: int, completion_tokens: int,
+                    cache_read_tokens: int = 0, cache_creation_tokens: int = 0) -> float:
+    """Costo en USD con la CACHÉ DE PROMPT desglosada (A-MAY1, 2026-07-21).
+
+    `cost_usd` tarifa TODO el prompt a la entrada normal, y por eso el panel subestimaba las
+    ESCRITURAS de caché (2.00x, y LiteLLM las deja FUERA de `prompt_tokens`) y sobreestimaba las
+    LECTURAS (0.10x, que van DENTRO de `prompt_tokens`). Aquí se reutiliza la MISMA función que
+    ya usa la reserva del banco (`eval.spend_guard.real_call_cost`) para no duplicar los factores
+    de tarifa: fuente única de la aritmética de caché. Sin tokens de caché el resultado es
+    IDÉNTICO a `cost_usd` por construcción (normal_in = prompt_tokens, los otros dos cubos son 0).
+
+    Fail-safe: si `spend_guard` no se pudiera importar (no debería: es código del propio repo),
+    se cae a la tarifa plana `cost_usd` en vez de perder la fila — una métrica jamás rompe nada.
+    """
+    if not (cache_read_tokens or cache_creation_tokens):
+        # Sin caché no hay nada que desglosar: se conserva EXACTAMENTE el camino de siempre.
+        return cost_usd(alias, prompt_tokens, completion_tokens)
+    try:
+        from ..eval import spend_guard  # import diferido (sin ciclo: spend_guard importa usage
+
+        # también en diferido, y ambos módulos ya están cargados en tiempo de ejecución).
+        return spend_guard.real_call_cost(
+            alias, prompt_tokens, completion_tokens, cache_read_tokens, cache_creation_tokens)
+    except Exception:  # noqa: BLE001 — una métrica jamás rompe un turno; se degrada a tarifa plana
+        logger.exception("cost_usd_cached: no se pudo desglosar la caché (alias=%s); "
+                         "se usa tarifa plana", alias)
+        return cost_usd(alias, prompt_tokens, completion_tokens)
+
+
 def estimated_call_cost(alias: str, messages: list[dict], max_tokens: int | None,
                         *, task: str | None = None, tools: list | None = None) -> float:
     """Reserva conservadora antes de una llamada pagada; los aliases gratis dan cero."""
@@ -151,7 +180,11 @@ def record(alias: str, task: str | None, usage: Any,
             "prompt_tokens": prompt,
             "completion_tokens": completion,
             "total_tokens": total,
-            "cost_usd": round(cost_usd(alias, prompt, completion), 6),
+            # A-MAY1: la caché de prompt se tarifa desglosada (escritura 2x FUERA de
+            # prompt_tokens, lectura 0.1x DENTRO). Sin tokens de caché es idéntico a
+            # `cost_usd(alias, prompt, completion)` — la fila normal no cambia en nada.
+            "cost_usd": round(cost_usd_cached(
+                alias, prompt, completion, cache_read, cache_creation), 6),
             "source": source[:32],
             "cache_read_tokens": cache_read,
             "cache_creation_tokens": cache_creation,

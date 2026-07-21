@@ -186,6 +186,73 @@ def classify_llm_error(exc: BaseException) -> LLMErrorKind:
     return LLMErrorKind.UNKNOWN
 
 
+# ── ¿Se llegó a ENVIAR la petición? (A2 — quién paga un fallo de red) ────────────────
+# `classify_llm_error` dice QUÉ falló; esto dice CUÁNDO falló, que es una pregunta distinta y
+# es la que decide quién paga. NETWORK y TIMEOUT mezclan dos mundos:
+#   · el proveedor NUNCA recibió nada (DNS no resuelve, conexión rechazada, timeout de
+#     CONEXIÓN, el TLS no llegó a establecerse) → no procesó, no facturó, no se cobra;
+#   · la petición SALIÓ y no sabemos si se procesó (timeout de LECTURA, conexión reseteada a
+#     mitad, el servidor cortó sin responder) → INCIERTO, y lo incierto se cobra.
+# La asimetría es deliberada: sólo se devuelve el dinero cuando se puede DEMOSTRAR que no se
+# gastó. Ante la duda, `provider_never_reached` devuelve False y la reserva se queda cobrada.
+_NEVER_REACHED_TYPES = (
+    "connecttimeout",              # httpx.ConnectTimeout — venció ABRIENDO el socket
+    "connecterror",                # httpx.ConnectError — rechazada / DNS / red caída
+    "connectionrefusederror",      # OSError de la stdlib
+    "gaierror",                    # socket.gaierror — resolución de nombre
+    "proxyerror",                  # el proxy ni siquiera aceptó la conexión
+    "sslcertverificationerror",    # el TLS no llegó a establecerse
+)
+_NEVER_REACHED_MESSAGES = (
+    "connection refused", "econnrefused", "winerror 10061",
+    "name or service not known", "nodename nor servname", "getaddrinfo failed",
+    "temporary failure in name resolution", "failed to resolve",
+    "failed to establish a new connection", "connect timeout",
+    "timed out while connecting", "certificate verify failed",
+)
+# Marcadores de que la petición YA SALIÓ. Si aparece cualquiera de éstos, el final es INCIERTO
+# y no se devuelve nada, aunque en la misma cadena haya un marcador de "no se llegó a conectar".
+_MAYBE_SENT_MESSAGES = (
+    "read timeout", "read operation timed out", "reset by peer", "econnreset",
+    "winerror 10054", "server disconnected", "response ended prematurely",
+    "incomplete chunked read", "peer closed connection",
+)
+
+
+def provider_never_reached(exc: BaseException) -> bool:
+    """True SÓLO si se puede demostrar que el proveedor no llegó a recibir la petición (A2).
+
+    Recorre la cadena `__cause__`/`__context__` igual que `_status_code`, porque LiteLLM y el
+    SDK de OpenAI envuelven el error real: un `APIConnectionError` de arriba no dice nada por
+    sí solo (puede venir de un fallo al conectar o de una lectura cortada a mitad); lo que lo
+    dice es el `httpx.ConnectError` o el `socket.gaierror` que lleva dentro.
+
+    Fail-safe: cualquier duda —marcador de "ya salió" presente, o ningún marcador reconocido—
+    devuelve False, y quien llama sigue cobrando la reserva.
+    """
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    encontrado = False
+    while stack:
+        e = stack.pop()
+        if id(e) in seen:
+            continue
+        seen.add(id(e))
+        name = type(e).__name__.lower()
+        msg = str(e).lower()
+        # Un status HTTP demuestra que el proveedor RESPONDIÓ: la petición salió, seguro.
+        if _status_code(e) is not None:
+            return False
+        if any(s in msg for s in _MAYBE_SENT_MESSAGES):
+            return False
+        if name in _NEVER_REACHED_TYPES or any(s in msg for s in _NEVER_REACHED_MESSAGES):
+            encontrado = True
+        for chained in (getattr(e, "__cause__", None), getattr(e, "__context__", None)):
+            if chained is not None and id(chained) not in seen:
+                stack.append(chained)
+    return encontrado
+
+
 def is_retryable(kind: LLMErrorKind) -> bool:
     """True si vale la pena reintentar (RATE_LIMIT, TIMEOUT, NETWORK, SERVER_ERROR)."""
     return kind in _RETRYABLE

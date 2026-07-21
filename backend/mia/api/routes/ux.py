@@ -1721,6 +1721,12 @@ async def dashboard_stats(request: Request):
         # modelo, capturados en cada llamada al LLM por metrics/usage). Frontera de
         # mes en UTC (misma que el filtro de trazas). Si la migración 021 no está
         # aplicada, DEGRADA al estimado legacy en vez de tumbar el panel entero.
+        # A3 — se EXCLUYE `source='eval'`: el gasto del BANCO DE PRUEBAS no es del abogado.
+        # `policy/budget.py` ya lo excluía del presupuesto que BLOQUEA turnos, pero esta
+        # tercera suma de la misma tabla quedó sin tocar y le presentaba al abogado el gasto
+        # de las pruebas como su "costo REAL del mes" (y en el conteo de llamadas, y en el
+        # hit-rate de caché). Es honestidad de producto, no sólo contabilidad.
+        # `IS DISTINCT FROM` y no `<>` porque `source` es nullable: sin source es producción.
         real_cost_usd = 0.0
         usage_calls_month = 0
         cache_read_month = 0
@@ -1730,7 +1736,8 @@ async def dashboard_stats(request: Request):
                 "SELECT coalesce(sum(cost_usd), 0), count(*), "
                 "       coalesce(sum(cache_read_tokens), 0), coalesce(sum(prompt_tokens), 0) "
                 "FROM turn_usage WHERE created_at >= "
-                "(date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc')"
+                "(date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc') "
+                "AND source IS DISTINCT FROM 'eval'"
             )).fetchone()
             real_cost_usd = float(usage_row[0])
             usage_calls_month = int(usage_row[1])

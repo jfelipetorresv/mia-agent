@@ -58,7 +58,8 @@ class FakeProvider:
 
     def __init__(self, *, fail_aliases: tuple = (), fail_times: int = 0,
                  token_factor: float = 1.0, boom: bool = False,
-                 peor_caso: bool = False, served_alias: str | None = None) -> None:
+                 peor_caso: bool = False, served_alias: str | None = None,
+                 cache_mode: str | None = None, raise_exc: BaseException | None = None) -> None:
         self.attempts: list[str] = []      # alias de CADA intento, en orden
         self.max_tokens_vistos: list = []  # el max_tokens con el que llegó CADA intento
         self.fail_aliases = set(fail_aliases)
@@ -72,6 +73,16 @@ class FakeProvider:
         # que la cota tiene que aguantar; con `token_factor` no se podía expresar.
         self.peor_caso = peor_caso
         self.served_alias = served_alias
+        # A1 — CACHÉ DE PROMPT. Reproduce la aritmética EXACTA de LiteLLM, que es la mitad del
+        # defecto (`llms/anthropic/chat/transformation.py::calculate_usage`, medido):
+        #   'creation' → la ESCRITURA va FUERA de `prompt_tokens` y FUERA de `total_tokens`;
+        #                por eso se cobraba a CERO y el tope no se podía certificar.
+        #   'read'     → la LECTURA va DENTRO de `prompt_tokens`; por eso se cobraba a precio
+        #                completo cuando en realidad cuesta la décima parte.
+        self.cache_mode = cache_mode
+        # A2 — el fallo exacto que el proveedor levanta, para distinguir "no se llegó a
+        # conectar" (se devuelve la reserva) de "no sabemos si procesó" (se cobra).
+        self.raise_exc = raise_exc
 
     @property
     def calls(self) -> int:
@@ -80,6 +91,8 @@ class FakeProvider:
     def __call__(self, client, alias, kwargs, task=None):
         self.attempts.append(alias)
         self.max_tokens_vistos.append(kwargs.get("max_tokens"))
+        if self.raise_exc is not None:
+            raise self.raise_exc
         if self.boom:
             raise RuntimeError("el proveedor murió a mitad")
         if alias in self.fail_aliases and self._failed.get(alias, 0) < self.fail_times:
@@ -94,9 +107,19 @@ class FakeProvider:
             p, c = bound_tokens(kwargs.get("messages"), kwargs.get("max_tokens"))
             p = max(1, int(p * self.token_factor))
             c = max(1, int(c * self.token_factor))
+        prompt_tokens, cache_read, cache_creation, total = p, 0, 0, p + c
+        if self.cache_mode == "creation":
+            # TODO el prompt se escribe a caché: fuera de prompt_tokens y de total_tokens.
+            prompt_tokens, cache_creation, total = 0, p, c
+        elif self.cache_mode == "read":
+            # TODO el prompt se sirve de caché: la lectura YA está dentro de prompt_tokens.
+            cache_read = p
         return SimpleNamespace(
             model=self.served_alias or alias,
-            usage=SimpleNamespace(prompt_tokens=p, completion_tokens=c, total_tokens=p + c),
+            usage=SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=c,
+                                  total_tokens=total,
+                                  cache_read_input_tokens=cache_read,
+                                  cache_creation_input_tokens=cache_creation),
             choices=[SimpleNamespace(finish_reason="stop",
                                      message=SimpleNamespace(content="ok"))])
 
@@ -188,14 +211,51 @@ def run_calls(guard, fake, n: int, messages=None, **kwargs) -> list[BaseExceptio
     return errs
 
 
-def main() -> None:
+def _tmpdir_desechable(prefix: str) -> Path:
+    """Directorio de trabajo DESECHABLE, en el temporal del SISTEMA (A4 · A-MAY2).
+
+    Dos reglas, y las dos se COMPRUEBAN aquí en vez de confiarse:
+
+    1. NUNCA dentro del repo, y el gate FALLA ANTES de crear nada si no puede cumplirlo.
+       `tempfile.gettempdir()` cae a `os.getcwd()` cuando TMP/TEMP/TMPDIR no están puestos o
+       apuntan a algo que no existe — y como los gates se lanzan con el cwd en la raíz del repo,
+       ahí es donde aparecían los `mia-spend-guard-*` que ensuciaban el árbol de trabajo. La
+       versión anterior se caía a `ROOT/.tmp` (DENTRO del repo): eso creaba el temporal en el
+       árbol de trabajo y hacía fallar a-71/a-72, cuyos propios asertos exigen que el trabajo
+       quede FUERA del repo — el gate quedaba en 81/83 y encima sucio. Ahora, si el temporal del
+       sistema resuelve dentro de ROOT, se LEVANTA `SystemExit` con instrucción clara ANTES de
+       crear ningún desechable: fail-closed de arranque, no ensuciar y descubrirlo después.
+    2. Se BORRA al terminar (`atexit`), pase o falle el gate. La versión anterior hacía
+       `mkdtemp` y no limpiaba nunca: un directorio nuevo por corrida, para siempre.
+    """
+    import atexit
+    import shutil
     import tempfile
 
+    base = Path(tempfile.gettempdir()).resolve()
+    try:
+        dentro_del_repo = base == ROOT or ROOT in base.parents or base.is_relative_to(ROOT)
+    except AttributeError:  # pragma: no cover — Python < 3.9
+        dentro_del_repo = str(base).startswith(str(ROOT))
+    if dentro_del_repo:
+        # NO se crea un temporal dentro del repo: se corta aquí, antes de escribir nada.
+        raise SystemExit(
+            f"[HALT] el temporal del SISTEMA resuelve DENTRO del repo ({base}); este gate no "
+            "puede crear su directorio desechable en el árbol de trabajo (ensuciaría el repo y "
+            "rompería a-71/a-72). Pon TMP/TEMP (o TMPDIR) apuntando a una carpeta FUERA de "
+            f"{ROOT} y vuelve a lanzar el gate.")
+    tmp = Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
+    atexit.register(lambda: shutil.rmtree(tmp, ignore_errors=True))
+    return tmp
+
+
+def main() -> None:
+    from mia.agent import error_classifier as err_clf
     from mia.agent import llm as llm_mod
     from mia.eval import spend_guard
     from mia.metrics import usage as usage_metrics
 
-    tmp = Path(tempfile.mkdtemp(prefix="mia-spend-guard-"))
+    tmp = _tmpdir_desechable("mia-spend-guard-")
     # Backoff a cero: este gate ejercita CUÁNTOS intentos hay, no cuánto se espera entre ellos.
     llm_mod.retry_delay = lambda kind, attempt: 0.0
 
@@ -207,8 +267,15 @@ def main() -> None:
     # MUTACIÓN: en `check_and_reserve`, cambiar `projected_run > self._effective(...)` por
     # `self.run_spent_usd > self.run_limit_usd` (comprobar DESPUÉS en vez de ANTES) →
     # caen a-1 y a-2 (se hacen todas las llamadas y ninguna levanta).
+    # A1 — `cache_mode="creation"` es lo que hace que RESERVA y LIQUIDACIÓN vuelvan a ser EL
+    # MISMO número, que es la premisa con la que están calibrados los escenarios de topes de
+    # aquí abajo (ver `bound_tokens`). Y no es un truco: es el caso REAL y típico de MIA —
+    # `agent/llm._messages_with_cache` marca el prefijo de TODA llamada a la API de Anthropic,
+    # así que la primera llamada de cada corrida escribe el prompt entero a la caché de 1 h y
+    # lo paga al doble. Sin caché (`cache_mode=None`) el intento liquida por DEBAJO de la
+    # reserva —la cota funcionando— y harían falta más llamadas para cortar.
     g = guard_for(tmp, "run", run_limit_usd=est * 2.5)
-    fake = FakeProvider()
+    fake = FakeProvider(cache_mode="creation")
     errs = run_calls(g, fake, 5)
     check("a-1 · una corrida que EXCEDE el tope de corrida CORTA (no hace todas las llamadas)",
           fake.calls == 2 and len(errs) == 3)
@@ -233,9 +300,9 @@ def main() -> None:
     mk = lambda sid, **kw: spend_guard.EvalSpendGuard(  # noqa: E731
         run_limit_usd=100.0, session_limit_usd=est * 2.5, global_limit_usd=1000.0,
         closeout_reserve_usd=0.0, session_id=sid, ledger_path=ledger, **kw)
-    g1, f1 = mk("s-persistente"), FakeProvider()
+    g1, f1 = mk("s-persistente"), FakeProvider(cache_mode="creation")
     run_calls(g1, f1, 2)
-    g2, f2 = mk("s-persistente"), FakeProvider()
+    g2, f2 = mk("s-persistente"), FakeProvider(cache_mode="creation")
     errs2 = run_calls(g2, f2, 2)
     check("a-6 · la primera corrida de la sesión sí gasta", f1.calls == 2)
     check("a-7 · el tope de SESIÓN persiste entre corridas distintas (la 2a ya no gasta)",
@@ -249,12 +316,12 @@ def main() -> None:
     ga = spend_guard.EvalSpendGuard(run_limit_usd=100.0, session_limit_usd=100.0,
                                     global_limit_usd=est * 2.5, closeout_reserve_usd=0.0,
                                     session_id="sesion-A", ledger_path=ledger_g)
-    fa = FakeProvider()
+    fa = FakeProvider(cache_mode="creation")
     run_calls(ga, fa, 2)
     gb = spend_guard.EvalSpendGuard(run_limit_usd=100.0, session_limit_usd=100.0,
                                     global_limit_usd=est * 2.5, closeout_reserve_usd=0.0,
                                     session_id="sesion-B", ledger_path=ledger_g)
-    fb = FakeProvider()
+    fb = FakeProvider(cache_mode="creation")
     run_calls(gb, fb, 2)
     check("a-8 · el techo GLOBAL corta aunque la SESIÓN sea otra (y su sesión está a cero)",
           fa.calls == 2 and fb.calls == 0 and "GLOBAL" in (gb.stop_reason or ""))
@@ -330,7 +397,7 @@ def main() -> None:
     # del alias caro quedarían facturados bajo UNA sola reserva.
     print("\n-- D2: un intento = una reserva (reintentos y fallback REALES) --")
     g = guard_for(tmp, "reintentos", run_limit_usd=100.0)
-    fake = FakeProvider(fail_aliases=("claude-sonnet",), fail_times=2)
+    fake = FakeProvider(fail_aliases=("claude-sonnet",), fail_times=2, cache_mode="creation")
     with g.case("c-reintentos"):
         errs = run_calls(g, fake, 1)
     # 2 intentos fallidos (cobrados por la reserva, invariante D) + 1 bueno.
@@ -345,7 +412,7 @@ def main() -> None:
     # por adelantado, porque cada intento se reserva con el precio que de verdad se factura.)
     cadena = llm_mod.resolve_fallback_chain("main", None)
     g = guard_for(tmp, "fallback", run_limit_usd=100.0)
-    fake = FakeProvider(fail_aliases=(cadena[0],), fail_times=99)
+    fake = FakeProvider(fail_aliases=(cadena[0],), fail_times=99, cache_mode="creation")
     with g.case("c-fallback"):
         run_calls(g, fake, 1, model=None)
     servidos = fake.attempts
@@ -936,7 +1003,9 @@ def main() -> None:
     g = spend_guard.EvalSpendGuard(run_limit_usd=tope, session_limit_usd=1000.0,
                                    global_limit_usd=1000.0, closeout_reserve_usd=0.0,
                                    session_id="s-misma", ledger_path=ledger_s)
-    fake = FakeProvider()
+    # `cache_mode="creation"` (reserva == liquidación) para que un sobregasto no se pueda
+    # esconder detrás de la devolución del sobrante: aquí lo que se mide es si el tope aguanta.
+    fake = FakeProvider(cache_mode="creation")
     barrera2 = threading.Barrier(6)
 
     def worker2() -> None:
@@ -955,9 +1024,18 @@ def main() -> None:
             h.start()
         for h in hs:
             h.join()
+    # El aserto es el TOPE, no el número exacto de intentos: con 6 hilos compitiendo por el
+    # mismo saldo, cuántos entran antes del corte depende del planificador. Fijarlo en `== 4`
+    # hacía este check FLAKY —se le vio dar rojo con 5 intentos y USD 1.2307, o sea con el tope
+    # perfectamente respetado—, y un rojo espurio en el gate del dinero durante una corrida de
+    # USD 30 cuesta la corrida entera. Lo que sí se exige, y es lo que mata la mutación de D5:
+    # que el gasto NO pase del tope, que el guardián CORTARA de verdad, y que no pasaran los 24
+    # intentos pedidos (si pasaran todos, no habría habido tope).
     check(f"a-37 · el tope POR CORRIDA aguanta 6 hilos concurrentes de la MISMA corrida "
-          f"(gastado {g.run_spent_usd:.4f} <= tope {tope:.4f}) y solo pasaron 4 intentos",
-          g.run_spent_usd <= tope + 1e-9 and fake.calls == 4)
+          f"(gastado {g.run_spent_usd:.4f} <= tope {tope:.4f}, pasaron {fake.calls} de 24 "
+          "intentos y el guardián cortó)",
+          g.run_spent_usd <= tope + 1e-9 and g.stop_reason is not None
+          and 0 < fake.calls < 24)
 
     # Ruptura del cerrojo: SOLO con dueño demostrablemente muerto.
     # MUTACIÓN: volver a romper el cerrojo por edad sin comprobar el PID → cae a-39.
@@ -1111,6 +1189,9 @@ def main() -> None:
     print(f"   embeddings  : facturado USD {cota['facturado_embeddings']:.6f} · contado por el "
           f"guardián USD {cota['contado_embeddings']:.6f} · exceso "
           f"USD {cota['exceso_embeddings']:+.8f} ({cota['intentos_embedding']} intentos)")
+    print(f"   caché 1h    : facturado USD {cota['facturado_cache']:.6f} · exceso "
+          f"USD {cota['exceso_cache']:+.8f} ({cota['intentos_cache']} intentos, TODO el prompt "
+          "escrito a caché al DOBLE de la entrada)")
     print(f"   COTA FINAL  : exceso máximo sobre el tope nominal = USD {cota['exceso']:+.8f}")
     check(f"a-61 · COTA FINAL MEDIDA: lo que el PROVEEDOR factura no pasa del tope NOMINAL por "
           f"ninguna de las dos rutas vivas — exceso máximo USD {cota['exceso']:+.8f} <= 0, con "
@@ -1121,6 +1202,106 @@ def main() -> None:
           "facturó de verdad (la reserva de S4 es una COTA, no un promedio: 1 token por "
           "CARÁCTER). Con la regla de dedo de 4 chars/token esto se rompe 4 a 1.",
           cota["contado_embeddings"] >= cota["facturado_embeddings"] - 1e-9)
+
+    # ═══ 20. A1 · LA CACHÉ DE PROMPT SE TARIFA ═══════════════════════════════
+    # MUTACIÓN: poner `CACHE_WRITE_MULTIPLIER = 1.0` en spend_guard → caen a-63 y a-65 (la
+    # escritura deja de valer el doble y la reserva deja de ser cota).
+    # MUTACIÓN de control: `CACHE_READ_MULTIPLIER = 1.0` → cae a-64 (la lectura deja de abaratar
+    # y el tope se vuelve inútil por sobre-reserva permanente).
+    print("\n-- A1: la ESCRITURA de caché se factura al DOBLE; la LECTURA abarata --")
+    msgs_cache = big_messages(20_000)
+    p_tok, c_tok = bound_tokens(msgs_cache, spend_guard.EVAL_MAX_OUTPUT_TOKENS)
+    in_rate, out_rate = spend_guard._WORST_RATES
+    reserva = spend_guard.upper_bound_call_cost(
+        "claude-sonnet", msgs_cache, max_tokens=spend_guard.EVAL_MAX_OUTPUT_TOKENS)
+    reserva_sin_cache = round((p_tok * in_rate + c_tok * out_rate) / 1_000_000.0, 6)
+    esperada = round((p_tok * in_rate * spend_guard.CACHE_WRITE_MULTIPLIER
+                      + c_tok * out_rate) / 1_000_000.0, 6)
+    check(f"a-63 · la RESERVA cuenta el peor caso de ESCRITURA de caché (x"
+          f"{spend_guard.CACHE_WRITE_MULTIPLIER:.2f} sobre la entrada): USD {reserva:.6f}, no "
+          f"USD {reserva_sin_cache:.6f} como antes de A1",
+          abs(reserva - esperada) < 1e-9 and reserva > reserva_sin_cache)
+
+    # Las tres liquidaciones del MISMO intento, según dónde caiga el prompt.
+    coste_normal = spend_guard.real_call_cost("claude-sonnet", p_tok, c_tok, 0, 0)
+    coste_lectura = spend_guard.real_call_cost("claude-sonnet", p_tok, c_tok, p_tok, 0)
+    coste_escritura = spend_guard.real_call_cost("claude-sonnet", 0, c_tok, 0, p_tok)
+    print(f"   mismo intento · entrada normal USD {coste_normal:.6f} · todo LECTURA "
+          f"USD {coste_lectura:.6f} · todo ESCRITURA USD {coste_escritura:.6f}")
+    check("a-64 · la LECTURA de caché ABARATA (x0.10), no encarece: liquidar el mismo intento "
+          "servido desde caché cuesta MENOS que la entrada normal",
+          coste_lectura < coste_normal)
+    check("a-65 · la ESCRITURA de caché ENCARECE y ya no se liquida a cero: el mismo intento "
+          "escrito a caché cuesta más que la entrada normal, y sigue por DEBAJO de la reserva",
+          coste_escritura > coste_normal and coste_escritura <= reserva + 1e-9)
+    check("a-66 · la sub-facturación máxima de un intento sigue siendo CERO con la caché en su "
+          f"peor caso: reserva USD {reserva:.6f} >= coste real USD {coste_escritura:.6f}",
+          spend_guard.worst_case_underestimate_usd() == 0.0
+          and max(coste_normal, coste_lectura, coste_escritura) <= reserva + 1e-9)
+    check("a-67 · COTA con caché, MEDIDA de punta a punta: con TODO el prompt escrito a caché "
+          f"el proveedor no pasa del tope nominal — exceso USD {cota['exceso_cache']:+.8f} <= 0",
+          cota["exceso_cache"] <= 1e-9 and cota["intentos_cache"] >= 1)
+
+    # ═══ 21. A2 · UN FALLO DE RED QUE NO LLEGÓ A CONECTAR NO SE COBRA ════════
+    # MUTACIÓN: en `_guarded_invoke`, volver a `guard.settle(reservation, None)` siempre → cae
+    # a-68 (la corrida que no gastó nada vuelve a quemar presupuesto de sesión).
+    # MUTACIÓN de control: devolver siempre la reserva (`0.0` sin mirar la excepción) → cae
+    # a-69, que es lo que impide "arreglar" A2 abriendo un hueco de sobregasto.
+    print("\n-- A2: no-enviado se DEVUELVE; incierto se sigue cobrando --")
+
+    class SinConexion(Exception):
+        """Lo que levanta httpx cuando NO se llegó a abrir el socket."""
+
+    SinConexion.__name__ = "ConnectError"
+
+    class LecturaCortada(Exception):
+        """La petición SALIÓ y la respuesta no llegó: nadie sabe si el proveedor la procesó."""
+
+    g_red = guard_for(tmp, "a2-red", run_limit_usd=10.0)
+    errs_red = run_calls(g_red, FakeProvider(
+        raise_exc=SinConexion("[Errno 111] Connection refused")), 3, messages=msgs_cache)
+    saldo_red = spend_guard.read_spend(g_red.ledger_path, g_red.session_id)
+    print(f"   no-enviado : {len(errs_red)} llamadas fallidas · corrida USD "
+          f"{g_red.run_spent_usd:.6f} · sesión USD {saldo_red['session_usd']:.6f}")
+    check("a-68 · A2: las llamadas que murieron ANTES de conectar (DNS/conexión rechazada) "
+          "DEVUELVEN la reserva: ni la corrida ni la sesión quedan con gasto, y el saldo del "
+          "libro vuelve a cero",
+          len(errs_red) == 3 and g_red.run_spent_usd < 1e-9
+          and saldo_red["session_usd"] < 1e-9 and saldo_red["global_usd"] < 1e-9)
+
+    g_inc = guard_for(tmp, "a2-incierto", run_limit_usd=10.0)
+    errs_inc = run_calls(g_inc, FakeProvider(
+        raise_exc=LecturaCortada("read timeout: la respuesta nunca llegó")), 3,
+        messages=msgs_cache)
+    saldo_inc = spend_guard.read_spend(g_inc.ledger_path, g_inc.session_id)
+    print(f"   incierto   : {len(errs_inc)} llamadas fallidas · corrida USD "
+          f"{g_inc.run_spent_usd:.6f} · sesión USD {saldo_inc['session_usd']:.6f}")
+    check("a-69 · A2 no abrió un hueco: un final INCIERTO (timeout de lectura — la petición "
+          "salió y no sabemos si se procesó) se sigue cobrando por lo estimado, invariante D "
+          "intacto",
+          len(errs_inc) == 3 and g_inc.run_spent_usd > 0
+          and saldo_inc["session_usd"] > 0)
+    check("a-70 · y la distinción la hace el clasificador que YA existía, no una taxonomía "
+          "nueva: `provider_never_reached` separa los dos casos y ante la duda dice NO",
+          err_clf.provider_never_reached(SinConexion("[Errno 111] Connection refused")) is True
+          and err_clf.provider_never_reached(
+              LecturaCortada("read timeout: la respuesta nunca llegó")) is False
+          and err_clf.provider_never_reached(RuntimeError("algo raro pasó")) is False)
+
+    # ═══ 22. A4 · LAS PRUEBAS NO ENSUCIAN EL ESTADO REAL ═════════════════════
+    # MUTACIÓN: devolver `tmp = Path(tempfile.mkdtemp(prefix=...))` sin `dir=` ni comprobación
+    # → cae a-71 en cuanto el temporal del sistema resuelva dentro del repo (que es como
+    # aparecieron los `mia-spend-guard-*` en la raíz).
+    print("\n-- A4: el gate trabaja en un desechable, nunca en el estado real --")
+    libro_real = spend_guard.default_ledger_path().resolve()
+    check("a-71 · A4: el directorio de trabajo del gate está FUERA del repo y es desechable",
+          ROOT not in tmp.resolve().parents and tmp.resolve() != ROOT,
+          )
+    check("a-72 · A4: ningún guardián de este gate apunta al libro de saldos REAL "
+          f"({libro_real})",
+          g_red.ledger_path.resolve() != libro_real
+          and g_inc.ledger_path.resolve() != libro_real
+          and ROOT not in g_red.ledger_path.resolve().parents)
 
     failed = [name for name, ok in results if not ok]
     print(f"\nEval spend guard: {len(results)-len(failed)}/{len(results)} PASS")
@@ -1279,6 +1460,25 @@ def _measured_overshoot(tmp: Path) -> dict:
         litellm.embedding = prev_emb
         cfg_mod.VOYAGE_API_KEY = prev_key
 
+    # ── Fase C: el modelo con la CACHÉ DE PROMPT en su peor caso (A1) ────────
+    # Es la fase que F0 no tenía y por la que el auditor no certificaba el tope: TODO el prompt
+    # se ESCRIBE a caché de 1 h, que se factura al DOBLE de la entrada normal y que LiteLLM
+    # deja FUERA de `prompt_tokens` — así que antes de A1 esto se liquidaba a coste CERO de
+    # entrada y el guardián creía estar gastando mucho menos de lo que la tarjeta pagaba.
+    gc = nuevo_guard("cache")
+    peor_cache = FakeProvider(peor_caso=True, cache_mode="creation",
+                              served_alias="claude-sonnet")
+    with provider(peor_cache), gc.activate():
+        for _ in range(500):
+            try:
+                llm_mod.call_llm(big_messages(), task="delegation_triage", model="claude-haiku")
+            except BaseException:  # noqa: BLE001
+                break
+    # El guardián liquida al coste real (`real_call_cost`), así que `run_spent_usd` ES lo
+    # facturado — mismo razonamiento que la fase A, ahora con la escritura de caché contada.
+    facturado_cache = gc.run_spent_usd
+    exc_cache = round(facturado_cache - tope_nominal, 8)
+
     exc_modelo = round(gm.run_spent_usd - tope_nominal, 8)
     exc_emb = round(facturado_emb["usd"] - tope_nominal, 8)
     return {
@@ -1288,8 +1488,12 @@ def _measured_overshoot(tmp: Path) -> dict:
         "facturado_embeddings": facturado_emb["usd"],
         "contado_embeddings": ge.run_spent_usd,
         "exceso_embeddings": exc_emb,
-        "exceso": max(exc_modelo, exc_emb),
-        "corto": gm.stop_reason is not None and ge.stop_reason is not None,
+        "facturado_cache": facturado_cache,
+        "exceso_cache": exc_cache,
+        "intentos_cache": peor_cache.calls,
+        "exceso": max(exc_modelo, exc_emb, exc_cache),
+        "corto": (gm.stop_reason is not None and ge.stop_reason is not None
+                  and gc.stop_reason is not None),
         "intentos_modelo": peor_modelo.calls,
         "intentos_embedding": intentos_emb["n"],
     }
