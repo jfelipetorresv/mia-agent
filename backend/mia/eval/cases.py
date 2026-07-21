@@ -181,8 +181,59 @@ RISK_CASES: tuple[GoldenCase, ...] = (
 def load_golden_cases() -> list[GoldenCase]:
     """El set canónico de casos de oro (sintéticos). Copia defensiva no hace falta:
     los GoldenCase son frozen. NO incluye `RISK_CASES` (ver su comentario): esos se corren
-    por id, a propósito, no como parte del examen "antes/después" de siempre."""
+    por id, a propósito, no como parte del examen "antes/después" de siempre.
+
+    Tampoco incluye el HOLDOUT (`eval.holdout`): ese es el candado del grupo (c) — si el
+    cargador del bucle de arreglo lo devolviera, el holdout dejaría de serlo. Ver
+    `EVAL_GROUPS` abajo."""
     return list(GOLDEN_CASES)
+
+
+# ── TRES GRUPOS DE EVALUACIÓN (separación anti-sobreajuste) ───────────────────
+# El banco no puede volverse el entrenamiento del guardián. Si con los mismos casos se mide Y
+# se arregla, cada arreglo los ajusta a sí mismos y el número deja de significar nada. Por eso
+# el material vive en tres poblaciones con reglas distintas:
+#
+#   (a) REGRESIÓN VISIBLE — `GOLDEN_CASES` + `RISK_CASES` (arriba). Se miran, se depuran y se
+#       arreglan libremente. Son el bucle de trabajo, y por eso NO certifican nada por sí solos.
+#   (b) VALIDACIÓN INDEPENDIENTE — `load_validation_cases()`. Las planta el VERIFICADOR, no el
+#       constructor. Aquí solo vive el PUNTO DE EXTENSIÓN: el constructor no escribe estos casos
+#       (si los escribiera, volverían a ser del grupo (a) con otro nombre).
+#   (c) HOLDOUT INTOCABLE — `eval.holdout`. Jamás se usa para arreglar. Sellado con hash y con
+#       una única puerta de carga que rechaza cualquier propósito distinto de la medición final.
+#
+# `EVAL_GROUPS` nombra las tres para que quien lea un reporte sepa CON QUÉ se midió. Un número
+# del grupo (a) y uno del grupo (c) no valen lo mismo y no deben promediarse.
+EVAL_GROUPS: tuple[str, ...] = ("regresion_visible", "validacion_independiente", "holdout")
+
+# Nombre del módulo OPCIONAL donde el verificador independiente deja sus mutaciones. No existe
+# en el repo a propósito: lo crea quien verifica, cuando verifica.
+VALIDATION_MODULE = "mia.eval.validation_cases"
+
+
+def load_validation_cases() -> list[GoldenCase]:
+    """Grupo (b): casos de VALIDACIÓN INDEPENDIENTE — PUNTO DE EXTENSIÓN del verificador.
+
+    Contrato (todo lo que hay que saber para plantar mutaciones sin tocar una línea de este
+    repo): crear el módulo `mia/eval/validation_cases.py` con una secuencia `VALIDATION_CASES`
+    de `GoldenCase`. Esta función la carga y la devuelve. Si el módulo no existe —el estado
+    normal— devuelve `[]` y nada cambia.
+
+    Por qué así y no una lista aquí: si el constructor escribiera estos casos, serían grupo (a)
+    disfrazado. La independencia no es una propiedad del caso, es una propiedad de QUIÉN lo
+    escribió; lo único que el constructor puede aportar es que quepan sin fricción.
+
+    FAIL-SOFT deliberado en la forma, ESTRICTO en el contenido: si el módulo no está, no pasa
+    nada; pero si está y trae algo que no es `GoldenCase`, se descarta ese elemento en vez de
+    colarlo a medias (un caso mal formado en el banco es peor que un caso ausente).
+    """
+    import importlib
+
+    try:
+        mod = importlib.import_module(VALIDATION_MODULE)
+    except ImportError:
+        return []
+    return [c for c in getattr(mod, "VALIDATION_CASES", ()) if isinstance(c, GoldenCase)]
 
 
 def _rows_to_cases(rows: list[tuple]) -> list[GoldenCase]:

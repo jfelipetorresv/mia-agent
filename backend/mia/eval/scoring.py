@@ -38,6 +38,40 @@ FLAG_UNSUPPORTED_CITATIONS = "citas_sin_respaldo"
 FLAG_NO_DIAGNOSIS_CLOSING = "sin_cierre_diagnostico"
 
 
+# ── QUIÉN marcó: el MODELO obediente o el GUARDIÁN determinista ───────────────
+# Son cosas distintas y el banco tiene que poder distinguirlas: que el guardián marque es una
+# GARANTÍA (siempre ocurre); que el modelo se auto-marque es SUERTE (a veces ocurre). Un panel
+# que las confunde le atribuye al modelo una disciplina que no tiene.
+#
+# El dato existe y es fiable POR UNA VÍA SOLA: el `verification_report` del grafo, calculado
+# sobre el borrador ANTES de anotarlo (`agents/graph.py` → `md["verification"]`). Ahí
+# `marcadas` = marcas que traía el modelo y `anotadas` = las que puso el guardián.
+#
+# HALLAZGO (Frente B): la vía de RESPALDO —re-escanear el borrador cuando no llega informe— NO
+# es fiable, y falla en la dirección peligrosa. Para cuando el turno llega al HITL el borrador
+# YA está anotado, así que un re-escaneo lee las marcas del GUARDIÁN como si fueran del modelo:
+# medido en vivo sobre un borrador con 4 citas anotadas por el guardián, el re-escaneo reporta
+# `marcadas=4, sin_respaldo=0` — es decir, convierte un turno indisciplinado en uno impecable y
+# apaga `citas_sin_respaldo`, que es justo la señal que tumba `ok`.
+#
+# No se puede "arreglar" el re-escaneo (la información de quién marcó se destruye al anotar el
+# texto: las dos marcas son el mismo literal). Lo que sí se puede es que el banco NUNCA presente
+# una atribución no fiable como si lo fuera. Por eso la señal declara su ORIGEN:
+ORIGEN_INFORME_GUARDIAN = "informe_guardian"   # atribución fiable
+ORIGEN_REESCANEO = "reescaneo_borrador"        # atribución dudosa (ver abajo)
+
+# Etiqueta con la que el panel nombra el aviso (`execution/run_eval.py` — frente C). Vive aquí
+# para que el nombre no se escriba dos veces en dos archivos y se desincronice.
+AVISO_ATRIBUCION_MARCAS = "atribucion_de_marcas_no_fiable"
+
+# CUÁNDO exactamente el re-escaneo miente. No siempre: si el borrador re-escaneado no trae NI
+# UNA marca, entonces `marcadas=0` y no hay nada que atribuir mal — el dato es trivialmente
+# correcto (ese es el caso de las pruebas unitarias sobre borradores crudos). El re-escaneo solo
+# es indistinguible cuando SÍ hay marcas, porque la marca del modelo y la del guardián son el
+# MISMO literal `[VERIFICAR]` y el texto ya no recuerda quién la puso. Se afina así a propósito:
+# un aviso que salta siempre se ignora siempre, y entonces no avisa de nada.
+
+
 def _citation_signal(draft: str, sources: Any, extra_patterns: Any,
                      verification_report: Any = None) -> dict:
     """Disciplina de citas del borrador, vía el verificador determinista de CP9.
@@ -47,14 +81,19 @@ def _citation_signal(draft: str, sources: Any, extra_patterns: Any,
     HITL el borrador YA fue anotado por el nodo de verificación (las citas sin marca recibieron
     su [VERIFICAR]) — re-escanear ese borrador anotado contaría 0 sin respaldo y borraría la
     señal. Sin informe (pruebas sobre un borrador crudo), se ESCANEA el borrador aquí.
-    `anotadas` = citas sin marca [VERIFICAR] ni respaldo en el corpus = las riesgosas."""
+    `anotadas` = citas sin marca [VERIFICAR] ni respaldo en el corpus = las riesgosas.
+
+    `origen_marcas` dice por cuál de las dos vías salió el desglose modelo/guardián, y
+    `atribucion_marcas_fiable` si ese desglose se puede leer (ver el bloque de arriba)."""
     if isinstance(verification_report, dict) and "citas" in verification_report:
         report = verification_report
+        origen = ORIGEN_INFORME_GUARDIAN
     else:
         src = sources if isinstance(sources, list) else None
         extra = extra_patterns if isinstance(extra_patterns, list) else None
         _annotated, report = verification.annotate_draft(
             draft or "", sources=src, extra_patterns=extra)
+        origen = ORIGEN_REESCANEO
     citas = int(report.get("citas", 0))
     anotadas = int(report.get("anotadas", 0))
     respaldadas = int(report.get("respaldadas", 0))
@@ -66,6 +105,10 @@ def _citation_signal(draft: str, sources: Any, extra_patterns: Any,
         "citas_marcadas": marcadas,
         # fracción de citas "en regla" (marcadas o respaldadas) sobre el total; 1.0 sin citas.
         "citas_en_regla_ratio": round((citas - anotadas) / citas, 4) if citas else 1.0,
+        # PROCEDENCIA DEL DATO (Frente B · B3): sin esto, `citas_marcadas` y `citas_sin_respaldo`
+        # se leen igual vengan de donde vengan, y una de las dos vías miente.
+        "origen_marcas": origen,
+        "atribucion_marcas_fiable": origen == ORIGEN_INFORME_GUARDIAN or marcadas == 0,
     }
 
 
@@ -269,6 +312,12 @@ def score_turn(
     # banderas más sería ruido duplicado sobre el mismo hecho.
     substance = substance_signal(draft, extra_patterns)
     info_flags = _substance_info_flags(substance) if (reached_draft and not tiny_draft) else []
+    # NOTA (B3): el aviso de atribución NO se cuela en `flags_informativos`. Esa lista tiene un
+    # contrato propio —son los INDICIOS DE SUSTANCIA— y varias suites afirman sobre ella; meter
+    # ahí una señal de otra naturaleza volvería rojas pruebas que nada tienen que ver. El dato
+    # viaja en sus dos claves explícitas (`origen_marcas`, `atribucion_marcas_fiable`), que
+    # `**cites` ya propaga al resultado, y el panel las lee con la etiqueta
+    # `AVISO_ATRIBUCION_MARCAS`.
 
     flags: list[str] = []
     if not reached_draft:
