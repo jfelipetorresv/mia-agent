@@ -6,12 +6,24 @@ Uso (con los servicios vivos: Postgres + LiteLLM :4000 + política de modelo):
     .venv\\Scripts\\python.exe execution\\run_eval.py                 # corrida "antes/después"
     .venv\\Scripts\\python.exe execution\\run_eval.py --run-id mi_corrida
     .venv\\Scripts\\python.exe execution\\run_eval.py --compare A B     # compara dos corridas ya hechas
+    .venv\\Scripts\\python.exe execution\\run_eval.py --list-cases     # qué casos hay, sin correr nada
+    .venv\\Scripts\\python.exe execution\\run_eval.py --case <id>       # corre UN caso (canónico o de riesgo)
+    .venv\\Scripts\\python.exe execution\\run_eval.py --case <id> --repeat 5   # riesgo INTERMITENTE: tasa, no booleano
+    .venv\\Scripts\\python.exe execution\\run_eval.py --agentic-compare        # MIA_AGENTIC_READING off→on, esta corrida
 
 Corre los CASOS DE ORO SINTÉTICOS de `mia.eval.cases` por el grafo completo de asunto,
 puntúa cada uno con señales deterministas (disciplina de citas, cierre del diagnóstico,
 borrador) y guarda la corrida en `mia-data/eval-runs/{run_id}/`. Para medir si un cambio
 mejora o empeora la calidad: corre ANTES (en main), corre DESPUÉS (en la rama) y
 `--compare antes despues`.
+
+FRENTE E (banco contra el modelo vivo, riesgos reales capturados en pruebas en vivo):
+`--case`/`--repeat` corren UN caso de `cases.RISK_CASES` (o uno canónico) las veces que
+haga falta y reportan la TASA de fuga de jurisdicción (nunca un booleano de una pasada —
+el riesgo es INTERMITENTE). `--agentic-compare` corre el banco DOS veces en este mismo
+proceso, alternando `mia.config.MIA_AGENTIC_READING` SOLO para esta corrida (nunca toca el
+.env ni deja la bandera encendida al terminar) y compara tokens + motivo de parada de la
+lectura agéntica entre el camino clásico y el agéntico.
 
 Crea un despacho EFÍMERO de prueba y lo borra al terminar (incl. sus checkpoints). NO usa
 datos reales de cliente: eso exige el candado `allow_eval_real_data` del despacho (fail-closed).
@@ -25,6 +37,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import psycopg
 from dotenv import load_dotenv
@@ -41,8 +54,10 @@ try:
 except Exception:
     pass
 
+from mia import config                                 # noqa: E402
 from mia.agents.state import thread_id_for            # noqa: E402
 from mia.db import pool                                # noqa: E402
+from mia.eval import cases as cases_mod                # noqa: E402
 from mia.eval import compare_reports                   # noqa: E402
 from mia.eval import harness                           # noqa: E402
 
@@ -81,9 +96,40 @@ def _print_summary(report: dict) -> None:
         sc = c.get("score", {})
         flags = ", ".join(sc.get("flags", [])) or "ok"
         err = f" ERROR: {c['error']}" if c.get("error") else ""
-        print(f"  · {c['case_id']}: citas={sc.get('citas')} sin_respaldo="
-              f"{sc.get('citas_sin_respaldo')} cierre={sc.get('has_diagnosis_closing')} "
+        # marcadas = el MODELO ya trajo su propio [VERIFICAR]; sin_respaldo = las que tuvo
+        # que anotar el GUARDIÁN porque no venían marcadas ni respaldadas por el corpus.
+        print(f"  · {c['case_id']}: citas={sc.get('citas')} marcadas_modelo="
+              f"{sc.get('citas_marcadas')} anotadas_guardian={sc.get('citas_sin_respaldo')} "
+              f"respaldadas={sc.get('citas_respaldadas')} cierre={sc.get('has_diagnosis_closing')} "
               f"borrador={sc.get('draft_chars')}c [{flags}]{err}")
+        prov = c.get("provenance") or {}
+        if prov.get("atribucion_indebida"):
+            print(f"    AVISO procedencia: atribuye al despacho/expediente sin material "
+                  f"sellado — frases: {prov.get('frases_detectadas')}")
+
+
+def _all_cases() -> list:
+    """Casos registrados que `run_eval.py` puede correr por id: los canónicos + los de
+    riesgo (Frente E). `load_tenant_gold_cases` (Banco de oro confirmado) NO entra aquí:
+    exige un tenant real, y este comando trabaja sobre el despacho EFÍMERO de prueba."""
+    return list(cases_mod.load_golden_cases()) + list(cases_mod.RISK_CASES)
+
+
+def _find_case(case_id: str):
+    for c in _all_cases():
+        if c.id == case_id:
+            return c
+    disponibles = ", ".join(c.id for c in _all_cases())
+    raise SystemExit(f"No existe el caso '{case_id}'. Disponibles: {disponibles}")
+
+
+def _print_case_list() -> None:
+    print("Casos canónicos (mia.eval.cases.GOLDEN_CASES — examen 'antes/después' de siempre):")
+    for c in cases_mod.load_golden_cases():
+        print(f"  · {c.id} — {c.title}")
+    print("\nCasos de RIESGO (mia.eval.cases.RISK_CASES — Frente E, se corren por id):")
+    for c in cases_mod.RISK_CASES:
+        print(f"  · {c.id} — {c.title}")
 
 
 def _load_report(run_id: str) -> dict:
@@ -98,12 +144,13 @@ def _load_report(run_id: str) -> dict:
     return {"run_id": run_id, "cases": cases, "summary": summary}
 
 
-async def _run(run_id: str) -> dict:
+async def _run(run_id: str, case_id: Optional[str] = None) -> dict:
+    cases = [_find_case(case_id)] if case_id else None
     await pool.open_pool()
     tenant_id = _make_eval_tenant()
     matter_ids: list[str] = []
     try:
-        report = await harness.run_suite(tenant_id, run_id=run_id)
+        report = await harness.run_suite(tenant_id, cases, run_id=run_id)
         matter_ids = [c.get("matter_id") for c in report.get("cases", []) if c.get("matter_id")]
         harness.persist_report(report)
         return report
@@ -112,12 +159,100 @@ async def _run(run_id: str) -> dict:
         _drop_eval_tenant(tenant_id, matter_ids)
 
 
+# ── Frente E: repetir UN caso (riesgo INTERMITENTE — tasa, no booleano) ───────
+async def _run_repeat(case_id: str, n: int) -> dict:
+    case = _find_case(case_id)
+    await pool.open_pool()
+    tenant_id = _make_eval_tenant()
+    matter_ids: list[str] = []
+    try:
+        results = await harness.run_case_n(tenant_id, case, n)
+        matter_ids = [r.get("matter_id") for r in results if r.get("matter_id")]
+        leak = harness.jurisdiction_leak_rate(results)
+        return {"case_id": case_id, "n": n, "results": results, "leak": leak}
+    finally:
+        await pool.close_pool()
+        _drop_eval_tenant(tenant_id, matter_ids)
+
+
+def _print_repeat_summary(result: dict) -> None:
+    leak = result["leak"]
+    print(f"\n=== Repetición del caso '{result['case_id']}' × {result['n']} ===")
+    print(f"  Fuga de jurisdicción detectada en {leak['n_con_fuga']}/{leak['n']} corridas "
+          f"(tasa {leak['tasa']:.0%}). INTERMITENTE por diseño: una sola pasada limpia NO "
+          "certifica que no vuelva a pasar.")
+    for i, d in enumerate(leak["detalle"], 1):
+        marca = "FUGA" if d["leak"] else "ok"
+        print(f"  · corrida {i} [{marca}]: citas_detectadas={d['citas_detectadas']}"
+              + (f" · ejemplo: {d['detalle'][0]!r}" if d["detalle"] else ""))
+
+
+# ── Frente E: MIA_AGENTIC_READING off→on, solo esta corrida ───────────────────
+async def _run_agentic_compare(run_id: str, case_id: Optional[str]) -> dict:
+    cases = [_find_case(case_id)] if case_id else None
+    await pool.open_pool()
+    tenant_id = _make_eval_tenant()
+    matter_ids: list[str] = []
+    original_flag = config.MIA_AGENTIC_READING
+    try:
+        config.MIA_AGENTIC_READING = False
+        off_report = await harness.run_suite(tenant_id, cases, run_id=f"{run_id}_agentic_off")
+        matter_ids += [c.get("matter_id") for c in off_report.get("cases", [])
+                       if c.get("matter_id")]
+
+        config.MIA_AGENTIC_READING = True
+        on_report = await harness.run_suite(tenant_id, cases, run_id=f"{run_id}_agentic_on")
+        matter_ids += [c.get("matter_id") for c in on_report.get("cases", [])
+                       if c.get("matter_id")]
+
+        return harness.compare_agentic_reports(off_report, on_report)
+    finally:
+        # SIEMPRE se restaura, pase lo que pase: la bandera es solo de ESTA corrida, nunca
+        # queda encendida para el resto del proceso ni se escribe en el .env.
+        config.MIA_AGENTIC_READING = original_flag
+        await pool.close_pool()
+        _drop_eval_tenant(tenant_id, matter_ids)
+
+
+def _print_agentic_compare(result: dict) -> None:
+    print("\n=== MIA_AGENTIC_READING apagada → encendida (solo esta corrida) ===")
+    print(f"  Casos comparados: {result['n_total']} · corrió el bucle agéntico en: "
+          f"{result['n_corrio_agentic']}/{result['n_total']}")
+    if result["n_total"] and result["n_corrio_agentic"] < result["n_total"]:
+        print("  AVISO: donde NO corrió, el motor de la política de modelo activa no admite "
+              "herramientas (o el tope de ampliaciones está en 0) — el turno se comportó "
+              "igual que apagado. Ver agents.retrieval.agentic_reading_available().")
+    for c in result["cases"]:
+        motivo = c["motivo_parada"] or "n/a (no corrió)"
+        print(f"  · {c['case_id']}: tokens off={c['tokens_off']} on={c['tokens_on']} "
+              f"(Δ={c['delta_tokens']:+d}) · ampliaciones={c['ampliaciones']} · "
+              f"motivo_parada={motivo}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Banco de pruebas de calidad de Mia (CP-E4)")
     ap.add_argument("--run-id", default=None, help="id de la corrida (default: eval_<fecha>)")
     ap.add_argument("--compare", nargs=2, metavar=("ANTES", "DESPUES"),
                     help="compara dos corridas ya guardadas por su run_id")
+    ap.add_argument("--list-cases", action="store_true",
+                    help="lista los casos registrados (canónicos + de riesgo) y termina, "
+                         "sin tocar la DB ni el motor")
+    ap.add_argument("--case", default=None, metavar="ID",
+                    help="corre UN caso por su id (canónico o de RISK_CASES) en vez del "
+                         "examen completo; ver --list-cases")
+    ap.add_argument("--repeat", type=int, default=None, metavar="N",
+                    help="con --case: corre ese caso N veces seguidas y reporta la tasa de "
+                         "fuga de jurisdicción (riesgo INTERMITENTE — una pasada no basta)")
+    ap.add_argument("--agentic-compare", action="store_true",
+                    help="corre el banco DOS veces en este proceso — MIA_AGENTIC_READING "
+                         "apagada y luego encendida, SOLO para esta corrida — y compara "
+                         "tokens y motivo de parada de la lectura agéntica (con --case, solo "
+                         "ese caso; si no, los 3 canónicos)")
     args = ap.parse_args()
+
+    if args.list_cases:
+        _print_case_list()
+        return 0
 
     if args.compare:
         before, after = _load_report(args.compare[0]), _load_report(args.compare[1])
@@ -131,8 +266,21 @@ def main() -> int:
             print(f"  · {c['case_id']}: {c['verdict'].upper()} — {det}")
         return 0
 
+    if args.repeat is not None:
+        if not args.case:
+            ap.error("--repeat exige --case <id> (¿cuál caso repetir?)")
+        result = asyncio.run(_run_repeat(args.case, args.repeat))
+        _print_repeat_summary(result)
+        return 0
+
+    if args.agentic_compare:
+        run_id = args.run_id or f"eval_{datetime.now():%Y%m%d_%H%M%S}"
+        result = asyncio.run(_run_agentic_compare(run_id, args.case))
+        _print_agentic_compare(result)
+        return 0
+
     run_id = args.run_id or f"eval_{datetime.now():%Y%m%d_%H%M%S}"
-    report = asyncio.run(_run(run_id))
+    report = asyncio.run(_run(run_id, args.case))
     _print_summary(report)
     print(f"\nGuardada en mia-data/eval-runs/{run_id}/. "
           f"Corre otra en la otra rama y usa --compare para el veredicto.")

@@ -55,6 +55,7 @@ from mia.db import pool                                   # noqa: E402
 from mia.eval import compare_reports, score_turn          # noqa: E402
 from mia.eval import cases as cases_mod                   # noqa: E402
 from mia.eval import harness                              # noqa: E402
+from mia.eval import scoring                               # noqa: E402
 from mia.eval.cases import GoldenCase, GoldenCaseDoc      # noqa: E402
 
 _results: list[tuple[str, bool]] = []
@@ -168,6 +169,107 @@ def offline_checks() -> None:
               (run_dir / "cases.jsonl").exists() and (run_dir / "summary.json").exists())
 
 
+# ── Frente E: casos de RIESGO + señales nuevas (todo OFFLINE, sin DB) ──────────
+def frente_e_offline_checks() -> None:
+    print("\n-- offline: Frente E — fuga de jurisdicción, procedencia, tasa, agéntico --")
+
+    # RISK_CASES: registrados, sintéticos, y CADA uno con el fixture que su riesgo exige.
+    check("risk cases: el set de riesgo es no vacío y todos SINTÉTICOS",
+          len(cases_mod.RISK_CASES) >= 3 and all(c.synthetic for c in cases_mod.RISK_CASES))
+    check("risk cases: cada uno trae id y mensaje",
+          all(c.id and c.message for c in cases_mod.RISK_CASES))
+    check("risk cases: no se coló ninguno en el set canónico (load_golden_cases sigue en 3, "
+          "sin romper a execution/test_gold_cases_influence_eval.py que asume n==4)",
+          len(cases_mod.load_golden_cases()) == 3
+          and not (set(c.id for c in cases_mod.RISK_CASES)
+                   & set(c.id for c in cases_mod.load_golden_cases())))
+
+    fuga = next(c for c in cases_mod.RISK_CASES if c.id == "fuga-jurisdiccion-contrato-sin-pais")
+    check("risk cases: el caso de fuga de jurisdicción tiene expediente VACÍO a propósito",
+          fuga.documents == ())
+    procedencia = next(c for c in cases_mod.RISK_CASES if c.id == "procedencia-despacho-vacio")
+    check("risk cases: el caso de procedencia tiene expediente VACÍO a propósito",
+          procedencia.documents == ())
+    citas_abrev = next(c for c in cases_mod.RISK_CASES
+                       if c.id == "disciplina-citas-formas-abreviadas")
+    check("risk cases: el caso de disciplina de citas sella una forma ABREVIADA ('arts.')",
+          any("arts." in ch for d in citas_abrev.documents for ch in d.chunks))
+
+    # jurisdiction_leak_signal: reusa el escáner del guardián (agents.verification), no
+    # duplica vocabulario de país — MUTACIÓN: mismo texto, se le añade una cita concreta.
+    razona_por_institucion = (
+        "El régimen general de validez de un contrato exige capacidad de las partes, "
+        "consentimiento libre de vicios, objeto y causa lícitos. Sin conocer bajo qué "
+        "ordenamiento trabaja el despacho no es posible precisar más.")
+    limpio = scoring.jurisdiction_leak_signal(razona_por_institucion)
+    check("jurisdiction_leak: razona por institución sin citar articulado → SIN fuga",
+          limpio["leak"] is False and limpio["citas_detectadas"] == 0)
+    con_fuga = razona_por_institucion + " Con fundamento en el artículo 90 de la Ley 1437 de 2011."
+    mutado = scoring.jurisdiction_leak_signal(con_fuga)
+    check("jurisdiction_leak: MUTADO — se añade una cita concreta → SÍ detecta la fuga "
+          "(mutación roja sobre el mismo texto limpio)",
+          mutado["leak"] is True and mutado["citas_detectadas"] >= 1
+          and "Ley 1437 de 2011" in mutado["detalle"][0])
+
+    # jurisdiction_leak_rate: pura, agrega N resultados de `run_case`-shape. MUTACIÓN:
+    # de 0/3 con fuga a 2/3 con fuga (la tasa, no un booleano, es el punto del gate).
+    limpios = [{"matter_id": f"m{i}", "draft_preview": razona_por_institucion,
+               "diagnosis_preview": ""} for i in range(3)]
+    tasa0 = harness.jurisdiction_leak_rate(limpios)
+    check("jurisdiction_leak_rate: 3 corridas limpias → tasa 0.0",
+          tasa0["n"] == 3 and tasa0["n_con_fuga"] == 0 and tasa0["tasa"] == 0.0)
+    mixtos = [{"matter_id": "m0", "draft_preview": con_fuga, "diagnosis_preview": ""},
+             {"matter_id": "m1", "draft_preview": con_fuga, "diagnosis_preview": ""},
+             {"matter_id": "m2", "draft_preview": razona_por_institucion, "diagnosis_preview": ""}]
+    tasa1 = harness.jurisdiction_leak_rate(mixtos)
+    check("jurisdiction_leak_rate: MUTADO — 2 de 3 corridas con fuga → tasa 0.6667 "
+          "(reporta TASA, no un booleano de una pasada)",
+          tasa1["n_con_fuga"] == 2 and abs(tasa1["tasa"] - round(2 / 3, 4)) < 1e-9
+          and len(tasa1["detalle"]) == 3)
+    # la fuga también puede venir por el DIAGNÓSTICO (no solo el borrador) — por eso
+    # `run_case` ahora guarda `diagnosis_preview` y `jurisdiction_leak_rate` lo incluye.
+    solo_diagnostico = [{"matter_id": "m0", "draft_preview": razona_por_institucion,
+                         "diagnosis_preview": con_fuga}]
+    tasa2 = harness.jurisdiction_leak_rate(solo_diagnostico)
+    check("jurisdiction_leak_rate: una fuga que solo aparece en el DIAGNÓSTICO también cuenta",
+          tasa2["n_con_fuga"] == 1)
+
+    # provenance_signal: atribuir al despacho SIN material sellado es sospechoso; CON
+    # material, la misma frase deja de serlo (MUTACIÓN sobre `documents_retrieved`).
+    atribuye = "Conforme a la experiencia del despacho en casos similares, el contrato es válido."
+    p_sin_material = scoring.provenance_signal(atribuye, "", 0)
+    check("provenance: atribución al despacho SIN material sellado → indebida",
+          p_sin_material["atribucion_indebida"] is True
+          and p_sin_material["sin_material_sellado"] is True)
+    p_con_material = scoring.provenance_signal(atribuye, "", 3)
+    check("provenance: MUTADO — MISMA frase pero CON material sellado → ya NO es indebida",
+          p_con_material["atribucion_indebida"] is False)
+    sin_atribucion = "El contrato es válido conforme a lo que consta en [doc 1]."
+    p_neutro = scoring.provenance_signal(sin_atribucion, "", 0)
+    check("provenance: sin frases de procedencia → no marca nada aunque no haya material",
+          p_neutro["atribucion_indebida"] is False and p_neutro["frases_detectadas"] == [])
+
+    # compare_agentic_reports: pura, compara dos reportes por case_id. MUTACIÓN: quitar la
+    # traza `agentic_reading` del caso "on" (motor sin herramientas) cambia el veredicto de
+    # "corrió" a "no corrió", sin inventar un motivo de parada que no ocurrió.
+    off_report = {"cases": [{"case_id": "c1", "score": {"total_tokens": 500}}]}
+    on_report_corrio = {"cases": [{"case_id": "c1", "score": {"total_tokens": 300},
+                                   "agentic_reading": {"stop": "suficiente", "expansions": 1}}]}
+    cmp1 = harness.compare_agentic_reports(off_report, on_report_corrio)
+    check("compare_agentic: el motivo de parada y el delta de tokens viajan por caso",
+          cmp1["cases"][0]["corrio_agentic"] is True
+          and cmp1["cases"][0]["motivo_parada"] == "suficiente"
+          and cmp1["cases"][0]["delta_tokens"] == -200
+          and cmp1["n_corrio_agentic"] == 1)
+    on_report_no_corrio = {"cases": [{"case_id": "c1", "score": {"total_tokens": 500}}]}
+    cmp2 = harness.compare_agentic_reports(off_report, on_report_no_corrio)
+    check("compare_agentic: MUTADO — sin traza (motor sin herramientas) → corrio_agentic "
+          "False y motivo_parada None, NO se inventa un motivo",
+          cmp2["cases"][0]["corrio_agentic"] is False
+          and cmp2["cases"][0]["motivo_parada"] is None
+          and cmp2["n_corrio_agentic"] == 0)
+
+
 # ── DB ──────────────────────────────────────────────────────────────────────────
 def _make_tenant() -> str:
     with psycopg.connect(autocommit=True, **PG) as c:
@@ -244,6 +346,49 @@ async def db_checks() -> None:
               isinstance(res["verification"], dict) and "citas" in res["verification"])
         check("e2e: el resultado trae puntaje con flags",
               "flags" in res["score"] and isinstance(res["score"]["flags"], list))
+
+        # Frente E — end-to-end: run_case ahora expone diagnosis_preview y provenance
+        # (antes se calculaban y se perdían); se verifican sobre el MISMO turno de arriba.
+        check("e2e: el resultado trae diagnosis_preview (antes se perdía por completo)",
+              bool(res.get("diagnosis_preview")))
+        check("e2e: provenance viaja en el resultado y ve que SÍ hubo material sellado",
+              isinstance(res.get("provenance"), dict)
+              and res["provenance"]["sin_material_sellado"] is False)
+        check("e2e agentic_reading: con la bandera apagada (default de esta suite, nunca se "
+              "tocó), el resultado NO trae la traza — mismo turno de siempre, sin el bucle",
+              "agentic_reading" not in res)
+
+        # run_case_n + jurisdiction_leak_rate contra el GRAFO real (LLM/embeddings
+        # stubbeados, el mismo doble que usa el resto de esta suite): demuestra que el
+        # MECANISMO de repetición y de tasa funciona de punta a punta sobre un caso de
+        # RIESGO real (expediente VACÍO). La intermitencia REAL solo se observa en vivo
+        # contra un modelo de verdad (fuera de alcance aquí — ver notas_honestas).
+        fuga_case = next(c for c in cases_mod.RISK_CASES
+                         if c.id == "fuga-jurisdiccion-contrato-sin-pais")
+        n_results = await harness.run_case_n(tenant, fuga_case, 3, tenant_allow_real=False)
+        matter_ids.extend(r["matter_id"] for r in n_results if r.get("matter_id"))
+        check("e2e run_case_n: corre el caso 3 veces, con matter_id nuevo cada vez",
+              len(n_results) == 3 and len({r["matter_id"] for r in n_results}) == 3)
+        check("e2e run_case_n: el expediente VACÍO no recupera documentos en ninguna corrida",
+              all(r["documents_retrieved"] == 0 for r in n_results))
+        rate = harness.jurisdiction_leak_rate(n_results)
+        check("e2e jurisdiction_leak_rate: cuenta las 3 corridas (el fake LLM de esta suite "
+              "cita 'Ley 1437 de 2011' en el cierre del diagnóstico SIEMPRE, así que aquí la "
+              "tasa sale determinista — mide el MECANISMO, no la intermitencia en vivo)",
+              rate["n"] == 3 and rate["n_con_fuga"] == 3 and rate["tasa"] == 1.0)
+
+        # Procedencia con despacho vacío: confirma que `sin_material_sellado` refleja el
+        # turno REAL (0 documentos recuperados). El fake LLM de esta suite no reproduce
+        # frases de procedencia, así que `atribucion_indebida` no se ejercita aquí de punta
+        # a punta — eso ya lo cubre `provenance_signal` en OFFLINE con su mutación.
+        procedencia_case = next(c for c in cases_mod.RISK_CASES
+                                if c.id == "procedencia-despacho-vacio")
+        res_proc = await harness.run_case(tenant, procedencia_case, tenant_allow_real=False)
+        matter_ids.append(res_proc["matter_id"])
+        check("e2e procedencia: despacho vacío → 0 documentos recuperados",
+              res_proc["documents_retrieved"] == 0)
+        check("e2e procedencia: provenance ve que este turno no selló material",
+              res_proc["provenance"]["sin_material_sellado"] is True)
     finally:
         await pool.close_pool()
         _drop_tenant(tenant, matter_ids)
@@ -254,6 +399,7 @@ def main() -> int:
     llm.call_llm = _fake_call_llm
 
     offline_checks()
+    frente_e_offline_checks()
     asyncio.run(db_checks())
 
     passed = sum(1 for _, ok in _results if ok)

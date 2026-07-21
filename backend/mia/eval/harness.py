@@ -15,6 +15,12 @@ sin fricción.
 SEPARACIÓN: el harness siembra los asuntos de prueba BAJO el `tenant_id` que recibe (RLS) y
 corre; el CICLO DE VIDA del tenant de prueba y la limpieza de checkpoints los maneja el
 llamador (`execution/run_eval.py` o el gate) con conexión admin.
+
+FRENTE E (banco contra el modelo vivo): además de `run_case`/`run_suite` (una pasada), este
+módulo trae `run_case_n` + `jurisdiction_leak_rate` para riesgos INTERMITENTES (una corrida
+limpia no basta) y `compare_agentic_reports` para medir coste/motivo de parada de la lectura
+agéntica (`config.MIA_AGENTIC_READING`) sin encender la bandera global — la enciende y apaga
+`execution/run_eval.py --agentic-compare`, alrededor de esta misma corrida.
 """
 from __future__ import annotations
 
@@ -30,7 +36,12 @@ from ..agents.graph import build_matter_graph
 from ..agents.state import initial_state, thread_id_for
 from ..db import pool
 from .cases import GoldenCase, load_golden_cases, load_tenant_gold_cases
-from .scoring import score_turn, substantive_score
+from .scoring import (
+    jurisdiction_leak_signal,
+    provenance_signal,
+    score_turn,
+    substantive_score,
+)
 
 logger = logging.getLogger("mia.eval.harness")
 
@@ -144,6 +155,7 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
     sources = md.get("research_sources")
     score = score_turn(draft, diagnosis, md, sources=sources,
                        verification_report=md.get("verification"))
+    documents_retrieved = int(md.get("retrieved", 0) or 0)
 
     result = {
         "case_id": case.id,
@@ -154,10 +166,26 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         "verification": md.get("verification") or {},
         # nº de documentos que intake recuperó del expediente del caso (RAG). Con documentos
         # sembrados debe ser > 0: si es 0, el turno corrió a ciegas (regresión de recuperación).
-        "documents_retrieved": int(md.get("retrieved", 0) or 0),
+        "documents_retrieved": documents_retrieved,
         "draft_preview": draft[:_DRAFT_PREVIEW_CHARS],
+        # el diagnóstico se perdía por completo (solo viajaba dentro del bloque de cierre que
+        # `score_turn` parsea): un caso de riesgo (Frente E) puede necesitar leerlo entero, p.
+        # ej. para `jurisdiction_leak_signal`, que también puede fugarse en el diagnóstico y no
+        # solo en el borrador.
+        "diagnosis_preview": diagnosis[:_DRAFT_PREVIEW_CHARS],
         "reached_draft": score["reached_draft"],
+        # PROCEDENCIA (Frente E): ¿el turno atribuye al despacho/expediente algo que este
+        # turno no selló? Se calcula SIEMPRE (barato y puro) — informativo, no toca `score.ok`.
+        "provenance": provenance_signal(draft, diagnosis, documents_retrieved),
     }
+    # Traza de la LECTURA AGÉNTICA (opt-in, `config.MIA_AGENTIC_READING`): cuántas
+    # ampliaciones pidió el modelo, con qué motivo y por qué paró (`agents.graph` la escribe
+    # en `metadata["agentic_reading"]` — ver `_turn.intake_node`). Antes se calculaba y se
+    # perdía: el harness nunca la copiaba al resultado, así que nada por fuera del proceso
+    # podía leer el motivo de parada para comparar coste. None cuando el bucle no corrió
+    # (bandera apagada, motor sin herramientas, o el expediente no tenía nada que leer).
+    if "agentic_reading" in md:
+        result["agentic_reading"] = md["agentic_reading"]
 
     # Hook sustantivo: si el caso trae rúbrica confirmada, calificar la respuesta nueva contra
     # ella. El juez corre FUERA de la ruta pura (callback); sin rúbrica, no se toca nada.
@@ -166,6 +194,57 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
             draft, diagnosis, case.rubric, judge=substantive_judge)
 
     return result
+
+
+# ── correr el MISMO caso N veces (riesgos INTERMITENTES) ──────────────────────
+async def run_case_n(tenant_id: str, case: GoldenCase, n: int, *,
+                     tenant_allow_real: Optional[bool] = None,
+                     substantive_judge: Optional[callable] = None) -> list[dict]:
+    """Corre el MISMO caso de oro `n` veces SEGUIDAS y devuelve la lista de resultados.
+
+    Existe para los riesgos que solo se ven a veces (p. ej. la fuga de jurisdicción
+    capturada en vivo — Frente E): una sola corrida limpia no prueba que el defecto no
+    vuelva a pasar, así que hay que poder repetir el MISMO caso y medir una TASA en vez de
+    un booleano de una pasada. Cada corrida siembra su PROPIO asunto (matter_id nuevo,
+    mismo `case`) — son turnos independientes, no memoria compartida entre corridas.
+
+    `n <= 0` se trata como 1 (nunca corre "cero veces" en silencio — eso sería devolver
+    una lista vacía y que el llamador crea que sí se corrió).
+    """
+    n = max(1, int(n))
+    allow = tenant_allow_real
+    if allow is None and not case.synthetic:
+        allow = (await read_eval_policy(tenant_id))["allow_real_data"]
+    results: list[dict] = []
+    for _ in range(n):
+        results.append(await run_case(tenant_id, case, tenant_allow_real=allow,
+                                      substantive_judge=substantive_judge))
+    return results
+
+
+def jurisdiction_leak_rate(results: list[dict]) -> dict:
+    """Tasa de fuga de jurisdicción sobre una lista de corridas del MISMO caso (ver
+    `run_case_n`). Aplica `scoring.jurisdiction_leak_signal` al diagnóstico + borrador de
+    CADA corrida — reusa el escáner del guardián de citas, no duplica vocabulario de país
+    (ver el docstring de `jurisdiction_leak_signal`). Pura: solo lee los resultados que ya
+    trae `run_case_n`, no vuelve a tocar la DB.
+
+    Honesto con la intermitencia (regla dura de este banco): devuelve una TASA, nunca un
+    solo booleano — una corrida limpia entre cinco no certifica que el riesgo no exista.
+    """
+    n = len(results)
+    detalle: list[dict] = []
+    for r in results:
+        texto = f"{r.get('diagnosis_preview') or ''}\n{r.get('draft_preview') or ''}"
+        sig = jurisdiction_leak_signal(texto)
+        detalle.append({"matter_id": r.get("matter_id"), **sig})
+    con_fuga = sum(1 for d in detalle if d["leak"])
+    return {
+        "n": n,
+        "n_con_fuga": con_fuga,
+        "tasa": round(con_fuga / n, 4) if n else 0.0,
+        "detalle": detalle,
+    }
 
 
 # ── correr una SUITE + reporte ────────────────────────────────────────────────
@@ -225,6 +304,49 @@ def build_report(run_id: str, case_results: list[dict]) -> dict:
             "n_con_error": errored,
             "total_citas_sin_respaldo": total_unsup,
         },
+    }
+
+
+# ── comparar CON/SIN lectura agéntica (MIA_AGENTIC_READING, Frente E) ─────────
+def compare_agentic_reports(off_report: dict, on_report: dict) -> dict:
+    """Compara coste en tokens y motivo de parada de la lectura agéntica entre dos corridas
+    del MISMO banco — una con `config.MIA_AGENTIC_READING` apagada y otra encendida SOLO
+    para esa corrida (ver `execution/run_eval.py --agentic-compare`, que es quien pone y
+    quita la bandera; esta función es pura y no la toca).
+
+    OJO — la bandera encendida NO garantiza que el bucle corra: `agents.retrieval.
+    agentic_reading_available()` exige ADEMÁS que el motor de la política de modelo activa
+    admita herramientas (`agents.retrieval.chain_supports_tools`, lectura de solo lectura
+    para este frente). Si no las admite, el turno se comporta igual que apagado y
+    `agentic_reading` viaja en None; este comparador lo REPORTA como tal
+    (`corrio_agentic: False`) en vez de esconderlo o inventar un motivo de parada."""
+    off_idx = {c["case_id"]: c for c in off_report.get("cases", []) if c.get("case_id")}
+    on_idx = {c["case_id"]: c for c in on_report.get("cases", []) if c.get("case_id")}
+    common = sorted(set(off_idx) & set(on_idx))
+
+    per_case: list[dict] = []
+    for cid in common:
+        o, n = off_idx[cid], on_idx[cid]
+        o_tokens = int((o.get("score") or {}).get("total_tokens", 0) or 0)
+        n_tokens = int((n.get("score") or {}).get("total_tokens", 0) or 0)
+        trace = n.get("agentic_reading")
+        trace = trace if isinstance(trace, dict) else None
+        per_case.append({
+            "case_id": cid,
+            "tokens_off": o_tokens,
+            "tokens_on": n_tokens,
+            "delta_tokens": n_tokens - o_tokens,
+            "motivo_parada": trace.get("stop") if trace else None,
+            "ampliaciones": trace.get("expansions") if trace else None,
+            "corrio_agentic": trace is not None,
+        })
+
+    return {
+        "cases": per_case,
+        "n_total": len(per_case),
+        "n_corrio_agentic": sum(1 for c in per_case if c["corrio_agentic"]),
+        "only_off": sorted(cid for cid in off_idx if cid not in on_idx),
+        "only_on": sorted(cid for cid in on_idx if cid not in off_idx),
     }
 
 

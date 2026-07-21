@@ -69,6 +69,39 @@ def _citation_signal(draft: str, sources: Any, extra_patterns: Any,
     }
 
 
+# ── Fuga de JURISDICCIÓN (riesgo capturado en vivo — INTERMITENTE) ────────────
+# Cuando el despacho NO tiene ordenamiento configurado, `prompt_builder.JURISDICTION_UNKNOWN`
+# le prohíbe al modelo citar articulado, ley, decreto, código o corporación de UN país
+# concreto: debe razonar por INSTITUCIÓN jurídica y pedir el ordenamiento como siguiente paso
+# (ver `execution/test_jurisdiction_agnostic.py::jurisdiccion_en_el_prompt`). El riesgo real
+# capturado en vivo es que el modelo, pese a la instrucción, A VECES sí cita una norma
+# concreta — y solo a veces: es INTERMITENTE, la peor clase de defecto (una corrida limpia
+# no prueba que no vuelva a pasar; ver `harness.run_case_n` + `harness.jurisdiction_leak_rate`).
+#
+# La señal REUTILIZA el escáner del guardián de citas (`agents.verification.scan_citations` +
+# `compile_patterns`) en vez de escribir vocabulario de país propio: la regla dura de
+# agnosticismo de jurisdicción (CLAUDE.md) prohíbe literales de país/corte/base normativa en
+# código común, y el escáner YA sabe reconocer la FORMA de una cita normativa concreta
+# (Ley/Decreto/Resolución/Sentencia/artículo con su cuerpo normativo/Radicado) sin nombrar
+# ningún país. No hace falta saber DE QUÉ país es la norma citada para saber que citarla, bajo
+# jurisdicción desconocida, YA es la fuga: la forma de la cita es la señal, no su contenido.
+def jurisdiction_leak_signal(text: str, extra_patterns: Any = None) -> dict:
+    """¿El texto cita articulado/norma/providencia CONCRETOS? (fuga bajo jurisdicción
+    desconocida). Determinista y puro — mismo escáner que usa el guardián de citas (CP9),
+    aplicado a cualquier texto que se le pase (normalmente diagnóstico + borrador del turno).
+    NO decide de qué país es la norma citada — eso violaría el agnosticismo que se está
+    protegiendo; solo decide si HAY una cita concreta, que es la fuga en sí misma."""
+    pats = verification.compile_patterns(
+        extra_patterns if isinstance(extra_patterns, list) else None)
+    citas = verification.scan_citations(text or "", pats)
+    detalle = [c["citation"] for c in citas]
+    return {
+        "citas_detectadas": len(citas),
+        "detalle": detalle[:10],
+        "leak": len(citas) > 0,
+    }
+
+
 # ── INDICIOS de sustancia (estructurales, deterministas) ──────────────────────
 # QUÉ MIDEN Y QUÉ NO (leer antes de creerle a estos números):
 #
@@ -396,3 +429,51 @@ def substantive_score(
             result["judge"] = {"veredicto": "", "explicacion_llana": "El juez no pudo opinar."}
 
     return result
+
+
+# ── PROCEDENCIA: no atribuir al despacho lo que no llegó sellado ──────────────
+# Con el despacho VACÍO (cero documentos recuperados en el turno) no hay nada que el turno
+# haya "manejado antes" en el sentido de expediente o conocimiento propio: cualquier frase
+# que atribuya al despacho o al expediente una experiencia o un antecedente concreto es, en
+# ese escenario, memoria paramétrica disfrazada de material del despacho — la MISMA clase de
+# defecto que `prompt_builder.PROVENANCE_POLICY` le prohíbe al modelo ("no presentes tu
+# propia memoria como material del despacho").
+#
+# Las frases son léxico GENÉRICO de procedencia en español (ningún país, ninguna corporación,
+# ninguna sigla de código) — no es vocabulario jurídico de jurisdicción, así que no repite la
+# regla dura de agnosticismo (esa protege literales de PAÍS, no la palabra "despacho").
+_PROVENANCE_PHRASES: tuple[str, ...] = (
+    "el despacho ha manejado", "el despacho ya ha tratado", "la practica del despacho",
+    "conforme a la experiencia del despacho", "segun nuestro expediente",
+    "el expediente registra", "consta en el expediente", "el despacho cuenta con",
+    "conocimiento consolidado del despacho", "como el despacho ha sostenido",
+    "segun el criterio consolidado del despacho", "el despacho suele",
+    "en casos anteriores del despacho", "segun nuestros antecedentes",
+)
+
+FLAG_UNGROUNDED_PROVENANCE = "atribucion_indebida_al_despacho"
+
+
+def provenance_signal(draft: str, diagnosis: str, documents_retrieved: int) -> dict:
+    """¿La respuesta atribuye al despacho/expediente algo que ESTE turno no selló?
+
+    `documents_retrieved` = documentos del expediente recuperados en el turno (la misma
+    cuenta que guarda `harness.run_case` bajo esa clave). Con el despacho VACÍO (0), una
+    frase de procedencia genérica (`_PROVENANCE_PHRASES`) es sospechosa: no hay material
+    sellado del que esa experiencia pueda salir. Con documentos SÍ recuperados, las mismas
+    frases son legítimas (el despacho sí trajo algo) y no se marcan — la señal no penaliza
+    decir "consta en el expediente" cuando de verdad consta.
+
+    Determinista y puro. NO decide si la atribución es jurídicamente correcta: solo si HAY
+    base sellada para hacerla en este turno.
+    """
+    texto = verification._normalize((diagnosis or "") + " \n " + (draft or ""))
+    hallazgos = [p for p in _PROVENANCE_PHRASES if verification._normalize(p) in texto]
+    sin_material = int(documents_retrieved or 0) <= 0
+    indebida = sin_material and bool(hallazgos)
+    return {
+        "sin_material_sellado": sin_material,
+        "frases_detectadas": hallazgos,
+        "atribucion_indebida": indebida,
+        "flags": [FLAG_UNGROUNDED_PROVENANCE] if indebida else [],
+    }

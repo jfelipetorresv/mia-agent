@@ -298,12 +298,43 @@ def e_unit() -> None:
     check("E10 · no muta el borrador", (lambda d: (substance_signal(d), d == DEVELOPED)[1])(DEVELOPED))
 
 
+# ── F · jurisdiction_leak_signal (Frente E): agnóstico de PAÍS, sensible a la FORMA ────
+# Mismo espíritu que `c_jurisdiction()` de arriba, pero para la señal de FUGA de jurisdicción
+# (ver `scoring.jurisdiction_leak_signal`): reusa el escáner del guardián de citas, así que
+# tiene que discriminar la MISMA cita concreta sin importar de qué país sea — la fuga es citar
+# articulado concreto bajo jurisdicción desconocida, no citar el de un país en particular.
+def f_jurisdiction_leak_agnostic() -> None:
+    print("\n-- F · jurisdiction_leak_signal: agnóstico de PAÍS, sensible a la FORMA --")
+
+    razona_por_institucion = (
+        "El régimen general de validez de un contrato exige capacidad de las partes, "
+        "consentimiento libre de vicios, objeto y causa lícitos; sin conocer bajo qué "
+        "ordenamiento trabaja el despacho no es posible precisar más.")
+    check("F1 · razona por institución, sin citar articulado concreto → SIN fuga",
+          scoring.jurisdiction_leak_signal(razona_por_institucion)["leak"] is False
+          and scoring.jurisdiction_leak_signal(razona_por_institucion)["citas_detectadas"] == 0)
+
+    co = razona_por_institucion + " Con fundamento en el artículo 90 de la Ley 1437 de 2011."
+    es = razona_por_institucion + " Con fundamento en el artículo 25 de la Ley 39/2015."
+    leak_co = scoring.jurisdiction_leak_signal(co)
+    leak_es = scoring.jurisdiction_leak_signal(es)
+    check("F2 · una cita concreta COLOMBIANA dispara la fuga", leak_co["leak"] is True)
+    check("F3 · la MISMA forma de cita, ESPAÑOLA, dispara la fuga IGUAL — no distingue país "
+          "(la fuga es la FORMA de citar articulado concreto, no de qué país es la norma)",
+          leak_es["leak"] is True and leak_es["citas_detectadas"] == leak_co["citas_detectadas"])
+    check("F4 · determinista (dos corridas idénticas dan el mismo resultado)",
+          scoring.jurisdiction_leak_signal(co) == scoring.jurisdiction_leak_signal(co))
+    check("F5 · None no lanza (borrador vacío del turno)",
+          scoring.jurisdiction_leak_signal(None)["leak"] is False)
+
+
 def main() -> int:
     a_discrimination()
     b_false_positives()
     c_jurisdiction()
     d_no_regression()
     e_unit()
+    f_jurisdiction_leak_agnostic()
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)
