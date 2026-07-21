@@ -10,7 +10,9 @@ Reglas de diseño:
   - El presupuesto vive en `tenant_settings.config['policy']['monthly_budget_usd']`
     (jsonb). Ausente, null o <= 0 = SIN límite (el caso por defecto de casi todos).
   - El gasto del mes = SUMA de `turn_usage.cost_usd` del mes calendario UTC en curso,
-    bajo RLS del tenant. (Los alias locales/suscripción cuestan 0 — ver metrics/usage.)
+    bajo RLS del tenant, EXCLUYENDO `source='eval'` (el banco de pruebas tiene su propio
+    tope y no debe poder bloquear un turno real — ver `_NOT_EVAL`). Los alias
+    locales/suscripción cuestan 0 (ver metrics/usage).
   - La lectura informativa sigue fail-open para no tumbar una pantalla por un hipo.
     La llamada PAGADA es distinta: reserva saldo de forma atómica antes de salir. Si
     no puede comprobarlo, el router usa un respaldo gratuito o detiene solo ese cobro.
@@ -50,6 +52,16 @@ _CONTROL_UNAVAILABLE_MESSAGE = (
 )
 HOLD_MINUTES = 15
 
+# El gasto del BANCO DE PRUEBAS no consume el sobre mensual del despacho (S2).
+#
+# `agent/llm.py` ya excluía el scope de eval de la RESERVA, pero no del CÁLCULO: el uso del
+# banco SÍ se persiste en `turn_usage` (con `source='eval'`, para poder auditarlo), así que
+# ambas sumas de abajo lo contaban igual y una tanda de pruebas podía bloquear el turno real
+# de un abogado. El banco tiene su propio tope, fail-closed y más estricto
+# (`eval.spend_guard`); éste es el sobre del despacho y solo debe contar su trabajo real.
+# `IS DISTINCT FROM` y no `<>` porque `source` es nullable: una fila sin source es producción.
+_NOT_EVAL = "source IS DISTINCT FROM 'eval'"
+
 
 def _period_start() -> str:
     now = datetime.now(timezone.utc)
@@ -73,6 +85,7 @@ def _ensure_month(conn: Any, tenant_id: str, period: str) -> None:
         "INSERT INTO ai_budget_months (tenant_id, period_start, baseline_usd, spent_usd) "
         "SELECT %s::uuid, %s::date, COALESCE(SUM(cost_usd), 0), COALESCE(SUM(cost_usd), 0) "
         "FROM turn_usage WHERE created_at >= %s::date::timestamp AT TIME ZONE 'UTC' "
+        f"AND {_NOT_EVAL} "
         "ON CONFLICT (tenant_id, period_start) DO NOTHING",
         (tenant_id, period, period),
     )
@@ -279,7 +292,8 @@ async def month_to_date_cost(tenant_id: str) -> float:
         row = await (await conn.execute(
             "SELECT COALESCE(SUM(cost_usd), 0) FROM turn_usage "
             "WHERE created_at >= "
-            "  date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+            "  date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' "
+            f"AND {_NOT_EVAL}",
         )).fetchone()
     return float(row[0]) if row and row[0] is not None else 0.0
 

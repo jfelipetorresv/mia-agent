@@ -28,3 +28,7 @@ frontend/.playwright-cli/
 # SI se versionan, solo se ignora la salida del build.
 packaging/dist/
 packaging/build/
+
+# Temporales que crean las suites del banco de pruebas (defecto de higiene: deberian ir a TEMP)
+mia-harness-ledger-*/
+mia-spend-guard-*/

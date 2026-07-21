@@ -587,7 +587,15 @@ def call_llm(
             scope = usage_metrics.current_scope()
             estimate = usage_metrics.estimated_call_cost(
                 alias, messages, max_tokens, task=task, tools=tools)
-            if scope is not None and estimate > 0:
+            # El gasto del BANCO DE PRUEBAS (scope source='eval') no consume el presupuesto
+            # MENSUAL del despacho: lo gobierna el tope propio del eval
+            # (`eval.spend_guard`), que es fail-closed y más estricto que éste. Sin esta
+            # línea, una corrida de evaluación —que la ruta HTTP `gold-cases:evaluate` lanza
+            # con el TENANT REAL— podía agotar el saldo del mes y bloquear los turnos
+            # productivos del abogado. `record()` sí sigue registrando el uso: el gasto se
+            # MIDE en `turn_usage`, solo no se descuenta del sobre mensual de producción.
+            is_eval = scope is not None and scope[2] == "eval"
+            if scope is not None and estimate > 0 and not is_eval:
                 budget_tenant = scope[0]
                 try:
                     hold_id = policy_budget.reserve_call_sync(

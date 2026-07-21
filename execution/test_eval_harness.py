@@ -300,6 +300,69 @@ def _drop_tenant(tenant_id: str, matter_ids: list[str]) -> None:
         c.execute("DELETE FROM tenants WHERE id=%s", (tenant_id,))
 
 
+async def budget_eval_isolation_checks() -> None:
+    """S2 — el gasto del BANCO no contamina el presupuesto MENSUAL del despacho.
+
+    El defecto reproducido: en la ronda anterior se excluyó el scope de eval de la RESERVA
+    (`agent/llm.py`), pero NO del CÁLCULO. Como el uso del banco SÍ se persiste en `turn_usage`
+    con `source='eval'`, las dos sumas de `policy/budget.py` (el baseline de `_ensure_month` y
+    el respaldo de `month_to_date_cost`) seguían contándolo: una tanda de pruebas podía agotar
+    el sobre del mes y BLOQUEAR un turno real de un abogado.
+
+    Se comprueban las dos direcciones, que es lo que hace válida la prueba:
+      (a) una fila source='eval' NO cuenta al mes;
+      (b) una fila de PRODUCCIÓN cuenta EXACTAMENTE igual que antes del cambio (mismo número,
+          al céntimo), y sigue reservando y liquidando contra el sobre mensual.
+    """
+    print("\n-- db: S2 — el gasto del banco no contamina el sobre mensual del despacho --")
+    from mia.policy import budget as policy_budget  # noqa: E402
+
+    await pool.open_pool()
+    tenant = _make_tenant()
+    prod_usd, eval_usd = 0.1100, 7.7700
+    try:
+        with psycopg.connect(autocommit=True, **PG) as c:
+            for source, cost in (("api", prod_usd), ("eval", eval_usd)):
+                c.execute(
+                    "INSERT INTO turn_usage (tenant_id, model, task, source, prompt_tokens, "
+                    "completion_tokens, total_tokens, cost_usd) "
+                    "VALUES (%s::uuid,'claude-sonnet','main',%s,10,10,20,%s)",
+                    (tenant, source, cost))
+
+        # (a) + (b) sobre el RESPALDO (`month_to_date_cost` sin fila en ai_budget_months).
+        # MUTACIÓN: quitar `AND {_NOT_EVAL}` de esa consulta → sale 7.88 y cae este check.
+        mtd = await policy_budget.month_to_date_cost(tenant)
+        check(f"S2: el gasto del mes cuenta SOLO producción (USD {mtd:.4f} == "
+              f"{prod_usd:.4f}) y NO la fila source='eval' (USD {eval_usd:.4f})",
+              abs(mtd - prod_usd) < 1e-6)
+
+        # Y sobre el BASELINE de `_ensure_month`, que es el camino real de producción: la
+        # primera reserva del mes copia el gasto ya hecho a `ai_budget_months`.
+        # MUTACIÓN: quitar `AND {_NOT_EVAL}` del INSERT de `_ensure_month` → el baseline nace
+        # en 7.88 y cae este check.
+        hold = policy_budget.reserve_call_sync(tenant, 0.02, model="claude-sonnet", task="main")
+        check("S2 · producción INTACTA: un turno normal sigue reservando saldo mensual "
+              "(reserve_call_sync devolvió un hold)", bool(hold))
+        with psycopg.connect(autocommit=True, **PG) as c:
+            base = float(c.execute(
+                "SELECT baseline_usd FROM ai_budget_months WHERE tenant_id=%s::uuid",
+                (tenant,)).fetchone()[0])
+        check(f"S2: el baseline del mes también excluye el eval (USD {base:.4f} == "
+              f"{prod_usd:.4f})", abs(base - prod_usd) < 1e-6)
+
+        # Liquidación: el gasto de producción se suma al sobre EXACTAMENTE por su coste real.
+        policy_budget.finish_call_sync(tenant, hold, 0.0300)
+        st = await policy_budget.budget_status(tenant)
+        check(f"S2 · producción INTACTA: tras liquidar, el mes suma producción + coste real "
+              f"(USD {st['spent_this_month_usd']:.2f} == {prod_usd + 0.03:.2f}) y la reserva "
+              "quedó devuelta",
+              abs(st["spent_this_month_usd"] - round(prod_usd + 0.03, 2)) < 1e-6
+              and st["reserved_usd"] == 0.0)
+    finally:
+        await pool.close_pool()
+        _drop_tenant(tenant, [])
+
+
 async def db_checks() -> None:
     print("\n-- db: política fail-closed, candado, end-to-end por el grafo --")
     await pool.open_pool()
@@ -389,6 +452,67 @@ async def db_checks() -> None:
               res_proc["documents_retrieved"] == 0)
         check("e2e procedencia: provenance ve que este turno no selló material",
               res_proc["provenance"]["sin_material_sellado"] is True)
+
+        # ── S5: el juez sustantivo ARBITRARIO se rechaza (la marca era burlable) ──
+        # La versión anterior aceptaba cualquier juez marcado con `governed_judge` y luego
+        # exigía "evidencia": que el tope hubiera visto ≥1 llamada suya. Eso es burlable — un
+        # juez puede hacer N peticiones HTTP pagadas y UNA llamada gobernada solo para aprobar
+        # el chequeo, y el gasto real pasa sin control. Ahora se rechaza de entrada.
+        from mia.eval import spend_guard  # noqa: E402
+
+        juez_case = GoldenCase(
+            id="juez-rubrica", title="Juez con rúbrica",
+            message="Analiza la caducidad y prepara la defensa.",
+            documents=(GoldenCaseDoc("demanda.txt", ("El daño se consolidó en 2019.",)),),
+            rubric={"citas_clave": ["Ley 1437 de 2011"], "conclusiones_clave": []})
+
+        corrio = {"n": 0}
+
+        def juez_burlon(draft, diagnosis, rubric):
+            """El juez BURLÓN del hallazgo S5: gastaría por su cuenta y luego haría UNA
+            llamada gobernada para 'acreditarse'. Aquí no llega a ejecutarse ni una vez."""
+            corrio["n"] += 1
+            embeddings.embed_texts(["la llamada gobernada de coartada"])
+            return {"veredicto": "solido", "explicacion_llana": "ok"}
+
+        # MUTACIÓN: quitar el `raise UngovernedJudge` de `run_case` → cae este check (el juez
+        # burlón corre, se acredita con su llamada de coartada y la corrida lo da por bueno).
+        bloqueado = None
+        try:
+            await harness.run_case(tenant, juez_case, tenant_allow_real=False,
+                                   substantive_judge=juez_burlon)
+        except BaseException as exc:  # noqa: BLE001
+            bloqueado = exc
+        check("S5: un juez sustantivo arbitrario se RECHAZA antes de correr nada "
+              "(UngovernedJudge) — ni siquiera el que traería una llamada de coartada",
+              isinstance(bloqueado, spend_guard.UngovernedJudge) and corrio["n"] == 0)
+        check("S5: la marca burlable `governed_judge` ya no existe (no se puede acreditar un "
+              "juez poniéndole un atributo)",
+              not hasattr(spend_guard, "governed_judge")
+              and not hasattr(spend_guard, "is_governed_judge"))
+
+        # S1: la parada del juez es un SpendGuardHalt, así que ningún `except Exception` del
+        # camino puede tragársela y hacer pasar la corrida bloqueada por completa.
+        # MUTACIÓN: hacer que `UngovernedJudge` herede de `Exception` → cae este check.
+        tragada = False
+        try:
+            try:
+                await harness.run_case(tenant, juez_case, tenant_allow_real=False,
+                                       substantive_judge=juez_burlon)
+            except Exception:  # noqa: BLE001 — el patrón de graph.py / run_suite
+                tragada = True
+        except spend_guard.SpendGuardHalt:
+            pass
+        check("S1: UngovernedJudge deriva de SpendGuardHalt(BaseException): un `except "
+              "Exception` NO se la come", tragada is False)
+
+        # Camino BUENO: con rúbrica y SIN juez, la calificación determinista sigue viva.
+        res_rub = await harness.run_case(tenant, juez_case, tenant_allow_real=False)
+        matter_ids.append(res_rub["matter_id"])
+        check("S5: sin juez, la calificación sustantiva DETERMINISTA (cobertura de rúbrica) "
+              "sigue funcionando igual",
+              isinstance(res_rub.get("substantive"), dict)
+              and "cobertura_citas" in res_rub["substantive"])
     finally:
         await pool.close_pool()
         _drop_tenant(tenant, matter_ids)
@@ -400,7 +524,18 @@ def main() -> int:
 
     offline_checks()
     frente_e_offline_checks()
-    asyncio.run(db_checks())
+    # `harness.run_case` es FAIL-CLOSED (Frente A): sin tope de gasto activo NO corre, porque
+    # llamarla de verdad gasta dinero (modelo + embeddings de Voyage). Esta suite la invoca
+    # directo, así que abre su propio guardián con un fichero de saldo desechable. Aquí el LLM
+    # y los embeddings están stubbeados, así que no se gasta un centavo: el guardián solo
+    # satisface el contrato.
+    from mia.eval import spend_guard  # noqa: E402
+    guardia = spend_guard.EvalSpendGuard(
+        session_id="test-eval-harness",
+        ledger_path=Path(tempfile.mkdtemp(prefix="mia-harness-ledger-")) / "ledger.json")
+    with spend_guard.install(), guardia.activate():
+        asyncio.run(db_checks())
+        asyncio.run(budget_eval_isolation_checks())
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)
