@@ -1,10 +1,24 @@
 # Rediseño del perfil del despacho (SOUL) — diagnóstico y diseño
 
-**Fecha:** 2026-07-20 · **Origen:** encargo de Pipe ("más rico pero NO más largo") · **Estado:** diseñado, no implementado
+**Fecha:** 2026-07-20 · **Origen:** encargo de Pipe ("más rico pero NO más largo") ·
+**Estado (verificado 2026-07-21 contra el código):** **implementado** el arreglo del bug
+(punto 1 del plan) y el rediseño de preguntas/SOUL (puntos 2-6 del plan) — commit
+`c980704`, "feat(perfil): el perfil del despacho pregunta criterio, no datos censales".
+Punto 7 (`## aprendido` poblado por el trabajo real vía `update_soul`) **también está
+implementado** — `execution/test_aprendido.py`, 32/32 checks PASS (verificado en vivo
+2026-07-21). **Único punto del plan que NO se hizo tal como se diseñó: el
+punto 8** — la pregunta "Súbeme 2 a 4 escritos tuyos" (carga de escritos como paso del
+wizard) **no existe** en `frontend/app/onboarding/page.tsx`; el onboarding sigue siendo
+puramente de preguntas. La riqueza de estilo se dejó completamente a `## aprendido`
+en vez de a una carga inicial de escritos.
 
 ---
 
 ## 1 · Diagnóstico
+
+**Este diagnóstico describe el estado del código el 2026-07-20, ANTES del arreglo.
+Sigue siendo útil como historia del defecto, pero desde `c980704` el bug de §1 y los
+Defectos A/B de abajo YA NO EXISTEN — ver el estado real en el encabezado y en §4.**
 
 ### No es un bug de generación: es un fallo silencioso de validación
 
@@ -146,17 +160,21 @@ Todo agnóstico de jurisdicción: sin país, sin rama, sin tipo de cliente preca
 
 ---
 
-## 4 · Plan de implementación
+## 4 · Plan de implementación — estado real (verificado 2026-07-21)
 
-| # | Archivo | Qué | Riesgo |
+Todo el plan se ejecutó en el commit `c980704` ("feat(perfil): el perfil del despacho
+pregunta criterio, no datos censales"), salvo el punto 3b señalado abajo.
+
+| # | Archivo | Qué | Estado |
 |---|---|---|---|
-| 1 | `backend/mia/api/routes/ux.py` (~1597) | **El arreglo del bug**: validar llaves contra el set de campos conocidos + llamar `validate_soul`; 422 ruidoso nombrando las llaves desconocidas | Bajo-medio — puede romper scripts que hoy mandan basura en silencio. Es justamente el punto |
-| 2 | `backend/mia/onboarding/soul_interview.py` | `QUESTIONS` nuevas; secciones `autonomia`/`nunca`/`terminado`/`aprendido` en `build_soul` y `build_summary` | Medio — no tocar el render legacy; `build_soul` ya omite lo vacío, así que los perfiles viejos degradan limpio |
-| 3 | `frontend/app/onboarding/page.tsx` | ids, `TAG_IDS`/`TEXT_IDS`, `REQUIRED_IDS`, `BLOCK_LABEL`, paso de carga de escritos | Medio-alto — el paso de carga es UI nueva |
-| 4 | `frontend/app/_components/MiDespachoSection.tsx` | Espejo de los campos nuevos para poder editarlos después | Bajo — pero si se olvida, las dos pantallas se contradicen |
-| 5 | `execution/test_e2e.py` | El gate afirma conteos y secciones viejas; **se romperá** | Bajo — ruptura esperada |
-| 6 | `architecture/soul_interview.md` | Doc obsoleto: dice 19 preguntas y generación por LLM | Ninguno |
-| 7 | Escritura de `## aprendido` desde el trabajo real | Vía `update_soul`, ya existente | Medio — única pieza verdaderamente nueva; hacerla al final y aparte |
+| 1 | `backend/mia/api/routes/ux.py` (`_known_fields_only` en ~610, endpoint en ~1627) | Validar llaves contra el set de campos conocidos + llamar `validate_soul`; 422 nombrando las llaves desconocidas | **Hecho** |
+| 2 | `backend/mia/onboarding/soul_interview.py` | `QUESTIONS` nuevas (`p1,p2,p6,p20,p21,p22`); secciones `autonomia`/`nunca`/`terminado`/`aprendido` en `build_soul` (~325) y `build_summary` (~402) | **Hecho** |
+| 3a | `frontend/app/onboarding/page.tsx` | ids, `TAG_IDS`/`TEXT_IDS`, `REQUIRED_IDS`, `BLOCK_LABEL` | **Hecho** |
+| 3b | `frontend/app/onboarding/page.tsx` | Paso de carga de escritos (pregunta 8 del diseño, "Súbeme 2 a 4 escritos") | **NO hecho** — no existe ese paso; se decidió no implementarlo y dejar la riqueza de estilo enteramente a `## aprendido` |
+| 4 | `frontend/app/_components/MiDespachoSection.tsx` | Espejo de los campos nuevos para poder editarlos después | **Hecho** |
+| 5 | `execution/test_e2e.py` | Gate actualizado: `QUESTIONS` = 6, ids removidos listados explícitamente (línea ~257-262) | **Hecho** |
+| 6 | `architecture/soul_interview.md` | Reescrito: documenta el diseño de 6 preguntas + generación determinista sin LLM | **Hecho** |
+| 7 | Escritura de `## aprendido` desde el trabajo real | Vía `update_soul` | **Hecho** — `execution/test_aprendido.py`, 32/32 PASS |
 
-**Orden:** 1 primero y solo (cierra el fallo silencioso sin tocar el diseño). Luego 2→3→4→5 como bloque.
-6 al cerrar. 7 como incremento separado.
+**Pendiente real:** si Pipe todavía quiere el punto 8 original (carga de escritos como
+fuente de estilo en vez de solo `## aprendido`), es trabajo nuevo, no una corrección.

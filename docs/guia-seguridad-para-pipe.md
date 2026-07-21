@@ -27,10 +27,11 @@ Piensa en Mia como un edificio de oficinas con tres pisos:
 
 **Dato clave que debes tener claro con cualquier técnico:** hoy Mia NO usa
 Vercel ni Supabase. Esos son servicios de internet (Vercel aloja pantallas,
-Supabase aloja bases de datos). Todo Mia vive en tu laptop ("Modo B"). El día
-que se despliegue a internet para clientes ("Modo A"), ahí sí entrarían
-servicios de ese tipo — y este documento tiene una sección para ese momento
-(sección 7).
+Supabase aloja bases de datos). Todo Mia vive en tu laptop ("Modo B"). "Modo
+A" (despliegue a internet para clientes, con Docker) es solo una idea para el
+futuro — hoy NO existe, no hay una sola pieza construida (ni Dockerfile ni
+nada parecido). El día que se decida construirlo, ahí sí entrarían servicios
+de ese tipo — y este documento tiene una sección para ese momento (sección 7).
 
 ### Las tres llaves del edificio
 
@@ -126,11 +127,12 @@ límites de tamaño de archivos aplicados ANTES de cargarlos a memoria.
    robado sirve hasta 7 días.
 5. **Cifrar la clave de Pinecone guardada en la base de datos** (hoy está en
    texto plano, protegida solo por el aislamiento por despacho).
-6. **Antes de tener varios despachos en un mismo servidor (Modo A):** hay una
-   lista técnica ya escrita (aislar los asistentes externos, separar quién
-   puede escribir el corpus jurídico, apagar el instalador de Obsidian, un
-   canal de Telegram por despacho). Está en la sección 3 del documento
-   técnico — entrégasela tal cual al ingeniero.
+6. **Si algún día se construye un despliegue con varios despachos en un mismo
+   servidor ("Modo A", hoy inexistente):** hay una lista técnica ya escrita
+   (aislar los asistentes externos, separar quién puede escribir el corpus
+   jurídico, apagar el instalador de Obsidian, un canal de Telegram por
+   despacho). Está en la sección 3 del documento técnico — entrégasela tal
+   cual al ingeniero cuando llegue ese momento.
 
 ---
 
@@ -194,7 +196,7 @@ límites de tamaño de archivos aplicados ANTES de cargarlos a memoria.
 | Mensual | Revisar dependencias con huecos conocidos (`pip-audit`, `npm audit`) y actualizar | Técnico |
 | Mensual | Revisar accesos: ¿quién tiene cuenta? ¿sobra alguien? | Tú |
 | Trimestral | Rotar claves de API (LLM, Voyage, Telegram, etc.) | Técnico contigo |
-| Antes de cada hito (primer cliente, internet, Modo A) | Auditoría externa + pentest | Experto externo |
+| Antes de cada hito (primer cliente, salida a internet, o si algún día se construye Modo A) | Auditoría externa + pentest | Experto externo |
 | Siempre | Correr la regresión completa y `test_rls.py` tras CUALQUIER cambio | Quien cambie código |
 
 Y tu parte personal, que ningún técnico puede hacer por ti: contraseña larga y

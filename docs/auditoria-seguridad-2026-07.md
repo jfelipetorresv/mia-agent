@@ -50,9 +50,10 @@ recomendaciones de la sección 4.
    email) / 15 min → 429 (frena el barrido de emails aleatorios); 10
    registros por IP / hora → 429. Las claves vencidas se eliminan (prune
    por clave + barrido oportunista cada ~256 registros): sin fuga de memoria.
-   *Límites conocidos:* (a) es por proceso; en Modo A con varios workers
-   migrar a contador compartido (Postgres/Redis); (b) detrás de un reverse
-   proxy la IP vista es la del proxy — antes de Modo A hay que leer
+   *Límites conocidos:* (a) es por proceso; en un despliegue futuro con
+   varios workers (hoy no existe — "Modo A" es solo una posibilidad, sin
+   Dockerfile en el repo) migrar a contador compartido (Postgres/Redis);
+   (b) detrás de un reverse proxy la IP vista es la del proxy — antes de eso hay que leer
    X-Forwarded-For desde un proxy confiable o el límite frenaría a todos los
    usuarios a la vez; (c) el registro del fallo ocurre tras el await de
    DB/bcrypt: una ráfaga concurrente puede colar unos intentos extra antes
@@ -127,6 +128,9 @@ y re-verificadas en esta misma pasada.
 5. **Backups cifrados y probados** de PostgreSQL: hoy no hay rutina definida.
 
 ### Antes de multi-tenant real / Modo A (MEDIA — ya anotadas en bugs-and-risks.md)
+*Nota: "Modo A" (Docker + WSL2) es una posibilidad futura, no una capacidad
+existente — no hay Dockerfile ni docker-compose en el repo. Fuera de alcance
+de v1. Los ítems siguientes son gates a resolver SI algún día se construye.*
 6. Subprocesos del Agent Hub fuera del alcance de RLS (Riesgo #10) — sandbox por tenant.
 7. Corpus SAT-Graph escribible por el mismo rol `mia_app` (Riesgo #13) — rol curador aparte.
 8. Cron de Obsidian enumera tenants con conexión superusuario (Riesgo #15) — SECURITY DEFINER dedicada.

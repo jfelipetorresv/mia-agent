@@ -1,12 +1,16 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-07-20 (sesión 50)
+# Última actualización: 2026-07-21 (sincronización de documentación — #75 y #79 cerrados con evidencia
+# reejecutada; #76 y #78 verificados que SIGUEN abiertos, no se tocan)
 
 ## Actualización 2026-07-20 — Sesión 50 (lectura del expediente · guardián de citas · jurisdicción · perfil · selector)
 
 **Cerrados y VERIFICADOS hoy:** migraciones 044/045/046 fuera del ledger · las dos suites de carpetas en
 rojo desde hacía sesiones · la ausencia total de cobertura de "carpeta vinculada a un proyecto" · el
 recorte por presupuesto que partía por mitades ciegas. **Nuevos: #75-#80.**
+**Actualización 2026-07-21:** #75 y #79 se CERRARON el mismo 2026-07-20 (`2ecbbeb` y `753d798`, ambos
+posteriores a esta entrada) pero el archivo no lo reflejaba — corregido con evidencia reejecutada en cada
+entrada. #76, #77, #78 y #80 siguen abiertos: no tienen commit de cierre ni gate que los cubra.
 
 ### 🟢 Riesgo — Migraciones 044, 045 y 046 ausentes del ledger; la 044 nunca había corrido (CERRADO 2026-07-20)
 `/health` reportaba **41 de 44**. La 045 y la 046 se habían aplicado a mano en la sesión anterior sorteando
@@ -39,20 +43,27 @@ solo miraba el techo ("no desbordar") y era **estructuralmente incapaz** de ver 
 mitad; el check nuevo de **utilización** es el único que atrapa dos de las seis mutaciones.
 **Regla que queda:** toda restricción con un máximo debe preguntarse si también necesita un mínimo.
 
-### 🔴 Riesgo #75 — El guardián de citas detectó 1 de 5 en la prueba en vivo y no cubre formas abreviadas
+### 🟢 Riesgo #75 — El guardián de citas detectó 1 de 5 en la prueba en vivo y no cubre formas abreviadas (CERRADO 2026-07-20, `2ecbbeb`)
 En la primera prueba contra un modelo real, de las cinco citas que salieron marcadas **el guardián
 determinista solo detectó una**: las otras cuatro las marcó el modelo **obedeciendo la instrucción del
 prompt** — que es exactamente aquello de lo que el guardián existe para no depender. El resultado fue
 correcto, pero **por la razón equivocada**. **Causa conocida:** hoy es un escáner de patrones sobre el
 texto final y no cubre las formas abreviadas (`arts. N y ss.`, siglas de código).
-**Por qué importa:** una instrucción de prompt es una sugerencia al modelo, no un control; el día que el
-modelo no obedezca, no habrá red.
-**Acción, en dos planos.** (a) Inmediato: ampliar los patrones — las formas `arts. N y ss.` son
-transversales al Civil Law hispano y van **en el código**; **las siglas concretas de cada código van en el
-pack de jurisdicción, nunca en el código** (regla dura de agnosticismo). (b) De fondo, y es la pregunta
-mejor: **si el guardián debería operar sobre lo que el modelo AFIRMA en vez de sobre lo que ESCRIBE** —
-exigiendo que toda cita venga acompañada de su ancla al material sellado, en vez de buscarla a posteriori
-con expresiones regulares.
+**Por qué importaba:** una instrucción de prompt es una sugerencia al modelo, no un control; el día que el
+modelo no obedeciera, no habría red.
+**Lo que se construyó (`2ecbbeb`, "feat(guardian): una cita solo queda respaldada con su ancla al
+expediente, y las abreviadas ya no pasan de largo"):** (1) el guardián ahora detecta las formas abreviadas
+transversales del Civil Law — `art./arts. N`, rangos, `y ss./y siguientes`, `inciso/numeral/parágrafo N
+del artículo M` — exigiendo siempre cuerpo normativo o sigla para no marcar prosa corriente; (2) las siglas
+de códigos son **dato del pack** (`citation_style.json` campo `code_abbreviations`, poblado en `co`), nunca
+código común — cumple el agnosticismo de jurisdicción; (3) **se invirtió la carga de la prueba**: el
+respaldo por expediente ahora exige un ancla `[doc n]` cercana Y que ESE documento contenga la cita
+respetando fronteras numéricas — una cita sin ancla queda `[VERIFICAR]` aunque algo parecido viva en otro
+documento (responde exactamente a la pregunta de fondo que este riesgo dejaba abierta: el guardián ya
+opera sobre lo que el modelo ANCLA, no solo sobre lo que ESCRIBE).
+**Verificado en vivo (2026-07-21):** `execution/test_doc_citation_guard.py` — **53/53 checks PASS**
+(subió de 38 a 53 checks, cada uno demostrado en rojo por mutación en la verificación adversarial de
+`2ecbbeb`).
 
 ### 🔴 Riesgo #76 — Ningún gate corre contra un modelo real (LA BRECHA DE FONDO)
 **La señalaron todos los verificadores de la sesión, en todos los frentes.** Todo el banco de pruebas corre
@@ -86,18 +97,27 @@ día del cliente. **Corolario que ya está aplicado:** una instrucción de promp
 determinista es irrenunciable. **Acción:** entra en el banco de casos del #76 con repeticiones, no con un
 intento — un solo pase en verde no dice nada sobre un fenómeno intermitente.
 
-### 🟡 Riesgo #79 — Cuatro puntos señalados por verificadores y no cerrados hoy
-Ninguno es bloqueante; se dejan anotados para que no se pierdan.
-1. **Comentario obsoleto en `backend/mia/agents/warroom.py:78-81`**: afirma que el recorte parte por la
-   mitad, que **ya no es cierto** tras `3063df5`. Un comentario que miente sobre el mecanismo es una trampa
-   para el siguiente que lo lea.
-2. **Margen cero del estimador de tokens de la Sala de estrategia**: el presupuesto nuevo se calcula al
-   filo, sin holgura para el error del propio estimador (que es heurístico — Riesgo #5).
+### 🟢 Riesgo #79 — Cuatro puntos señalados por verificadores y no cerrados hoy (CERRADO 2026-07-20, `753d798`)
+Ninguno era bloqueante; quedaron anotados para que no se perdieran. Los cuatro se resolvieron en
+`753d798` ("fix(sala+frontend+tests): margen para el estimador, piso del recorte medido por fin, y tres
+detalles que mentían"):
+1. **Comentario obsoleto en `backend/mia/agents/warroom.py:78-81`**: afirmaba que el recorte parte por la
+   mitad, que ya no era cierto tras `3063df5`. **Corregido**: el comentario (`warroom.py:73-81` hoy) describe
+   lo que `shrink_documents` realmente hace y remite a su docstring en `context_recovery.py`.
+2. **Margen cero del estimador de tokens de la Sala de estrategia**: el presupuesto se calculaba al filo,
+   sin holgura para el error del propio estimador (heurístico — Riesgo #5). **Corregido**: margen explícito
+   `_ESTIMATOR_SAFETY_MARGIN=0.15` en `fit_documents`/`fit_turns` (`context_recovery.py`), custodiado por
+   mutación.
 3. **`init_durable_jobs` aplicado dentro de un bloque de aserciones** en `test_matter_folders_multi.py`:
-   una precondición del entorno metida donde va una comprobación; si el bloque cambia, la preparación
-   desaparece en silencio.
-4. **Fragmentación del reparto**: los trozos quedan en ~50 tokens y **nadie ha medido si un trozo de ese
-   tamaño sostiene una cita**. Es la pregunta de calidad que el cambio de recorte deja abierta.
+   una precondición del entorno metida donde va una comprobación; si el bloque cambiaba, la preparación
+   desaparecía en silencio. **Corregido**: envuelto en try/except con un `check(...)` de fallo legible
+   (`test_matter_folders_multi.py:279-284`).
+4. **Fragmentación del reparto**: los trozos quedaban en ~50 tokens y nadie había medido si un trozo de ese
+   tamaño sostiene una cita. **Corregido**: `MIN_DOC_TOKENS` subió a 90 (piso citable, deliberadamente
+   desacoplado del piso de admisión), calibrado contra una cita jurisprudencial real medida (ficha + ratio
+   decidendi, 89 tokens) para que ya no se corte a mitad del argumento.
+**Verificado en vivo (2026-07-21):** `execution/test_warroom.py` — **84/84 checks PASS**, incluyendo los dos
+checks nuevos "MENOR 5" que ejercitan explícitamente el punto 4.
 
 ### 🟡 Riesgo #80 — Puertas de calidad que están verdes y no prueban nada (mitigado con meta-gate, no cerrado)
 **Tres en una sola semana**, y una de ellas rota **tres días sin que constara**:

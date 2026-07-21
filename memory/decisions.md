@@ -31,7 +31,10 @@ de infraestructura sin justificación para la escala actual.
 ## 5 · 2026-06-01 — Windows como plataforma de desarrollo principal
 **Decisión:** desarrollo en Windows, Modo B (nativo).
 **Razonamiento:** la laptop del fundador necesita acceso libre a Obsidian y
-documentos. Modo A (Docker + WSL2) queda reservado para producción.
+documentos. Modo A (Docker + WSL2) quedó reservado para producción.
+**Estado (2026-07):** Modo A nunca se implementó — 0 Dockerfile/docker-compose
+en el repo. Queda fuera de alcance de v1; se conserva esta decisión histórica
+como registro, no como capacidad disponible.
 
 ## 6 · 2026-06-01 — Core propio (no fork de Hermes)
 **Decisión:** core propio adoptando patrones MIT de Hermes.

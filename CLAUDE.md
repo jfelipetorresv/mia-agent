@@ -48,8 +48,11 @@ Dos memorias separadas:
 - Frontend: Next.js 14 App Router · TypeScript · SSE streaming
 - Knowledge Stores: pgvector (siempre) · Obsidian vault (opcional)
   · Pinecone (opcional)
-- Despliegue: procesos nativos Windows (Modo B). Docker Compose
-  disponible para producción/clientes (Modo A).
+- Despliegue: procesos nativos Windows (Modo B). "Modo A" (Docker +
+  WSL2, producción/clientes) es solo una posibilidad futura fuera
+  de alcance de v1: no existe ni un Dockerfile ni un docker-compose
+  en el repo (verificado). No vender ni documentar Modo A como
+  capacidad disponible.
 - Arranque Modo B: 3 terminales PowerShell (litellm / uvicorn /
   npm run dev)
 - Archivos clave:
@@ -78,7 +81,9 @@ Dos memorias separadas:
   sin justificación para la escala actual.
 - 2026-06-01 — Windows como plataforma de desarrollo principal.
   Modo B (nativo) para laptop del fundador con acceso libre a
-  Obsidian y documentos. Modo A (Docker + WSL2) para producción.
+  Obsidian y documentos. Modo A (Docker + WSL2) para producción se
+  decidió en su momento pero NUNCA se implementó (0 Dockerfile/
+  docker-compose en el repo); queda fuera de alcance de v1.
 - 2026-06-01 — Core propio (no fork de Hermes) adoptando patrones
   MIT. Hermes es referencia de código, no dependencia.
 - 2026-06-01 — call_llm(task="compression") está BLOQUEADA a la

@@ -63,11 +63,12 @@ los chunks, el problema es del cliente.
 
 ## 5. Base de datos
 
-- El clúster portable va en el **puerto 55432**, no en el 5432 del sistema.
-- **Landmine de `scripts/setup_db.ps1`**: su chequeo previo de pgvector apunta al PostgreSQL
-  del sistema (`C:\Program Files\PostgreSQL\16\bin\psql.exe`, puerto 5432), no al portable, y
-  aborta con `exit 1` **antes** de migrar. Pendiente de arreglar: debe leer `PG_PORT` del
-  `.env`. Mientras tanto, aplica las migraciones directo al 55432.
+- El clúster portable va en el **puerto 55432**, no en el 5432 del sistema (confirmado vivo).
+- **`scripts/setup_db.ps1` ya lee la base del `.env`** (`PG_HOST`/`PG_PORT`/`PG_DB`, líneas
+  12-34 del script) en vez de asumir el PostgreSQL del sistema en el 5432 — arreglado en el
+  commit `fdad1f1`. Antes de ese commit el chequeo previo de pgvector apuntaba con ruta fija al
+  PostgreSQL del sistema y abortaba con `exit 1` aunque la base portable sí tuviera pgvector
+  (falsa alarma reproducida 2026-07-19); ya no es el caso.
 - **Consulta el esquema real antes de escribir SQL exploratorio.** `matters` tiene `title`, no
   `name` (`psycopg.errors.UndefinedColumn` costó una iteración). Descubre columnas vía
   `information_schema`.
