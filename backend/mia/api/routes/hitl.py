@@ -77,6 +77,25 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
                     task = asyncio.create_task(_wiki_update())
                     _BACKGROUND_TASKS.add(task)
                     task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+                    # La sección «lo que he ido aprendiendo de tu trabajo» del perfil se
+                    # enriquece sola: de este borrador aprobado Mia infiere 0..N patrones de
+                    # metodología del despacho y los deposita en el perfil. También en segundo
+                    # plano y fail-soft absoluto — `learn_from_approved_draft` nunca lanza, pero
+                    # se envuelve igual: NINGÚN fallo aquí puede rozar la aprobación, que ya
+                    # quedó cerrada arriba. Solo si hubo un borrador que mostrar.
+                    if final_draft:
+                        async def _aprender(tid: str = tenant_id, mid: str = matter_id,
+                                            texto: str = final_draft) -> None:
+                            try:
+                                from ...memory.aprendido import learn_from_approved_draft
+                                await learn_from_approved_draft(tid, texto)
+                            except Exception:
+                                logger.exception("aprendido update falló (tenant=%s matter=%s)",
+                                                 tid, mid)
+                        task_ap = asyncio.create_task(_aprender())
+                        _BACKGROUND_TASKS.add(task_ap)
+                        task_ap.add_done_callback(_BACKGROUND_TASKS.discard)
                 yield sse("done", "Listo.", draft=final_draft, status=command.get("decision"))
         except HTTPException:
             raise
