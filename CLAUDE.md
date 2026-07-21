@@ -30,8 +30,13 @@ Dos memorias separadas:
   su metodología. Mia lo resuelve.
 - Terminado se ve como: un agente que un abogado sin background
   técnico puede abrir, subir un expediente, hacer una pregunta, y
-  recibir un diagnóstico jurídico verificado + borrador para aprobar
-  — en 10 minutos. Comercializable a otros despachos del Civil Law.
+  recibir un diagnóstico jurídico verificado (sin una sola afirmación
+  sin respaldo) + un borrador de calidad para aprobar. El tiempo del
+  recorrido se MIDE y se reporta (p50/p95); no es una promesa fija —
+  decisión de Pipe 2026-07-21: "no tienen que ser 10 minutos. puede
+  ser más si el resultado es brutal y de calidad". Lo que aprueba o
+  reprueba es el respaldo de las afirmaciones, nunca el reloj.
+  Comercializable a otros despachos del Civil Law.
 - Fuera de alcance (v1): módulo de billing SaaS, segundo paquete de
   jurisdicción, voz nativa, app móvil, integración con sistemas de
   gestión de expedientes externos.

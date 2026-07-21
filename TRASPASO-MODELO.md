@@ -32,7 +32,11 @@ persistente de Claude Code + `git log` + `memory/progress.md`, en ese orden.
 - **Qué es Mia:** un agente legal cognitivo que aprende la metodología de CADA despacho,
   comercializable a firmas de CUALQUIER jurisdicción. "Terminado" = un abogado sin
   background técnico abre Mia, sube un expediente, pregunta, y recibe diagnóstico
-  verificado + borrador para aprobar en 10 minutos.
+  verificado (sin afirmaciones sin respaldo) + un borrador de calidad para aprobar. El
+  tiempo se MIDE y se reporta (p50/p95); no es una puerta de aprobación — decisión de
+  Pipe 2026-07-21: "no tienen que ser 10 minutos. puede ser más si el resultado es
+  brutal y de calidad". El respaldo de citas sigue siendo el único criterio que aprueba
+  o reprueba.
 - **Agnóstica de jurisdicción (REGLA DURA — para los tres agentes: Claude, Codex,
   Antigravity):** Mia NO es colombiana ni de ninguna jurisdicción fija. Se adapta a la
   persona/firma que la instala y a cómo quiera operarla: un despacho en México la adapta a

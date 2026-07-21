@@ -50,7 +50,13 @@
     la alternativa rápida para localizar archivos por convención.
 15. **Los procesos zombis de `statusline.js` (Node) saturan la máquina.** Ante "todo va lento",
     contar procesos primero, no asumir que el síntoma visible es la causa. Matar solo los
-    `statusline.js`, no todo `node`.
+    `statusline.js`, no todo `node`. **Causa raíz encontrada y cerrada en F0**: el script leía
+    stdin con `readFileSync(0)` (bloqueante) y con `refreshInterval: 1` generaba un proceso
+    colgado por segundo. Arreglado con lectura asíncrona + vigilante `process.exit` a 1,5 s (de
+    2566 procesos node a 46, cero zombis). **Regla ampliada**: un fallo que parece de red/proveedor
+    (`ALL_PROVIDERS_EXHAUSTED`, tareas de fondo "killed" sin una línea de salida) puede ser el
+    entorno saboteando el trabajo, no un bug de producto — contar `node.exe` ANTES de diagnosticar
+    el código propio.
 16. **Los servicios de desarrollo lanzados desde una sesión de agente mueren al terminar el
     comando** (el sandbox se lleva el árbol de procesos) — salvo que se lancen con
     `run_in_background` del harness, que sí sobrevive la sesión. Para que el usuario final los
@@ -101,3 +107,48 @@
     versión global que cubra el repo sin restricción de directorio.** Duplicar lógica de seguridad
     en dos sitios es peor que tenerla en uno: diverge con el tiempo y nadie sabe cuál manda.
 32. **Tres intentos iguales de la misma vía = cambiar de estrategia**, no repetir una cuarta vez.
+
+## Guardián de gasto hermético y frente crítico (F0)
+
+33. **Un guardián de gasto/seguridad no se cierra enumerando rutas de gasto una por una — no
+    converge.** Construir un registro HERMÉTICO donde cada ruta esté GOBERNADA, DESACTIVADA o
+    DECLARADA, y una entrada sin clasificar impide que la corrida arranque. Implementado:
+    `SPEND_ROUTES` + `ensure_installed()` en `backend/mia/eval/spend_guard.py`; barrera:
+    `execution/test_eval_harness.py`.
+34. **Todo tope compuesto por varias fuentes se mide POR FUENTE, nunca solo el agregado.** Sumar
+    esconde la fuente rota bajo la que sí funciona — ocurrió con modelo+embeddings: el agregado
+    daba verde con la cota de embeddings rota. Medir y reportar cada fuente por separado.
+35. **La excepción de un guardián crítico hereda de `BaseException`, nunca de `Exception`**, y el
+    módulo se audita para que ninguna excepción propia se desvíe de esa regla. Un `except
+    Exception` genérico en cualquier otro punto del codebase (p. ej. los 19 de `graph.py`) puede
+    tragarse la señal del guardián en silencio — pasó DOS VECES por dos puertas distintas antes de
+    blindarse. Implementado: `SpendGuardHalt(BaseException)` + `guard_exception_audit()` en
+    `backend/mia/eval/spend_guard.py`.
+36. **Exit code 0 no es prueba de que una corrida terminó bien** — puede ser una corrida FRENADA
+    que una puerta de manejo de errores reporta como éxito. Verificar el motivo explícito además
+    del código de salida, y probarlo con una mutación que fuerce el corte a mitad de corrida.
+37. **Reservar presupuesto en el punto más cercano a "esto va a cobrar" (por intento cobrable), no
+    en la capa que orquesta reintentos o saltos de alias.** Una reserva a nivel de `call_llm` deja
+    sin cubrir los reintentos y los saltos de alias dentro de la misma llamada lógica.
+38. **Al fijar el scope de un contador de gasto (de "no cuenta nada" a "cuenta de verdad"),
+    auditar TODOS sus consumidores, no solo el que motivó el cambio.** El cómputo de sesión y el
+    cómputo MENSUAL son consumidores distintos del mismo contador — arreglar uno y no el otro deja
+    el gasto de pruebas filtrando al presupuesto real del despacho, y ese filtrado puede bloquear
+    el turno real de un abogado.
+39. **En el frente crítico de cada fase (dinero o seguridad), exigir dos verificadores de
+    proveedor DISTINTO**, uno que audite con rigor y otro que ejecute sondas propias contra el
+    código real. Un solo verificador, por bueno que sea, puede aprobar un estado que el segundo
+    tumba reproduciendo el defecto en vivo — pasó en la ronda 3 de F0.
+40. **Al arbitrar entre un verificador que razona y uno que ejecuta, descontar las cifras
+    cuantitativas del que solo razona bajo presión (tiende a exagerar magnitudes) pero tomarse en
+    serio cada defecto ESTRUCTURAL que señale**, sobre todo si lo reproduce ejecutando una sonda en
+    vez de estimarlo.
+41. **Preguntar al verificador algo práctico y concreto** ("¿autorizarías gastar esto sabiendo que
+    es dinero real de una persona?") **en vez de pedir un veredicto abstracto** APROBADO/RECHAZADO
+    — produce mejores respuestas porque ancla el juicio en la consecuencia real.
+42. **Commitear lo ya aprobado sin esperar a que termine el frente que sigue en disputa** —
+    asegura progreso; los commits baratos no dependen del que está en su ronda de verificación.
+43. **Ninguna suite de prueba escribe su gasto/telemetría al libro de saldos REAL del despacho.**
+    Usar siempre un tenant/sesión marcado por convención como desechable (nunca un ID que pueda
+    colisionar con namespace de producción); verificar con grep antes de correr una suite que gasta
+    dinero real.
