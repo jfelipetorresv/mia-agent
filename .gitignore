@@ -15,8 +15,12 @@ __pycache__/
 *.egg-info/
 mia_backend.egg-info/
 
-# Herramientas locales de desarrollo (no del producto)
-.claude/
+# Herramientas locales de desarrollo (no del producto) — EXCEPTO settings.json
+# (hooks damage-control a nivel de proyecto: SI se versiona, para que un clon
+# limpio lo tenga). ".claude/*" en vez de ".claude/" para que git no deje de
+# descender al directorio y la excepción de abajo pueda aplicar.
+.claude/*
+!.claude/settings.json
 frontend/.playwright-cli/
 .playwright-cli/
 
