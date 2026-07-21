@@ -31,7 +31,7 @@ gastar contra el modelo). Nada se ha gastado aún de forma seria.
 sabe reprobar — 50 mutaciones plantadas + holdout intocable con manifiesto de hashes).
 
 Frentes **A (dinero) y C (panel): ronda 1 rechazada, ronda 2 aplicada pero SIN VERIFICAR.** Las correcciones
-de la ronda 2 están en el commit **WIP `<pendiente>` (marcado, local, sin push)** — hay que RE-VERIFICARLAS
+de la ronda 2 están en el commit **WIP `f284bcf` (marcado, local, sin push)** — hay que RE-VERIFICARLAS
 con un pase adversarial fresco + Codex xhigh ANTES de darlas por buenas. Los reportes de corrección de esa
 ronda están guardados en el scratchpad de la sesión:
 `…/scratchpad/f1prep_ronda2_fixes.json` (por si el scratchpad no sobrevive, el resumen está abajo).
