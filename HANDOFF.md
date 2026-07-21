@@ -1,5 +1,12 @@
 # HANDOFF — Mia (traspaso a Cursor)
 
+> **PLAN MAESTRO VIGENTE (aprobado por Pipe 2026-07-21):**
+> `C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md` — "Dejar MIA funcionando
+> en los términos de la visión". Fases F0→F6 + 2 sesiones de Pipe; dynamic workflows con matriz
+> Opus/Sonnet/Haiku/Codex; refutado por Codex en xhigh. El prompt de arranque está en su sección
+> «Arranque en una terminal nueva». Toda sesión de implementación empieza leyendo ese plan + la
+> entrada más reciente de este archivo.
+
 ---
 
 # CIERRE — 2026-07-20 (sesión Fable) · Los 5 frentes del encargo, implementados y verificados
