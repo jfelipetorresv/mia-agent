@@ -24,6 +24,7 @@ except Exception:
     pass
 
 from mia.agents import verification  # noqa: E402
+from mia.jurisdiction.pack import load_pack  # noqa: E402
 
 MARK = verification.VERIFY_MARK
 
@@ -143,6 +144,8 @@ def run() -> None:
           MARK not in txt19 and rep19["fantasmas"] == 0)
 
     run_frontera_identificadores()
+    run_abreviadas_y_siglas()
+    run_ancla_fuente_de_verdad()
 
 
 # ── Frontera de identificadores: el respaldo NO puede truncar un número ────────
@@ -293,6 +296,117 @@ def run_frontera_identificadores() -> None:
           and est38.get("Ley 1437 de 2011") == "respaldada"
           and rep38["respaldadas"] == 1 and rep38["anotadas"] == 2
           and anotado38.count(MARK) == 2)
+
+
+# ── Citas ABREVIADAS + SIGLAS por pack ────────────────────────────────────────
+# En la prueba en vivo el guardián detectó 1 de 5 citas: los patrones exigían la palabra
+# completa "artículo" y no veían "art./arts. N", "y ss." ni las siglas con puntos ("C.C.").
+# El código común aporta la MECÁNICA (formas abreviadas con cuerpo normativo); las siglas
+# son DATOS del pack (citation_style.json → "code_abbreviations"), que el verificador compone
+# con las formas abreviadas en runtime. Ningún nombre de código de país vive en el código.
+
+def run_abreviadas_y_siglas() -> None:
+    print("\n-- Citas abreviadas + siglas por pack (co) --")
+    ann = verification.annotate_draft
+    # Las siglas salen del PACK (dato), no de un literal del test: se prueba el cableado real.
+    siglas = load_pack("co").citation_style.get("code_abbreviations") or []
+    extra = verification.code_abbreviation_patterns(siglas)
+    check("el pack co aporta siglas de código como DATOS (no vacío)", len(siglas) >= 1)
+
+    # 39 · forma abreviada con "y ss." ligada a la sigla del pack ("C.C.").
+    _, r1 = ann("Se aplican los arts. 1516 y ss. C.C. al contrato.", extra_patterns=extra)
+    check("abreviada 'arts. 1516 y ss. C.C.' con pack co → detectada (1 cita)",
+          r1["citas"] == 1 and r1["anotadas"] == 1)
+
+    # 40 · forma abreviada con CUERPO NORMATIVO explícito (base genérica, sin pack).
+    _, r2 = ann("Ver el art. 90 de la Constitución Política.")
+    check("abreviada con cuerpo 'art. 90 de la Constitución Política' → detectada (base)",
+          r2["citas"] == 1)
+
+    # 41 · subdivisión de un artículo nombrado (inciso / parágrafo).
+    _, r3 = ann("El inciso 2 del artículo 5 lo dispone; ver también el parágrafo del artículo 90.")
+    check("subdivisión 'inciso 2 del artículo 5' / 'parágrafo del artículo 90' → detectadas (2)",
+          r3["citas"] == 2)
+
+    # 42-43 · SIGLA por pack: con el pack la sigla se reconoce; SIN el pack NO — la sigla es
+    # un dato del pack, no del código común (una sigla con puntos no es 3+ mayúsculas contiguas).
+    _, r4con = ann("Conforme al art. 5 del C.C. procede el archivo.", extra_patterns=extra)
+    _, r4sin = ann("Conforme al art. 5 del C.C. procede el archivo.")
+    check("sigla por pack 'art. 5 del C.C.': con pack co → detectada", r4con["citas"] == 1)
+    check("sigla por pack 'art. 5 del C.C.': SIN pack → NO detectada (sigla = dato del pack)",
+          r4sin["citas"] == 0)
+
+    # 44 · rango con sigla del pack ("arts. 1 a 3 C.P.C.").
+    _, r5 = ann("Los arts. 1 a 3 C.P.C. regulan el punto.", extra_patterns=extra)
+    check("rango con sigla 'arts. 1 a 3 C.P.C.' con pack co → detectada", r5["citas"] == 1)
+
+    # 45 · DISCIPLINA: 'art. 5' suelto (sin cuerpo normativo ni sigla) NO se marca — la forma
+    # abreviada conserva la misma exigencia que la completa (evita el "art." periodístico).
+    _, r6 = ann("El art. 5 zanja la cuestión sin más trámite.", extra_patterns=extra)
+    check("disciplina: 'art. 5' suelto (sin cuerpo ni sigla) → NO detectado (0 citas)",
+          r6["citas"] == 0)
+
+
+# ── El ANCLA [doc n] como fuente de verdad del respaldo por expediente ─────────
+# El respaldo por cotejo textual GLOBAL certificaba en verde una cita solo porque su texto
+# apareciera en ALGÚN documento. Se invierte la carga: una cita queda respaldada por el
+# expediente únicamente si lleva un ancla [doc n] cerca (antes o después) Y el CONTENIDO de
+# ESE documento la contiene (respetando fronteras numéricas). Sin ancla → siempre [VERIFICAR],
+# aunque el cotejo global la hallara en otra pieza. Marcar de más es inofensivo; respaldar de
+# más destruye la única razón por la que un abogado confiaría en esto.
+
+def run_ancla_fuente_de_verdad() -> None:
+    print("\n-- Ancla como fuente de verdad del respaldo por expediente --")
+    ann = verification.annotate_draft
+    doc_ley = [{"content": "El contrato invoca la Ley 1437 de 2011 en su cláusula tercera.",
+                "filename": "contrato.pdf"}]
+
+    # 46 · cita CON ancla [doc 1] a un documento cuyo contenido la respalda → respaldada.
+    a7, r7 = ann("Según el contrato [doc 1], aplica la Ley 1437 de 2011.",
+                 documents=doc_ley, num_documents=1)
+    check("cita anclada [doc 1] a doc que la contiene → respaldada, sin [VERIFICAR]",
+          r7["respaldadas"] == 1 and r7["anotadas"] == 0 and MARK not in a7)
+
+    # 47 · INVERSIÓN: la MISMA cita SIN ancla queda [VERIFICAR], aunque el documento la
+    # contenga — el cotejo global ya no basta (esta es la carga que se invierte).
+    a8, r8 = ann("Aplica la Ley 1437 de 2011 al caso, sin más.",
+                 documents=doc_ley, num_documents=1)
+    check("cita SIN ancla, aunque el doc la contenga → [VERIFICAR] (carga invertida)",
+          r8["respaldadas"] == 0 and r8["anotadas"] == 1 and MARK in a8)
+
+    # 48 · cita con ancla a un documento cuyo contenido NO la respalda → [VERIFICAR].
+    doc_otro = [{"content": "El contrato trata de arrendamiento, plazos y cánones mensuales."}]
+    a9, r9 = ann("Según el contrato [doc 1], aplica la Ley 1437 de 2011.",
+                 documents=doc_otro, num_documents=1)
+    check("cita anclada [doc 1] a doc que NO la contiene → [VERIFICAR]",
+          r9["respaldadas"] == 0 and r9["anotadas"] == 1 and MARK in a9)
+
+    # 49 · ancla ANTEPUESTA (antes de la cita) también respalda.
+    a10, r10 = ann("El [doc 1] establece que la Ley 1437 de 2011 rige la actuación.",
+                   documents=doc_ley, num_documents=1)
+    check("ancla ANTEPUESTA '[doc 1] ... Ley 1437 de 2011' → respaldada",
+          r10["respaldadas"] == 1 and MARK not in a10)
+
+    # 50 · frontera numérica CON ancla: 'Decreto 108' anclada a un doc que dice
+    # 'Decreto 1082 de 2015' NO se certifica (el peor defecto: respaldar de más).
+    doc_dec = [{"content": "El Decreto 1082 de 2015 regula la contratación estatal."}]
+    a11, r11 = ann("Según [doc 1], el Decreto 108 obliga a publicar el aviso.",
+                   documents=doc_dec, num_documents=1)
+    est11 = {d["cita"]: d["estado"] for d in r11["detalle"]}
+    check("frontera con ancla: 'Decreto 108' anclada a doc con 'Decreto 1082 de 2015' → NO respaldada",
+          r11["respaldadas"] == 0 and est11.get("Decreto 108") == "anotada" and MARK in a11)
+
+    # 51 · la cita respaldada por ancla conserva su atribución al EXPEDIENTE en el informe.
+    check("respaldo por ancla: el informe atribuye la fuente al expediente ([doc 1])",
+          r7["detalle"][0].get("fuente", {}).get("referencia") == "[doc 1]"
+          and r7["detalle"][0].get("fuente", {}).get("tipo") == "expediente")
+
+    # 52 · RETROCOMPAT: sin `documents`, el respaldo por corpus sigue funcionando sin ancla
+    # (las dos vías son independientes; no se rompió la que ya existía).
+    fuente = [{"tipo": "norma", "referencia": "Ley 1437 de 2011", "titulo": "corpus"}]
+    a12, r12 = ann("Aplica la Ley 1437 de 2011 al caso.", sources=fuente)
+    check("retrocompat: sin documents, el corpus respalda la cita sin ancla",
+          r12["respaldadas"] == 1 and MARK not in a12)
 
 
 def main() -> int:

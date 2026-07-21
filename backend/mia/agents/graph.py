@@ -1710,6 +1710,13 @@ class MatterGraphBuilder:
             verification.highest_sealed_doc_index(_last_user_message(state)),
         )
 
+        # documents = los del expediente que el modelo vio en el turno, EN ORDEN de sellado
+        # (<<<DOC n>>>, posición i → n=i+1). Habilita el respaldo por ANCLA: una cita legal
+        # solo la respalda el expediente si lleva [doc n] cerca Y ese documento la contiene
+        # (carga invertida — el cotejo global en otra pieza ya no basta). El respaldo por
+        # corpus (`sources`) sigue igual y es independiente. Marcar de más es inofensivo.
+        docs = state.get("documents") or []
+
         def _scan() -> tuple[str, dict]:
             sources = md.get("research_sources")
             if project_material and not sources:
@@ -1721,7 +1728,8 @@ class MatterGraphBuilder:
                                  "del proyecto; se marcará de más", exc_info=True)
                     sources = None
             return verification.annotate_draft(
-                text, sources=sources, extra_patterns=extra, num_documents=num_documents)
+                text, sources=sources, extra_patterns=extra,
+                num_documents=num_documents, documents=docs)
 
         annotated, report = await asyncio.to_thread(_scan)
         md["verification"] = report

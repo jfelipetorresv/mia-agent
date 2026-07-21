@@ -3,5 +3,7 @@
   "ruling": "{court}, Sentencia {decision_number} de {year}, M.P. {magistrado_ponente}",
   "citation_patterns": [
     "\\b(?:Sentencias?\\s+)?(?:C|T|SU|A)-\\d{1,4}[A-Z]?(?:\\s+de\\s+\\d{4}|/\\d{2,4})"
-  ]
+  ],
+  "code_abbreviations": ["C.C.", "C. Co.", "C.P.", "C.P.C.", "C.G.P.", "C.P.A.C.A.", "C.S.T.", "E.T."],
+  "_code_abbreviations_note": "Siglas de los códigos de este ordenamiento, como DATOS del pack. El verificador (agents/verification.code_abbreviation_patterns) las COMPONE en runtime con las formas abreviadas del artículo ('arts. 1516 y ss. C.C.') y escapa los puntos. Otro ordenamiento pone las suyas aquí; el código común no conoce ninguna. C.C.=Código Civil, C. Co.=Código de Comercio, C.P.=Código Penal, C.P.C.=Código de Procedimiento Civil, C.G.P.=Código General del Proceso, C.P.A.C.A.=Código de Procedimiento Administrativo y de lo Contencioso Administrativo, C.S.T.=Código Sustantivo del Trabajo, E.T.=Estatuto Tributario."
 }

@@ -475,6 +475,18 @@ DIAGNOSIS_CLOSING_FOOTER = "=== FIN DEL CIERRE ==="
 _WARROOM_DICTAMEN_HEADER = "=== DICTAMEN DE LA SALA ==="
 _WARROOM_DICTAMEN_FOOTER = "=== FIN DEL DICTAMEN ==="
 
+# Instrucción de ANCLAJE de citas compartida por los nodos que AFIRMAN derecho o hechos
+# (analysis, draft, edit, work). Mismo mecanismo que el nodo facts: cada cita se ancla al
+# documento del expediente que la respalda como [doc n]. La advertencia es HONESTA — quien
+# decide qué queda en firme NO es el modelo obedeciendo, sino un verificador determinista que
+# marca [VERIFICAR] toda cita sin ancla a su respaldo. Sin país ni código concreto (§ agnóstico).
+_ANCHOR_INSTRUCTION = (
+    "Ancla al expediente cada norma, providencia o dato que afirmes, citándolo como [doc n] "
+    "— cada documento llega sellado en un bloque <<<DOC n>>> y n es ese número. Un verificador "
+    "determinista marca [VERIFICAR] toda cita que no quede anclada a su respaldo; anclarla bien "
+    "es lo que evita esa marca. No inventes el número de un documento que no se te entregó."
+)
+
 # L8 · instrucción de CADA nodo del grafo — SOLO la tarea del turno: la identidad,
 # la metodología (estructura hechos/problema/fundamentos/conclusión), la regla
 # [VERIFICAR] y el tono §G ya viven en L1/L2/L3/L5 (no se duplican aquí).
@@ -519,7 +531,8 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "posición del cliente, y qué vacíos impiden una conclusión definitiva. "
         "Apóyate en el expediente como evidencia y, si aparece, en el conocimiento "
         "del despacho como orientación de método (nunca en reemplazo de la fuente "
-        "normativa). Jerarquiza los argumentos disponibles: ordénalos del más fuerte al "
+        "normativa). " + _ANCHOR_INSTRUCTION + " "
+        "Jerarquiza los argumentos disponibles: ordénalos del más fuerte al "
         "más débil, di por qué cada uno lo es, asigna a los tres o cuatro más sólidos el "
         "grueso del desarrollo del escrito y nombra los que conviene descartar. Esto es "
         "jerarquía de ARGUMENTOS, no elección de camino: el menú de opciones que sigue "
@@ -543,6 +556,7 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "Redacta el borrador del escrito jurídico a partir del diagnóstico, el perfil "
         "del despacho y los playbooks aplicables. Tono profesional del oficio. Es un "
         "borrador para que el abogado lo apruebe.\n"
+        + _ANCHOR_INSTRUCTION + "\n"
         "Si al citar una norma o providencia sospechas que pudo haber sido derogada, "
         "modificada o su exequibilidad condicionada, y no puedes confirmarlo con lo "
         "que tienes en este turno, DILO expresamente en el propio texto del escrito "
@@ -553,7 +567,8 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
     "edit": (
         "## Tarea de este turno — CORRECCIÓN\n"
         "Incorpora al borrador las indicaciones del abogado, conservando lo que no se "
-        "pidió cambiar. Devuelve el borrador corregido completo."
+        "pidió cambiar. Devuelve el borrador corregido completo.\n"
+        + _ANCHOR_INSTRUCTION
     ),
     # Bloque A (evolución de producto): "Proyecto" = espacio de trabajo libre estilo
     # Cowork, sin diagnóstico formal ni borrador con aprobación HITL — eso es de los
@@ -569,9 +584,9 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "puntual. Tono conversacional y directo, como quien trabaja codo a codo con el "
         "abogado. Si te pide un documento (un escrito, una tabla comparativa, un "
         "resumen), entrégalo COMPLETO dentro de tu respuesta — el abogado lo guardará "
-        "tal cual se lo entregues. Toda afirmación jurídica que no tenga respaldo en las "
-        "fuentes o en el conocimiento del despacho se marca [VERIFICAR]. Nunca inventes "
-        "citas, normas ni providencias."
+        "tal cual se lo entregues. " + _ANCHOR_INSTRUCTION + " Toda afirmación jurídica "
+        "que no tenga respaldo en las fuentes o en el conocimiento del despacho se marca "
+        "[VERIFICAR]. Nunca inventes citas, normas ni providencias."
     ),
     # Sala de estrategia (warroom): panel de counsel con posturas OPUESTAS que debaten el
     # asunto y un moderador que sintetiza un dictamen. La postura de cada panelista llega en

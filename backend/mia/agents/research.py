@@ -287,6 +287,11 @@ async def citation_patterns_for(tenant_id: str) -> list[str]:
             style = load_pack(code).citation_style or {}
             extra = style.get("citation_patterns") or []
             patterns.extend(str(p) for p in extra if str(p).strip())
+            # Siglas de los códigos del pack (DATOS: "C.C.", "C. Co."...). El verificador
+            # las compone con las formas abreviadas del artículo ("arts. 1516 y ss. C.C.").
+            # Escapa los puntos y liga la sigla al número — mecánica genérica, sigla del pack.
+            patterns.extend(
+                verification.code_abbreviation_patterns(style.get("code_abbreviations")))
         except Exception:  # noqa: BLE001 — un pack corrupto no tumba el turno
             continue
     return patterns

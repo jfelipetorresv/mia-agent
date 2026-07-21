@@ -29,9 +29,35 @@ VERIFY_MARK = "[VERIFICAR]"
 # Ventana hacia adelante en la que una marca existente "cubre" la cita. Cubre el
 # patrón usual del redactor: la marca va al lado o al final de la frase de la cita.
 MARK_WINDOW_CHARS = 160
+# Ventana en la que un ancla [doc n] "abraza" una cita (ANTES o DESPUÉS de ella). Es la
+# cercanía que exige el respaldo por ancla (ver annotate_draft y _anchored_doc_backing):
+# el redactor pone la referencia al documento pegada a la cita, no a tres párrafos.
+ANCHOR_WINDOW_CHARS = 200
+
+# ── Piezas compartidas por las formas del artículo (completa y abreviada) ─────
+# Cuerpo normativo que DEBE seguir a un artículo para que cuente como cita (y no el
+# "artículo" periodístico): un Código nombrado, una Ley/Decreto con número, la
+# Constitución, o una SIGLA en mayúsculas (3-10 letras contiguas, p. ej. "CPACA").
+# Léxico genérico del Civil Law hispano — ningún país, corte ni código concreto.
+_NORM_BODY = (
+    r"(?:C[oó]digo\s+[\wáéíóúñÁÉÍÓÚÑ]+(?:\s+[\wáéíóúñÁÉÍÓÚÑ]+){0,4}"
+    r"|Ley\s+\d+(?:\s+de\s+\d{4})?"
+    r"|Decreto\s+\d+(?:\s+de\s+\d{4})?"
+    r"|Constituci[oó]n(?:\s+Pol[ií]tica)?(?:\s+de\s+\d{4})?"
+    r"|[A-ZÁÉÍÓÚÑ]{3,10}\b)"
+)
+# Lista de números de artículo: "N", "N, M", "N y M", "N a M" (rango), cerrando con
+# "y ss."/"y siguientes" opcional. El separador es EXPLÍCITO (", ", " y ", " a ") y el
+# sufijo del número excluye dígitos: sin ambigüedad entre cuantificadores anidados no hay
+# backtracking exponencial (ReDoS) ante el texto de documentos de terceros.
+_ARTICLE_NUMBERS = (
+    r"\d+[A-Za-z°º]*(?:(?:\s*,\s*|\s+y\s+|\s+a\s+)\d+[A-Za-z°º]*)*"
+    r"(?:\s+y\s+s(?:s|iguientes)\.?)?"
+)
 
 # Patrones BASE (léxico jurídico genérico en español — ver docstring). Cada pack de
-# jurisdicción puede AÑADIR los suyos vía citation_style.json → "citation_patterns".
+# jurisdicción puede AÑADIR los suyos vía citation_style.json → "citation_patterns" y sus
+# siglas de código vía "code_abbreviations" (ver code_abbreviation_patterns).
 BASE_CITATION_PATTERNS: tuple[str, ...] = (
     # Normas con número: "Ley 1437 de 2011", "Decreto Ley 19 de 2012", "Resolución 123"
     r"\b(?:Ley|Decreto(?:\s+(?:Ley|Legislativo))?|Resoluci[oó]n|Acuerdo|Circular|Ordenanza)"
@@ -40,20 +66,20 @@ BASE_CITATION_PATTERNS: tuple[str, ...] = (
     r"\bSentencias?\s+(?:No\.?\s*)?[A-Z]{0,3}[-\s]?\d+[\w./-]*(?:\s+de\s+\d{4})?",
     # Autos con fecha: "Auto 123 de 2020"
     r"\bAutos?\s+(?:No\.?\s*)?\d+[\w./-]*\s+de\s+\d{4}",
-    # Artículo CON su cuerpo normativo: "artículo 164 del CPACA", "artículos 21 de la Ley 640 de 2001",
-    # "artículo 90 de la Constitución Política". El artículo suelto ("el artículo 5")
-    # NO se marca: suele referirse a la norma ya citada en la misma frase.
-    # OJO (revisión capa 2, M2): el separador de la lista de artículos es EXPLÍCITO
-    # (", " o " y ") y el sufijo del número excluye dígitos — sin ambigüedad entre
-    # cuantificadores anidados no hay backtracking exponencial (ReDoS) ante texto
-    # adversarial (el escáner corre sobre borradores que citan documentos de terceros).
-    r"\bart[ií]culos?\s+\d+[A-Za-z°º]*(?:(?:\s*,\s*|\s+y\s+)\d+[A-Za-z°º]*)*"
-    r"\s+(?:de\s+la\s+|del?\s+)"
-    r"(?:C[oó]digo\s+[\wáéíóúñÁÉÍÓÚÑ]+(?:\s+[\wáéíóúñÁÉÍÓÚÑ]+){0,4}"
-    r"|Ley\s+\d+(?:\s+de\s+\d{4})?"
-    r"|Decreto\s+\d+(?:\s+de\s+\d{4})?"
-    r"|Constituci[oó]n(?:\s+Pol[ií]tica)?(?:\s+de\s+\d{4})?"
-    r"|[A-ZÁÉÍÓÚÑ]{3,10}\b)",
+    # Artículo CON su cuerpo normativo, forma COMPLETA o ABREVIADA:
+    #   "artículo 164 del CPACA", "artículos 21 de la Ley 640 de 2001",
+    #   "art. 90 de la Constitución Política", "arts. 1 a 3 del Código Civil".
+    # El artículo suelto ("el art. 5") NO se marca: sin cuerpo normativo suele referirse a
+    # la norma ya citada en la misma frase (y evita el "artículo" periodístico). La forma
+    # abreviada ligada a una SIGLA del pack ("arts. 1516 y ss. C.C.") entra por
+    # code_abbreviation_patterns, no aquí (la sigla es dato del pack, no del código).
+    r"\b(?:art[ií]culos?|arts?\.)\s+" + _ARTICLE_NUMBERS
+    + r"\s+(?:de\s+la\s+|del?\s+)" + _NORM_BODY,
+    # Subdivisión de un artículo nombrado: "inciso 2 del artículo 5", "parágrafo del
+    # artículo 90", "numeral 3 del artículo 12". Nombrar un artículo concreto ya es una
+    # cita legal — el cuerpo normativo puede ir o no.
+    r"\b(?:inciso|numeral|par[aá]grafo|literal|ordinal)s?\s+(?:\d+[A-Za-z°º]*\s+)?"
+    r"del?\s+art[ií]culos?\s+\d+[A-Za-z°º]*",
     # Radicados / expedientes con número largo
     r"\b(?:Radicado|Radicaci[oó]n|Expediente)\s+(?:No\.?\s*)?\d[\d.\-/]{4,}",
 )
@@ -72,6 +98,36 @@ def compile_patterns(extra: Optional[list[str]] = None) -> list[re.Pattern]:
         except re.error:
             continue
     return compiled
+
+
+def code_abbreviation_patterns(abbreviations: Optional[list[str]]) -> list[str]:
+    """Regex EXTRA que ligan una forma de artículo a una SIGLA de código del pack.
+
+    Mecánica pura (código común, sin país): las siglas son DATOS del pack
+    (citation_style.json → "code_abbreviations", p. ej. "C.C.", "C. Co."). Por cada sigla
+    se compone un patrón "artículo(s)/art(s). N [y ss.] [de la|del]? SIGLA", con los puntos
+    de la sigla ESCAPADOS (así "C.C." casa literal, no "CxC") y los espacios internos
+    flexibles ("C. Co." con uno o más espacios). Una sigla vacía se ignora.
+
+    A diferencia de la forma con cuerpo normativo (que va en los patrones BASE, genérica),
+    aquí el "de la/del" es OPCIONAL: el redactor escribe "arts. 1516 y ss. C.C." pegando la
+    sigla al número. La sigla ES el cuerpo normativo, así que tampoco hay falso positivo
+    periodístico. El lookahead final impide que una sigla corta ("C.P.") muerda a otra más
+    larga que la contiene ("C.P.A.C.A.": esa la reconoce su propio patrón, entero).
+
+    Estos patrones se pasan como `extra_patterns` (mismo canal que citation_patterns del
+    pack) — el puente lo tiende agents/research.citation_patterns_for."""
+    pats: list[str] = []
+    for raw in abbreviations or []:
+        ab = str(raw).strip()
+        if not ab:
+            continue
+        sigla = r"\s*".join(re.escape(part) for part in ab.split())
+        pats.append(
+            r"\b(?:art[ií]culos?|arts?\.)\s+" + _ARTICLE_NUMBERS
+            + r"\s+(?:de\s+la\s+|del?\s+)?" + sigla + r"(?![A-Za-z.])"
+        )
+    return pats
 
 
 # Separadores que pueden ir DENTRO de un identificador ("C-355", "25.326",
@@ -364,11 +420,78 @@ def scan_citations(text: str, patterns: Optional[list[re.Pattern]] = None) -> li
     return out
 
 
+# ── Ancla como FUENTE DE VERDAD del respaldo por expediente ──────────────────
+# El respaldo por cotejo textual GLOBAL (¿aparece la cita en ALGÚN documento?) es
+# peligroso: certifica en verde una cita que el modelo puso donde no toca solo porque el
+# número exista en otra pieza. La regla se invierte: una cita queda respaldada por el
+# expediente únicamente si (i) lleva un ancla [doc n] cerca (ANTES o DESPUÉS, ventana
+# ANCHOR_WINDOW_CHARS) y (ii) el CONTENIDO de ESE documento n contiene el texto de la cita,
+# con el MISMO cotejo por piezas que el corpus (respeta fronteras numéricas: "Decreto 108"
+# no lo respalda un doc que dice "Decreto 1082"). Que otro documento la contenga NO cuenta.
+# Sin ancla → nunca respaldada por el expediente (queda para el corpus o [VERIFICAR]).
+
+
+def _document_tokens(documents: Optional[list]) -> dict[int, tuple[str, ...]]:
+    """{número_de_sello: piezas del contenido} para el cotejo por ancla.
+
+    El documento en la posición i (0-based) se sella como <<<DOC i+1>>> (ver
+    agents/untrusted.render_documents), así que su número de ancla [doc n] es i+1. Cada
+    documento puede ser un dict con "content" o el texto pelado. Un contenido vacío no
+    entra (no puede respaldar nada)."""
+    out: dict[int, tuple[str, ...]] = {}
+    for i, d in enumerate(documents or []):
+        content = d.get("content") if isinstance(d, dict) else d
+        toks = _match_tokens(str(content or ""))
+        if toks:
+            out[i + 1] = toks
+    return out
+
+
+def _document_titulo(documents: Optional[list], n: int) -> str:
+    """Rótulo compacto del documento n para la atribución del informe (filename si lo trae)."""
+    if not documents or n < 1 or n > len(documents):
+        return ""
+    d = documents[n - 1]
+    if isinstance(d, dict):
+        return str(d.get("filename") or d.get("titulo") or d.get("id") or "")
+    return ""
+
+
+def _anchored_doc_backing(
+    citation: str, cit_start: int, cit_end: int, text: str,
+    doc_tokens: dict[int, tuple[str, ...]],
+) -> Optional[int]:
+    """Número del documento anclado que RESPALDA la cita, o None.
+
+    Ancla = una referencia [doc n] dentro de la ventana ANTES o DESPUÉS de la cita. La cita
+    solo queda respaldada si el contenido de ESE documento n contiene sus piezas (cotejo
+    LOCAL al documento anclado, no global). Solo se consideran documentos de los que se
+    tiene contenido (`doc_tokens`): un ancla a un adjunto sin contenido cargado no respalda
+    (dirección segura — marca de menos jamás inventa respaldo)."""
+    if not doc_tokens:
+        return None
+    cit = _match_tokens(citation)
+    if not cit:
+        return None
+    before = text[max(0, cit_start - ANCHOR_WINDOW_CHARS):cit_start]
+    after = text[cit_end:cit_end + ANCHOR_WINDOW_CHARS]
+    nums: set[int] = set()
+    for window in (before, after):
+        for m in _DOC_REF_RE.finditer(window):
+            nums.update(int(x) for x in _INT_RE.findall(m.group(1)))
+    for n in sorted(nums):
+        toks = doc_tokens.get(n)
+        if toks and _tokens_match(cit, toks):
+            return n
+    return None
+
+
 def annotate_draft(
     draft: str,
     sources: Optional[list[dict]] = None,
     extra_patterns: Optional[list[str]] = None,
     num_documents: Optional[int] = None,
+    documents: Optional[list] = None,
 ) -> tuple[str, dict]:
     """Anota el borrador y produce el informe del especialista de verificación.
 
@@ -376,33 +499,53 @@ def annotate_draft(
     metadata del checkpoint y a la pantalla):
       {"citas": N, "marcadas": n, "respaldadas": n, "anotadas": n,
        "detalle": [{"cita", "estado", "fuente"?}...]}   estado ∈ marcada|respaldada|anotada
-    `fuente` solo aparece en las respaldadas: {"tipo", "referencia", "titulo"} — la
-    fuente compacta del corpus que dio el respaldo (Fase 1b: citas en línea).
+    `fuente` solo aparece en las respaldadas: {"tipo", "referencia", "titulo"} — la fuente
+    compacta que dio el respaldo (Fase 1b: citas en línea). El respaldo puede venir de dos
+    vías INDEPENDIENTES: el corpus curado del turno (`sources`) o el EXPEDIENTE por ancla
+    (`documents`), esta última con la carga invertida (ver abajo).
 
-    Si se pasa `num_documents` (documentos del expediente recuperados en el turno),
-    corre ADEMÁS el guardián de referencias [doc n] fantasma y añade su informe bajo
-    la clave "docs_fantasma". Sin ese parámetro el comportamiento es idéntico al de
-    antes (retrocompatible: los llamadores que solo verifican citas legales no cambian).
+    `documents` (opcional): los documentos del expediente vistos en el turno, en el mismo
+    orden en que se sellaron <<<DOC n>>> (posición i → documento n=i+1). Habilita el
+    respaldo por ANCLA: una cita solo queda respaldada por el expediente si lleva un ancla
+    [doc n] cerca (antes o después) Y el contenido de ESE documento contiene su texto. Una
+    cita SIN ancla NO se respalda por el expediente aunque el cotejo global la encontrara en
+    otra pieza — queda al corpus o a [VERIFICAR]. Sin `documents` esta vía no corre y el
+    respaldo depende solo del corpus (retrocompatible byte a byte).
 
-    Determinista y sin efectos: nunca borra texto, solo INSERTA " [VERIFICAR]" tras
-    las citas sin marca ni respaldo en el corpus (y tras las referencias a documentos
-    inexistentes cuando se conoce `num_documents`).
+    Si se pasa `num_documents` (documentos del expediente recuperados en el turno), corre
+    ADEMÁS el guardián de referencias [doc n] fantasma y añade su informe bajo la clave
+    "docs_fantasma". Sin ese parámetro el comportamiento es idéntico al de antes.
+
+    Determinista y sin efectos: nunca borra texto, solo INSERTA " [VERIFICAR]" tras las
+    citas sin marca ni respaldo (ni del corpus ni por ancla del expediente) y tras las
+    referencias a documentos inexistentes cuando se conoce `num_documents`.
     """
     text = draft or ""
     citations = scan_citations(text, compile_patterns(extra_patterns))
     index = _tokenize_index(source_index(sources))
+    doc_tokens = _document_tokens(documents)
     detalle: list[dict] = []
     marcadas = respaldadas = anotadas = 0
     inserts: list[int] = []  # posiciones (end) donde insertar la marca
 
     for c in citations:
         fuente = None
+        anchor_n: Optional[int] = None
         if c["marked"]:
             marcadas += 1
             estado = "marcada"
         elif (fuente := _backing_source_tokenized(c["citation"], index)) is not None:
             respaldadas += 1
             estado = "respaldada"
+        elif (anchor_n := _anchored_doc_backing(
+                c["citation"], c["start"], c["end"], text, doc_tokens)) is not None:
+            # Respaldo por ANCLA al expediente: la cita lleva [doc n] cerca y el documento n
+            # contiene su texto. Fuente sintética del expediente (no del corpus).
+            respaldadas += 1
+            estado = "respaldada"
+            fuente = {"tipo": "expediente",
+                      "referencia": f"[doc {anchor_n}]",
+                      "titulo": _document_titulo(documents, anchor_n)}
         else:
             anotadas += 1
             estado = "anotada"
