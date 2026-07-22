@@ -214,39 +214,15 @@ def run_calls(guard, fake, n: int, messages=None, **kwargs) -> list[BaseExceptio
 def _tmpdir_desechable(prefix: str) -> Path:
     """Directorio de trabajo DESECHABLE, en el temporal del SISTEMA (A4 · A-MAY2).
 
-    Dos reglas, y las dos se COMPRUEBAN aquí en vez de confiarse:
-
-    1. NUNCA dentro del repo, y el gate FALLA ANTES de crear nada si no puede cumplirlo.
-       `tempfile.gettempdir()` cae a `os.getcwd()` cuando TMP/TEMP/TMPDIR no están puestos o
-       apuntan a algo que no existe — y como los gates se lanzan con el cwd en la raíz del repo,
-       ahí es donde aparecían los `mia-spend-guard-*` que ensuciaban el árbol de trabajo. La
-       versión anterior se caía a `ROOT/.tmp` (DENTRO del repo): eso creaba el temporal en el
-       árbol de trabajo y hacía fallar a-71/a-72, cuyos propios asertos exigen que el trabajo
-       quede FUERA del repo — el gate quedaba en 81/83 y encima sucio. Ahora, si el temporal del
-       sistema resuelve dentro de ROOT, se LEVANTA `SystemExit` con instrucción clara ANTES de
-       crear ningún desechable: fail-closed de arranque, no ensuciar y descubrirlo después.
-    2. Se BORRA al terminar (`atexit`), pase o falle el gate. La versión anterior hacía
-       `mkdtemp` y no limpiaba nunca: un directorio nuevo por corrida, para siempre.
+    Ronda 3 (Codex): el helper se EXTRAJO a `execution/_tmp_desechable.py` para que los otros
+    gates (test_eval_harness) reutilicen la MISMA regla fail-before-create en vez de repetir
+    `mkdtemp`/`TemporaryDirectory` sin limpieza y sin la guarda de "nunca dentro del repo". Aquí
+    se conserva el nombre local y se delega. La regla: NUNCA dentro del repo (HALT antes de crear
+    nada si el temporal del sistema resuelve ahí — protegía a-71/a-72) y limpieza por `atexit`.
     """
-    import atexit
-    import shutil
-    import tempfile
+    from _tmp_desechable import tmpdir_desechable
 
-    base = Path(tempfile.gettempdir()).resolve()
-    try:
-        dentro_del_repo = base == ROOT or ROOT in base.parents or base.is_relative_to(ROOT)
-    except AttributeError:  # pragma: no cover — Python < 3.9
-        dentro_del_repo = str(base).startswith(str(ROOT))
-    if dentro_del_repo:
-        # NO se crea un temporal dentro del repo: se corta aquí, antes de escribir nada.
-        raise SystemExit(
-            f"[HALT] el temporal del SISTEMA resuelve DENTRO del repo ({base}); este gate no "
-            "puede crear su directorio desechable en el árbol de trabajo (ensuciaría el repo y "
-            "rompería a-71/a-72). Pon TMP/TEMP (o TMPDIR) apuntando a una carpeta FUERA de "
-            f"{ROOT} y vuelve a lanzar el gate.")
-    tmp = Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
-    atexit.register(lambda: shutil.rmtree(tmp, ignore_errors=True))
-    return tmp
+    return tmpdir_desechable(prefix, repo_root=ROOT)
 
 
 def main() -> None:

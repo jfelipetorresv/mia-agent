@@ -293,6 +293,45 @@ def jurisdiction_leak_persisted_checks() -> None:
           panel3["fuga_jurisdiccion"]["n_con_fuga"] == 1)
 
 
+# ── jurisdiction_leak_rate: la TASA obedece la señal PERSISTIDA (R3-COBERTURA) ─
+def jurisdiction_leak_rate_persisted_checks() -> None:
+    print("\n-- jurisdiction_leak_rate: la tasa cuenta desde la señal PERSISTIDA sobre el "
+          "texto COMPLETO, no recalcula sobre el preview (R3-COBERTURA) --")
+
+    # Hallazgo del verificador (ronda 2): `jurisdiction_leak_rate` PREFIERE la señal que
+    # `run_case` persiste sobre el borrador ENTERO, pero mutarla para que la IGNORE (recalcular
+    # sobre el preview truncado) dejaba el panel verde — la función estaba sin blindar. El panel
+    # (`build_quality_panel`) tiene su propio candado (jurisdiction_leak_persisted_checks), pero
+    # NADIE cubría la función `jurisdiction_leak_rate` directamente. Estos checks lo cierran.
+
+    # Preview LIMPIO (sin cita), señal persistida leak=True: la cita vivía más allá del preview.
+    # La TASA tiene que contarla. MUTACIÓN: en `jurisdiction_leak_rate`, ignorar
+    # `r.get("jurisdiction_leak")` y recalcular sobre el preview → n_con_fuga baja a 0 → ROJO.
+    r_persist = harness.jurisdiction_leak_rate([
+        {"matter_id": "m1", "diagnosis_preview": "texto de diagnóstico sin ninguna cita",
+         "draft_preview": "borrador de muestra completamente limpio",
+         "jurisdiction_leak": {"citas_detectadas": 2, "detalle": ["Ley 1437 de 2011"],
+                               "leak": True}},
+    ])
+    check("tasa: preview LIMPIO + señal persistida leak=True → cuenta la fuga (1/1); si la "
+          "función recalculara sobre el preview daría 0",
+          r_persist["n"] == 1 and r_persist["n_con_fuga"] == 1 and r_persist["tasa"] == 1.0)
+
+    # La inversa (blinda en el otro sentido): preview CON cita, señal persistida leak=False → la
+    # tasa NO la cuenta. Si la función mirara el preview, contaría 1 → ROJO. Prueba que manda la
+    # señal persistida, no el texto truncado.
+    r_persist_false = harness.jurisdiction_leak_rate([
+        {"matter_id": "m2",
+         "diagnosis_preview": "Con fundamento en la Ley 1437 de 2011 se resuelve.",
+         "draft_preview": "Con fundamento en el Decreto 1069 de 2015 se decide.",
+         "jurisdiction_leak": {"citas_detectadas": 0, "detalle": [], "leak": False}},
+    ])
+    check("tasa: preview CON cita + señal persistida leak=False → NO cuenta fuga (0/1); si "
+          "mirara el preview contaría 1 (manda la señal persistida)",
+          r_persist_false["n"] == 1 and r_persist_false["n_con_fuga"] == 0
+          and r_persist_false["tasa"] == 0.0)
+
+
 # ── versión del baseline (hash de prompt + modelos servidos) ──────────────────
 def version_checks() -> None:
     print("\n-- prompt_version_hash / served_models_signal: versionar el baseline (F1) --")
@@ -371,6 +410,7 @@ def main() -> int:
     precision_respaldo_checks()
     precision_clamp_checks()
     jurisdiction_leak_persisted_checks()
+    jurisdiction_leak_rate_persisted_checks()
     version_checks()
     report_checks()
 

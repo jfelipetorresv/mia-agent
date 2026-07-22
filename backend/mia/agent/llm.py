@@ -632,10 +632,18 @@ def call_llm(
             )
             if hold_id and budget_tenant:
                 resp_usage = getattr(resp, "usage", None)
-                actual = usage_metrics.cost_usd(
+                # R3-ALTO (Codex, ronda 3): el presupuesto MENSUAL de producción se liquida con
+                # la MISMA fuente única que el panel y el banco (`cost_usd_cached`), que desglosa
+                # la caché de prompt (escritura 2.00x FUERA de prompt_tokens, lectura 0.10x
+                # DENTRO). Antes liquidaba con `cost_usd` plano y subestimaba las ESCRITURAS de
+                # caché (p. ej. USD 6,00 en vez de 6,15), agotando el sobre del mes por debajo del
+                # gasto real. Sin tokens de caché el número es IDÉNTICO al de antes (fila normal).
+                cache_read, cache_creation = usage_metrics._cache_tokens(resp_usage)
+                actual = usage_metrics.cost_usd_cached(
                     alias,
                     int(getattr(resp_usage, "prompt_tokens", 0) or 0),
                     int(getattr(resp_usage, "completion_tokens", 0) or 0),
+                    cache_read, cache_creation,
                 )
                 policy_budget.finish_call_sync(budget_tenant, hold_id, actual)
                 hold_id = None

@@ -170,8 +170,14 @@ def record(alias: str, task: str | None, usage: Any,
         tenant_id, matter_id, source = scope
         prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion = int(getattr(usage, "completion_tokens", 0) or 0)
-        total = int(getattr(usage, "total_tokens", 0) or 0) or (prompt + completion)
         cache_read, cache_creation = _cache_tokens(usage)
+        # R3-MENOR (Codex, ronda 3): LiteLLM deja la ESCRITURA de caché FUERA de `total_tokens`
+        # (medido en `llms/anthropic/chat/transformation.py::calculate_usage`), así que el total
+        # VISIBLE subreportaba (p. ej. 1,60M en vez de 1,85M con 0,25M de escritura). El COSTE ya
+        # estaba bien (cost_usd_cached); esto corrige sólo el TOTAL. Mismo criterio que
+        # `eval.spend_guard._extract` — fuente única. La LECTURA ya está DENTRO de prompt_tokens.
+        base_total = int(getattr(usage, "total_tokens", 0) or 0) or (prompt + completion)
+        total = base_total + cache_creation
         row = {
             "tenant_id": tenant_id,
             "matter_id": matter_id,

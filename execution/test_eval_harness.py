@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -57,6 +56,11 @@ from mia.eval import cases as cases_mod                   # noqa: E402
 from mia.eval import harness                              # noqa: E402
 from mia.eval import scoring                               # noqa: E402
 from mia.eval.cases import GoldenCase, GoldenCaseDoc      # noqa: E402
+
+# R3-MEDIO (Codex, ronda 3): temporales del harness por el helper común fail-before-create
+# (nunca dentro del repo, limpieza garantizada). Antes: TemporaryDirectory()/mkdtemp sueltos.
+sys.path.insert(0, str(ROOT / "execution"))
+from _tmp_desechable import tmpdir_desechable              # noqa: E402
 
 _results: list[tuple[str, bool]] = []
 
@@ -163,10 +167,10 @@ def offline_checks() -> None:
     ])
     check("build_report: resumen con conteos",
           report["summary"]["n_casos"] == 1 and report["summary"]["n_llegaron_a_borrador"] == 1)
-    with tempfile.TemporaryDirectory() as td:
-        run_dir = harness.persist_report(report, base_dir=td)
-        check("persist_report: escribe cases.jsonl + summary.json",
-              (run_dir / "cases.jsonl").exists() and (run_dir / "summary.json").exists())
+    td = tmpdir_desechable("mia-harness-report-")
+    run_dir = harness.persist_report(report, base_dir=str(td))
+    check("persist_report: escribe cases.jsonl + summary.json",
+          (run_dir / "cases.jsonl").exists() and (run_dir / "summary.json").exists())
 
 
 # ── Frente E: casos de RIESGO + señales nuevas (todo OFFLINE, sin DB) ──────────
@@ -436,7 +440,7 @@ async def db_checks() -> None:
         from mia.eval import spend_guard as _sg  # noqa: E402
         guard_n = _sg.EvalSpendGuard(
             session_id="test-eval-harness-run_case_n",
-            ledger_path=Path(tempfile.mkdtemp(prefix="mia-harness-ledger-n-")) / "ledger.json")
+            ledger_path=tmpdir_desechable("mia-harness-ledger-n-") / "ledger.json")
         n_results = await harness.run_case_n(tenant, fuga_case, 3, tenant_allow_real=False,
                                              guard=guard_n)
         matter_ids.extend(r["matter_id"] for r in n_results if r.get("matter_id"))
@@ -542,7 +546,7 @@ def main() -> int:
     from mia.eval import spend_guard  # noqa: E402
     guardia = spend_guard.EvalSpendGuard(
         session_id="test-eval-harness",
-        ledger_path=Path(tempfile.mkdtemp(prefix="mia-harness-ledger-")) / "ledger.json")
+        ledger_path=tmpdir_desechable("mia-harness-ledger-") / "ledger.json")
     with spend_guard.install(), guardia.activate():
         asyncio.run(db_checks())
         asyncio.run(budget_eval_isolation_checks())

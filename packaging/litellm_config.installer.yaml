@@ -56,6 +56,16 @@ model_list:
 litellm_settings:
   drop_params: true
 
+# R3-CRITICO (Codex, ronda 3): SIN este bloque LiteLLM 1.74.8 hereda num_retries=2 en su
+# router, asi que ante un fallo transitorio el PROXY reintenta 2 veces por su cuenta -> 3 POST
+# al proveedor por CADA intento fisico. MIA ya reintenta y hace fallback en agent/llm.py, y
+# CADA intento suyo queda RESERVADO en el tope de gasto (eval.spend_guard). Regla: UNA peticion
+# fisica por intento -- el proxy NUNCA reintenta solo (si lo hiciera, un intento facturado cuya
+# respuesta se pierde desaparece del libro y hasta 12 llamadas se esconden tras 4 reservas).
+# El gate execution/test_litellm_proxy_retries.py y check_env_pins.py fijan este 0 (anti-deriva).
+router_settings:
+  num_retries: 0
+
 # Unico bloque que difiere del dev: master_key exigida en toda peticion del proxy
 # instalado. os.environ/LITELLM_MASTER_KEY -- NUNCA hardcodeado en este archivo.
 general_settings:
