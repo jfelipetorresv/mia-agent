@@ -42,6 +42,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -109,7 +110,12 @@ def budget_settle_checks() -> None:
     capturado: dict = {}
     orig_reserve = policy_budget.reserve_call_sync
     orig_finish = policy_budget.finish_call_sync
-    orig_cwr = llm_mod._call_with_retries
+    # R5-1: la reserva/liquidación del tope MENSUAL vive DENTRO de `_invoke_metered` (R4-CRÍTICO),
+    # que `_call_with_retries` invoca por intento. Mockear `_call_with_retries` (como hacía la
+    # herencia R3-ALTO) SALTABA la liquidación real → capturado['actual']=None y el check ciego.
+    # Se mockea un nivel MÁS ABAJO — `_invoke` (el POST físico) — para que `_invoke_metered`
+    # corra de verdad: reserva → _invoke (falso) → liquida con cost_usd_cached del usage REAL.
+    orig_invoke = llm_mod._invoke
     orig_client = llm_mod._get_client
     token = usage_metrics.set_usage_scope("00000000-0000-0000-0000-000000000000",
                                           None, "api")
@@ -117,14 +123,14 @@ def budget_settle_checks() -> None:
         policy_budget.reserve_call_sync = lambda tenant, est, **kw: "hold-r3"
         policy_budget.finish_call_sync = (
             lambda tenant, hold, actual: capturado.__setitem__("actual", actual))
-        llm_mod._call_with_retries = lambda *a, **k: resp
+        llm_mod._invoke = lambda *a, **k: resp
         llm_mod._get_client = lambda: None
         llm_mod.call_llm([{"role": "user", "content": "x" * 4000}],
                          task="main", model="claude-sonnet")
     finally:
         policy_budget.reserve_call_sync = orig_reserve
         policy_budget.finish_call_sync = orig_finish
-        llm_mod._call_with_retries = orig_cwr
+        llm_mod._invoke = orig_invoke
         llm_mod._get_client = orig_client
         usage_metrics.reset_usage_scope(token)
 
@@ -151,14 +157,14 @@ def budget_settle_checks() -> None:
         policy_budget.reserve_call_sync = lambda tenant, est, **kw: "hold-r3b"
         policy_budget.finish_call_sync = (
             lambda tenant, hold, actual: capturado2.__setitem__("actual", actual))
-        llm_mod._call_with_retries = lambda *a, **k: resp_sin
+        llm_mod._invoke = lambda *a, **k: resp_sin
         llm_mod._get_client = lambda: None
         llm_mod.call_llm([{"role": "user", "content": "x" * 4000}],
                          task="main", model="claude-sonnet")
     finally:
         policy_budget.reserve_call_sync = orig_reserve
         policy_budget.finish_call_sync = orig_finish
-        llm_mod._call_with_retries = orig_cwr
+        llm_mod._invoke = orig_invoke
         llm_mod._get_client = orig_client
         usage_metrics.reset_usage_scope(token)
     check(f"fila SIN caché: la liquidación queda idéntica a la tarifa plana "
@@ -283,29 +289,52 @@ def _wait_ready(port: int, proc: subprocess.Popen, timeout: float = 75.0) -> boo
     return False
 
 
-def _one_request_upstream_posts(tmp: Path, router_settings: dict, tag: str) -> int | None:
-    """Levanta upstream + proxy efímero, hace UNA petición, devuelve cuántos POST llegó al
-    upstream. None si el proxy no arrancó (para que el check lo vea ROJO, nunca verde ciego)."""
+@contextmanager
+def _ephemeral_stack(tmp: Path, router_settings: dict, tag: str):
+    """Levanta el upstream contador + una instancia EFÍMERA de litellm (num_retries según
+    `router_settings`) y CEDE `(proxy_port, upstream)`; `(None, upstream)` si no arrancó (para
+    que el check lo vea ROJO, nunca verde ciego). Limpia proxy y upstream al salir. Compartido
+    por la vía urllib (sección 4) y la vía del CLIENTE real de MIA (sección 5, R5-2), para que
+    ambas ejerciten EXACTAMENTE el mismo montaje."""
     litellm_exe = ROOT / ".venv-litellm" / "Scripts" / "litellm.exe"
-    if not litellm_exe.exists():
-        print(f"    (no existe {litellm_exe})")
-        return None
-
     upstream = http.server.HTTPServer(("127.0.0.1", 0), _CountingUpstream)
     upstream.post_count = 0  # type: ignore[attr-defined]
     up_port = upstream.server_address[1]
     threading.Thread(target=upstream.serve_forever, daemon=True).start()
-
-    proxy_port = _free_port()
-    cfg_path = _write_ephemeral_config(tmp, up_port, router_settings)
-    proc = subprocess.Popen(
-        [str(litellm_exe), "--config", str(cfg_path), "--host", "127.0.0.1",
-         "--port", str(proxy_port)],
-        cwd=str(tmp), env=_scrubbed_env(),
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = None
     try:
+        if not litellm_exe.exists():
+            print(f"    (no existe {litellm_exe})")
+            yield None, upstream
+            return
+        proxy_port = _free_port()
+        cfg_path = _write_ephemeral_config(tmp, up_port, router_settings)
+        proc = subprocess.Popen(
+            [str(litellm_exe), "--config", str(cfg_path), "--host", "127.0.0.1",
+             "--port", str(proxy_port)],
+            cwd=str(tmp), env=_scrubbed_env(),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if not _wait_ready(proxy_port, proc):
             print(f"    [{tag}] el proxy efímero NO arrancó a tiempo (puerto {proxy_port})")
+            yield None, upstream
+            return
+        yield proxy_port, upstream
+    finally:
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except Exception:
+                proc.kill()
+        upstream.shutdown()
+        upstream.server_close()
+
+
+def _one_request_upstream_posts(tmp: Path, router_settings: dict, tag: str) -> int | None:
+    """Levanta upstream + proxy efímero, hace UNA petición urllib DIRECTA (ajena a la capa
+    cliente de MIA), devuelve cuántos POST llegaron al upstream. None si el proxy no arrancó."""
+    with _ephemeral_stack(tmp, router_settings, tag) as (proxy_port, upstream):
+        if proxy_port is None:
             return None
         body = json.dumps({"model": "probe",
                            "messages": [{"role": "user", "content": "hola"}]}).encode()
@@ -320,14 +349,29 @@ def _one_request_upstream_posts(tmp: Path, router_settings: dict, tag: str) -> i
             print(f"    [{tag}] la petición al proxy falló de forma inesperada: {exc!r}")
         time.sleep(0.5)   # deja que el proxy termine cualquier reintento en vuelo
         return upstream.post_count  # type: ignore[attr-defined]
-    finally:
-        proc.terminate()
+
+
+def _client_layer_posts(tmp: Path, make_client, tag: str) -> int | None:
+    """Como `_one_request_upstream_posts` pero la petición la hace un CLIENTE OpenAI construido
+    por `make_client(proxy_port)` y despachado por `llm._invoke` (la vía REAL de MIA). El proxy
+    efímero SIEMPRE va con num_retries=0, así que la ÚNICA fuente posible de amplificación es la
+    capa cliente (el `max_retries` del SDK) — que es justo lo que la vía urllib no puede ver
+    (R5-2). Devuelve los POST al upstream; None si el proxy no arrancó."""
+    from mia.agent import llm as llm_mod
+    with _ephemeral_stack(tmp, {"num_retries": 0}, tag) as (proxy_port, upstream):
+        if proxy_port is None:
+            return None
         try:
-            proc.wait(timeout=15)
-        except Exception:
-            proc.kill()
-        upstream.shutdown()
-        upstream.server_close()
+            client = make_client(proxy_port)
+            # `_invoke` con un alias NO "cli-*" hace `client.chat.completions.create(**kwargs)`:
+            # el mismísimo camino de producción para un alias de proxy.
+            llm_mod._invoke(client, "probe",
+                            {"model": "probe",
+                             "messages": [{"role": "user", "content": "hola"}]})
+        except Exception:  # noqa: BLE001 — se ESPERA error (upstream 500); importa el conteo
+            pass
+        time.sleep(0.5)   # deja que cualquier reintento del cliente termine en vuelo
+        return upstream.post_count  # type: ignore[attr-defined]
 
 
 def live_checks(repo_router: dict) -> None:
@@ -351,11 +395,69 @@ def live_checks(repo_router: dict) -> None:
           fix == 1)
 
 
+# ═══ 5. VIVO · CAPA CLIENTE: el cliente REAL de MIA no amplifica (R5-2) ══════════
+def client_layer_checks() -> None:
+    """La sección 4 golpea LiteLLM con urllib DIRECTO: es CIEGA a la capa cliente de MIA. Mutar
+    `_get_client` a max_retries=2 la deja verde (reproducido en la ronda 4) porque urllib no usa
+    el SDK. Aquí el proxy efímero va con num_retries=0 (no reintenta él), de modo que el ÚNICO
+    origen posible de POST extra es el `max_retries` del cliente OpenAI:
+
+      · CONTROL: un cliente construido A PROPÓSITO con max_retries=2 → el upstream recibe 3 POST
+        (prueba que el rig SÍ ve los reintentos de la capa cliente; sin esto el FIX sería ciego).
+      · FIX: el cliente REAL del repo (`llm._get_client`, max_retries=0) apuntado al proxy
+        efímero → EXACTAMENTE 1 POST ante el mismo fallo.
+
+    Mutación (R5-2): poner max_retries=2 en `_get_client` → el FIX pasa a 3 POST → ROJO."""
+    print("\n-- 5. vivo · capa cliente: el cliente REAL de MIA no reintenta (proxy num_retries=0) --")
+    tmp = tmpdir_desechable("mia-litellm-client-")
+
+    import mia.config as mia_config
+    from mia.agent import llm as llm_mod
+    from openai import OpenAI
+
+    def _make_control(port: int):
+        # CONTROL: max_retries=2 EXPLÍCITO (no pasa por _get_client). Demuestra que el montaje
+        # observa los reintentos del SDK; si no viera 3, el FIX sería un verde ciego.
+        return OpenAI(base_url=f"http://127.0.0.1:{port}", api_key="sk-probe-no-real",
+                      max_retries=2)
+
+    control = _client_layer_posts(tmp, _make_control, "control-cliente")
+    print(f"    control (cliente max_retries=2): POST al upstream = {control}")
+    check("CONTROL: un cliente con max_retries=2 reintenta y el upstream recibe 3 POST — el rig "
+          "SÍ observa la amplificación de la CAPA CLIENTE (sin esto, el FIX sería verde ciego)",
+          control == 3)
+
+    # FIX: el cliente REAL del repo (`_get_client`, max_retries=0) apuntado al proxy efímero.
+    # Se reescribe config.LITELLM_* y se resetea el singleton `_client` para que se reconstruya
+    # contra el proxy de prueba; se restaura todo en finally (no toca el proxy real de :4000).
+    def _make_real(port: int):
+        llm_mod._client = None
+        mia_config.LITELLM_BASE_URL = f"http://127.0.0.1:{port}"
+        mia_config.LITELLM_API_KEY = "sk-probe-no-real"
+        return llm_mod._get_client()
+
+    orig_base = mia_config.LITELLM_BASE_URL
+    orig_key = mia_config.LITELLM_API_KEY
+    orig_client = llm_mod._client
+    try:
+        fix = _client_layer_posts(tmp, _make_real, "fix-cliente")
+    finally:
+        mia_config.LITELLM_BASE_URL = orig_base
+        mia_config.LITELLM_API_KEY = orig_key
+        llm_mod._client = orig_client
+    print(f"    fix (cliente REAL del repo, max_retries=0): POST al upstream = {fix}")
+    check("FIX: el cliente REAL de MIA (_get_client, max_retries=0) apuntado al proxy hace "
+          "EXACTAMENTE 1 POST ante el fallo — la capa cliente NO reintenta por su cuenta "
+          "(mutación: max_retries=2 en _get_client → 3 POST → ROJO)",
+          fix == 1)
+
+
 def main() -> int:
     repo_router = static_pin_checks()
     budget_settle_checks()
     record_total_checks()
     live_checks(repo_router)
+    client_layer_checks()
 
     passed = sum(1 for _, ok in results if ok)
     total = len(results)

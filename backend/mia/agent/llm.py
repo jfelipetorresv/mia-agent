@@ -45,6 +45,7 @@ from .error_classifier import (
     LLMErrorKind,
     classify_llm_error,
     is_retryable,
+    provider_never_reached,
     retry_delay,
     should_fallback,
 )
@@ -586,78 +587,48 @@ def call_llm(
         base_kwargs["tools"] = tools
     base_kwargs.update(extra)
 
+    from ..metrics import usage as usage_metrics
+    from ..policy import budget as policy_budget
+
     client = _get_client()
     last: _FallbackNeeded | None = None
     for i, alias in enumerate(chain):
         next_alias = chain[i + 1] if i + 1 < len(chain) else None
-        hold_id: str | None = None
-        budget_tenant: str | None = None
         try:
-            from ..metrics import usage as usage_metrics
-            from ..policy import budget as policy_budget
-
-            scope = usage_metrics.current_scope()
-            estimate = usage_metrics.estimated_call_cost(
-                alias, messages, max_tokens, task=task, tools=tools)
-            # El gasto del BANCO DE PRUEBAS (scope source='eval') no consume el presupuesto
-            # MENSUAL del despacho: lo gobierna el tope propio del eval
-            # (`eval.spend_guard`), que es fail-closed y más estricto que éste. Sin esta
-            # línea, una corrida de evaluación —que la ruta HTTP `gold-cases:evaluate` lanza
-            # con el TENANT REAL— podía agotar el saldo del mes y bloquear los turnos
-            # productivos del abogado. `record()` sí sigue registrando el uso: el gasto se
-            # MIDE en `turn_usage`, solo no se descuenta del sobre mensual de producción.
-            is_eval = scope is not None and scope[2] == "eval"
-            if scope is not None and estimate > 0 and not is_eval:
-                budget_tenant = scope[0]
-                try:
-                    hold_id = policy_budget.reserve_call_sync(
-                        budget_tenant, estimate, model=alias, task=task)
-                except (policy_budget.BudgetExceeded,
-                        policy_budget.BudgetControlUnavailable):
-                    free_fallback = any(
-                        usage_metrics.estimated_call_cost(a, [], 1, task=task) == 0
-                        for a in chain[i + 1:]
-                    )
-                    if free_fallback:
-                        logger.warning("se omite alias pagado %s para proteger el tope; "
-                                       "se usa respaldo gratuito", alias)
-                        continue
-                    raise
             # Prefix caching de Anthropic: marca el prefijo estable del system SOLO para
             # los aliases de la API directa (el resto recibe los messages sin cambios).
+            # R4-CRÍTICO (Codex, ronda 4): la reserva/liquidación del presupuesto MENSUAL de
+            # producción ya NO vive aquí (una por alias, liquidada con el usage del ÚLTIMO
+            # intento). Vive DENTRO de cada intento, en `_invoke_metered` (lo llama
+            # `_call_with_retries` una vez por POST físico), que es el único punto donde se
+            # gasta el dinero de verdad. Así (a) los intentos que fallan tras llegar al
+            # proveedor, (b) los previos a un éxito y (c) un éxito sin usage se contabilizan
+            # cada uno, en vez de eludir el tope. Mismo modelo por-intento que eval.spend_guard.
             alias_messages = _messages_with_cache(messages, alias)
             resp = _call_with_retries(
                 client, {**base_kwargs, "messages": alias_messages, "model": alias},
                 MAX_RETRIES, task=task, alias=alias, next_alias=next_alias,
             )
-            if hold_id and budget_tenant:
-                resp_usage = getattr(resp, "usage", None)
-                # R3-ALTO (Codex, ronda 3): el presupuesto MENSUAL de producción se liquida con
-                # la MISMA fuente única que el panel y el banco (`cost_usd_cached`), que desglosa
-                # la caché de prompt (escritura 2.00x FUERA de prompt_tokens, lectura 0.10x
-                # DENTRO). Antes liquidaba con `cost_usd` plano y subestimaba las ESCRITURAS de
-                # caché (p. ej. USD 6,00 en vez de 6,15), agotando el sobre del mes por debajo del
-                # gasto real. Sin tokens de caché el número es IDÉNTICO al de antes (fila normal).
-                cache_read, cache_creation = usage_metrics._cache_tokens(resp_usage)
-                actual = usage_metrics.cost_usd_cached(
-                    alias,
-                    int(getattr(resp_usage, "prompt_tokens", 0) or 0),
-                    int(getattr(resp_usage, "completion_tokens", 0) or 0),
-                    cache_read, cache_creation,
-                )
-                policy_budget.finish_call_sync(budget_tenant, hold_id, actual)
-                hold_id = None
             _record_usage(alias, task, resp)   # CP-V1: tokens reales → turn_usage
             return resp
+        except (policy_budget.BudgetExceeded, policy_budget.BudgetControlUnavailable):
+            # El presupuesto MENSUAL cortó ESTE alias pagado (la reserva del primer intento no
+            # cupo, o no se pudo comprobar el saldo). Si queda un respaldo GRATIS más adelante
+            # en la cadena, se salta a él para proteger el tope sin frenar el trabajo; si no,
+            # se propaga el corte al llamador (una llamada pagada no evade el tope). Es la
+            # MISMA política de respaldo gratuito de antes, ahora disparada por intento.
+            free_fallback = any(
+                usage_metrics.estimated_call_cost(a, [], 1, task=task) == 0
+                for a in chain[i + 1:]
+            )
+            if free_fallback:
+                logger.warning("se omite alias pagado %s para proteger el tope; "
+                               "se usa respaldo gratuito", alias)
+                continue
+            raise
         except _FallbackNeeded as fn:
-            if hold_id and budget_tenant:
-                policy_budget.finish_call_sync(budget_tenant, hold_id, None)
             last = fn                          # sigue con el próximo alias de la cadena
             continue
-        except BaseException:
-            if hold_id and budget_tenant:
-                policy_budget.finish_call_sync(budget_tenant, hold_id, None)
-            raise
 
     # Cadena entera agotada: todos los proveedores fallaron con errores saltables.
     kind = last.kind if last else LLMErrorKind.UNKNOWN
@@ -718,6 +689,69 @@ def _invoke(client: Any, alias: str, kwargs: dict[str, Any], task: str | None = 
     return client.chat.completions.create(**kwargs)
 
 
+def _invoke_metered(client: Any, alias: str, kwargs: dict[str, Any],
+                    task: str | None = None) -> Any:
+    """UN intento físico contra el proveedor, con la reserva/liquidación del presupuesto
+    MENSUAL de producción POR INTENTO (R4-CRÍTICO, Codex ronda 4).
+
+    El dinero se gasta en CADA intento que sale al proveedor, no en `call_llm`:
+    `_call_with_retries` invoca esto hasta MAX_RETRIES+1 veces por alias y `call_llm` recorre
+    la cadena. Reservar UNA vez por alias y liquidar con el usage del ÚLTIMO intento dejaba sin
+    contabilizar (a) los intentos que fallaron tras llegar al proveedor, (b) los previos a un
+    éxito, y (c) un éxito sin usage (liquidaba a 0) — hasta 4 POST pagados por proveedor que
+    eludían el tope mensual. Mismo modelo por-intento que `eval.spend_guard._guarded_invoke`
+    (fuente de inspiración):
+
+      · reserva la estimación de ESTE intento antes de salir;
+      · fallo INCIERTO (llegó o pudo llegar al proveedor) → COBRA la estimación (no libera);
+      · `provider_never_reached` DEMOSTRABLE → devuelve la reserva (el proveedor no cobró);
+      · éxito con usage → COBRA el coste real (`cost_usd_cached`, la MISMA fuente única que el
+        panel y el banco: escritura de caché 2.00x FUERA de prompt_tokens, lectura 0.10x DENTRO;
+        sin tokens de caché es IDÉNTICO a la tarifa plana — R3-ALTO);
+      · éxito SIN usage legible → COBRA la estimación (NUNCA 0).
+
+    Sin scope (gates offline), scope de EVAL (lo gobierna `eval.spend_guard`, fail-closed) o
+    coste 0 (aliases `cli-*`/local de la política de suscripción): NO reserva — delega directo
+    y la suscripción sigue costando cero. `BudgetExceeded`/`BudgetControlUnavailable` de la
+    reserva se PROPAGAN a `call_llm`, que decide el respaldo gratuito de la cadena.
+    """
+    from ..metrics import usage as usage_metrics
+    from ..policy import budget as policy_budget
+
+    scope = usage_metrics.current_scope()
+    estimate = usage_metrics.estimated_call_cost(
+        alias, kwargs.get("messages") or [], kwargs.get("max_tokens"),
+        task=task, tools=kwargs.get("tools"))
+    is_eval = scope is not None and scope[2] == "eval"
+    if scope is None or estimate <= 0 or is_eval:
+        return _invoke(client, alias, kwargs, task)
+
+    budget_tenant = scope[0]
+    hold_id = policy_budget.reserve_call_sync(budget_tenant, estimate, model=alias, task=task)
+    if not hold_id:                       # estimate>0 pero la reserva no apartó nada: sin cobro
+        return _invoke(client, alias, kwargs, task)
+    try:
+        resp = _invoke(client, alias, kwargs, task)
+    except BaseException as exc:
+        # INCIERTO se cobra; solo un fallo que DEMOSTRABLEMENTE no llegó al proveedor devuelve.
+        never_reached = provider_never_reached(exc)
+        policy_budget.finish_call_sync(
+            budget_tenant, hold_id, 0.0 if never_reached else estimate)
+        raise
+    resp_usage = getattr(resp, "usage", None)
+    cache_read, cache_creation = usage_metrics._cache_tokens(resp_usage)
+    prompt = int(getattr(resp_usage, "prompt_tokens", 0) or 0)
+    completion = int(getattr(resp_usage, "completion_tokens", 0) or 0)
+    if resp_usage is None or (prompt == 0 and completion == 0
+                              and cache_read == 0 and cache_creation == 0):
+        actual = estimate                 # (c) sin usage no se puede afirmar menos → cobra estim.
+    else:
+        actual = usage_metrics.cost_usd_cached(
+            alias, prompt, completion, cache_read, cache_creation)
+    policy_budget.finish_call_sync(budget_tenant, hold_id, actual)
+    return resp
+
+
 def _call_with_retries(
     client: Any,
     kwargs: dict[str, Any],
@@ -736,8 +770,15 @@ def _call_with_retries(
     """
     for attempt in range(max_retries + 1):     # 1 intento inicial + hasta max_retries reintentos
         try:
-            return _invoke(client, alias, kwargs, task)
+            return _invoke_metered(client, alias, kwargs, task)
         except Exception as exc:               # noqa: BLE001 — se clasifica y re-lanza abajo
+            # El presupuesto MENSUAL (R4-CRÍTICO) reserva/ liquida DENTRO de `_invoke_metered`,
+            # por intento. Un corte del tope NO es un error del proveedor: no se clasifica ni se
+            # reintenta aquí; se propaga a `call_llm`, que decide el respaldo gratuito de la
+            # cadena. (Import diferido para no crear ciclo al cargar el módulo.)
+            from ..policy.budget import BudgetControlUnavailable, BudgetExceeded
+            if isinstance(exc, (BudgetExceeded, BudgetControlUnavailable)):
+                raise
             kind = classify_llm_error(exc)
 
             if kind is LLMErrorKind.CONTEXT_TOO_LONG:
