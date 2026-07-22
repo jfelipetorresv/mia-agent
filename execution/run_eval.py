@@ -331,7 +331,7 @@ async def _run(run_id: str, case_id: Optional[str] = None,
 
 
 # ── Frente E: repetir UN caso (riesgo INTERMITENTE — tasa, no booleano) ───────
-async def _run_repeat(case_id: str, n: int,
+async def _run_repeat(run_id: str, case_id: str, n: int,
                       guard: Optional[spend_guard.EvalSpendGuard] = None) -> dict:
     case = _find_case(case_id)
     await pool.open_pool()
@@ -346,8 +346,18 @@ async def _run_repeat(case_id: str, n: int,
         # falsos bloqueos...) ES parte del resultado, no ruido a esconder: mismo panel
         # que usa `run_suite`, aquí agregado sobre las N corridas de este caso.
         panel = harness.build_quality_panel(results)
-        return {"case_id": case_id, "n": n, "results": results, "leak": leak,
-                "panel": panel, "spend": guard.snapshot()}
+        report = {"run_id": run_id, "case_id": case_id, "n": n, "results": results,
+                  "cases": results, "leak": leak, "panel": panel,
+                  "spend": guard.snapshot(),
+                  "version": {
+                      "prompt_hash": harness.prompt_version_hash(),
+                      "modelos_servidos": harness.served_models_signal(results),
+                  },
+                  "summary": {"repeat": {"case_id": case_id, "n": n, "leak": leak}}}
+        # Se persiste SIEMPRE, igual que en `_run`: el baseline se audita contra los
+        # crudos en disco, no contra lo que quedó impreso en una consola que ya murió.
+        harness.persist_report(report)
+        return report
     finally:
         await pool.close_pool()
         _drop_eval_tenant(tenant_id, matter_ids)
@@ -528,8 +538,10 @@ def _main() -> int:
     if args.repeat is not None:
         if not args.case:
             ap.error("--repeat exige --case <id> (¿cuál caso repetir?)")
-        result = asyncio.run(_run_repeat(args.case, args.repeat, _make_guard(args)))
+        run_id = args.run_id or f"eval_{datetime.now():%Y%m%d_%H%M%S}"
+        result = asyncio.run(_run_repeat(run_id, args.case, args.repeat, _make_guard(args)))
         _print_repeat_summary(result)
+        print(f"\nGuardada en mia-data/eval-runs/{run_id}/.")
         return exit_code_for(result)
 
     if args.agentic_compare:
