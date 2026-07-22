@@ -43,8 +43,8 @@ router = APIRouter(tags=["speech"])
 # Rate-limit por ABOGADO (tenant + email del JWT, hallazgo capa 2): dictar 20
 # clips en 5 minutos es uso humano intenso para UNA persona; por despacho
 # castigaría a las firmas con varios abogados dictando a la vez. En memoria
-# (Modo B, 1 worker); en Modo A multi-worker migrar a contador compartido
-# (mismo apunte que auth.py).
+# (1 worker, Modo B); si algún día hubiera un despliegue multi-worker, migrar
+# a contador compartido (mismo apunte que auth.py).
 _RATE_MAX_CLIPS = 20
 _RATE_WINDOW_SECONDS = 5 * 60
 _clip_hits: dict[tuple[str, str], list[float]] = {}

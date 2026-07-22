@@ -33,8 +33,9 @@ load_dotenv(PROJECT_ROOT / ".env")
 PG_DB = os.getenv("PG_DB", "mia")
 
 # Entorno de despliegue (auditoría de seguridad 2026-07): "dev" (default, laptop
-# del despacho / Modo B) o "production" (Modo A / servidor expuesto). En producción
-# se endurecen automáticamente: docs del API apagadas, exp obligatorio en el JWT.
+# del despacho / Modo B) o "production" (si algún día hubiera un servidor expuesto).
+# En producción se endurecen automáticamente: docs del API apagadas, exp obligatorio
+# en el JWT.
 MIA_ENV = os.getenv("MIA_ENV", "dev").strip().lower()
 IS_PRODUCTION = MIA_ENV in ("prod", "production")
 

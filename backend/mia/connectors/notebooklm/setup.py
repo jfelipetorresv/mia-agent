@@ -16,8 +16,8 @@ vuelve un flujo de dos botones en Configuración (patrón "Instalar dictado por 
 El DISCO es la fuente de verdad (`installed()` mira el binario; `authenticated()` mira el
 archivo de sesión). La memoria del proceso solo guarda lo transitorio (instalación/login en
 curso), que muere con el proceso — persistirlo mentiría tras un reinicio. Mismo criterio que
-`speech/install.py`. Limitación declarada Modo A multi-worker: el polling puede caer en un
-worker sin el trabajo en curso.
+`speech/install.py`. Limitación declarada si algún día hubiera un despliegue multi-worker:
+el polling puede caer en un worker sin el trabajo en curso.
 
 NOTA [VERIFICAR] (misma convención que agent_hub/client · D3): los comandos exactos del CLI
 (`notebooklm-py` en pip, `notebooklm` como entry-point, `auth check`, `list --json`) y el

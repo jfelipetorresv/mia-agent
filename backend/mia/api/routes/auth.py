@@ -22,8 +22,9 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 # ── Freno anti fuerza-bruta (auditoría 2026-07) ────────────────────────────────
 # Sin esto, /login acepta intentos ilimitados: un atacante puede probar millones de
 # contraseñas contra un email conocido. Ventana deslizante EN MEMORIA por proceso
-# (suficiente para Modo B, 1 worker; en Modo A multi-worker migrar a un contador
-# compartido, p. ej. en Postgres o Redis — anotado en la auditoría).
+# (suficiente para 1 worker, Modo B; si algún día hubiera un despliegue
+# multi-worker, migrar a un contador compartido, p. ej. en Postgres o Redis —
+# anotado en la auditoría).
 _LOGIN_MAX_FAILURES = 5          # fallos permitidos por (ip, email) …
 _LOGIN_WINDOW_SECONDS = 15 * 60  # … dentro de esta ventana → 429
 _LOGIN_IP_MAX_FAILURES = 30      # tope agregado: fallos por ip (cualquier email)
@@ -39,9 +40,10 @@ _DUMMY_HASH = bcrypt.hashpw(b"mia-timing-equalizer", bcrypt.gensalt(rounds=12))
 
 
 def _client_ip(request: Request) -> str:
-    # En Modo A detrás de un reverse proxy esto es la IP del proxy, no la del
-    # cliente: habría que leer X-Forwarded-For DESDE UN PROXY CONFIABLE antes de
-    # confiar en ella (anotado en la auditoría como límite conocido).
+    # Si algún día hubiera un despliegue detrás de un reverse proxy, esto sería
+    # la IP del proxy, no la del cliente: habría que leer X-Forwarded-For DESDE
+    # UN PROXY CONFIABLE antes de confiar en ella (anotado en la auditoría como
+    # límite conocido).
     return request.client.host if request.client else "unknown"
 
 
