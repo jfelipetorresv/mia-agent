@@ -274,6 +274,21 @@ async def check_aislamiento() -> None:
           any("anexos al final" in x for x in aprendido_of(a)))
 
 
+# ══ H · cableado del route HITL (F2: la corrección también aprende) ═══════════
+def check_cableado_hitl() -> None:
+    print("\n== H · cableado en api/routes/hitl.py (editing también aprende) ==")
+    # Por fuente y no por HTTP: levantar el stack SSE completo aquí duplicaría
+    # test_hitl_flow; lo que este gate protege es que el path `editing` no vuelva
+    # a quedar descableado en silencio (estuvo así hasta F2 pese a que el módulo
+    # ya traía SOURCE_CORREGIDO).
+    src = (ROOT / "backend" / "mia" / "api" / "routes" / "hitl.py").read_text(
+        encoding="utf-8")
+    check("H1 · el aprendizaje corre al aprobar Y al corregir (no solo approved)",
+          'in ("approved", "editing")' in src)
+    check("H2 · la corrección aprende con su propia fuente (SOURCE_CORREGIDO)",
+          "SOURCE_CORREGIDO" in src and "SOURCE_APROBADO" in src)
+
+
 async def async_main() -> int:
     print("== Gate · «## aprendido» se llena sola desde el trabajo aprobado ==")
     original_llm = ap.call_llm
@@ -292,6 +307,7 @@ async def async_main() -> int:
             await check_tope_e2e()
             await check_edicion_abogado()
             await check_aislamiento()
+            check_cableado_hitl()
     finally:
         ap.call_llm = original_llm
         config.MIA_HOME = original_home
