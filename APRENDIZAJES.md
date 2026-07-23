@@ -152,3 +152,23 @@
     Usar siempre un tenant/sesión marcado por convención como desechable (nunca un ID que pueda
     colisionar con namespace de producción); verificar con grep antes de correr una suite que gasta
     dinero real.
+44. **La medición sin persistencia no es medición: verificar QUÉ escribe a disco un runner ANTES
+    de gastarle horas.** El camino `--repeat` del eval imprimía el panel y tiraba los crudos; 30
+    corridas del baseline vivieron solo en un log que murió con el proceso (F1, 2026-07-22).
+    Barrera: checks de cableado en `execution/test_eval_harness.py` (persist en `_run_repeat`).
+45. **En esta máquina, el trabajo largo se corre en TROZOS foreground (<10 min) con persistencia
+    por trozo y un agregador que recalcula desde los crudos.** Un factor externo sin identificar
+    mata árboles de procesos completos (WMI y harness por igual; 3 tandas perdidas el 2026-07-22);
+    ni el desacople salva. Herramientas: `execution/aggregate_eval_runs.py` + la sección de método
+    del baseline en `memory/findings.md`.
+46. **Un cero puede ser ciego: al endurecer un comportamiento, el gate debe exigir la señal
+    POSITIVA del mecanismo, no la ausencia del síntoma.** "0 fugas" es indistinguible de "el
+    modelo no citó" salvo que el informe registre la INTERCEPCIÓN (omitidas ≥ 1 con un fake que
+    siempre desobedece). Implementado en los checks e2e de `test_eval_harness.py`.
+47. **La dirección segura depende del dueño del texto.** Para fuentes/documentos, el cotejo
+    estricto (marcar de menos jamás inventa respaldo); para el MENSAJE del abogado, el laxo
+    (borrar de más es el daño — input fidedigno). El mismo cotejo no sirve para ambos:
+    `_covers` vs `_contains_contiguous` en `backend/mia/agents/verification.py`.
+48. **Ante cualquier lentitud (Glob/ripgrep con timeout es la primera señal), correr la sonda de
+    salud ANTES de seguir**: `scripts/sonda_salud.ps1` (zombis de statusline/CPU/RAM/segador).
+    La saturación pasó DOS veces en un día y ambas se detectaron tarde.

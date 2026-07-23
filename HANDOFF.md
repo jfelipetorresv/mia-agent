@@ -18,7 +18,26 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 
 ---
 
-# CIERRE — 2026-07-22 (2ª sesión) · F1 HECHA: baseline bajo suscripción, auditado y con paquete para Pipe · EMPEZAR AQUÍ
+# CIERRE — 2026-07-22 (2ª sesión) · F1 HECHA + F2 casi entera · EMPEZAR AQUÍ
+
+## Arranque en una terminal nueva (prompt sugerido)
+
+> Lee `HANDOFF.md` y `APRENDIZAJES.md` de `D:\Inteligencia Artificial\Mia-Super Agent\mia` y el plan
+> maestro (`C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`). Corre
+> `scripts\sonda_salud.ps1` ANTES de nada (y relanza el segador si no está corriendo). Luego arranca la
+> pieza grande restante de F2: la **especificación de seguridad de salida POR ORACIÓN** — toda afirmación
+> jurídica → su fuente → un pasaje localizable → relación de soporte, o abstención explícita; capa
+> determinista para ubicación y respaldo léxico; sondas adversariales de entailment en el banco para la
+> implicación semántica; lo no verificable se marca, nunca se certifica. El patrón a seguir es el de la
+> omisión de F2.1 (decisión en `graph._verify_draft`, mecánica agnóstica en `verification.py`, informe
+> con trazabilidad, gates con mutación y señal positiva). Verificación adversarial independiente antes de
+> dar nada por bueno, y cierre con benchmark en vivo N=10 bajo `suscripcion` (gratis, en trozos
+> foreground — regla 45 de APRENDIZAJES.md).
+
+Retrospectiva de esta sesión: `Pipe-OS\01-operacion\retrospectivas\retrospective-2026-07-22-007-…`.
+Aprendizajes convertidos en regla: `APRENDIZAJES.md` 44-48 (persistencia antes de medir; trozos
+foreground; cero-no-ciego; dirección segura según el dueño del texto; sonda de salud) — con sus barreras
+ejecutables commiteadas (checks anti-descableado en `test_eval_harness.py`, `scripts/sonda_salud.ps1`).
 
 Rama `feat/fase1-inc1-cleanup-scaffolding`. **F1 quedó ejecutada en su vía principal**: el benchmark vivo
 corrió COMPLETO bajo la política `suscripcion` (el modo de venta), coste USD ~0 (solo centavos de
