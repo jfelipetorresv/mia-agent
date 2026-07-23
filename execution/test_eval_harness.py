@@ -407,8 +407,14 @@ async def db_checks() -> None:
         # los chunks se siembran con embedding, así que RAG los ve. 0 = corrida a ciegas.
         check("e2e: intake recuperó el expediente del caso (RAG, no a ciegas)",
               res["documents_retrieved"] >= 1)
-        check("e2e: el scorer detectó la cita sin respaldo del borrador",
-              res["score"]["citas_sin_respaldo"] >= 1)
+        # F2 (endurecimiento): este tenant no configuró jurisdicción → la cita sin
+        # respaldo del fake ya NO llega al borrador marcada — se OMITE antes de emitirse.
+        # El check no queda ciego: exige que el informe REGISTRE la omisión (hubo cita
+        # que omitir), no solo que el score salga limpio.
+        check("e2e: la cita sin respaldo del fake fue OMITIDA del borrador (jurisdicción "
+              "desconocida) y el informe lo registra",
+              res["verification"].get("omitidas", 0) >= 1
+              and res["score"]["citas_sin_respaldo"] == 0)
         check("e2e: el informe de verificación viaja en el resultado",
               isinstance(res["verification"], dict) and "citas" in res["verification"])
         check("e2e: el resultado trae puntaje con flags",
@@ -449,10 +455,17 @@ async def db_checks() -> None:
         check("e2e run_case_n: el expediente VACÍO no recupera documentos en ninguna corrida",
               all(r["documents_retrieved"] == 0 for r in n_results))
         rate = harness.jurisdiction_leak_rate(n_results)
-        check("e2e jurisdiction_leak_rate: cuenta las 3 corridas (el fake LLM de esta suite "
-              "cita 'Ley 1437 de 2011' en el cierre del diagnóstico SIEMPRE, así que aquí la "
-              "tasa sale determinista — mide el MECANISMO, no la intermitencia en vivo)",
-              rate["n"] == 3 and rate["n_con_fuga"] == 3 and rate["tasa"] == 1.0)
+        # F2 (endurecimiento): el fake cita 'Ley 1437 de 2011' en el cierre del diagnóstico
+        # SIEMPRE, pero bajo jurisdicción desconocida el diagnóstico pasa por el guardián y
+        # la cita se OMITE antes de emitirse → la fuga EMITIDA debe ser 0 en las 3. El check
+        # no queda ciego: exige además que cada corrida REGISTRE la omisión en el informe
+        # del diagnóstico (la cita existió y fue interceptada — no es que el fake dejara de
+        # citar). Sigue midiendo el MECANISMO, no la intermitencia en vivo.
+        check("e2e jurisdiction_leak_rate: la fuga del fake fue interceptada en las 3 "
+              "corridas (0 emitidas) y cada informe del diagnóstico registra la omisión",
+              rate["n"] == 3 and rate["n_con_fuga"] == 0 and rate["tasa"] == 0.0
+              and all((r.get("verification_diagnosis") or {}).get("omitidas", 0) >= 1
+                      for r in n_results))
 
         # Procedencia con despacho vacío: confirma que `sin_material_sellado` refleja el
         # turno REAL (0 documentos recuperados). El fake LLM de esta suite no reproduce

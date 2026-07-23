@@ -1574,6 +1574,15 @@ class MatterGraphBuilder:
         diagnosis, usage = await self._llm(
             _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="analysis",
             model=_persona_alias(state))
+        # F2 · jurisdicción desconocida: el diagnóstico TAMBIÉN se emite al abogado
+        # (payload del hitl_checkpoint) y quedaba fuera del guardián — F1 midió fugas en
+        # él. Bajo genérico pasa por la misma verificación que el borrador (las citas sin
+        # respaldo se omiten); su informe queda en metadata["verification_diagnosis"].
+        # Bajo jurisdicción CONFIGURADA el diagnóstico queda como siempre (asimetría
+        # deliberada: este incremento endurece solo el modo donde el defecto está medido).
+        if not [c for c in (state.get("jurisdictions") or []) if c and c != GENERIC_CODE]:
+            diagnosis = await self._verify_draft(
+                state, md, diagnosis, report_key="verification_diagnosis")
         md.update(stage="analysis", diagnosis=diagnosis)
         # CP6: cierre estructurado del diagnóstico (problema/normas/riesgo) para la
         # Pantalla 2. Best-effort: si el modelo no emitió el bloque, summary es None
@@ -1679,7 +1688,8 @@ class MatterGraphBuilder:
         return {"draft": draft, "hitl_status": "pending", "metadata": md}
 
     async def _verify_draft(self, state: MatterState, md: dict, text: str,
-                            *, project_material: bool = False) -> str:
+                            *, project_material: bool = False,
+                            report_key: str = "verification") -> str:
         """Pasa el especialista de verificación sobre `text` y deja el informe en md.
 
         El escaneo corre en asyncio.to_thread (revisión capa 2, M2): es CPU-bound
@@ -1689,7 +1699,17 @@ class MatterGraphBuilder:
         `project_material` (PROYECTOS): sin nodo de investigación no hay
         `research_sources`, así que el respaldo sale del material que el propio
         proyecto leyó en este turno (ver `_project_material_sources`). En el flujo de
-        asunto queda en False y todo se comporta exactamente igual que antes."""
+        asunto queda en False y todo se comporta exactamente igual que antes.
+
+        F2 · jurisdicción desconocida: si el despacho no configuró ordenamiento
+        (`state["jurisdictions"]` vacío o solo genérico), las citas SIN respaldo se
+        OMITEN del texto en vez de marcarse — control determinista de la regla que el
+        prompt solo sugiere (`omit_unbacked` de annotate_draft; F1 midió 40% de
+        desobediencia). Con jurisdicción configurada nada cambia.
+
+        `report_key`: bajo qué clave de metadata queda el informe — "verification"
+        (borrador, default) o "verification_diagnosis" (el diagnóstico, que también se
+        emite y sin esto quedaba fuera del guardián)."""
         extra = await research.citation_patterns_for(state["tenant_id"])  # fail-soft
         # num_documents = rango válido de referencias [doc n] que vio el modelo. Habilita el
         # guardián de [doc n] fantasma (un [doc k] fuera de rango es un documento inventado):
@@ -1717,6 +1737,13 @@ class MatterGraphBuilder:
         # corpus (`sources`) sigue igual y es independiente. Marcar de más es inofensivo.
         docs = state.get("documents") or []
 
+        # Jurisdicción desconocida = la lista del turno no trae ningún código real. La
+        # DECISIÓN vive aquí (el módulo de verificación sigue agnóstico de jurisdicción);
+        # coincide con la semántica del prompt: _jurisdiction_labels sin etiquetas →
+        # JURISDICTION_UNKNOWN (prompt_builder). Fail-safe: sin dato, se asume desconocida.
+        generic = not [c for c in (state.get("jurisdictions") or [])
+                       if c and c != GENERIC_CODE]
+
         def _scan() -> tuple[str, dict]:
             sources = md.get("research_sources")
             if project_material and not sources:
@@ -1729,10 +1756,11 @@ class MatterGraphBuilder:
                     sources = None
             return verification.annotate_draft(
                 text, sources=sources, extra_patterns=extra,
-                num_documents=num_documents, documents=docs)
+                num_documents=num_documents, documents=docs,
+                omit_unbacked=generic)
 
         annotated, report = await asyncio.to_thread(_scan)
-        md["verification"] = report
+        md[report_key] = report
         return annotated
 
     # ── 6 · verification (CP9 · especialista de VERIFICACIÓN, determinista) ──

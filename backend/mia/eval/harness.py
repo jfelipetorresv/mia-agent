@@ -552,6 +552,11 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         "elapsed_ms": elapsed_ms,
         "score": score,
         "verification": md.get("verification") or {},
+        # F2: el informe del DIAGNÓSTICO (solo existe bajo jurisdicción desconocida, donde
+        # el diagnóstico también pasa por el guardián). Permite asertar que una fuga de
+        # jurisdicción fue OMITIDA y no simplemente que "no hubo" (0 fugas sin este
+        # informe sería indistinguible de un modelo que dejó de citar — check ciego).
+        "verification_diagnosis": md.get("verification_diagnosis") or {},
         # nº de documentos que intake recuperó del expediente del caso (RAG). Con documentos
         # sembrados debe ser > 0: si es 0, el turno corrió a ciegas (regresión de recuperación).
         "documents_retrieved": documents_retrieved,

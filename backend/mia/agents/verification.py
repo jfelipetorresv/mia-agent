@@ -26,6 +26,11 @@ import unicodedata
 from typing import Optional
 
 VERIFY_MARK = "[VERIFICAR]"
+# Reemplazo de una cita SIN respaldo bajo jurisdicción desconocida (`omit_unbacked` de
+# annotate_draft): el span de la cita se sustituye por esta marca — visible, en lenguaje
+# del abogado, sin nombrar ningún país (el módulo sigue agnóstico). El texto original de
+# la cita omitida queda en el informe de verificación, no en el texto emitido.
+OMIT_MARK = "[referencia normativa omitida: ordenamiento no configurado]"
 # Ventana hacia adelante en la que una marca existente "cubre" la cita. Cubre el
 # patrón usual del redactor: la marca va al lado o al final de la frase de la cita.
 MARK_WINDOW_CHARS = 160
@@ -492,6 +497,7 @@ def annotate_draft(
     extra_patterns: Optional[list[str]] = None,
     num_documents: Optional[int] = None,
     documents: Optional[list] = None,
+    omit_unbacked: bool = False,
 ) -> tuple[str, dict]:
     """Anota el borrador y produce el informe del especialista de verificación.
 
@@ -519,19 +525,33 @@ def annotate_draft(
     Determinista y sin efectos: nunca borra texto, solo INSERTA " [VERIFICAR]" tras las
     citas sin marca ni respaldo (ni del corpus ni por ancla del expediente) y tras las
     referencias a documentos inexistentes cuando se conoce `num_documents`.
+
+    `omit_unbacked` (F2 · jurisdicción desconocida): con True, la cita SIN respaldo no se
+    marca — se REESCRIBE su span por `OMIT_MARK` antes de emitirse (la regla del prompt
+    «aquí la cita no se marca, se omite» deja de ser una sugerencia al modelo y pasa a ser
+    control determinista; medido en F1: el modelo la desobedece en el 40% de las corridas
+    del caso de citas). Una cita marcada por el modelo también se omite si no tiene
+    respaldo (marcarla no la autoriza); si lo tiene, se conserva. El texto original queda
+    en el informe (estado "omitida") — el abogado ve QUÉ se omitió en el informe, no en el
+    texto. Este módulo sigue agnóstico de jurisdicción: la DECISIÓN de activar el modo vive
+    en el llamador (graph._verify_draft); aquí solo vive la mecánica. Con False (default)
+    el comportamiento es idéntico byte a byte al de antes.
     """
     text = draft or ""
     citations = scan_citations(text, compile_patterns(extra_patterns))
     index = _tokenize_index(source_index(sources))
     doc_tokens = _document_tokens(documents)
     detalle: list[dict] = []
-    marcadas = respaldadas = anotadas = 0
-    inserts: list[int] = []  # posiciones (end) donde insertar la marca
+    marcadas = respaldadas = anotadas = omitidas = 0
+    # ediciones (start, end, reemplazo); una inserción es (pos, pos, " [VERIFICAR]").
+    # scan_citations garantiza spans disjuntos, así que aplicarlas de atrás hacia
+    # adelante nunca desplaza offsets pendientes ni pisa otra edición.
+    edits: list[tuple[int, int, str]] = []
 
     for c in citations:
         fuente = None
         anchor_n: Optional[int] = None
-        if c["marked"]:
+        if c["marked"] and not omit_unbacked:
             marcadas += 1
             estado = "marcada"
         elif (fuente := _backing_source_tokenized(c["citation"], index)) is not None:
@@ -546,10 +566,17 @@ def annotate_draft(
             fuente = {"tipo": "expediente",
                       "referencia": f"[doc {anchor_n}]",
                       "titulo": _document_titulo(documents, anchor_n)}
+        elif omit_unbacked:
+            # Sin respaldo bajo jurisdicción desconocida: el span completo se sustituye.
+            # (Si venía marcada, la marca [VERIFICAR] posterior puede quedar huérfana tras
+            # el placeholder — redundante e inofensivo; jamás autoriza nada.)
+            omitidas += 1
+            estado = "omitida"
+            edits.append((c["start"], c["end"], OMIT_MARK))
         else:
             anotadas += 1
             estado = "anotada"
-            inserts.append(c["end"])
+            edits.append((c["end"], c["end"], " " + VERIFY_MARK))
         if len(detalle) < 50:
             entry: dict = {"cita": c["citation"], "estado": estado}
             if fuente is not None:
@@ -561,9 +588,9 @@ def annotate_draft(
                 }
             detalle.append(entry)
 
-    # insertar de atrás hacia adelante para no desplazar los offsets pendientes
-    for pos in sorted(inserts, reverse=True):
-        text = text[:pos] + " " + VERIFY_MARK + text[pos:]
+    # aplicar de atrás hacia adelante para no desplazar los offsets pendientes
+    for start, end, repl in sorted(edits, key=lambda e: (e[0], e[1]), reverse=True):
+        text = text[:start] + repl + text[end:]
 
     report = {
         "citas": len(citations),
@@ -572,6 +599,9 @@ def annotate_draft(
         "anotadas": anotadas,
         "detalle": detalle,
     }
+    if omit_unbacked:
+        # La clave solo existe en el modo nuevo: el informe clásico queda idéntico.
+        report["omitidas"] = omitidas
     # Guardián de referencias [doc n] fantasma DESPUÉS del escáner legal: así el
     # escáner de citas legales evalúa su ventana de marcado sobre el borrador crudo
     # (sin ver las marcas del guardián) y no hay diafonía entre ambos tipos de marca.
