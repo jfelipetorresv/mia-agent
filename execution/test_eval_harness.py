@@ -172,6 +172,20 @@ def offline_checks() -> None:
     check("persist_report: escribe cases.jsonl + summary.json",
           (run_dir / "cases.jsonl").exists() and (run_dir / "summary.json").exists())
 
+    # Barrera de cableado (retrospectiva 2026-07-22-007): el camino `--case --repeat N`
+    # de run_eval.py estuvo SIN persistir hasta ac5ce98 — 30 corridas del baseline
+    # vivieron solo en un log que murió con el proceso. Este check impide que el
+    # descableado vuelva en silencio: _run_repeat debe llamar a persist_report y el
+    # main del repeat debe respetar --run-id.
+    run_eval_src = (Path(__file__).resolve().parent / "run_eval.py").read_text(
+        encoding="utf-8")
+    repeat_body = run_eval_src.split("async def _run_repeat", 1)[1].split(
+        "\nasync def ", 1)[0]
+    check("run_eval._run_repeat PERSISTE los crudos (persist_report cableado)",
+          "persist_report(" in repeat_body)
+    check("run_eval: el camino --repeat respeta --run-id (no genera uno propio siempre)",
+          "_run_repeat(run_id" in run_eval_src)
+
 
 # ── Frente E: casos de RIESGO + señales nuevas (todo OFFLINE, sin DB) ──────────
 def frente_e_offline_checks() -> None:
