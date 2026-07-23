@@ -70,15 +70,29 @@ del modelo (corrida 6); cobertura de respaldo 50%→100%; falsos bloqueos 0; sin
 "cruda" bajó 40%→20% y el 20% restante es el memo SELLADO referido con ancla (disciplina correcta). Detalle
 en `memory/findings.md` §F2.1. Suites: 26/26 nueva + 53/53 + 57/57 + 59/59 + 104/104 + 50/50.
 
+## También en esta sesión: dos ítems más de F2 CERRADOS
+
+- **`## aprendido` aprende de las CORRECCIONES** (`d5bcc51`): el path `decision=='editing'` de hitl.py
+  quedó cableado con `SOURCE_CORREGIDO` (estaba sin conectar aunque el módulo lo soportaba). Gate H nuevo
+  en test_aprendido (34/34); test_hitl_flow 21/21.
+- **Sonda de instalabilidad PASÓ** (adelanto de F5 que el plan manda correr al cierre de F2): backend
+  re-compilado (466,5 MB, smoke OCR OK) y `--first-run` contra clúster scratch desde cero → initdb + rol +
+  44 migraciones + checkpointer + «Mia puede arrancar», y la SEGUNDA corrida es idempotente (0
+  actualizaciones, .env con secretos byte a byte intacto; apaga su postgres al salir). El hueco que F5
+  documentaba («el exe actual NO trae --first-run ni las migraciones») quedó cerrado por este build.
+- Lectura agéntica bajo `cli-*`: DECLARADA como limitación conocida (el código la detecta con
+  `agentic_reading_available()` y no cobra de más); «arreglar» espera el delta on/off de la corrida de
+  referencia en nube.
+
 ## Qué sigue (en orden)
 
 1. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: juzgar la calidad jurídica de las 6
    salidas + las 4 decisiones (RISK_CASES por defecto; prioridades restantes de F2; disparar OAuth/Trusted
    Signing; desdeclarar Modo A). Nota: las salidas del paquete son PRE-F2.1 (el endurecimiento no las
    invalida: ninguna tenía citas sin respaldo).
-2. **Resto de F2** (plan maestro): especificación de seguridad por oración; cablear `decision=='editing'`
-   de `## aprendido` en hitl.py; «arreglar o declarar» la lectura agéntica bajo `cli-*`; sonda de
-   instalabilidad al cierre de F2.
+2. **Resto de F2** (plan maestro): la pieza grande que queda es la especificación de seguridad de salida
+   POR ORACIÓN (toda afirmación jurídica → fuente → pasaje localizable → soporte, o abstención); su banco
+   de sondas adversariales de entailment.
 3. **Referencia en nube** (opcional, espera el OK de Pipe al tope de USD 30): RISK_CASES ×10 bajo `nube`
    + `--agentic-compare`.
 
