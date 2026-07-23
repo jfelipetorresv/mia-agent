@@ -59,16 +59,28 @@ persistencia por trozo, y agregación posterior. Además: los zombis de statusli
 CPU 100%, 1,3 GB RAM libre — el segador de 8 h se había apagado solo); matarlos y relanzar el segador es
 lo primero ante cualquier lentitud.
 
+## F2.1 HECHO en esta misma sesión: la fuga pasó de sugerencia a control (`e0c1634`+`e743c63`)
+
+Bajo jurisdicción desconocida, toda cita sin respaldo (ni corpus, ni ancla, ni el MENSAJE del abogado —
+carve-out del principio «input fidedigno», hallazgo MAYOR de la revisión adversarial independiente) se
+OMITE del texto ANTES de emitirse; el DIAGNÓSTICO también pasa por el guardián (estaba fuera y F1 midió
+fugas en él); el informe de omisiones viaja al abogado (payload HITL). **Re-corrida en vivo N=10 del caso
+citas (mismo prompt_hash): citas sin respaldo emitidas 3→0; el guardián interceptó EN VIVO 2 extrapolaciones
+del modelo (corrida 6); cobertura de respaldo 50%→100%; falsos bloqueos 0; sin costo de latencia.** La fuga
+"cruda" bajó 40%→20% y el 20% restante es el memo SELLADO referido con ancla (disciplina correcta). Detalle
+en `memory/findings.md` §F2.1. Suites: 26/26 nueva + 53/53 + 57/57 + 59/59 + 104/104 + 50/50.
+
 ## Qué sigue (en orden)
 
 1. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: juzgar la calidad jurídica de las 6
-   salidas + las 4 decisiones (RISK_CASES por defecto; qué endurece F2 primero; disparar OAuth/Trusted
-   Signing; desdeclarar Modo A).
-2. **Referencia en nube** (opcional, espera el OK de Pipe al tope de USD 30): los 3 RISK_CASES ×10 bajo
-   `nube` + `--agentic-compare` (bajo `cli-*` el bucle agéntico NO corre — limitación declarada del modo
-   de venta, decisión «arreglar o declarar» pendiente en F2).
-3. **F2 — endurecer la fuga de jurisdicción**: el detector la caza (por eso existe el 40%); falta
-   bloquear/reescribir antes de mostrar. El baseline da el punto de comparación exacto.
+   salidas + las 4 decisiones (RISK_CASES por defecto; prioridades restantes de F2; disparar OAuth/Trusted
+   Signing; desdeclarar Modo A). Nota: las salidas del paquete son PRE-F2.1 (el endurecimiento no las
+   invalida: ninguna tenía citas sin respaldo).
+2. **Resto de F2** (plan maestro): especificación de seguridad por oración; cablear `decision=='editing'`
+   de `## aprendido` en hitl.py; «arreglar o declarar» la lectura agéntica bajo `cli-*`; sonda de
+   instalabilidad al cierre de F2.
+3. **Referencia en nube** (opcional, espera el OK de Pipe al tope de USD 30): RISK_CASES ×10 bajo `nube`
+   + `--agentic-compare`.
 
 ## Pendientes de Pipe (acumulados)
 

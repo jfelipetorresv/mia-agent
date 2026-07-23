@@ -231,6 +231,38 @@ aborta si el prompt_hash difiere). La corrida `--agentic-compare` NO aplica bajo
 `suscripcion` (los aliases `cli-*` no ejecutan el bucle agéntico — limitación declarada del
 modo de venta, pendiente «arreglar o declarar» de F2); el delta agéntico queda para la
 corrida de referencia en nube.
+
+---
+
+## F2.1 · La fuga de jurisdicción pasa de sugerencia a control · 2026-07-22 (misma sesión)
+
+Endurecimiento construido SOBRE el baseline de arriba (commits `e0c1634` + `e743c63`,
+revisión adversarial independiente: APRUEBA; su hallazgo MAYOR — el input del abogado es
+fidedigno y no se borra — corregido con carve-out). Bajo jurisdicción desconocida, toda
+cita concreta SIN respaldo (ni corpus, ni ancla al expediente, ni el mensaje del abogado)
+se OMITE del texto ANTES de emitirse (`[referencia normativa omitida: ordenamiento no
+configurado]`), con el texto original en el informe de verificación. El DIAGNÓSTICO —
+que también se emite y estaba fuera del guardián — pasa por la misma verificación.
+
+### Re-corrida en vivo del caso citas (N=10, mismo prompt_hash e0a4e15a39069bae)
+
+| métrica | baseline F1 | post-F2.1 |
+|---|---|---|
+| citas sin respaldo EMITIDAS | 3 (anotadas [VERIFICAR]) + diagnóstico sin guardián | **0** |
+| omisiones ejecutadas por el guardián | no existía | 2 (corrida 6: el modelo extrapoló «arts. 1740 y ss. del CCO» y «art. 1546 del CCO» sin ancla en el diagnóstico — interceptadas) |
+| fuga cruda (cualquier cita concreta en el texto) | 4/10 (40%) | 2/10 (20%) — y en ambas el texto SOLO contiene las citas del memo SELLADO referidas con ancla [doc n] (disciplina correcta, no defecto) |
+| cobertura de respaldo | 50% (3/6) | **100% (4/4)** |
+| falsos bloqueos | 0 | 0 |
+| éxito de tarea | 10/10 | 10/10 |
+| latencia p50/p95 | 395/449 s | 393/436 s (sin costo de latencia) |
+
+Crudos: `mia-data/eval-runs/f2_omision_citas_20260722*`. La señal de fuga CRUDA se mantiene
+reportándose tal cual (transparencia); la métrica de calidad que este endurecimiento
+controla es «citas sin respaldo emitidas», derivable de los informes `verification` +
+`verification_diagnosis` que ahora viajan en cada crudo. El mecanismo además quedó probado
+contra un modelo que SIEMPRE desobedece (fake del harness: 3/3 interceptadas, checks no
+ciegos que exigen la omisión registrada). Suites: 26/26 omisión, 53/53 guardián, 57/57
+harness, 59/59 proyectos, 104/104 agnosticismo, 50/50 mutaciones del banco.
 5. **Ciclo de vida por telemetría de uso (mide "¿se usa?", no "¿acertó?")** — sidecar `.usage.json`,
    transición `active→stale(30d)→archived(90d)`, nunca borra, snapshot+rollback, `pin`. → Mia:
    `PlaybookCurator` que cuente activaciones y archive (con snapshot) los sin uso — pero el
