@@ -40,6 +40,7 @@ import asyncio
 import hashlib
 import logging
 import math
+import os
 import statistics
 import time
 from contextlib import contextmanager
@@ -568,6 +569,12 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         # políticas gratis (cli-*, motor local) el coste es 0 pero los tokens SÍ se cuentan.
         "usage": case_usage.as_dict() if case_usage is not None else None,
     }
+    # TEXTO COMPLETO opt-in (F1 · paquete de decisión): el preview de 1200 sirve para
+    # depurar, no para que un abogado JUZGUE la calidad jurídica de un borrador de ~15k.
+    # Se activa por env y no por defecto: engordaría todos los crudos del banco.
+    if os.getenv("MIA_EVAL_PERSIST_FULL", "").strip() == "1":
+        result["draft_full"] = draft
+        result["diagnosis_full"] = diagnosis
     # FALSOS BLOQUEOS (F1 · Frente C): ¿alguna marca [VERIFICAR] espontánea del modelo
     # cayó sobre una cita que YA estaba respaldada por el corpus? Ver `false_block_signal`.
     result["false_block"] = false_block_signal(md.get("verification"), sources)

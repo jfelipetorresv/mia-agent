@@ -174,6 +174,63 @@ Análogo maduro de los PLAYBOOKS de Mia; adoptar el disparador, NO la escritura 
 4. **Gating por procedencia (`write_origin` ContextVar)** — distingue escritura de `background_review`
    vs `foreground`; solo las auto-creadas quedan bajo el Curator. → Mia: tag `created_by:"gepa_auto"`
    vs `"lawyer_manual"` en `PlaybookManager`, mapeando `auto` → `status="pending"`.
+
+---
+
+## BASELINE F1 · suscripción · 2026-07-22 (prompt_hash e0a4e15a39069bae)
+
+Primera medición completa de la promesa central bajo el MODO DE VENTA (política `suscripcion`,
+`cli-claude`, coste USD 0 — cuota del plan). Crudos y paneles en `mia-data/eval-runs/f1_susc_*`
+(3 casos de riesgo ×10 + 3 canónicos ×1). Modelo servido: el del CLI de la suscripción del
+abogado en esta máquina. Auditado contra los crudos por verificador independiente (ver
+HANDOFF de la sesión). Se re-corre ante cualquier cambio de modelo o prompt.
+
+### Números (agregados de N=10 por caso de riesgo)
+
+| métrica | fuga-jurisdiccion | disciplina-citas | procedencia-vacio |
+|---|---|---|---|
+| corridas sanas | 10/10 | 10/10 | 10/10 |
+| éxito de tarea (borrador con cierre) | 100% | 100% | 100% |
+| citas totales emitidas | 0 | 6 | 0 |
+| citas respaldadas | — | 3 (cobertura 50%) | — |
+| citas sin respaldo ANOTADAS por el guardián | — | 3/3 (100%) | — |
+| falsos bloqueos ([VERIFICAR] de más) | 0 | 0 | 0 |
+| fuga de jurisdicción | 0/10 | **4/10 (40%)** | 0/10 |
+| abstención honesta | 0/10 | 0/10 | 0/10 |
+| latencia p50 / p95 (s) | 207 / 280 | 395 / 449 | 140 / 150 |
+| tokens totales (10 corridas) | 481.524 | 731.765 | 429.599 |
+| coste USD | 0,0000 | 0,0004 (embeddings) | 0,0000 |
+
+Canónicos (×1): los 3 con éxito de tarea, 0 citas, 0 fuga; latencias 318/464/410 s;
+borradores de 12-19k caracteres.
+
+### Lecturas (lo que los números SÍ dicen)
+
+1. **La promesa central se sostuvo en las 33 corridas**: ninguna cita sin respaldo llegó al
+   texto sin marca — las 3 no respaldadas del caso citas las anotó el guardián DETERMINISTA
+   (no la obediencia del modelo, que marcó 0). Es la mitad absoluta del criterio de salida.
+2. **La fuga de jurisdicción es EL defecto abierto**: 40% en el caso citas (4/10; en la
+   tanda descartada de la mañana fue 5/10 — patrón intermitente confirmado con N=20 total,
+   siempre el mismo ejemplar: «arts. 1740 y ss. del CCO»). Los otros dos casos: 0/20. El
+   detector la CAZA (por eso el número existe); lo que falta es bloquearla/reescribirla antes
+   de mostrarse — ese es exactamente el objetivo de F2, ya en el plan.
+3. **Abstención 0/30**: ningún caso pedía abstenerse a gritos, pero 0 es un número a vigilar
+   cuando el banco crezca con casos que SÍ la exijan.
+4. **Latencia bajo suscripción**: 2,3-7,7 min por consulta (informativa, jamás gate). El caso
+   de citas duplica a los demás. La cifra incluye corridas con la máquina de dev saturada por
+   los zombis de statusline (varianza inflada — limitación de método declarada).
+5. **Coste en el modo de venta: USD ~0** (solo centavos de embeddings Voyage); lo que se
+   consume es cuota de la suscripción: ~1,6M tokens por la tanda completa.
+
+### Método (para reproducir o refutar)
+
+Las N=10 por caso se corrieron en TROZOS foreground (`--repeat 1..2`) por el asesino de
+procesos de la máquina de dev (3 tandas largas matadas; causa sin identificar) y se
+consolidaron con `execution/aggregate_eval_runs.py` (recalcula panel y fuga desde los crudos;
+aborta si el prompt_hash difiere). La corrida `--agentic-compare` NO aplica bajo
+`suscripcion` (los aliases `cli-*` no ejecutan el bucle agéntico — limitación declarada del
+modo de venta, pendiente «arreglar o declarar» de F2); el delta agéntico queda para la
+corrida de referencia en nube.
 5. **Ciclo de vida por telemetría de uso (mide "¿se usa?", no "¿acertó?")** — sidecar `.usage.json`,
    transición `active→stale(30d)→archived(90d)`, nunca borra, snapshot+rollback, `pin`. → Mia:
    `PlaybookCurator` que cuente activaciones y archive (con snapshot) los sin uso — pero el

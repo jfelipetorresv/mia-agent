@@ -3,6 +3,7 @@
 > Entradas archivadas del HANDOFF.md, de la más reciente a la más antigua.
 > En HANDOFF.md viven solo la entrada vigente y la anterior.
 
+- [PAUSA — 2026-07-21 · reinicio de máquina a mitad de la preparación de F1](053-pausa-2026-07-21-reinicio-a-mitad-de-la-preparacion-de-f1.md)
 - [CIERRE — 2026-07-21 · F0 COMPLETA · MIA corrió por primera vez contra un modelo real](052-cierre-2026-07-21-f0-completa-mia-corrio-por-primera-vez.md)
 - [CIERRE — 2026-07-20 (sesión Fable) · Los 5 frentes del encargo, implementados y verificados](051-cierre-2026-07-20-sesion-fable-los-5-frentes-del-encargo-i.md)
 - [CIERRE — 2026-07-20 (final de sesión) · 15 commits, verificación adversarial y primera prueba en vivo](050-cierre-2026-07-20-final-de-sesion-15-commits-verificacion.md)

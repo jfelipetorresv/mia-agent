@@ -18,7 +18,69 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 
 ---
 
-# CIERRE — 2026-07-22 · Preparación de F1 COMPLETA: dinero hermético en 5 rondas + limpieza · EMPEZAR AQUÍ
+# CIERRE — 2026-07-22 (2ª sesión) · F1 HECHA: baseline bajo suscripción, auditado y con paquete para Pipe · EMPEZAR AQUÍ
+
+Rama `feat/fase1-inc1-cleanup-scaffolding`. **F1 quedó ejecutada en su vía principal**: el benchmark vivo
+corrió COMPLETO bajo la política `suscripcion` (el modo de venta), coste USD ~0 (solo centavos de
+embeddings), y el baseline quedó versionado, AUDITADO contra los crudos por un verificador independiente
+(veredicto: NÚMEROS FIELES, 10/10 chequeos) y publicado.
+
+## Los números que importan (detalle en `memory/findings.md`, sección BASELINE F1)
+
+- **La promesa central se sostuvo en las 33 corridas**: ninguna cita sin respaldo llegó al texto sin
+  marca — las 3 no respaldadas (caso citas) las anotó el guardián DETERMINISTA (el modelo marcó 0).
+  Falsos bloqueos: 0. Éxito de tarea: 33/33.
+- **El defecto abierto es la fuga de jurisdicción: 40%** en el caso citas (4/10; la tanda descartada de
+  la mañana dio 5/10 — intermitente confirmado con N=20, siempre «arts. 1740 y ss. del CCO»). Es
+  exactamente lo que F2 endurece. Los otros dos casos de riesgo: 0/20.
+- Latencia (informativa): p50 2,3-6,6 min según caso. Cuota consumida: ~1,6M tokens la tanda.
+- Crudos y paneles: `mia-data/eval-runs/f1_susc_*` (agregados + partes + canónicos), prompt_hash
+  `e0a4e15a39069bae`. Se re-corre ante cualquier cambio de modelo o prompt.
+
+## Qué se construyó/arregló (commits de esta sesión)
+
+- `ac5ce98` — fix(eval): `--repeat` PERSISTE los crudos y la versión del baseline (antes imprimía y
+  tiraba los resultados; sin esto no había ni auditoría ni baseline).
+- `8abb855` — feat(eval): `execution/aggregate_eval_runs.py` consolida trozos de `--repeat` en un run
+  agregado recalculando panel y fuga DESDE los crudos (aborta si difiere el prompt_hash).
+- (este cierre) — harness: `MIA_EVAL_PERSIST_FULL=1` persiste borrador/diagnóstico COMPLETOS (opt-in,
+  para el paquete de decisión); `memory/findings.md` con el BASELINE F1; y
+  **`docs/f1-paquete-decision-pipe.md`**: 6 salidas ÍNTEGRAS + los 4 ejemplares reales de fuga + las
+  4 preguntas de la Sesión A. Ese archivo ES el insumo de la próxima sesión con Pipe.
+
+## El asesino de procesos (léelo antes de correr nada largo)
+
+**Tres tandas largas fueron matadas hoy** (2 lanzadas desacopladas vía WMI, 1 como tarea del harness):
+árboles COMPLETOS (powershell+cmd+python) terminados sin rastro en Event Log; no fue Defender, ni el
+segador, ni OOM; LiteLLM (python, vivo desde la víspera) sobrevivió — no es un barrido general y la causa
+sigue SIN identificar. **La defensa que funcionó** (y es ahora el método estándar): trabajo largo en
+TROZOS foreground (`--repeat 1..2`, <10 min por comando — el foreground completó el 100% de las veces),
+persistencia por trozo, y agregación posterior. Además: los zombis de statusline REAPARECIERON (3.346,
+CPU 100%, 1,3 GB RAM libre — el segador de 8 h se había apagado solo); matarlos y relanzar el segador es
+lo primero ante cualquier lentitud.
+
+## Qué sigue (en orden)
+
+1. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: juzgar la calidad jurídica de las 6
+   salidas + las 4 decisiones (RISK_CASES por defecto; qué endurece F2 primero; disparar OAuth/Trusted
+   Signing; desdeclarar Modo A).
+2. **Referencia en nube** (opcional, espera el OK de Pipe al tope de USD 30): los 3 RISK_CASES ×10 bajo
+   `nube` + `--agentic-compare` (bajo `cli-*` el bucle agéntico NO corre — limitación declarada del modo
+   de venta, decisión «arreglar o declarar» pendiente en F2).
+3. **F2 — endurecer la fuga de jurisdicción**: el detector la caza (por eso existe el 40%); falta
+   bloquear/reescribir antes de mostrar. El baseline da el punto de comparación exacto.
+
+## Pendientes de Pipe (acumulados)
+
+1. Aprobar el borrado de 7 ramas remotas ya fusionadas (verificado commit a commit, sesión anterior).
+2. Aprobar la tarea programada permanente del segador de statusline (hoy volvió a hacer falta).
+3. Decidir si se conserva `origin/claude/arranque-fptz34` (2 commits de docs de la sesión 45).
+4. Aprobar (o no) el tope de USD 30 para las corridas de REFERENCIA en nube (el baseline principal ya
+   está hecho y fue gratis).
+
+---
+
+# CIERRE — 2026-07-22 · Preparación de F1 COMPLETA: dinero hermético en 5 rondas + limpieza
 
 Rama `feat/fase1-inc1-cleanup-scaffolding`, pusheada hasta `bfb9123`. **La preparación de F1 terminó**: el
 banco sabe reprobar (frente B, `b86b15a`), el panel es confiable (43/43) y el control de dinero quedó
@@ -80,80 +142,6 @@ sección de deuda del cierre de F0 (archivo `052` del historial).
 2. Aprobar la tarea programada permanente del segador de statusline (cada 5 min, mata solo >30 s de vida).
 3. La rama `origin/claude/arranque-fptz34` tiene 2 commits de docs de la sesión 45: decidir si se conserva.
 4. Sin nada bloqueante: F1 puede arrancar bajo suscripción sin gastar un dólar.
-
----
-
-# PAUSA — 2026-07-21 · reinicio de máquina a mitad de la preparación de F1
-
-Rama `feat/fase1-inc1-cleanup-scaffolding`. **F0 está completa y PUSHEADA** (hasta `dad662e`). Esta pausa es
-a mitad de la PREPARACIÓN de F1 (cerrar la deuda de dinero + demostrar que el banco puede fallar, ANTES de
-gastar contra el modelo). Nada se ha gastado aún de forma seria.
-
-## Cómo retomar (en orden)
-
-1. **Reiniciar servicios** (el reinicio los mató; la DB portable 55432 puede volver sola o no):
-   - LiteLLM :4000 → `scripts/start_litellm.ps1` **con `run_in_background` del harness** (si no, muere).
-   - DB 55432: si no está, `pg_ctl` según `scripts/setup_db.ps1` (lee puerto del `.env`).
-   - Verificar con `curl -s http://127.0.0.1:4000/health/liveliness` (debe dar 200) antes de gastar.
-2. **Primera sonda ante cualquier lentitud rara: contar `node.exe`.** Los zombis de `statusline.js` ya
-   tienen la causa raíz arreglada (ver cierre de F0), pero si reaparecen, matar solo los `statusline`.
-3. **Retomar la ronda 2 de preparación de F1: solo falta VERIFICAR** (las correcciones ya están aplicadas).
-
-## Qué quedó a medias (estado exacto)
-
-**Preparación de F1 = 3 frentes.** Frente **B APROBADO Y COMMITEADO** (`b86b15a`: el banco demuestra que
-sabe reprobar — 50 mutaciones plantadas + holdout intocable con manifiesto de hashes).
-
-Frentes **A (dinero) y C (panel): ronda 1 rechazada, ronda 2 aplicada pero SIN VERIFICAR.** Las correcciones
-de la ronda 2 están en el commit **WIP `f284bcf` (marcado, local, sin push)** — hay que RE-VERIFICARLAS
-con un pase adversarial fresco + Codex xhigh ANTES de darlas por buenas. Los reportes de corrección de esa
-ronda están guardados en el scratchpad de la sesión:
-`…/scratchpad/f1prep_ronda2_fixes.json` (por si el scratchpad no sobrevive, el resumen está abajo).
-
-**Defectos que la ronda 2 dice haber cerrado (verificar cada uno EJECUTANDO):**
-- **A-BLOQ** (lo reprodujo Codex con un proxy local): el SDK reintenta por dentro (`max_retries=2`) y solo
-  expone el error final; se devolvía la reserva de intentos que SÍ salieron al proveedor. Arreglo: los
-  reintentos los hace MIA (`max_retries=0` en el cliente), cada uno reservado por separado. **Verificar con
-  un proxy propio que reciba N POST y luego rechace.**
-- **A-MAY1**: `metrics/usage.py` (PRODUCCIÓN) no tarifaba el caché (escritura 2x fuera de `prompt_tokens`,
-  lectura 0.1x dentro). Arreglo: mismo desglose de tres cubos que `spend_guard.real_call_cost`. **Verificar
-  que una fila SIN caché registra idéntico a antes, y `enforce_budget` sigue fail-open.**
-- **A-MAY2** (tmp + ledger): el gate creaba temporales dentro del repo (81/83) y un call-site
-  (`test_eval_harness.py:431`) filtraba al libro REAL con sesión `inapp-<fecha>`. **Verificar 83/83 y que el
-  hash de `mia-data/eval-runs/spend_ledger.json` no cambia al correr los gates.**
-- **A-MEN**: los embeddings cobran toda falla de red (dirección segura); declarado.
-- **A-ABIERTO**: limpieza del residuo pre-existente del libro real (sesiones `default`/`smoke-f05`) y dos
-  artefactos gitignoreados en la raíz (`.tmp/`, `mia-spend-guard-f478svfq`). Cosmético, no bloquea.
-- **C-MAY1**: la frecuencia de fuga de jurisdicción se medía sobre 1.200 de ~15.656 caracteres (el 8% del
-  borrador) → leería "cero fuga" por construcción. Arreglo: medir sobre el texto COMPLETO en `run_case`.
-  **Verificar con un borrador >15k con la fuga después del carácter 1200.**
-- **C-MAY2**: la métrica estrella (falsos bloqueos / `precision_respaldo`) no estaba protegida — mutar el
-  denominador dejaba la suite verde. Arreglo: asertos con valores conocidos. **Verificar mutando el
-  denominador → la suite debe ponerse ROJA.**
-- **C-MEN**: `precision_respaldo` podía imprimir negativo; se le puso clamp.
-
-**Verificación interrumpida**: de los 3 verificadores de la ronda 2, solo volvió 1 (parcial,
-`EVIDENCIA_INSUFICIENTE` — NO es un veredicto, la corrida se cortó). Re-verificar los tres desde cero.
-
-El workflow de la ronda 2 fue detenido a propósito (no se puede reanudar cross-sesión). El script vive en
-`…/workflows/scripts/mia-f1-prep-ronda2-wf_4e096384-1d0.js`; su fase «Corregir» YA corrió (no re-correrla:
-duplicaría ediciones), solo hace falta rehacer la fase «Verificar».
-
-## Decisiones de Pipe de esta sesión (no reabrir)
-
-- **La calidad manda sobre el reloj** (2026-07-21): los 10 minutos dejan de ser puerta; la latencia se mide
-  y reporta, ningún gate falla por tiempo. Lo absoluto sigue siendo: cero afirmaciones sin respaldo.
-- **El modo PRINCIPAL del producto es la SUSCRIPCIÓN del abogado** (Claude Code/Codex/Antigravity), no la
-  nube. El baseline de F1 debe aprobar bajo `suscripcion` (coste USD 0 → el benchmark principal es GRATIS,
-  N=10 sin tocar el tope); la nube es referencia. Verificado en esta sesión que el CLI `claude -p` anidado
-  responde, así que el benchmark del modo primario es viable desde aquí. Consecuencia ascendida a defecto:
-  bajo `cli-*` el bucle de lectura agéntica NO corre → capacidad que le falta al modo de venta; arreglar o
-  declarar. El "USD 0,31/turno" de F0.5 era SOLO el modo nube.
-
-## Pendiente de Pipe
-
-- Nada bloqueante. Cuando retome: aprobar (o no) que las corridas de REFERENCIA en nube usen el tope de
-  USD 30, aunque probablemente ni haga falta porque el modo principal es gratis.
 
 ---
 
