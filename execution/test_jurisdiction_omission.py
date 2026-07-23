@@ -123,6 +123,26 @@ t7, r7 = verification.annotate_draft(texto_fantasma, num_documents=1, omit_unbac
 check("docs_fantasma" in r7 and "[doc 9]" in t7 and verification.VERIFY_MARK in t7,
       "o11 · el guardián de [doc n] fantasma sigue corriendo tras la omisión")
 
+# Carve-out del input fidedigno (revisión adversarial de e0c1634, hallazgo MAYOR): una
+# cita que el ABOGADO escribió en su consulta y el modelo reprodujo jamás se omite.
+MENSAJE_ABOGADO = f"¿Aplica la {CITA} al derecho de petición de mi cliente?"
+t8, r8 = verification.annotate_draft(TEXTO, omit_unbacked=True,
+                                     lawyer_text=MENSAJE_ABOGADO)
+check(CITA in t8 and r8.get("respaldadas") == 1 and r8.get("omitidas") == 0,
+      "o12 · cita presente en el MENSAJE del abogado: se conserva (input fidedigno)")
+check(any(d.get("estado") == "respaldada"
+          and (d.get("fuente") or {}).get("tipo") == "consulta"
+          for d in r8.get("detalle", [])),
+      "o13 · el informe atribuye el respaldo a la consulta del abogado")
+t9, r9 = verification.annotate_draft(TEXTO, omit_unbacked=True,
+                                     lawyer_text="Mensaje sin ninguna norma citada.")
+check(CITA not in t9 and r9.get("omitidas") == 1,
+      "o14 · cita AUSENTE del mensaje del abogado: sigue omitida (el carve-out discrimina)")
+t10, r10 = verification.annotate_draft(TEXTO, omit_unbacked=False,
+                                       lawyer_text=MENSAJE_ABOGADO)
+check(CITA in t10 and verification.VERIFY_MARK in t10 and r10.get("anotadas") == 1,
+      "o15 · en modo clásico lawyer_text no cambia nada (la cita se marca como siempre)")
+
 print("== C · cableado real vía graph._verify_draft ==")
 
 
@@ -150,6 +170,30 @@ _, md_diag = _verify(["generic"], TEXTO, report_key="verification_diagnosis")
 check("verification_diagnosis" in md_diag and "verification" not in md_diag,
       "c5 · report_key separa el informe del diagnóstico del informe del borrador")
 
+
+def _verify_msgs(jurisdictions, text, mensaje):
+    state = {"tenant_id": "00000000-0000-0000-0000-000000000000",
+             "jurisdictions": jurisdictions, "documents": [],
+             "messages": [{"role": "user", "content": mensaje}]}
+    md: dict = {}
+    out = asyncio.run(MatterGraphBuilder._verify_draft(SimpleNamespace(), state, md, text))
+    return out, md
+
+
+out_abog, _ = _verify_msgs(["generic"], TEXTO, MENSAJE_ABOGADO)
+check(CITA in out_abog,
+      "c6 · cableado real: la cita del mensaje del abogado sobrevive vía _verify_draft")
+
+# El payload del checkpoint HITL expone el informe del diagnóstico (transparencia:
+# el abogado ve QUÉ se omitió del diagnóstico, no solo la marca en el texto).
+_graph_src = (ROOT / "backend" / "mia" / "agents" / "graph.py").read_text(encoding="utf-8")
+# Ancla al payload del HITL (hay más de un interrupt en graph.py — el del Agent Hub va
+# primero); el bloque termina en el comentario de reanudación de ESE nodo.
+_interrupt_block = _graph_src.split("Borrador listo para tu aprobación.", 1)[1].split(
+    "de aquí en adelante", 1)[0]
+check('"verification_diagnosis"' in _interrupt_block,
+      "c7 · el payload del checkpoint HITL incluye verification_diagnosis")
+
 print("== M · mutación: el gate sabe reprobar ==")
 
 t_mut, _ = verification.annotate_draft(TEXTO, omit_unbacked=False)
@@ -157,7 +201,7 @@ check(CITA in t_mut,
       "m1 · SIN el modo omisión la cita sobrevive — el aserto o1 discrimina de verdad")
 
 print()
-total = 3 + 11 + 5 + 1
+total = 3 + 15 + 7 + 1
 if failures:
     print(f"{len(failures)}/{total} checks FAIL:")
     for f in failures:

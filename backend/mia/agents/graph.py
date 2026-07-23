@@ -1757,7 +1757,10 @@ class MatterGraphBuilder:
             return verification.annotate_draft(
                 text, sources=sources, extra_patterns=extra,
                 num_documents=num_documents, documents=docs,
-                omit_unbacked=generic)
+                omit_unbacked=generic,
+                # Input fidedigno: una cita que el abogado escribió en su mensaje jamás
+                # se omite (revisión adversarial de e0c1634 — regla del producto).
+                lawyer_text=_last_user_message(state) if generic else None)
 
         annotated, report = await asyncio.to_thread(_scan)
         md[report_key] = report
@@ -1916,6 +1919,12 @@ class MatterGraphBuilder:
             "diagnosis_summary": (state.get("metadata") or {}).get("diagnosis_summary"),
             # CP9: informe del especialista de verificación (citas y su estado).
             "verification": (state.get("metadata") or {}).get("verification"),
+            # F2: informe del DIAGNÓSTICO (solo existe bajo jurisdicción desconocida,
+            # donde el diagnóstico también pasa por el guardián). Sin esto el abogado
+            # vería la marca de omisión en el texto pero no QUÉ se omitió ni por qué —
+            # transparencia asimétrica frente al borrador (revisión adversarial e0c1634).
+            "verification_diagnosis": (state.get("metadata") or {}).get(
+                "verification_diagnosis"),
         })
         # --- de aquí en adelante solo corre TRAS reanudar con Command(resume=...) ---
         dec = (decision or {}).get("decision")

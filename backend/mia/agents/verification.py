@@ -235,6 +235,20 @@ def _tokens_match(a: tuple[str, ...], b: tuple[str, ...]) -> bool:
     return _covers(a, b) or _covers(b, a)
 
 
+def _contains_contiguous(hay: tuple[str, ...], needle: tuple[str, ...]) -> bool:
+    """`needle` aparece completo y contiguo en `hay`, SIN la guarda de fronteras de
+    `_covers`. Solo para el cotejo contra el MENSAJE del abogado (texto libre: casi
+    nunca termina una cita justo antes de un calificador, y `_covers` la rechazaría —
+    p. ej. «¿aplica la Ley 100 de 1993 al derecho de petición?»). La dirección segura
+    aquí es la INVERSA a la de fuentes/documentos: conservar de más lo que el abogado
+    escribió es mejor que borrárselo; las piezas exactas ya impiden confusiones
+    numéricas ('100' nunca coteja '1007')."""
+    n, m = len(hay), len(needle)
+    if not m or m > n:
+        return False
+    return any(hay[i:i + m] == needle for i in range(n - m + 1))
+
+
 def source_keys(sources: Optional[list[dict]]) -> list[str]:
     """Claves normalizadas de las fuentes del corpus recuperadas en el turno.
 
@@ -498,6 +512,7 @@ def annotate_draft(
     num_documents: Optional[int] = None,
     documents: Optional[list] = None,
     omit_unbacked: bool = False,
+    lawyer_text: Optional[str] = None,
 ) -> tuple[str, dict]:
     """Anota el borrador y produce el informe del especialista de verificación.
 
@@ -536,11 +551,20 @@ def annotate_draft(
     texto. Este módulo sigue agnóstico de jurisdicción: la DECISIÓN de activar el modo vive
     en el llamador (graph._verify_draft); aquí solo vive la mecánica. Con False (default)
     el comportamiento es idéntico byte a byte al de antes.
+
+    `lawyer_text` (revisión adversarial de e0c1634, hallazgo MAYOR): el texto del mensaje
+    del abogado en el turno. Una cita que el ABOGADO escribió y el modelo reprodujo no se
+    omite jamás — la regla del producto es que el input directo del abogado es fidedigno y
+    no se verifica; el escepticismo aplica solo a lo que el modelo genera. Solo participa
+    en modo `omit_unbacked` (en modo clásico esa cita se marca [VERIFICAR], comportamiento
+    aceptado que no cambia aquí). El cotejo es el mismo de fuentes/documentos
+    (`_tokens_match`): piezas contiguas con fronteras respetadas.
     """
     text = draft or ""
     citations = scan_citations(text, compile_patterns(extra_patterns))
     index = _tokenize_index(source_index(sources))
     doc_tokens = _document_tokens(documents)
+    lawyer_toks = _match_tokens(lawyer_text) if (omit_unbacked and lawyer_text) else ()
     detalle: list[dict] = []
     marcadas = respaldadas = anotadas = omitidas = 0
     # ediciones (start, end, reemplazo); una inserción es (pos, pos, " [VERIFICAR]").
@@ -566,6 +590,13 @@ def annotate_draft(
             fuente = {"tipo": "expediente",
                       "referencia": f"[doc {anchor_n}]",
                       "titulo": _document_titulo(documents, anchor_n)}
+        elif lawyer_toks and _contains_contiguous(lawyer_toks, _match_tokens(c["citation"])):
+            # La cita está en el MENSAJE del abogado: input fidedigno, no se omite. Solo
+            # alcanzable en modo omit_unbacked (lawyer_toks queda vacío en modo clásico).
+            respaldadas += 1
+            estado = "respaldada"
+            fuente = {"tipo": "consulta", "referencia": "mensaje del abogado",
+                      "titulo": ""}
         elif omit_unbacked:
             # Sin respaldo bajo jurisdicción desconocida: el span completo se sustituye.
             # (Si venía marcada, la marca [VERIFICAR] posterior puede quedar huérfana tras
