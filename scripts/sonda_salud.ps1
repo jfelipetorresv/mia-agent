@@ -23,11 +23,30 @@ Write-Host "CPU:                   $([Math]::Round($cpu))%"
 Write-Host "RAM libre:             $ramLibre GB de $([Math]::Round($os.TotalVisibleMemorySize/1MB,1)) GB"
 Write-Host "segador corriendo:     $($reaper.Count -gt 0)"
 
+# DB portable (retrospectiva 2026-07-24-001: test_rls fallo con ConnectionTimeout
+# porque la DB estaba apagada y nadie lo sabia hasta correr la suite).
+$pgIsReady = "D:\Inteligencia Artificial\Mia-Super Agent\tools\postgres16-portable\pgsql\bin\pg_isready.exe"
+$dbOk = $false
+if (Test-Path $pgIsReady) {
+    & $pgIsReady -h 127.0.0.1 -p 55432 *> $null
+    $dbOk = ($LASTEXITCODE -eq 0)
+}
+Write-Host "DB portable (55432):   $(if ($dbOk) { 'acepta conexiones' } else { 'APAGADA' })"
+if (-not $dbOk) {
+    Write-Host "AVISO: DB portable apagada - test_rls y toda suite con DB fallara con ConnectionTimeout. Encender:"
+    Write-Host '  & "D:\Inteligencia Artificial\Mia-Super Agent\tools\postgres16-portable\pgsql\bin\pg_ctl.exe" -D "D:\Inteligencia Artificial\Mia-Super Agent\tools\pgdata-portable" -l "D:\Inteligencia Artificial\Mia-Super Agent\tools\pgdata-portable\arranque.log" start'
+}
+
 $alerta = $false
 if ($zombis.Count -gt 50) { Write-Host "ALERTA: zombis de statusline acumulados - segar y relanzar el segador."; $alerta = $true }
 if ($cpu -gt 90) { Write-Host "ALERTA: CPU saturada."; $alerta = $true }
 if ($ramLibre -lt 3) { Write-Host "ALERTA: RAM libre critica."; $alerta = $true }
-if ($reaper.Count -eq 0) { Write-Host "AVISO: el segador NO esta corriendo (se apaga solo a las 8 h). Relanzar:"; Write-Host '  Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ''powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\USER\.claude\statusline-reaper-loop.ps1"'' }' }
+# Desde 2026-07-23 existe la tarea programada permanente "statusline-reaper" (cada 5 min);
+# si esta registrada, el loop de 8 h ya no hace falta y no se avisa por su ausencia.
+$tareaPermanente = $null
+try { $tareaPermanente = Get-ScheduledTask -TaskName "statusline-reaper" -ErrorAction Stop } catch {}
+Write-Host "tarea programada:      $(if ($tareaPermanente) { $tareaPermanente.State } else { 'NO REGISTRADA' })"
+if ($reaper.Count -eq 0 -and -not $tareaPermanente) { Write-Host "AVISO: ni el segador de 8 h ni la tarea programada estan activos. Relanzar el loop:"; Write-Host '  Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ''powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\USER\.claude\statusline-reaper-loop.ps1"'' }' }
 
 if ($Segar -and $zombis.Count -gt 0) {
     $cutoff = (Get-Date).AddSeconds(-30)

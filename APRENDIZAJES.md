@@ -172,3 +172,19 @@
 48. **Ante cualquier lentitud (Glob/ripgrep con timeout es la primera señal), correr la sonda de
     salud ANTES de seguir**: `scripts/sonda_salud.ps1` (zombis de statusline/CPU/RAM/segador).
     La saturación pasó DOS veces en un día y ambas se detectaron tarde.
+49. **Todo cambio del prompt core pasa por verificación adversarial independiente ANTES del
+    commit, con la pregunta de ALCANCE como obligatoria**: ¿a qué nodos/modos llega esta capa y
+    en cuáles NO debería aplicar? Los 2 MAYORES de la decisión #43 (registro adversarial
+    incondicional; transcripción de norma vs jurisdicción desconocida) eran ambos de alcance y
+    el autor no los vio — el verificador fresco sí, dos veces en la misma sesión (11 hallazgos
+    reales en total). Barrera: checks `std-1..std-5` en `execution/test_prompt_builder.py`
+    (las correcciones no pueden des-corregirse en silencio).
+50. **Al editar un prompt cuyo output alimenta un parser, verificar QUÉ parte del texto
+    sobrevive el parseo y dirigir el contenido a los campos que se conservan.** La prosa del
+    moderador de la Sala fuera del bloque `=== DICTAMEN ===` se descarta: una instrucción
+    puede cumplirse y aún así perderse. Barrera: check `std-5` (el moderador escribe DENTRO
+    de los campos).
+51. **Comandos Windows que Pipe corre con `!` llevan `MSYS_NO_PATHCONV=1` antepuesto** (el `!`
+    corre en Git Bash y convierte `/Flags` en rutas: `schtasks /Create` → error "C:/Program
+    Files/Git/Create"). Además: acción bloqueada por el clasificador de permisos = preparar el
+    comando exacto para `!`, no buscar rodeos. Sin barrera automática (documentada).

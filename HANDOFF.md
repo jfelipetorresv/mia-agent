@@ -18,7 +18,78 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 
 ---
 
-# CIERRE — 2026-07-22 (2ª sesión) · F1 HECHA + F2 casi entera · EMPEZAR AQUÍ
+# CIERRE — 2026-07-24 · El criterio de Pipe entró a MIA: decisiones #43-#44 + backlog ruflo · EMPEZAR AQUÍ
+
+## Arranque en una terminal nueva (prompt sugerido)
+
+> Lee `HANDOFF.md` y `APRENDIZAJES.md` (reglas nuevas 49-51) de
+> `D:\Inteligencia Artificial\Mia-Super Agent\mia` y el plan maestro
+> (`C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`). Corre
+> `scripts\sonda_salud.ps1` ANTES de nada (ahora también chequea la DB portable; la tarea programada
+> del segador ya es permanente). Primer trabajo: **re-medir el baseline con el prompt nuevo** —
+> el prompt_hash cambió con las decisiones #43-#44 (`memory/decisions.md`), así que la línea base
+> `e0a4e15a39069bae` quedó desactualizada: correr `disciplina-citas-formas-abreviadas` ×10 y
+> `fuga-jurisdiccion-contrato-sin-pais` ×10 bajo `suscripcion` (gratis), en TROZOS foreground
+> `--repeat 1..2` <10 min (regla 45), agregando con `execution/aggregate_eval_runs.py`, y comparar
+> contra el baseline F1 (`memory/findings.md` §BASELINE F1). OJO al leer el panel: en el caso citas,
+> la mención del memo sellado CON ancla es disciplina correcta aunque el escáner crudo la cuente
+> (regla del 20% residual). Después: el resto de F2 (especificación de seguridad de salida POR
+> ORACIÓN) o la Sesión Pipe A si Pipe está disponible.
+
+Retrospectiva de esta sesión: `Pipe-OS\01-operacion\retrospectivas\retrospective-2026-07-24-001-mia-destilacion-principios.md`.
+Aprendizajes convertidos en regla: `APRENDIZAJES.md` 49-51 (alcance en destilaciones + verificación
+adversarial obligatoria para prompt core; prompts que alimentan parsers; MSYS_NO_PATHCONV para `!`)
+— con barreras: checks `std-1..std-5` en `test_prompt_builder.py` (51/51) y sonda de salud ampliada.
+
+Rama `feat/fase1-inc1-cleanup-scaffolding`, pusheada hasta este cierre.
+
+## Qué pasó en esta sesión (2026-07-23 → 24)
+
+1. **Los 4 pendientes de Pipe: APROBADOS Y EJECUTADOS.** Ramas remotas prescindibles borradas (solo
+   quedan `main` y esta rama; los 2 docs únicos de arranque-fptz34 rescatados en `abd1a25`), tarea
+   programada permanente del segador creada y verificada, tope USD 30 de referencia en nube
+   APROBADO (habilita RISK_CASES ×10 bajo `nube` + `--agentic-compare`).
+2. **Decisión #43 (`48d0ed5`)**: el manual de litigio de Pipe (metodologia-fable, 56 reglas) entró
+   DESTILADO al prompt core — L2 pasa a SEIS elementos con postura de litigio, catálogo de
+   confrontación, arquitectura del escrito, exhaustividad→selección y pasada del adversario; L8
+   facts/analysis/draft con lo operativo. Cero identidad, cero país (gate 104/104). La verificación
+   adversarial independiente encontró 2 MAYORES de ALCANCE que se corrigieron (adversarial
+   condicionado a encargos adversariales; transcripción de norma condicionada a ordenamiento
+   declarado).
+3. **Decisión #44 (`bc90628`)**: 5 skills más como PRINCIPIOS — Sala de estrategia (franqueza,
+   vacíos-como-preguntas, moderador que RESUELVE sin promediar y escribe DENTRO de los campos del
+   dictamen), `## aprendido` con vectores Funciona/Evitar/Lección + dedup ciego al vector,
+   pasada final de auto-verificación en draft, ficha de ESTÁNDAR DE CALIDAD por despacho en la
+   entrevista de guías (calidad = estructura + defectos, no puntaje), y convo-review resuelto:
+   ya está cubierto por `traces` FTS cross-asunto (candidato declarado: consulta espontánea).
+4. **Análisis ruflo (`c6c9665`, `memory/findings.md` §RUFLO)**: claude-flow renombrado; VETO de
+   instalación (telemetría+monetización sin disclosure, historial de fachadas); 5 ideas
+   destilables al backlog — decaimiento de confianza en lo aprendido (ALTA), consolidación
+   post-turno en cola presupuestada (ALTA), manifiesto sellado por entregable (MEDIA-ALTA,
+   candidata comercial), routing justificado (MEDIA), promoción explícita de memoria (MEDIA).
+   Valida el modo suscripción como modelo de negocio.
+5. **Verificación**: 2 rondas adversariales (11 hallazgos reales corregidos), 12 corridas de suites
+   en verde, 3 corridas EN VIVO con el prompt nuevo (fuga ×2 limpias; citas ×1 con disciplina
+   correcta — 2/2 respaldadas con ancla al memo sellado), USD 0.
+
+## Qué sigue (en orden)
+
+1. **Re-medir el baseline** N=10 con el prompt nuevo (ver prompt de arranque — es la deuda
+   declarada de #43/#44).
+2. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: calidad de las 6 salidas + las 4
+   decisiones + AHORA TAMBIÉN priorizar el backlog ruflo dentro de F2.
+3. **Resto de F2**: especificación de seguridad de salida POR ORACIÓN + banco de sondas
+   adversariales de entailment (la pieza grande del plan maestro).
+4. Referencia en nube (tope USD 30 ya aprobado): RISK_CASES ×10 bajo `nube` + `--agentic-compare`.
+
+## Pendientes de Pipe
+
+Ninguno bloqueante. Lo único que espera de Pipe es la **Sesión A** (juzgar calidad + 4 decisiones +
+prioridades del backlog ruflo).
+
+---
+
+# CIERRE — 2026-07-22 (2ª sesión) · F1 HECHA + F2 casi entera
 
 ## Arranque en una terminal nueva (prompt sugerido)
 
@@ -128,71 +199,6 @@ en `memory/findings.md` §F2.1. Suites: 26/26 nueva + 53/53 + 57/57 + 59/59 + 10
    `MSYS_NO_PATHCONV=1` o los `/Flags` de schtasks se convierten en rutas.
 3. **Tope USD 30 para corridas de referencia en nube: APROBADO.** La referencia RISK_CASES ×10 bajo
    `nube` + `--agentic-compare` queda habilitada (techo certificado USD 29,88).
-
----
-
-# CIERRE — 2026-07-22 · Preparación de F1 COMPLETA: dinero hermético en 5 rondas + limpieza
-
-Rama `feat/fase1-inc1-cleanup-scaffolding`, pusheada hasta `bfb9123`. **La preparación de F1 terminó**: el
-banco sabe reprobar (frente B, `b86b15a`), el panel es confiable (43/43) y el control de dinero quedó
-hermético y CERTIFICADO POR EJECUCIÓN tras 5 rondas de corrección↔verificación adversarial cruzada
-(Opus verifica, Codex xhigh refuta — dos veces encontró huecos críticos que Opus había aprobado).
-
-## Lo que quedó cerrado (commits de esta sesión)
-
-- `f284bcf`+`34f77e1` — caché tarifado en producción (6,15 vs 6,00), reintentos del SDK y del PROXY
-  apagados (`router_settings.num_retries: 0` en ambas configs, pin anti-deriva en `check_env_pins` 12/12),
-  gate vivo `test_litellm_proxy_retries.py`: una invocación = exactamente 1 POST (control con reintentos
-  = 3 POST). Temporales del harness migrados al helper común `execution/_tmp_desechable.py` (HALT antes de
-  crear dentro del repo). Panel: fuga de jurisdicción medida sobre el texto COMPLETO y métrica estrella
-  protegida por valores exactos.
-- `bfb9123` — el crítico final de Codex: el presupuesto MENSUAL del despacho ahora reserva y liquida POR
-  INTENTO dentro de `_invoke_metered` (antes: 4 fallos reales = USD 0 contabilizados; ahora 4 estimaciones;
-  éxito sin `usage` cobra estimación, nunca 0; solo lo demostrable-no-enviado se devuelve). Suscripción
-  `cli-*` intacta (coste 0, sin reserva). Gate 12/12 con vía del cliente REAL (mutar `max_retries` → ROJO)
-  y `test_model_policy` 43/43 con los 3 checks de regresión no-ciegos.
-- `643f1df` — este HANDOFF quedó liviano (15 KB): solo vigente + anterior; historial completo en
-  `docs/handoff-historial/INDICE.md` (regla de mantenimiento arriba).
-- `cd4df62` — limpieza fase B: 11 menciones de "Modo A" reescritas como hipótesis futura (nunca existió);
-  3 planes ejecutados a `memory/archivo/` (plan-f2 se queda: un test lo cita).
-- Limpieza fase A (sin commit, artefactos fuera de git): ~14 GB de builds regenerables borrados
-  (`target/`, `packaging/dist|build`, `.next`, `.tmp/`), rama local `feature/robustecimiento-sin-aws`
-  eliminada (0 commits únicos). El inventario completo concluyó: **no hay código muerto** en backend,
-  frontend ni configs.
-
-## Estado del veredicto de Codex (la garantía y su alcance)
-
-La sesión de eval en nube con tope USD 30 quedó con techo efectivo **USD 29,87712** garantizado
-(reproducido ejecutando). Su crítico restante (presupuesto mensual por alias) se cerró en `bfb9123` y un
-verificador adversarial fresco lo aprobó ejecutando las sondas exactas de Codex. El modo PRINCIPAL sigue
-siendo la suscripción del abogado (coste 0, cuota) — el tope USD protege solo las corridas de referencia.
-
-## Próximo paso: F1 propiamente (specs/todo/01-f1-benchmark-vivo.md)
-
-Benchmark vivo bajo `suscripcion` (N=10 GRATIS con `cli-claude`), nube como referencia con el tope ya
-certificado. La latencia se MIDE, nunca reprueba (decisión de Pipe). Antes de gastar en nube: releer la
-sección de deuda del cierre de F0 (archivo `052` del historial).
-
-## Entorno (léelo antes de arrancar servicios)
-
-- **LiteLLM :4000**: `scripts/start_litellm.ps1` con `run_in_background`; su config runtime vive en
-  `%TEMP%\mia-litellm-runtime\` (ya NO en `.tmp/`). Corre con `num_retries: 0`.
-- **Los zombis de statusline NO están resueltos**: el vigilante interno del script no alcanza a correr
-  (node se cuelga antes del event loop); 573 acumulados en 2,5 h saturaron la máquina y tumbaron a Codex.
-  Mitigación de sesión: `C:\Users\USER\.claude\statusline-reaper-loop.ps1` lanzado desacoplado (WMI,
-  se apaga solo a las 8 h). La tarea programada permanente espera aprobación de Pipe.
-- **Algo mata las tareas de fondo del harness en bloque** (ocurrió 4+ veces esta sesión, causa sin
-  identificar): los procesos largos críticos (LiteLLM, Codex) se lanzan desacoplados vía
-  `Invoke-CimMethod Win32_Process Create` y se vigilan con un bucle relanzable — el patrón está probado.
-- Residuo conocido: `mia-spend-guard-f478svfq/` y `mia-harness-ledger-j2c3gbkl/` (vacías, ACL de otro
-  contexto, exigen admin para borrarse; invisibles para git).
-
-## Pendientes de Pipe
-
-1. Aprobar el borrado de 7 ramas remotas ya fusionadas y sin trabajo único (verificado commit a commit).
-2. Aprobar la tarea programada permanente del segador de statusline (cada 5 min, mata solo >30 s de vida).
-3. La rama `origin/claude/arranque-fptz34` tiene 2 commits de docs de la sesión 45: decidir si se conserva.
-4. Sin nada bloqueante: F1 puede arrancar bajo suscripción sin gastar un dólar.
 
 ---
 
