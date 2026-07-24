@@ -81,7 +81,14 @@ _SYS = (
     "del arreglo, ni explicaciones, ni Markdown.\n"
     "- Cada cadena es UN patrón general de método, en una sola frase, reutilizable en otros "
     "asuntos. Sin datos del caso: nada de nombres de partes, identificadores, expedientes, "
-    "cifras, fechas ni hechos concretos.\n"
+    "cifras, fechas ni hechos concretos. La frontera es dura: la tesis de método viaja; el "
+    "caso, jamás.\n"
+    "- Cada frase empieza con su vector de cosecha: 'Funciona:' (lo que el abogado dio por "
+    "bueno y conviene repetir), 'Evitar:' (lo que corrigió o descartó — di qué y qué lo "
+    "reemplazó) o 'Lección:' (un aprendizaje con su regla de aplicación futura). Cuando el "
+    "trabajo venga de una CORRECCIÓN del abogado, prefiere 'Evitar:' y 'Lección:' — la "
+    "corrección es la semilla más valiosa — pero SOLO si el patrón se repetirá en otros "
+    "asuntos: una preferencia de un solo caso no se cosecha.\n"
     "- Si no ves un patrón claro y reutilizable, respondes con un arreglo vacío: []. Es "
     "mejor no aprender nada que inventar una preferencia que no existe.\n"
     "- Como máximo cinco elementos."
@@ -194,11 +201,17 @@ def _core(line: str) -> str:
     return s
 
 
+_VECTOR_RE = re.compile(r"^\s*(funciona|evitar|lecci[oó]n)\s*:\s*", re.IGNORECASE)
+
+
 def _dedup_key(line: str) -> str:
     """Clave de dedup: núcleo normalizado — espacios colapsados, minúsculas y sin puntuación
-    de borde (un punto final no vuelve distinto a un aprendizaje). Cubre el dedup exacto y el
+    de borde (un punto final no vuelve distinto a un aprendizaje). El vector de cosecha
+    ('Funciona:'/'Evitar:'/'Lección:') se quita ANTES: el mismo patrón bajo dos vectores, o
+    una línea manual del abogado sin prefijo, siguen deduplicando. Cubre el dedup exacto y el
     normalizado; no intenta similitud semántica (fuera de alcance por decisión)."""
-    core = re.sub(r"\s+", " ", _core(line)).strip().lower()
+    core = _VECTOR_RE.sub("", _core(line))
+    core = re.sub(r"\s+", " ", core).strip().lower()
     return core.strip(" .,;:!?·—-")
 
 

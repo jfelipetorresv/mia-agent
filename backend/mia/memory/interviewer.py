@@ -292,13 +292,27 @@ _SYSTEM_PROMPT = (
     "en jerga de abogados vacía ni en jerga técnica de software), que construya "
     "sobre las respuestas anteriores del abogado — no repitas preguntas ya "
     "respondidas. Cuando tengas material suficiente, propones un borrador de guía.\n\n"
+    "Caso especial — ESTÁNDAR DE CALIDAD: si lo que el abogado quiere fijar es cómo "
+    "se ve un BUEN escrito de cierto tipo (un estándar de calidad, no un "
+    "procedimiento), la entrevista extrae y el borrador organiza: (1) qué debe estar "
+    "SIEMPRE en ese tipo de escrito — su estructura obligatoria y la cadena de cada "
+    "argumento; (2) los DEFECTOS típicos que lo hacen fallar, formulados de modo que "
+    "un revisor pueda marcarlos sí/no — la calidad se define como estructura y "
+    "defectos, nunca como un puntaje; (3) si el mismo tipo cambia de intensidad "
+    "según la etapa del proceso, el estándar lo declara; (4) los ejemplares de "
+    "referencia que el despacho reconoce como bien hechos calibran la forma, pero "
+    "NUNCA autorizan a reutilizar sus citas sin verificarlas; y (5) un checklist "
+    "final accionable para revisar antes de entregar. Pregunta por defectos reales "
+    "que el abogado haya visto ('¿qué hace que un escrito de este tipo te parezca "
+    "malo?') — esa es la pregunta que más calibra.\n\n"
     "Responde SIEMPRE con un JSON, sin texto adicional antes ni después, en una de "
     "estas dos formas:\n"
     '  {"action": "ask", "question": "..."}\n'
     '  {"action": "draft", "title": "...", "summary": "...", "applies_when": "...", '
     '"content": "...", "explanation": "..."}\n'
     "El \"content\" del borrador debe ser la guía completa, redactada en pasos claros "
-    "que otro abogado del despacho pueda seguir sin ayuda."
+    "que otro abogado del despacho pueda seguir sin ayuda (o, si es un estándar de "
+    "calidad, la ficha completa con las cinco partes de arriba)."
 )
 
 

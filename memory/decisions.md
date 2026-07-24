@@ -846,3 +846,38 @@ gates_no_ciegos 9/9 · rls 19/19 · env_pins 12/12.
 **Deuda declarada**: el estándar es hoy INSTRUCCIÓN (prompt), no GATE — `substance_signal` sigue
 informativo. Promoverlo a rúbrica calibrada del banco es candidato natural del resto de F2, decisión
 de prioridades que corresponde a la Sesión Pipe A.
+
+## #44 — 2026-07-24 · Cinco skills más del fundador entran como PRINCIPIOS (no réplicas)
+
+**Decisión de Pipe** ("no repliques lo mío, pero como principios podemos poner esas skills, menos
+profundas que las mías"). Qué se destiló y a dónde:
+
+1. **council-legal → Sala de estrategia** (`warroom_panelist`/`warroom_moderator` en prompt_builder):
+   franqueza total (señalar debilidades es lealtad, no deslealtad), vacíos declarados como preguntas,
+   réplicas concentradas en los desacuerdos MAYORES, y el moderador RESUELVE en vez de promediar —
+   toma posición con las razones que ya dieron los panelistas y deja constancia del desacuerdo DENTRO
+   de los campos del dictamen (la prosa fuera del bloque se descarta — hallazgo del verificador). La
+   sala asesora; la decisión es del abogado.
+2. **cosechar-aprendizaje → `## aprendido`** (aprendido.py): vectores de cosecha obligatorios
+   ('Funciona:'/'Evitar:'/'Lección:'), preferencia por Evitar/Lección cuando la semilla es una
+   corrección — pero solo si el patrón se repetirá (una preferencia de un solo caso no se cosecha) —
+   y la frontera dura "la tesis de método viaja; el caso, jamás". `_dedup_key` quita el vector antes
+   de deduplicar (mismo patrón bajo dos vectores sigue siendo uno).
+3. **checklist-control-calidad → nodo draft**: pasada final de auto-verificación antes de entregar
+   (argumentos no enunciativos, consecuencia concreta, aritmética recomputada — con la regla de no
+   adivinar entre cifras divergentes del expediente: volver al [doc n] y avisar —, sin
+   contradicciones internas, orden anunciado=desarrollado, peticiones apoyadas, cero placeholders).
+   Se adaptó a "corrige y declara, nunca calles" — sin bloqueo, porque el bloqueo en MIA es del HITL.
+4. **creador-estandar-calidad → entrevista de guías** (interviewer.py): caso especial ESTÁNDAR DE
+   CALIDAD — ficha de 5 partes (estructura obligatoria, defectos tipificados sí/no, registro por
+   etapa, ejemplares que calibran forma pero NUNCA autorizan citas, checklist final); calidad =
+   estructura + defectos, no puntaje. Sin campo nuevo en DB: el estándar es un playbook y ya llega al
+   redactor por L9/draft; el "solo el abogado aprueba" ya lo garantiza el flujo Guardar (HITL por
+   construcción).
+5. **convo-review → nada que construir**: la capacidad ya existe en infraestructura — cada turno se
+   indexa en `traces` con FTS cross-asunto (`/api/traces/search`). Candidato futuro declarado: que el
+   agente consulte las trazas espontáneamente al retomar un asunto ("¿recuerdas...?").
+
+**Verificación**: adversarial independiente (Opus fresco) — 0 MAYORES, 4 menores corregidos + 1
+transversal (prosa del moderador descartada). Suites: jurisdiction_agnostic 104/104 ·
+prompt_builder 46/46 · gates_no_ciegos 9/9 · aprendido 34/34 · guide_interview · warroom — todas PASS.
