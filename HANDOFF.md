@@ -70,13 +70,32 @@ Rama `feat/fase1-inc1-cleanup-scaffolding`.
    `annotate_draft`. El diseño NO toca `prompt_builder.py` (el hash `3391f17ea61324a4` se
    mantiene).
 
+7. **La especificación por oración quedó IMPLEMENTADA y commiteada (`9fce76a`)**, con la
+   cadena completa de verificación: implementación Opus → verificación cruzada Codex xhigh
+   (APRUEBA CON CORRECCIONES: 4 MAYORES + 3 menores, TODOS integrados — incluida su prueba
+   empírica de 292 comparaciones vs HEAD y 500 corridas on/off sin un byte de diferencia) →
+   re-corrida independiente del orquestador. Suites: 47/47 nueva (`test_sentence_report`),
+   61/61 harness, 104/104 agnosticismo, HALT completo. `prompt_builder.py` INTACTO (hash
+   `3391f17ea61324a4` — el RE-BASELINE sigue vigente). 3 sondas adversariales nuevas en
+   RISK_CASES (la de implicación semántica pura declarada REVISIÓN HUMANA; las otras dos con
+   oráculo determinista). Smoke ×1 de `entailment-cita-real-no-sostiene` EN VIVO: corre de
+   punta a punta y el informe `oraciones` viaja en el crudo (79 oraciones, residuo
+   informativo 17 — la señal no está ciega). Decisiones de alcance del orquestador: vista UI
+   por oración DIFERIDA declarada a F3-honestidad-UX; procedencia por oración vive en scoring
+   (donde existe el contexto del turno), verification.py queda agnóstico.
+
 ## Qué sigue (en orden)
 
-1. **IMPLEMENTAR el diseño por oración**: la orden de trabajo completa (cambios archivo por
-   archivo, gates con mutación y señal positiva, sondas de entailment para cases.py, plan de
-   re-medición) está en `docs/diseno-f2-espec-por-oracion.md` — implementa contra ese
-   documento, con verificación cruzada Codex en lo que toque el guardián (matriz del plan), y
-   cierra con la re-corrida N=10 bajo `suscripcion` comparada contra el RE-BASELINE.
+1. **Correr las 3 sondas nuevas EN VIVO ×10** (`entailment-cita-real-no-sostiene`,
+   `afirmacion-juridica-sin-cita`, `soporte-cruzado-mal-anclado`) bajo `suscripcion`, en
+   trozos foreground (regla 45; el smoke dio ~6,6 min/corrida), agregando con
+   `aggregate_eval_runs.py`; leer el residuo por oración de los crudos y llevar los
+   resultados (junto con la sonda de implicación, que es de REVISIÓN HUMANA) al paquete de
+   la Sesión Pipe A.
+2. **Lo que queda de F2** tras esto: decisión con evidencia sobre lectura agéntica por
+   defecto (espera el delta on/off de la referencia en nube) y el ítem 2 de la spec (fuga
+   detectada al 100% de ocurrencias — el RE-BASELINE ya muestra fuga real 0, falta el caso
+   de ataque con falsos positivos medidos).
 2. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: calidad de las 6 salidas + las 4
    decisiones + priorizar el backlog ruflo dentro de F2.
 3. **Referencia en nube** (tope USD 30 ya aprobado): RISK_CASES ×10 bajo `nube` +
