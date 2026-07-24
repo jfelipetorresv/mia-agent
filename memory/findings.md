@@ -280,3 +280,34 @@ Hermes es un plano casi directo para cerrar el Riesgo #19 (dry-run→propuesta, 
 prune determinista vs consolidate opt-in); (3) FTS5/`content_tsv` sobre las trazas resolvería el
 rescaneo de JSONL; (4) en skills, adoptar el disparador de auto-revisión y la procedencia, pero
 canalizando SIEMPRE a `status="pending"` (el HITL es la diferencia de diseño no negociable de Mia).
+
+## RUFLO (ruvnet, 2026-07-24) — análisis externo: 5 ideas destilables, cero dependencia
+
+Revisión a fondo de github.com/ruvnet/ruflo (claude-flow renombrado, v3.5) por orden de Pipe.
+**Veredicto**: NO instalar jamás en máquinas con expedientes (telemetría + monetización entrando al
+código sin disclosure; historial documentado de v2 con ~85% de herramientas falsas — issue #653;
+proyecto unipersonal con ~10 releases/semana). Pero v3 tiene ideas de harness reales. Valida además
+nuestro modo suscripción (su pitch central es "corre sobre el CLI que ya pagas").
+
+**Backlog destilable (5 ideas, por valor):**
+1. **ALTA — Confianza con decaimiento en lo aprendido**: hoy un aprendizaje de hace 6 meses pesa
+   igual que uno de ayer; en derecho un criterio puede quedar superado. `confidence` +
+   `last_reinforced` en aprendido/playbooks, re-rankear recuperación por vigencia; re-confirmación o
+   re-corrección del abogado refuerza o degrada. Es ALTER TABLE + ranking, no infra.
+2. **ALTA — Consolidación post-turno en cola presupuestada**: aprender/auditar/detectar huecos FUERA
+   del camino crítico del turno (cola en el propio Postgres con SKIP LOCKED, prioridades y tope de
+   concurrencia). En modo suscripción los workers gastan CUOTA del abogado → presupuesto por
+   prioridad es condición.
+3. **MEDIA-ALTA — Manifiesto sellado por entregable**: al aprobar un borrador, sellar un JSON con
+   citas verificadas + fuentes + versión del guardián + hash + timestamp. Convierte la promesa
+   central en objeto exhibible ante el cliente ("este escrito pasó el gate X el día Y"). Valor
+   comercial y probatorio. Encaja a la salida del verificador determinista.
+4. **MEDIA — Routing justificado**: `routing_reason` en el estado del grafo y la traza cada vez que
+   el orquestador elige rama/modelo. Auditabilidad barata.
+5. **MEDIA — Promoción explícita de memoria**: regla "patrón corregido N veces en M asuntos →
+   candidato a playbook con aprobación del abogado"; expiración de trazas episódicas.
+
+**NO aplica (que la estética no nos tiente)**: consenso bizantino/topologías dinámicas (cosplay de
+sistemas distribuidos — nuestro grafo fijo ES la trazabilidad), "neural self-learning" no auditable
+(auto-sabotaje contra la promesa de respaldo), federación/IPFS (contrario al secreto profesional),
+catálogos de 300 herramientas (vendemos simplicidad).
