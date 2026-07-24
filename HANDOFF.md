@@ -60,11 +60,23 @@ Rama `feat/fase1-inc1-cleanup-scaffolding`.
    reubicados dentro de su sección.
 5. Sonda de salud en verde toda la sesión (0 zombis de statusline, DB portable arriba, tarea
    del segador "Ready").
+6. **El DISEÑO de la especificación por oración quedó HECHO y refutado** (misma sesión, más
+   tarde): `docs/diseno-f2-espec-por-oracion.md` (diseñador Opus) + refutación adversarial
+   independiente en `docs/diseno-f2-espec-por-oracion-refutacion.md` (veredicto: APRUEBA CON
+   CORRECCIONES — 4 MAYORES incl. un import circular bloqueante + 8 menores, TODOS integrados
+   al diseño con una discrepancia razonada registrada en §8/D2). Idea central que sobrevivió a
+   la refutación: la segmentación alimenta SOLO el informe — por construcción no puede causar
+   ni fuga ni falso bloqueo; las decisiones de marcar/omitir siguen saliendo de
+   `annotate_draft`. El diseño NO toca `prompt_builder.py` (el hash `3391f17ea61324a4` se
+   mantiene).
 
 ## Qué sigue (en orden)
 
-1. **Resto de F2**: especificación de seguridad de salida POR ORACIÓN + banco de sondas
-   adversariales de entailment (ver prompt de arranque).
+1. **IMPLEMENTAR el diseño por oración**: la orden de trabajo completa (cambios archivo por
+   archivo, gates con mutación y señal positiva, sondas de entailment para cases.py, plan de
+   re-medición) está en `docs/diseno-f2-espec-por-oracion.md` — implementa contra ese
+   documento, con verificación cruzada Codex en lo que toque el guardián (matriz del plan), y
+   cierra con la re-corrida N=10 bajo `suscripcion` comparada contra el RE-BASELINE.
 2. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: calidad de las 6 salidas + las 4
    decisiones + priorizar el backlog ruflo dentro de F2.
 3. **Referencia en nube** (tope USD 30 ya aprobado): RISK_CASES ×10 bajo `nube` +
