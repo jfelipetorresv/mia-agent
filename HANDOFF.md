@@ -24,18 +24,23 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 
 > Lee `HANDOFF.md` y `APRENDIZAJES.md` de `D:\Inteligencia Artificial\Mia-Super Agent\mia` y el plan
 > maestro (`C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`). Corre
-> `scripts\sonda_salud.ps1` ANTES de nada. La deuda del re-baseline está PAGADA
-> (`memory/findings.md` §RE-BASELINE, prompt_hash `3391f17ea61324a4`). Arranca la pieza grande
-> restante de F2: la **especificación de seguridad de salida POR ORACIÓN** — toda afirmación
-> jurídica → su fuente → un pasaje localizable → relación de soporte, o abstención explícita;
-> capa determinista para ubicación y respaldo léxico; sondas adversariales de entailment en el
-> banco para la implicación semántica; lo no verificable se marca, nunca se certifica. El patrón
-> a seguir es el de la omisión de F2.1 (decisión en `graph._verify_draft`, mecánica agnóstica en
-> `verification.py`, informe con trazabilidad, gates con mutación y señal positiva). Verificación
-> adversarial independiente antes de dar nada por bueno (regla 49 si toca el prompt core), y
-> cierre con re-corrida en vivo N=10 bajo `suscripcion` en trozos foreground (regla 45),
-> comparando contra el RE-BASELINE. Alternativa si Pipe está disponible: Sesión Pipe A con
-> `docs/f1-paquete-decision-pipe.md` (calidad de las 6 salidas + 4 decisiones + backlog ruflo).
+> `scripts\sonda_salud.ps1` ANTES de nada; venimos de un REINICIO de la máquina — si la DB
+> portable (55432) no acepta conexiones, arráncala primero (clúster en `tools/pgdata-portable`,
+> ver `memory` del repo / trampas de entorno). El re-baseline está PAGADO (`memory/findings.md`
+> §RE-BASELINE, hash `3391f17ea61324a4`) y la especificación POR ORACIÓN está IMPLEMENTADA y
+> verificada (`9fce76a`). Trabajo en curso INTERRUMPIDO por el reinicio: **las 3 sondas
+> adversariales nuevas ×10 en vivo** bajo `suscripcion` con `MIA_EVAL_PERSIST_FULL=1`, en
+> trozos foreground `--repeat 1` (regla 45; ~5-7 min por corrida). Estado exacto:
+> `entailment-cita-real-no-sostiene` va 3/10 (partes `f2sond_entail_smoke` [sin persist-full],
+> `_b`, `_c` — todas limpias, 0 fuga, éxito 1/1); faltan `_d.._j`. Después
+> `afirmacion-juridica-sin-cita` ×10 (`f2sond_sincita_a..j`) y `soporte-cruzado-mal-anclado`
+> ×10 (`f2sond_cruzado_a..j`), 0/10 ambas. Comando por trozo:
+> `.venv\Scripts\python.exe execution\run_eval.py --case <id> --repeat 1 --run-id <parte>
+> --session-id cli-<fecha>` con `$env:MIA_EVAL_PERSIST_FULL='1'`. Agregar con
+> `aggregate_eval_runs.py` (`--out f2sond_<caso>_n10`), leer el residuo por oración
+> (`verification.oraciones`) y las intercepciones de los crudos, publicar en findings +
+> paquete de Sesión A (la sonda de entailment es de REVISIÓN HUMANA: sus borradores completos
+> van al paquete). Si Pipe está disponible: Sesión Pipe A primero.
 
 Rama `feat/fase1-inc1-cleanup-scaffolding`.
 
