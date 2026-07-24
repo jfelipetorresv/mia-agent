@@ -3,6 +3,7 @@
 > Entradas archivadas del HANDOFF.md, de la más reciente a la más antigua.
 > En HANDOFF.md viven solo la entrada vigente y la anterior.
 
+- [CIERRE — 2026-07-22 (2ª sesión) · F1 HECHA + F2 casi entera](055-cierre-2026-07-22-2a-sesion-f1-hecha-f2-casi-entera.md)
 - [CIERRE — 2026-07-22 · Preparación de F1 COMPLETA: dinero hermético en 5 rondas + limpieza](054-cierre-2026-07-22-preparacion-de-f1-completa-dinero-hermetico.md)
 - [PAUSA — 2026-07-21 · reinicio de máquina a mitad de la preparación de F1](053-pausa-2026-07-21-reinicio-a-mitad-de-la-preparacion-de-f1.md)
 - [CIERRE — 2026-07-21 · F0 COMPLETA · MIA corrió por primera vez contra un modelo real](052-cierre-2026-07-21-f0-completa-mia-corrio-por-primera-vez.md)

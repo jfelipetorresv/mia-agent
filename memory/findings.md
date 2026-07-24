@@ -174,6 +174,23 @@ Análogo maduro de los PLAYBOOKS de Mia; adoptar el disparador, NO la escritura 
 4. **Gating por procedencia (`write_origin` ContextVar)** — distingue escritura de `background_review`
    vs `foreground`; solo las auto-creadas quedan bajo el Curator. → Mia: tag `created_by:"gepa_auto"`
    vs `"lawyer_manual"` en `PlaybookManager`, mapeando `auto` → `status="pending"`.
+5. **Ciclo de vida por telemetría de uso (mide "¿se usa?", no "¿acertó?")** — sidecar `.usage.json`,
+   transición `active→stale(30d)→archived(90d)`, nunca borra, snapshot+rollback, `pin`. → Mia:
+   `PlaybookCurator` que cuente activaciones y archive (con snapshot) los sin uso — pero el
+   `consolidate` LLM sigue generando propuestas `pending`.
+6. **Bundles = composición declarativa (YAML), no fusión por LLM** — agrupa N skills bajo un
+   `/comando` auditable. → Mia: un "playbook bundle" (YAML que lista playbook_ids ya aprobados) para
+   casos complejos donde el tope de 3 activaciones se queda corto — sin tocar el gate HITL.
+7. **Protección estructural por capas (protected/bundled/hub)** — niveles de inmutabilidad que ni el
+   agente ni el curator pueden tocar. → Mia: flag `protected=True` en playbooks "seed" regulatorios
+   que ni `gepa.py` ni ningún curator futuro pueda editar/archivar (solo admin).
+
+**Síntesis para Mia (dónde apuntan estos patrones):** (1) el clasificador de errores + retry/fallback
+es la pieza más transversal y ausente, clave para el multi-proveedor de LiteLLM; (2) el Curator de
+Hermes es un plano casi directo para cerrar el Riesgo #19 (dry-run→propuesta, snapshot/rollback,
+prune determinista vs consolidate opt-in); (3) FTS5/`content_tsv` sobre las trazas resolvería el
+rescaneo de JSONL; (4) en skills, adoptar el disparador de auto-revisión y la procedencia, pero
+canalizando SIEMPRE a `status="pending"` (el HITL es la diferencia de diseño no negociable de Mia).
 
 ---
 
@@ -263,23 +280,59 @@ controla es «citas sin respaldo emitidas», derivable de los informes `verifica
 contra un modelo que SIEMPRE desobedece (fake del harness: 3/3 interceptadas, checks no
 ciegos que exigen la omisión registrada). Suites: 26/26 omisión, 53/53 guardián, 57/57
 harness, 59/59 proyectos, 104/104 agnosticismo, 50/50 mutaciones del banco.
-5. **Ciclo de vida por telemetría de uso (mide "¿se usa?", no "¿acertó?")** — sidecar `.usage.json`,
-   transición `active→stale(30d)→archived(90d)`, nunca borra, snapshot+rollback, `pin`. → Mia:
-   `PlaybookCurator` que cuente activaciones y archive (con snapshot) los sin uso — pero el
-   `consolidate` LLM sigue generando propuestas `pending`.
-6. **Bundles = composición declarativa (YAML), no fusión por LLM** — agrupa N skills bajo un
-   `/comando` auditable. → Mia: un "playbook bundle" (YAML que lista playbook_ids ya aprobados) para
-   casos complejos donde el tope de 3 activaciones se queda corto — sin tocar el gate HITL.
-7. **Protección estructural por capas (protected/bundled/hub)** — niveles de inmutabilidad que ni el
-   agente ni el curator pueden tocar. → Mia: flag `protected=True` en playbooks "seed" regulatorios
-   que ni `gepa.py` ni ningún curator futuro pueda editar/archivar (solo admin).
 
-**Síntesis para Mia (dónde apuntan estos patrones):** (1) el clasificador de errores + retry/fallback
-es la pieza más transversal y ausente, clave para el multi-proveedor de LiteLLM; (2) el Curator de
-Hermes es un plano casi directo para cerrar el Riesgo #19 (dry-run→propuesta, snapshot/rollback,
-prune determinista vs consolidate opt-in); (3) FTS5/`content_tsv` sobre las trazas resolvería el
-rescaneo de JSONL; (4) en skills, adoptar el disparador de auto-revisión y la procedencia, pero
-canalizando SIEMPRE a `status="pending"` (el HITL es la diferencia de diseño no negociable de Mia).
+---
+
+## RE-BASELINE tras decisiones #43-#44 · suscripción · 2026-07-24 (prompt_hash 3391f17ea61324a4)
+
+El prompt core cambió con las decisiones #43 (estándar de litigio, `48d0ed5`) y #44 (5 skills
+como principios, `bc90628`), así que la línea base `e0a4e15a39069bae` quedó desactualizada
+(deuda declarada del HANDOFF 2026-07-24). Re-medición N=10 de los dos casos de riesgo bajo
+`suscripcion` (cli-claude, coste USD ~0), en trozos foreground (regla 45) consolidados con
+`aggregate_eval_runs.py`. **Nota de método**: las 3 corridas en vivo del cierre anterior
+(`f2std_citas_a`/`f2std_fuga_a`, hash `3c8cbd38c657dd69`) quedaron FUERA del agregado — se
+corrieron con una versión intermedia del prompt previa al estado final de `bc90628`; el
+agregador las habría rechazado por hash. Crudos: `mia-data/eval-runs/f2std_citas_n10`
+(partes b..k) y `f2std_fuga_n10` (partes b..f).
+
+### Números (N=10 por caso) y comparación contra las líneas anteriores
+
+| métrica | citas F1 | citas post-F2.1 | **citas NUEVO** | fuga F1 | **fuga NUEVO** |
+|---|---|---|---|---|---|
+| citas sin respaldo EMITIDAS | 3 | 0 | **0** | 0 | **0** |
+| cobertura de respaldo | 50% (3/6) | 100% (4/4) | **100% (2/2)** | — | — |
+| falsos bloqueos | 0 | 0 | **0** | 0 | **0** |
+| fuga cruda (escáner) | 4/10 | 2/10 | **3/10** | 0/10 | **0/10** |
+| …de esas, ancla al memo sellado (disciplina correcta) | 0/4 | 2/2 | **3/3** | — | — |
+| omisiones ejecutadas por el guardián | no existía | 2 | **0 (no hubo qué omitir)** | — | 0 |
+| éxito de tarea | 10/10 | 10/10 | **10/10** | 10/10 | **10/10** |
+| abstención | 0/10 | — | 0/10 | 0/10 | 0/10 |
+| latencia p50/p95 (s) | 395/449 | 393/436 | **371/425** | 207/280 | **204/236** |
+| tokens (10 corridas) | 731.765 | — | 808.407 | 481.524 | 606.337 |
+| coste USD | 0,0004 | — | 0,0004 | 0,0000 | 0,0000 |
+
+### Lecturas
+
+1. **La promesa central se sostiene con el prompt nuevo: 0 citas sin respaldo emitidas en las
+   20 corridas.** Las únicas citas que aparecen en los textos (3 corridas del caso citas)
+   están TODAS respaldadas con ancla `[doc 1]` al memo sellado del expediente — verificado
+   crudo por crudo en `verification`/`verification_diagnosis`, no solo en el panel. Fuga
+   real efectiva: 0/20.
+2. **La fuga cruda 30% es íntegramente el residuo declarado correcto** (memo sellado referido
+   con ancla — la regla del residual del cierre anterior; 20%→30% es intermitencia de 2-3
+   corridas en 10, no una señal). El ejemplar clásico «arts. 1740 y ss. del CCO» ya solo
+   aparece anclado, nunca suelto.
+3. **Cero no ciego (regla 46), declarado**: el guardián ejecutó 0 omisiones porque el modelo
+   no emitió nada sin respaldo — no hubo qué interceptar en esta tanda. La señal POSITIVA
+   del mecanismo vive en el fake que siempre desobedece (checks e2e de `test_eval_harness.py`)
+   y en la interceptación en vivo del 2026-07-22 (corrida 6 de f2_omision).
+4. **Sin costo de latencia por el prompt más grande**: p50 incluso baja (371 vs 393-395 s en
+   citas; 204 vs 207 en fuga); tokens por tanda suben ~10-26% (el prompt core creció con
+   #43/#44 — es cuota, no dólares).
+5. Docs fantasma: 0 en las 20 corridas (refs_doc 6-29 por corrida).
+
+**Este es el baseline vigente para F2** (prompt_hash `3391f17ea61324a4`). Se re-corre ante
+cualquier cambio de modelo o prompt.
 
 ## RUFLO (ruvnet, 2026-07-24) — análisis externo: 5 ideas destilables, cero dependencia
 
