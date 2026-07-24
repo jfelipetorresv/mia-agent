@@ -812,3 +812,37 @@ de citar. Se retiró todo lo demás del encargo original.
 **Lo más valioso del cambio fue recortar la promesa, no construir la marca.** El razonamiento queda
 escrito en el propio componente —qué SÍ y qué NO se puede prometer, y bajo qué condición se podría
 ampliar— y hay una prohibición ejecutable de volver a prometer festivos, plazos o cálculo.
+
+## #43 — 2026-07-23 · El estándar de litigio del fundador entra al prompt core, DESTILADO y por rol funcional
+
+**Decisión de Pipe**: su manual privado de metodología de litigio (56 reglas) se adopta como estándar
+de calidad de escritos de MIA, "sin llevarse referencias mías o de Lexia" y sin corpus ni normas de un
+país. **Cómo se implementó**: lo universal del oficio fue a la capa L2 `METHODOLOGY` (cacheada, todos
+los especialistas) — postura ante el escrito de litigio, anatomía del argumento actualizada de 5 capas
+a SEIS ELEMENTOS (se sumaron el planteamiento exacto de lo controvertido y la consecuencia jurídica
+como elementos propios), catálogo de movimientos de confrontación (admisión, mejor versión, dilema,
+acto propio, petición de principio, silencio), arquitectura del escrito (tesis por argumento,
+autonomía, orden por la cadena lógica de la institución, subsidiariedad rotulada, peticiones espejo,
+hecho adverso, síntesis), exhaustividad-antes-de-selección y la pasada del adversario. Lo operativo
+del momento fue a L8: `facts` (admisiones literales VERBATIM separadas de las tácitas-como-inferencia;
+aritmética recomputada), `analysis` (descartes con motivo), `draft` (apertura con tesis, cierre con
+consecuencia, párrafo=idea, hogar único de transcripciones, sin muletillas ni meta-lenguaje).
+
+**Qué quedó FUERA a propósito**: identidad y firma del fundador, formato tipográfico, fases operativas
+(el grafo ya las encarna), verificación en capas (MIA ya la tiene determinista) y todo ejemplo o
+figura de un país. El estilo por despacho sigue llegando por SOUL/`## aprendido`; la citación, por
+packs de jurisdicción.
+
+**La verificación adversarial independiente encontró los 2 MAYORES que el autor no vio, ambos de
+ALCANCE**: (1) el registro adversarial era incondicional y gobernaba también trabajo consultivo
+(conceptos, contratos, nodo `work`) → se antepuso condición de alcance ("cuando el encargo es
+adversarial…; en trabajo no adversarial, el mismo rigor sin construir adversario"); (2) el elemento 2º
+("fuente normativa transcrita") empujaba a citar articulado bajo jurisdicción desconocida, contra la
+regla imperativa de L3 → se condicionó a "cuando el ordenamiento esté declarado". Más 4 menores
+corregidos (secundarios breves-pero-autónomos, admisión tácita≠verbatim, "radicar"→"presentar el
+escrito", comentario sin procedencia). Gates: jurisdiction_agnostic 104/104 · prompt_builder 46/46 ·
+gates_no_ciegos 9/9 · rls 19/19 · env_pins 12/12.
+
+**Deuda declarada**: el estándar es hoy INSTRUCCIÓN (prompt), no GATE — `substance_signal` sigue
+informativo. Promoverlo a rúbrica calibrada del banco es candidato natural del resto de F2, decisión
+de prioridades que corresponde a la Sesión Pipe A.
