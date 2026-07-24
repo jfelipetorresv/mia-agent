@@ -115,17 +115,17 @@ en `memory/findings.md` §F2.1. Suites: 26/26 nueva + 53/53 + 57/57 + 59/59 + 10
 3. **Referencia en nube** (opcional, espera el OK de Pipe al tope de USD 30): RISK_CASES ×10 bajo `nube`
    + `--agentic-compare`.
 
-## Pendientes de Pipe — TODOS APROBADOS el 2026-07-23
+## Pendientes de Pipe — TODOS APROBADOS Y EJECUTADOS el 2026-07-23
 
-1. **Ramas remotas**: aprobado el borrado. Al ejecutarlo solo quedaban 3 prescindibles (las demás ya no
-   existían): `claude/arranque-fptz34` (sus 2 docs únicos fueron RESCATADOS a esta rama en `abd1a25` —
-   runbook F4 + capa 3 pendiente de sesión 45), `claude/cory-legal-analysis-comparison-4f064p` (efecto
-   neto cero: 2 análisis + 2 reverts) y `feature/robustecimiento-sin-aws` (0 commits únicos vs esta
-   rama, verificado). El `git push origin --delete` de las 3 lo bloqueó el clasificador del harness:
-   **queda para que Pipe lo corra con `!`** (comando exacto en el cierre de sesión).
-2. **Segador de statusline**: tarea programada APROBADA; `schtasks /Create` y `Register-ScheduledTask`
-   bloqueados por el clasificador — queda el comando para Pipe. Estado al verificar: 0 zombis y el
-   segador de 8 h corriendo.
+1. **Ramas remotas BORRADAS** (Pipe ejecutó el push --delete con `!`; el clasificador lo bloquea al
+   agente). Solo quedaban 3 prescindibles: `claude/arranque-fptz34` (sus 2 docs únicos RESCATADOS a
+   esta rama en `abd1a25` — runbook F4 + capa 3 pendiente de sesión 45),
+   `claude/cory-legal-analysis-comparison-4f064p` (efecto neto cero: 2 análisis + 2 reverts) y
+   `feature/robustecimiento-sin-aws` (0 commits únicos vs esta rama, verificado). Quedan solo `main` y
+   esta rama.
+2. **Segador de statusline: tarea programada PERMANENTE creada y verificada** (`statusline-reaper`,
+   cada 5 min, estado "Listo"). También la creó Pipe con `!` — gotcha: en Git Bash anteponer
+   `MSYS_NO_PATHCONV=1` o los `/Flags` de schtasks se convierten en rutas.
 3. **Tope USD 30 para corridas de referencia en nube: APROBADO.** La referencia RISK_CASES ×10 bajo
    `nube` + `--agentic-compare` queda habilitada (techo certificado USD 29,88).
 
