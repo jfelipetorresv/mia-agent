@@ -1760,7 +1760,10 @@ class MatterGraphBuilder:
                 omit_unbacked=generic,
                 # Input fidedigno: una cita que el abogado escribió en su mensaje jamás
                 # se omite (revisión adversarial de e0c1634 — regla del producto).
-                lawyer_text=_last_user_message(state) if generic else None)
+                lawyer_text=_last_user_message(state) if generic else None,
+                # F2 · informe POR ORACIÓN (aditivo, read-only): viaja bajo la MISMA clave
+                # (`verification`/`verification_diagnosis`) y en AMBOS modos (omisión y clásico).
+                sentence_report=True)
 
         annotated, report = await asyncio.to_thread(_scan)
         md[report_key] = report

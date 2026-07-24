@@ -50,6 +50,7 @@ from typing import Any, Optional
 from .. import config, embeddings
 from ..agent import prompt_builder
 from ..agents import verification
+from ..agents.verification import ABSTENTION_PHRASES  # M1: mudado a verification (regla 6)
 from ..agents.checkpointer import open_checkpointer
 from ..agents.graph import build_matter_graph
 from ..agents.state import initial_state, thread_id_for
@@ -121,26 +122,9 @@ def false_block_signal(verification_report: Any, sources: Any) -> dict:
 
 
 # ── ABSTENCIÓN honesta (F1 · Frente C) ────────────────────────────────────────
-# Frases GENÉRICAS del español jurídico (sin léxico de país ni de un ordenamiento
-# concreto — mismo criterio de agnosticismo que `scoring.provenance_signal`) que
-# indican que Mia reconoció EXPLÍCITAMENTE que no puede respaldar algo. Calibradas para
-# no atrapar nada más: todas ligan una negación de posibilidad a la idea de respaldo,
-# fundamento o verificación.
-ABSTENTION_PHRASES: tuple[str, ...] = (
-    "no puedo respaldar esta afirmacion",
-    "no puedo verificar esta afirmacion",
-    "no cuento con elementos suficientes",
-    "no cuento con fundamento suficiente",
-    "no es posible fundamentar esta conclusion",
-    "no hay soporte documental suficiente",
-    "no hay respaldo suficiente en el expediente",
-    "hace falta que el despacho aporte",
-    "se requiere que el despacho aporte",
-    "sin el expediente completo no es posible",
-    "no cuento con normas confirmadas para",
-)
-
-
+# Las frases (léxico GENÉRICO del español jurídico, sin país) viven ahora en
+# agents/verification.py (M1: el informe por oración las necesita) y se reimportan arriba
+# (`ABSTENTION_PHRASES`, regla 6). Su valor y su semántica quedan idénticos.
 def abstention_signal(diagnosis: str, draft: str) -> dict:
     """TASA DE ABSTENCIÓN (F1 · Frente C): ¿Mia reconoció, en este turno, que NO puede
     respaldar algo? Determinista y puro — mismo estilo que `scoring.provenance_signal`.

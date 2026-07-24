@@ -505,6 +505,289 @@ def _anchored_doc_backing(
     return None
 
 
+# ── Forma y léxico compartidos (M1 · resolución del import circular) ──────────
+# Estas piezas de FORMA (sin una sola palabra de país) vivían en eval/scoring.py y
+# eval/harness.py; el informe por oración (build_sentence_report, abajo) las necesita, y
+# scoring.py YA importa este módulo — importarlas al revés crearía el ciclo
+# scoring → verification → scoring. Por eso viven aquí y scoring/harness las REIMPORTAN
+# (regla 6). Su comportamiento queda byte a byte: son las MISMAS definiciones, solo mudadas.
+
+# Un párrafo por debajo de este piso no es desarrollo: es un enunciado o un título. Calibrado
+# en ~2-3 frases de prosa jurídica; conservador (prefiere NO contar un párrafo dudoso).
+SUBSTANTIVE_PARAGRAPH_MIN_CHARS = 180
+# Piso ANÁLOGO por oración para la heurística de asertividad (§2.3). Deliberadamente igual al
+# de párrafo (conservador: subestima antes que inflar el residuo); constante propia para poder
+# calibrarlo sin tocar la señal de sustancia.
+SUBSTANTIVE_SENTENCE_MIN_CHARS = SUBSTANTIVE_PARAGRAPH_MIN_CHARS
+# Un bloque corto SIN puntuación terminal es un título (forma, no léxico). Con punto o punto y
+# coma es prosa (corta, pero prosa) y cuenta como enunciado, no como título.
+HEADER_MAX_CHARS = 120
+
+
+def _is_header(block: str) -> bool:
+    """¿El bloque es un TÍTULO? Criterio puramente FORMAL (sin una sola palabra jurídica, para
+    no atarnos a un país): línea corta que no cierra con puntuación de prosa."""
+    return len(block) <= HEADER_MAX_CHARS and not block.rstrip().endswith((".", ";", "?", "!"))
+
+
+# Frases GENÉRICAS del español jurídico que indican una ABSTENCIÓN honesta (Mia reconoce que no
+# puede respaldar algo). Lista FIJA y conservadora — mudada desde eval/harness.py (M1); harness
+# la reimporta. El informe por oración la usa para rotular una oración `abstenida`.
+ABSTENTION_PHRASES: tuple[str, ...] = (
+    "no puedo respaldar esta afirmacion",
+    "no puedo verificar esta afirmacion",
+    "no cuento con elementos suficientes",
+    "no cuento con fundamento suficiente",
+    "no es posible fundamentar esta conclusion",
+    "no hay soporte documental suficiente",
+    "no hay respaldo suficiente en el expediente",
+    "hace falta que el despacho aporte",
+    "se requiere que el despacho aporte",
+    "sin el expediente completo no es posible",
+    "no cuento con normas confirmadas para",
+)
+# Normalizadas una vez (la detección por oración corre por cada oración del borrador).
+_ABSTENTION_PHRASES_NORM: tuple[str, ...] = tuple(_normalize(p) for p in ABSTENTION_PHRASES)
+
+
+# ── Segmentación en ORACIONES para el INFORME (NUNCA para editar el texto) ────
+# Invariante central (§2.1): la segmentación alimenta SOLO el informe por oración; las
+# decisiones de marcar/omitir siguen saliendo, byte a byte, de scan_citations/annotate_draft.
+# Un error de segmentación jamás puede producir fuga ni falso bloqueo — a lo sumo atribuye una
+# cita a la oración vecina. Por eso es defendible construir un segmentador heurístico.
+_SENT_TERMINATORS = frozenset(".?!")
+# Comillas y paréntesis de cierre que, tras un terminador, pertenecen a la oración que TERMINA
+# (no arrancan la siguiente): «…afirmación.»  ·  (…afirmación).  ·  "…afirmación."
+_SENT_TRAILING_CLOSERS = frozenset("\"'»”’)]}")
+# Abreviaturas de FORMA (no de país): tras ellas un `.` no cierra oración. Léxico genérico del
+# español jurídico del Civil Law — ningún nombre de código, corte ni país (esos entran por el
+# pack, jamás aquí). Normalizadas (sin tildes, minúsculas) para el cotejo.
+_ASSERT_ABBREVIATIONS: frozenset = frozenset(
+    {"art", "arts", "inc", "num", "ord", "par", "pag", "p", "ss", "no", "nro", "cfr", "vs"})
+
+
+def _norm_token(tok: str) -> str:
+    """minúsculas · sin tildes, para un solo token (guarda de abreviaturas)."""
+    t = unicodedata.normalize("NFD", tok or "")
+    return "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
+
+
+def _preceding_token(text: str, i: int) -> str:
+    """Caracteres alfanuméricos inmediatamente ANTES del índice i (el token que precede al `.`)."""
+    j = i
+    while j > 0 and text[j - 1].isalnum():
+        j -= 1
+    return text[j:i]
+
+
+def _machine_block_boundaries(text: str) -> set[int]:
+    """Fronteras DURAS del bloque de máquina del cierre (regla 50): ninguna oración cruza un
+    marcador `=== … ===`, y CADA línea etiquetada del interior (`Problema jurídico:` /
+    `Normas y fuentes:` / `Riesgo y recomendación:`) es su propia frontera. Se hace por FORMA
+    —las líneas entre dos fences `===`—, sin hardcodear las etiquetas (agnóstico): así las tres
+    líneas del cierre no se funden aunque no traigan puntuación terminal."""
+    bounds: set[int] = set()
+    lines: list[tuple[int, int, bool]] = []
+    pos = 0
+    for line in (text or "").splitlines(keepends=True):
+        is_fence = "===" in line
+        lines.append((pos, pos + len(line), is_fence))
+        if is_fence:
+            bounds.add(pos)
+            bounds.add(pos + len(line))
+        pos += len(line)
+    # Interior de un bloque fenced (líneas entre dos `===` consecutivos): cada línea es frontera.
+    fence_idx = [i for i, (_s, _e, f) in enumerate(lines) if f]
+    for a, b in zip(fence_idx, fence_idx[1:]):
+        for i in range(a + 1, b):
+            bounds.add(lines[i][1])   # frontera al final de cada línea interior
+    return bounds
+
+
+def segment_sentences(text: str,
+                      protected_spans: Optional[list] = None) -> list:
+    """Parte `text` en oraciones para el INFORME por oración — NUNCA para editar el texto.
+
+    Agnóstico (§2): corta en `.?!` y en línea en blanco; jamás DENTRO de una cita detectada
+    (`protected_spans`, ya calculados por scan_citations — NO se re-escanea, m4) NI dentro de un
+    ancla `[doc n]` (se protegen aquí con `_DOC_REF_RE`, una sola pasada barata — no es el
+    escáner completo que m4 prohíbe); respeta una guarda de abreviaturas de FORMA (art./inc./No.
+    …) y de iniciales/siglas de EXACTAMENTE un carácter (C.C., art. 5.); absorbe comillas y
+    paréntesis de cierre finales en la oración que termina; y trata el bloque de máquina del
+    cierre (`=== … ===` + sus líneas etiquetadas) como fronteras duras (regla 50).
+
+    Devuelve las oraciones NO vacías [(inicio, fin) …]: cada cita cae en exactamente una por su
+    offset de inicio. Su PEOR caso es granularidad imperfecta del informe (§2.1) — nunca una
+    fuga ni un falso bloqueo."""
+    text = text or ""
+    n = len(text)
+    if n == 0:
+        return []
+    prot = [(int(s), int(e)) for s, e in (protected_spans or []) if int(e) > int(s)]
+    # Además de las citas, se protegen los anclas [doc n] para que `[doc 1].` corte DESPUÉS del
+    # `]` y `[doc. 1]` no se parta por dentro (M1). Es una pasada de UN patrón estrecho, no el
+    # escáner de citas completo (base+pack) que m4 pide no repetir.
+    for m in _DOC_REF_RE.finditer(text):
+        prot.append((m.start(), m.end()))
+    prot.sort()
+
+    def _in_citation(idx: int) -> bool:
+        for s, e in prot:
+            if s <= idx < e:
+                return True
+            if s > idx:
+                break
+        return False
+
+    forced = _machine_block_boundaries(text)
+    cuts: set[int] = set()
+    i = 0
+    while i < n:
+        ch = text[i]
+        if ch == "\n":
+            j = i + 1
+            while j < n and text[j] in " \t\r":
+                j += 1
+            if j < n and text[j] == "\n":
+                cuts.add(j + 1)          # línea en blanco → frontera de oración
+        elif ch in _SENT_TERMINATORS and not _in_citation(i):
+            guarded = False
+            if ch == ".":
+                prev = _preceding_token(text, i)
+                # Iniciales/siglas de EXACTAMENTE un carácter (C.C., art. 5.) y abreviaturas de
+                # forma (art./inc./No.) no cierran oración. `prev==""` (p. ej. tras `]`) NO se
+                # guarda: `[doc 1].` debe cortar (M1). Los identificadores con punto interno
+                # (25.326) los cubre `protected_spans` (mecanismo primario, §2.2.1).
+                guarded = len(prev) == 1 or _norm_token(prev) in _ASSERT_ABBREVIATIONS
+            if not guarded:
+                cut = i + 1
+                # Absorber comillas/paréntesis de cierre en la oración que termina (no dejarlos
+                # de arranque de la siguiente): «…afirmación.»  o  (…afirmación).
+                while cut < n and text[cut] in _SENT_TRAILING_CLOSERS:
+                    cut += 1
+                cuts.add(cut)
+        i += 1
+    bounds = sorted((cuts | forced | {n}) - {0})
+    spans: list = []
+    start = 0
+    for b in bounds:
+        if start < b <= n:
+            if text[start:b].strip():        # oraciones vacías / solo-espacio quedan FUERA (m1)
+                spans.append((start, b))
+            start = b
+    return spans
+
+
+# ── Informe por ORACIÓN (aditivo · read-only sobre las decisiones de annotate_draft) ──
+# El estado de una oración es el PEOR de sus citas; si no porta cita, cae a abstenida /
+# sin_respaldo_afirmativa / prosa por FORMA. NUNCA se rotula «respaldada»/«verificada» (m1,
+# techo #2): el estado más fuerte es «cita localizada». La segmentación alimenta SOLO este
+# informe; las ediciones sobre el texto son, byte a byte, las de annotate_draft.
+_SENT_STATUS_FROM_CITE = {
+    "omitida": "con_omision", "anotada": "con_anotacion",
+    "marcada": "con_marca", "respaldada": "con_cita_localizada",
+}
+_SENT_STATUS_SEVERITY = {
+    "con_omision": 4, "con_anotacion": 3, "con_marca": 2, "con_cita_localizada": 1,
+}
+# Rótulo por-cita DENTRO del bloque `oraciones`: «respaldada» clásica → «cita_localizada», para
+# que ni una clave ni un estado del bloque sugiera verificación semántica (barrera, techo #2).
+_CITE_LABEL_IN_SENTENCE = {
+    "respaldada": "cita_localizada", "marcada": "marcada",
+    "anotada": "anotada", "omitida": "omitida",
+}
+_SENTENCE_TEXT_CAP = 240
+_SENTENCE_DETALLE_CAP = 80
+# Cap de citas serializadas POR oración (una oración patológica con decenas de citas no debe
+# inflar el payload). El conteo/estado usa TODAS; solo se capa lo que se serializa (m3).
+_SENTENCE_CITES_CAP = 20
+
+
+def _sentence_doc_refs(text: str) -> list:
+    """Números de las anclas [doc n] presentes LITERALMENTE en el span (≠ lo que respaldó la
+    cita, m5: el ancla que respalda puede vivir en la oración vecina dentro de la ventana)."""
+    nums: set = set()
+    for m in _DOC_REF_RE.finditer(text or ""):
+        nums.update(int(x) for x in _INT_RE.findall(m.group(1)))
+    return sorted(nums)
+
+
+def _sentence_abstains(text: str) -> bool:
+    t = _normalize(text or "")
+    return any(p in t for p in _ABSTENTION_PHRASES_NORM)
+
+
+def _is_assertive_residue(text: str) -> bool:
+    """Heurística de asertividad (§2.3): FORMA asertiva, sin cita/ancla/abstención. SESGADA en
+    ambas direcciones (M2/M3/M4) — mide una tendencia de forma, NUNCA estima el hueco (1) ni
+    entra en ningún gate en esta iteración."""
+    s = (text or "").strip()
+    if len(s) < SUBSTANTIVE_SENTENCE_MIN_CHARS:
+        return False
+    if not s.endswith("."):
+        return False
+    return not _is_header(s)
+
+
+def _sentence_cite_entry(t) -> dict:
+    """Entrada por-cita dentro de una oración: {cita, estado(localización), fuente?}."""
+    _st, _en, cita, estado, fuente = t
+    entry = {"cita": cita, "estado": _CITE_LABEL_IN_SENTENCE.get(estado, estado)}
+    if fuente is not None:
+        entry["fuente"] = fuente
+    return entry
+
+
+def build_sentence_report(draft_original, citas_clasificadas, *,
+                          max_detalle: int = _SENTENCE_DETALLE_CAP) -> dict:
+    """Produce el bloque `oraciones` (§3) — ADITIVO y read-only.
+
+    NO toma decisiones de edición: CONSUME la clasificación que annotate_draft ya calculó
+    (`citas_clasificadas`, lista SIN capar de tuplas `(start, end, cita, estado, fuente)`, m3)
+    y segmenta el borrador ORIGINAL (pre-edición, m2). El `estado` de la oración es el PEOR de
+    sus citas; sin cita, cae a abstenida / sin_respaldo_afirmativa / prosa por forma."""
+    text = draft_original or ""
+    protected = [(st, en) for (st, en, _c, _e, _f) in citas_clasificadas]
+    spans = segment_sentences(text, protected)
+    counts = {k: 0 for k in ("con_cita", "con_cita_localizada", "con_marca", "con_anotacion",
+                             "con_omision", "abstenidas", "sin_respaldo_afirmativa", "prosa")}
+    detalle: list = []
+    for idx, (s, e) in enumerate(spans):
+        sent = text[s:e]
+        cits = [t for t in citas_clasificadas if s <= t[0] < e]
+        anclas = _sentence_doc_refs(sent)
+        abst = _sentence_abstains(sent)
+        if cits:
+            estado = max(
+                (_SENT_STATUS_FROM_CITE.get(t[3], "con_cita_localizada") for t in cits),
+                key=lambda st_: _SENT_STATUS_SEVERITY.get(st_, 0))
+            counts["con_cita"] += 1
+            counts[estado] += 1
+        elif abst:
+            estado = "abstenida"
+            counts["abstenidas"] += 1
+        elif not anclas and _is_assertive_residue(sent):
+            estado = "sin_respaldo_afirmativa"
+            counts["sin_respaldo_afirmativa"] += 1
+        else:
+            estado = "prosa"
+            counts["prosa"] += 1
+        if len(detalle) < max_detalle:
+            entry = {
+                "idx": idx,
+                "texto": sent.strip()[:_SENTENCE_TEXT_CAP],
+                "estado": estado,
+                # El conteo/estado ya usó TODAS las citas; solo se SERIALIZA un tope (m3).
+                "citas": [_sentence_cite_entry(t) for t in cits[:_SENTENCE_CITES_CAP]],
+                "anclas_en_span": anclas,
+                "abstiene": abst,
+            }
+            if len(cits) > _SENTENCE_CITES_CAP:
+                entry["citas_truncadas"] = len(cits) - _SENTENCE_CITES_CAP
+            detalle.append(entry)
+    return {"n": len(spans), **counts, "detalle": detalle}
+
+
 def annotate_draft(
     draft: str,
     sources: Optional[list[dict]] = None,
@@ -513,6 +796,7 @@ def annotate_draft(
     documents: Optional[list] = None,
     omit_unbacked: bool = False,
     lawyer_text: Optional[str] = None,
+    sentence_report: bool = False,
 ) -> tuple[str, dict]:
     """Anota el borrador y produce el informe del especialista de verificación.
 
@@ -559,13 +843,25 @@ def annotate_draft(
     en modo `omit_unbacked` (en modo clásico esa cita se marca [VERIFICAR], comportamiento
     aceptado que no cambia aquí). El cotejo es el mismo de fuentes/documentos
     (`_tokens_match`): piezas contiguas con fronteras respetadas.
+
+    `sentence_report` (F2 · informe POR ORACIÓN): con True, añade la clave ADITIVA `oraciones`
+    al informe (§3) — agrupa las citas ya clasificadas en su oración y mide el residuo por
+    forma. Es READ-ONLY sobre las decisiones: la segmentación NUNCA cambia el texto emitido ni
+    las ediciones (siguen saliendo del bucle de abajo). Con False (default) el informe queda
+    idéntico byte a byte al clásico. La DECISIÓN de activarlo vive en el llamador
+    (graph._verify_draft); aquí solo la mecánica.
     """
     text = draft or ""
+    draft_original = text  # se segmenta el borrador ORIGINAL, pre-edición (m2)
     citations = scan_citations(text, compile_patterns(extra_patterns))
     index = _tokenize_index(source_index(sources))
     doc_tokens = _document_tokens(documents)
     lawyer_toks = _match_tokens(lawyer_text) if (omit_unbacked and lawyer_text) else ()
     detalle: list[dict] = []
+    # Lista SIN capar de citas clasificadas para el informe por oración (m3). Solo se llena en
+    # modo sentence_report; el cap de 50 de `detalle` (abajo) dejaría a las citas 51+ sin
+    # estado y rotularía mal sus oraciones en silencio.
+    clasificadas: list = []
     marcadas = respaldadas = anotadas = omitidas = 0
     # ediciones (start, end, reemplazo); una inserción es (pos, pos, " [VERIFICAR]").
     # scan_citations garantiza spans disjuntos, así que aplicarlas de atrás hacia
@@ -608,15 +904,22 @@ def annotate_draft(
             anotadas += 1
             estado = "anotada"
             edits.append((c["end"], c["end"], " " + VERIFY_MARK))
+        # El camino por DEFECTO (sentence_report=False) debe quedar estructuralmente inerte para
+        # las citas 51+ — igual que antes de F2: no se compacta su fuente si no se va a usar (m2).
+        fuente_compact = None
+        if (sentence_report or len(detalle) < 50) and fuente is not None:
+            # Solo los campos compactos y serializables (nada extra que traiga la fuente).
+            fuente_compact = {
+                "tipo": str(fuente.get("tipo") or ""),
+                "referencia": str(fuente.get("referencia") or ""),
+                "titulo": str(fuente.get("titulo") or ""),
+            }
+        if sentence_report:
+            clasificadas.append((c["start"], c["end"], c["citation"], estado, fuente_compact))
         if len(detalle) < 50:
             entry: dict = {"cita": c["citation"], "estado": estado}
-            if fuente is not None:
-                # Solo los campos compactos y serializables (nada extra que traiga la fuente).
-                entry["fuente"] = {
-                    "tipo": str(fuente.get("tipo") or ""),
-                    "referencia": str(fuente.get("referencia") or ""),
-                    "titulo": str(fuente.get("titulo") or ""),
-                }
+            if fuente_compact is not None:
+                entry["fuente"] = fuente_compact
             detalle.append(entry)
 
     # aplicar de atrás hacia adelante para no desplazar los offsets pendientes
@@ -639,4 +942,8 @@ def annotate_draft(
     if num_documents is not None:
         text, docs_fantasma = flag_phantom_doc_citations(text, num_documents)
         report["docs_fantasma"] = docs_fantasma
+    if sentence_report:
+        # ADITIVO: segmenta el borrador ORIGINAL (pre-edición) con los spans crudos de las
+        # citas ya clasificadas. No toca el `text` emitido ni el informe clásico.
+        report["oraciones"] = build_sentence_report(draft_original, clasificadas)
     return text, report

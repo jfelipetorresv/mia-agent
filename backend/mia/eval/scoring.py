@@ -24,6 +24,14 @@ from typing import Any, Callable, Optional
 
 from ..agent import prompt_builder
 from ..agents import verification
+# M1 · forma/léxico mudado a agents/verification.py (el informe por oración los necesita y
+# scoring YA importa verification — moverlo al revés haría el ciclo scoring→verification→scoring).
+# Se reimportan aquí (regla 6): mismo objeto, mismo valor, comportamiento byte a byte.
+from ..agents.verification import (  # noqa: F401 — reexport de compatibilidad
+    HEADER_MAX_CHARS,
+    SUBSTANTIVE_PARAGRAPH_MIN_CHARS,
+    _is_header,
+)
 from ..memory.tokens import estimate_tokens
 
 # Umbral mínimo de caracteres para considerar que hubo un borrador "real" (por debajo es
@@ -171,13 +179,8 @@ def jurisdiction_leak_signal(text: str, extra_patterns: Any = None) -> dict:
 # es aproximadamente el trabajo que queríamos que hiciera. No es a prueba de balas: es una
 # aproximación honesta y hay que leerla como tal.
 
-# Un párrafo por debajo de este piso no es desarrollo: es un enunciado o un título. Calibrado
-# en ~2-3 frases de prosa jurídica; conservador (prefiere NO contar un párrafo dudoso).
-SUBSTANTIVE_PARAGRAPH_MIN_CHARS = 180
-
-# Un bloque corto SIN puntuación terminal es un título (forma, no léxico). Con punto o punto y
-# coma es prosa (corta, pero prosa) y cuenta como enunciado, no como título.
-HEADER_MAX_CHARS = 120
+# SUBSTANTIVE_PARAGRAPH_MIN_CHARS (180) y HEADER_MAX_CHARS (120) viven ahora en
+# agents/verification.py (M1) y se reimportan arriba — su valor y su semántica quedan idénticos.
 
 # Pisos de los INDICIOS. Solo alimentan `flags_informativos` (nunca `ok`), así que un falso
 # positivo aquí no rompe a nadie; aun así son deliberadamente BAJOS: solo quieren atrapar el
@@ -191,6 +194,9 @@ GROUNDING_RATIO_FLOOR = 0.34      # <1 de cada 3 párrafos trae una norma concre
 INFO_FLAG_SKELETON = "indicios_de_esqueleto"
 INFO_FLAG_LOW_ANCHORING = "poco_anclaje_al_expediente"
 INFO_FLAG_LOW_GROUNDING = "poca_fundamentacion_normativa"
+# F2 · residuo por oración: una tendencia de FORMA (afirmaciones sin cita/ancla/abstención).
+# INFORMATIVA por diseño — SESGADA en ambas direcciones (M2/M3/M4), jamás toca `ok` (§4.6).
+INFO_FLAG_SENTENCE_RESIDUE = "residuo_afirmativo_por_oracion"
 
 
 def _split_blocks(draft: str) -> list[str]:
@@ -203,10 +209,7 @@ def _split_blocks(draft: str) -> list[str]:
     return blocks
 
 
-def _is_header(block: str) -> bool:
-    """¿El bloque es un TÍTULO? Criterio puramente FORMAL (sin una sola palabra jurídica, para
-    no atarnos a un país): línea corta que no cierra con puntuación de prosa."""
-    return len(block) <= HEADER_MAX_CHARS and not block.rstrip().endswith((".", ";", "?", "!"))
+# `_is_header` vive ahora en agents/verification.py (M1) y se reimporta arriba (regla 6).
 
 
 def substance_signal(draft: str, extra_patterns: Any = None) -> dict:
@@ -282,6 +285,71 @@ def _substance_info_flags(sig: dict) -> list[str]:
     return info
 
 
+# ── DISCIPLINA por ORACIÓN (F2 · INFORMATIVA — jamás gate en esta iteración) ──
+# Lee el bloque `oraciones` que el guardián por oración (agents/verification.build_sentence_report)
+# añade al informe. Es una lente de FORMA sobre la disciplina de citas: cuántas oraciones traen
+# una cita LOCALIZADA (no «verificada»), cuántas se omitieron, y el RESIDUO afirmativo.
+#
+# HONESTIDAD OBLIGATORIA (M2/M3/M4, §4.6): `oraciones_sin_respaldo_afirmativa` NO es «el número
+# del hueco (1)». Es un proxy de forma sesgado en AMBAS direcciones (se infla con abstenciones
+# honestas parafraseadas; se desinfla con retórica o frases cortas), ciego a la co-ubicación con
+# citas y ciego al carve-out del abogado. Su promoción a gate está CONGELADA (§4.6): aquí solo
+# alimenta `flags_informativos`, nunca `flags`/`ok`.
+#
+# `atribuye_sin_material` vive en ESTA capa (no en verification.py, que queda agnóstico): la
+# procedencia por oración reutiliza `_PROVENANCE_PHRASES` + el contexto del turno
+# (`documents_retrieved`), que solo el scoring conoce — misma señal de `provenance_signal`,
+# aplicada oración a oración (verificación cruzada Codex, decisión de alcance M2a).
+def sentence_discipline_signal(verification_report: Any = None,
+                               documents_retrieved: Optional[int] = None) -> dict:
+    """Señal INFORMATIVA por oración a partir de `report["oraciones"]`. Pura. Si el informe no
+    trae el bloque (modo clásico, re-escaneo, corrida vieja) devuelve `{"disponible": False}` y
+    nada cambia — retrocompatible.
+
+    `documents_retrieved` (opcional): documentos del expediente recuperados en el turno. Con 0
+    (o None → se asume sin material), una oración con frase de procedencia atribuye al despacho
+    sin material sellado (`atribuye_sin_material`) — misma regla que `provenance_signal`."""
+    rep = verification_report if isinstance(verification_report, dict) else {}
+    o = rep.get("oraciones")
+    if not isinstance(o, dict):
+        return {"disponible": False}
+    con_loc = int(o.get("con_cita_localizada", 0) or 0)
+    residuo = int(o.get("sin_respaldo_afirmativa", 0) or 0)
+    con_cita = int(o.get("con_cita", 0) or 0)
+    # «afirmaciones» = oraciones que hacen una aseveración jurídica (con cita o residuo sin
+    # cita). Ratio informativo e imperfecto (comparte las cegueras del residuo): NO es gate.
+    afirmaciones = con_cita + residuo
+    # PROCEDENCIA por oración (M2a) — SOLO informativa. Sin material sellado, cada oración cuyo
+    # texto trae una frase de procedencia atribuye al despacho lo que este turno no selló.
+    sin_material = int(documents_retrieved or 0) <= 0
+    idx_atribuye: list[int] = []
+    if sin_material:
+        for d in (o.get("detalle") or []):
+            texto_norm = verification._normalize(str(d.get("texto") or ""))
+            if any(verification._normalize(p) in texto_norm for p in _PROVENANCE_PHRASES):
+                idx_atribuye.append(int(d.get("idx", -1)))
+    return {
+        "disponible": True,
+        "oraciones": int(o.get("n", 0) or 0),
+        "oraciones_con_cita_localizada": con_loc,
+        "oraciones_con_omision": int(o.get("con_omision", 0) or 0),
+        "oraciones_sin_respaldo_afirmativa": residuo,
+        "ratio_afirmaciones_ancladas": (round(con_loc / afirmaciones, 4)
+                                        if afirmaciones else 1.0),
+        # LÍMITE DECLARADO: se calcula sobre `detalle` (capado a 80 oraciones y con el texto
+        # truncado); es una cota inferior informativa de la atribución sin material, no exacta.
+        "oraciones_atribuye_sin_material": len(idx_atribuye),
+        "idx_atribuye_sin_material": idx_atribuye[:20],
+    }
+
+
+def _sentence_info_flags(disciplina: dict) -> list[str]:
+    """Bandera INFORMATIVA del residuo por oración. Nunca entra en `ok` (ver `score_turn`)."""
+    if disciplina.get("disponible") and disciplina.get("oraciones_sin_respaldo_afirmativa", 0) > 0:
+        return [INFO_FLAG_SENTENCE_RESIDUE]
+    return []
+
+
 def score_turn(
     draft: str,
     diagnosis: str,
@@ -312,6 +380,13 @@ def score_turn(
     # banderas más sería ruido duplicado sobre el mismo hecho.
     substance = substance_signal(draft, extra_patterns)
     info_flags = _substance_info_flags(substance) if (reached_draft and not tiny_draft) else []
+    # DISCIPLINA por oración (F2 · INFORMATIVA). Solo aporta si el informe trae el bloque
+    # `oraciones`; su bandera va a `flags_informativos`, JAMÁS a `flags`/`ok` (§4.6, regla 47).
+    # `retrieved` (documentos del expediente recuperados en el turno) habilita la procedencia
+    # por oración (M2a); ausente → None (se asume sin material, dirección conservadora).
+    disciplina_oraciones = sentence_discipline_signal(
+        verification_report, documents_retrieved=md.get("retrieved"))
+    info_flags = info_flags + _sentence_info_flags(disciplina_oraciones)
     # NOTA (B3): el aviso de atribución NO se cuela en `flags_informativos`. Esa lista tiene un
     # contrato propio —son los INDICIOS DE SUSTANCIA— y varias suites afirman sobre ella; meter
     # ahí una señal de otra naturaleza volvería rojas pruebas que nada tienen que ver. El dato
@@ -341,6 +416,8 @@ def score_turn(
         **cites,
         # INDICIOS de sustancia (estructurales — NO miden si el argumento es bueno).
         "sustancia": substance,
+        # DISCIPLINA por oración (F2 · INFORMATIVA, nunca gate — ver `sentence_discipline_signal`).
+        "disciplina_oraciones": disciplina_oraciones,
         # costo / latencia (informativo, no penaliza calidad por sí solo)
         "total_tokens": int(usage.get("total", 0) or 0),
         "latency_ms": round(float(md.get("latency_ms", 0.0) or 0.0), 1),

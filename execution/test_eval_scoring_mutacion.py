@@ -333,7 +333,7 @@ def g_tres_grupos() -> None:
     hold = {c.id for c in holdout_mod.HOLDOUT_CASES}
 
     check(f"G: el grupo (a) trae los canónicos ({len(visibles)}) y los de riesgo ({len(riesgo)})",
-          len(visibles) == 3 and len(riesgo) == 3)
+          len(visibles) == 3 and len(riesgo) == 6)  # 3 originales + 3 sondas de entailment (F2)
     check("G: CANDADO — `load_golden_cases()` (el cargador del bucle de arreglo) NO devuelve "
           "ni un solo caso del holdout", not (visibles & hold))
     check("G: los ids del holdout tampoco colisionan con los de riesgo", not (riesgo & hold))

@@ -661,3 +661,40 @@ falso bloqueo por segmentación) sobrevivió el ataque. Estado de cada hallazgo 
 - **m7 · framing de emisión inexacto** → RESUELTO. §5 corrige: los puntos de emisión son
   `_verify_draft` MÁS el diagnóstico bajo jurisdicción configurada (sin cubrir, D4).
 - **m8 · faltaba sección de dudas abiertas** → RESUELTO. §8 nueva con D1-D5 resueltas/escaladas.
+
+---
+
+## Verificación cruzada Codex integrada (2026-07-24)
+
+Segundo verificador (Codex xhigh, proveedor distinto) sobre la IMPLEMENTACIÓN. Veredicto
+**APRUEBA CON CORRECCIONES**: la invariante central sobrevivió a su prueba empírica (292
+comparaciones vs `HEAD`, 30 serializaciones byte a byte, 500 corridas `False` vs `True`: cero
+cambios de texto/marcas/omisiones/informe clásico; sin ciclo de imports; sin promoción del
+residuo a `ok`). Estado de cada hallazgo (decisiones de alcance del orquestador aplicadas):
+
+- **M1 · bug de segmentación (`[doc 1].` fusiona, `[doc. 1]` se parte)** → CORREGIDO. La guarda
+  de abreviatura ahora es `len(prev) == 1` (un solo carácter), así `prev==""` tras `]` NO guarda
+  y `[doc 1].` corta; `segment_sentences` protege también los spans `_DOC_REF_RE` (una pasada de
+  un patrón estrecho, no el escáner completo que m4 prohíbe) para que `[doc. 1]` no se parta; se
+  absorben comillas/paréntesis de cierre finales. Mutaciones nuevas en `test_sentence_report::s_doc_refs`.
+- **M2 · UI + `atribuye_sin_material`** → PARTIDO. (a) `atribuye_sin_material` se calcula en la
+  capa de SCORING (`sentence_discipline_signal` → `oraciones_atribuye_sin_material`), que ya tiene
+  `_PROVENANCE_PHRASES` y el contexto del turno (`documents_retrieved`); `verification.py` queda
+  agnóstico. (b) La vista de UI por oración queda **DIFERIDA declarada** a la rama F3-honestidad-UX:
+  el §4.3 fija «sin cambios de forma» y la pantalla no pertenece a este paso — el frontend NO se
+  tocó (tipado/normalización/render de `oraciones` es trabajo de F3-UX).
+- **M3 · gates débiles** → CORREGIDO. El check «byte a byte» compara ahora EXACTAMENTE `(texto
+  emitido, informe clásico COMPLETO)` entre `False` y `True` en AMBAS ramas (clásica y omisión),
+  con carve-out del abogado, docs fantasma y >50 citas (`test_sentence_report::p_byte_a_byte`).
+- **M4 · sondas sin oráculo** → CORREGIDO. Las de forma tienen ORÁCULO DETERMINISTA con mutación
+  de salida violatoria (sonda 6 intercepción; sonda 5 residuo + límite declarado bajo el piso,
+  `test_sentence_report::o_oraculos`); la sonda 4 (implicación semántica pura) se DECLARA
+  expresamente REVISIÓN HUMANA / juez del banco en `cases.py`, nunca medición automática.
+- **m1 · spans vacíos + solo `===` como frontera** → CORREGIDO. Se excluyen los spans
+  solo-espacio; las líneas etiquetadas del cierre son frontera por FORMA (interior de un bloque
+  fenced `===`), sin hardcodear las etiquetas.
+- **m2 · compactación de fuentes con `sentence_report=False`** → CORREGIDO. La fuente compacta
+  solo se construye si `sentence_report` o `len(detalle) < 50`: el camino por defecto queda
+  estructuralmente inerte para las citas 51+.
+- **m3 · cap de citas por oración** → CORREGIDO. `citas` se serializa con tope
+  (`_SENTENCE_CITES_CAP`) y reporta `citas_truncadas`; el conteo/estado usa TODAS.

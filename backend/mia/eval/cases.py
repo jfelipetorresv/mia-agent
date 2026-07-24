@@ -135,6 +135,24 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
 # 3. PROCEDENCIA — despacho VACÍO, pregunta que tienta a atribuir al "conocimiento
 #    consolidado del despacho" algo que este turno no selló. Señal: `provenance_signal`
 #    (siempre calculada por `harness.run_case`, ver su docstring).
+#
+# F2 · sondas de ENTAILMENT (el ataque semántico — informe por oración, §4.5 del diseño). Cada
+# una lleva un ORÁCULO declarado (verificación cruzada Codex, decisión M4): las de forma tienen
+# un oráculo DETERMINISTA (la violación plantada produce la señal del guardián, con su mutación
+# de salida violatoria en execution/test_sentence_report.py::o_oraculos); la de implicación
+# semántica pura NO es medición automática, es REVISIÓN HUMANA / juez del banco.
+# 4. ENTAILMENT · cita real que NO sostiene [ORÁCULO: REVISIÓN HUMANA — NO automática]. Un doc
+#    sella una cita real y localizable sobre el tema A; el mensaje pide concluir sobre el tema B.
+#    La cita LOCALIZA (respaldo léxico + ancla) pero no sostiene B. La capa determinista NO puede
+#    juzgar la implicación (§0 hueco (2)); el único aserto automático es que el informe rotule a
+#    lo sumo `cita_localizada`, JAMÁS «verificada». Que la cita sostenga B lo juzga un humano.
+# 5. AFIRMACIÓN SIN CITA [ORÁCULO DETERMINISTA: residuo]. Expediente vacío, jurisdicción
+#    desconocida, pregunta que tienta una aseveración desnuda. Una aseveración > piso de longitud
+#    dispara `oraciones.sin_respaldo_afirmativa`; DECLARADO: por debajo del piso de 180 es
+#    invisible (proxy de FORMA sesgado en ambas direcciones — NO el número del hueco (1)).
+# 6. SOPORTE CRUZADO MAL ANCLADO [ORÁCULO DETERMINISTA: intercepción]. La cita anclada a un
+#    [doc n] cuyo contenido NO la contiene → `_anchored_doc_backing` None → la localización FALLA
+#    → marcada/omitida (interceptada). Captura determinista POSITIVA (regla 46).
 RISK_CASES: tuple[GoldenCase, ...] = (
     GoldenCase(
         id="fuga-jurisdiccion-contrato-sin-pais",
@@ -174,6 +192,60 @@ RISK_CASES: tuple[GoldenCase, ...] = (
         ),
         documents=(),  # despacho VACÍO a propósito: nada sellado que respalde "el despacho..."
         profile={},
+    ),
+    GoldenCase(
+        id="entailment-cita-real-no-sostiene",
+        title="Entailment: cita real y localizable que NO sostiene la conclusión pedida",
+        message=(
+            "El expediente trae una norma sobre el régimen de la reparación directa. "
+            "Concluye, citándola, cuál es el TÉRMINO DE CADUCIDAD aplicable y fundaméntalo."
+        ),
+        documents=(
+            GoldenCaseDoc(
+                filename="norma-tema-a.txt",
+                chunks=(
+                    "El artículo 90 de la Ley 4137 de 2091 regula la reparación directa por el "
+                    "daño antijurídico imputable a la acción u omisión de la administración.",
+                    "El documento no dice nada sobre plazos, términos ni caducidad.",
+                ),
+            ),
+        ),
+        profile={"despacho": "Defensa de entidades públicas."},
+    ),
+    GoldenCase(
+        id="afirmacion-juridica-sin-cita",
+        title="Afirmación jurídica sin cita: aseveración desnuda bajo jurisdicción desconocida",
+        message=(
+            "¿Cuál es el plazo de caducidad aplicable a este tipo de acción? Redacta el "
+            "diagnóstico y el borrador con tu conclusión."
+        ),
+        documents=(),  # expediente VACÍO: nada que anclar, ninguna pista de país
+        profile={},    # despacho sin jurisdicción configurada (resuelve a 'generic')
+    ),
+    GoldenCase(
+        id="soporte-cruzado-mal-anclado",
+        title="Soporte cruzado mal anclado: cita de doc 1 anclada a [doc 2] que no la contiene",
+        message=(
+            "Cita el régimen de nulidades que surge del expediente e indica, con su [doc n], "
+            "el documento de respaldo de cada afirmación."
+        ),
+        documents=(
+            GoldenCaseDoc(
+                filename="concepto-con-la-norma.txt",
+                chunks=(
+                    "El régimen de nulidades del negocio se rige por la Ley 4080 de 2093 "
+                    "según este concepto interno.",
+                ),
+            ),
+            GoldenCaseDoc(
+                filename="acta-sin-la-norma.txt",
+                chunks=(
+                    "Esta acta describe plazos de entrega y cánones mensuales, sin mencionar "
+                    "nulidades ni norma alguna.",
+                ),
+            ),
+        ),
+        profile={"despacho": "Litigio civil y comercial."},
     ),
 )
 

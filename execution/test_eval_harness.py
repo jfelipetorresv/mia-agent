@@ -88,9 +88,15 @@ def _fake_embed(texts):
 def _fake_call_llm(messages, *, task=None, model=None, **kw):
     sysmsg = messages[0]["content"] if messages and isinstance(messages[0], dict) else ""
     if "BORRADOR" in sysmsg or "Redacta el borrador" in sysmsg:
-        # Borrador con una cita SIN marca → el verificador la anota (sin_respaldo=1).
-        content = ("BORRADOR: contestación de la demanda. Con fundamento en la Ley 1437 de 2011 "
-                   "y en reiterada jurisprudencia, se propone la excepción de caducidad. " * 6)
+        # Borrador con una cita SIN marca → el verificador la anota (sin_respaldo=1), y bajo
+        # jurisdicción desconocida la OMITE. F2 · informe por oración: se añade además una
+        # afirmación asertiva SIN cita (> piso de longitud, termina en '.') para ejercitar el
+        # residuo `oraciones.sin_respaldo_afirmativa` end-to-end (fake desobediente, regla 46).
+        content = (("BORRADOR: contestación de la demanda. Con fundamento en la Ley 1437 de 2011 "
+                    "y en reiterada jurisprudencia, se propone la excepción de caducidad. " * 6)
+                   + "El término de caducidad de la acción se cuenta a partir del día siguiente "
+                     "a la ocurrencia del hecho dañoso, y la carga de la prueba corresponde "
+                     "íntegramente a quien alega el derecho que reclama dentro del proceso.")
     elif "CRUCE" in sysmsg or "diagnóstico" in sysmsg.lower():
         content = "DIAGNÓSTICO: el eje es la caducidad.\n\n" + _CLOSING
     else:
@@ -429,6 +435,22 @@ async def db_checks() -> None:
               "desconocida) y el informe lo registra",
               res["verification"].get("omitidas", 0) >= 1
               and res["score"]["citas_sin_respaldo"] == 0)
+        # F2 · informe POR ORACIÓN e2e (rama genérica — este tenant no tiene jurisdicción): la
+        # cita omitida cae en una oración `con_omision` y la afirmación asertiva sin cita del
+        # fake cae en el residuo `sin_respaldo_afirmativa`. Señal POSITIVA no ciega (regla 46).
+        o_e2e = res["verification"].get("oraciones") or {}
+        check("e2e por oración (rama genérica): el informe trae 'oraciones' con con_omision≥1 "
+              "y sin_respaldo_afirmativa≥1 (fake desobediente end-to-end)",
+              o_e2e.get("con_omision", 0) >= 1 and o_e2e.get("sin_respaldo_afirmativa", 0) >= 1)
+        # MUTACIÓN: el MISMO borrador del fake, sin el modo por oración, NO produce el bloque
+        # 'oraciones' — es sentence_report lo que lo activa (si se descablea, este check cae).
+        fake_draft = _fake_call_llm(
+            [{"content": "Redacta el borrador"}]).choices[0].message.content
+        _, rep_off = harness.verification.annotate_draft(fake_draft, omit_unbacked=True)
+        _, rep_on = harness.verification.annotate_draft(
+            fake_draft, omit_unbacked=True, sentence_report=True)
+        check("e2e MUTADO: el mismo borrador sin el modo por oración NO trae 'oraciones'; con él sí",
+              "oraciones" not in rep_off and "oraciones" in rep_on)
         check("e2e: el informe de verificación viaja en el resultado",
               isinstance(res["verification"], dict) and "citas" in res["verification"])
         check("e2e: el resultado trae puntaje con flags",
