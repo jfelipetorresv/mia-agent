@@ -32,7 +32,8 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 > — ahora con dos decisiones nuevas de medición (M-1 abstención, M-2 etiqueta de éxito). Si
 > Pipe no está disponible, lo único ejecutable sin él es la **referencia en nube** (tope USD 30
 > ya aprobado): RISK_CASES ×10 bajo `nube` + `--agentic-compare`, que es además lo que destraba
-> la decisión sobre lectura agéntica por defecto.
+> la decisión sobre lectura agéntica por defecto. **Al agregar cualquier sonda nueva, usa
+> `--exige-evidencia`** (barrera nueva de esta sesión: sin texto releíble el agregado reprueba).
 
 Rama `feat/fase1-inc1-cleanup-scaffolding`.
 
@@ -70,6 +71,24 @@ Rama `feat/fase1-inc1-cleanup-scaffolding`.
 6. Nota de método: 2 corridas del cruzado sufrieron `Connection closed mid-response` del CLI y
    reintentaron; una llegó a 1 020 s y arrastra el p95 de esa sonda. Fallo de red, no del
    sistema: ambas terminaron limpias.
+7. **Retrospectiva y aprendizajes aplicados CON BARRERA (`e05d9fa`).** El defecto propio que
+   destapó la retrospectiva: el agregado `f2sond_entail_n10` incluyó la corrida `_smoke`,
+   guardada sin `MIA_EVAL_PERSIST_FULL=1` (borrador truncado a 1 200 chars), y **nada lo
+   advirtió** — justo en la sonda declarada de REVISIÓN HUMANA. Construido:
+   `harness.evidence_audit` + `--exige-evidencia` en `execution/aggregate_eval_runs.py` (avisa
+   siempre; reprueba cuando se le exige). Verificado en tres capas: 6 checks nuevos en
+   `test_eval_harness.py` (**67/67**, eran 61); reprobación real de `entail_n10` señalando el
+   índice 0; aprobación de `sincita`/`cruzado` con 10/10 releíbles. Ojo al matiz: los **números
+   del agregado no estaban comprometidos** (fuga y abstención se calculan sobre el texto entero
+   en `run_case` y viajan persistidas) — lo que faltaba era poder RELEER.
+8. **Cierre de sesión completo**: reglas 52-54 en `APRENDIZAJES.md`; **riesgo #81** en
+   `bugs-and-risks.md` (M-1/M-2, pariente del #80: métrica correcta con etiqueta que induce
+   lectura falsa); `findings.md` con el límite declarado de la evidencia; `progress.md`,
+   `session-summaries.md` (sesión 49) y `task_plan.md` (hito + puntero al plan maestro vigente,
+   porque su lista interna de 2026-07-01 quedó superada). Retrospectiva de método en el vault:
+   `01-operacion\retrospectivas\retrospective-2026-07-24-005-mia-sondas-adversariales-f2.md`.
+   Gates HALT en verde (19/19, 9/9, 12/12) + `test_sentence_report` 47/47. Repo limpio y
+   pusheado hasta `e05d9fa`.
 
 ## Qué sigue (en orden)
 
