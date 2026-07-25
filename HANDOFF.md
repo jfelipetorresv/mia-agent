@@ -1,4 +1,4 @@
-# HANDOFF — Mia (traspaso a Cursor)
+﻿# HANDOFF — Mia (traspaso a Cursor)
 
 > **PLAN MAESTRO VIGENTE (aprobado por Pipe 2026-07-21):**
 > `C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md` — "Dejar MIA funcionando
@@ -18,7 +18,77 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 
 ---
 
-# CIERRE — 2026-07-24 (2ª sesión) · Re-baseline con el prompt de #43-#44: la promesa se sostiene · EMPEZAR AQUÍ
+# CIERRE — 2026-07-24 (3ª sesión) · Las 3 sondas adversariales corridas: 30/30 sin un solo fallo · EMPEZAR AQUÍ
+
+## Arranque en una terminal nueva (prompt sugerido)
+
+> Lee `HANDOFF.md` y `APRENDIZAJES.md` de `D:\Inteligencia Artificial\Mia-Super Agent\mia` y el
+> plan maestro (`C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`).
+> Corre `scripts\sonda_salud.ps1` ANTES de nada; si la DB portable (55432) está apagada,
+> arráncala (clúster en `tools/pgdata-portable`). **F2 quedó sin trabajo de máquina
+> pendiente**: las 3 sondas adversariales están corridas ×10 en vivo y agregadas
+> (`memory/findings.md` §SONDAS ADVERSARIALES F2), con el mismo `prompt_hash 3391f17ea61324a4`
+> del RE-BASELINE. Lo que sigue es de Pipe: **Sesión A** con `docs/f1-paquete-decision-pipe.md`
+> — ahora con dos decisiones nuevas de medición (M-1 abstención, M-2 etiqueta de éxito). Si
+> Pipe no está disponible, lo único ejecutable sin él es la **referencia en nube** (tope USD 30
+> ya aprobado): RISK_CASES ×10 bajo `nube` + `--agentic-compare`, que es además lo que destraba
+> la decisión sobre lectura agéntica por defecto.
+
+Rama `feat/fase1-inc1-cleanup-scaffolding`.
+
+## Qué pasó en esta sesión (2026-07-24, 3ª)
+
+1. **Las 27 corridas que faltaban, hechas: 30/30 en total.** Las 3 sondas nuevas de `RISK_CASES`
+   ×10 cada una, bajo `suscripcion`, `MIA_EVAL_PERSIST_FULL=1`, en trozos foreground (regla 45).
+   Agregadas en `f2sond_entail_n10`, `f2sond_sincita_n10`, `f2sond_cruzado_n10` — las tres con
+   `prompt_hash 3391f17ea61324a4`, o sea **comparables con el RE-BASELINE**. Coste de tarjeta:
+   USD 0,00081 (solo embeddings).
+2. **El ataque no se materializó en ninguna de las 30.** 0 fuga, 0 citas sin respaldo, 0 falsos
+   bloqueos, 0 errores, 0 docs fantasma. Verificado **leyendo los 30 borradores completos**, no
+   solo el panel: en entailment MIA se negó 10/10 a concluir el término de caducidad y nombró el
+   vacío exacto (la norma describe el objeto, no fija plazos); en el expediente vacío no soltó
+   una sola cifra de plazo; en el cruzado no ancló nada a `[doc 2]` y encima **detectó por su
+   cuenta la trampa de la fecha imposible** (norma fechada 65-67 años en el futuro), que no era
+   parte del ataque diseñado.
+3. **Descartada una sospecha de ceguera**: `citas=0` en 30/30 con el borrador mencionando la
+   materia decenas de veces olía a detector roto. No lo es: MIA **omite la referencia normativa**
+   y escribe en su lugar `[referencia normativa omitida: ordenamiento no configurado]`. No hay
+   citas porque no hay citas que detectar.
+4. **DOS HALLAZGOS DE MEDICIÓN, ninguno corregido a propósito** (cambian cifras del baseline —
+   eso lo decide Pipe). Detalle completo en findings §SONDAS:
+   - **M-1**: "Abstención honesta 0%" no informa. 25/30 borradores dicen textualmente que no
+     pueden; el detector registra 0. `harness.py` L132 declara el sesgo conservador, pero las 11
+     frases de `ABSTENTION_PHRASES` quedaron desfasadas frente a cómo redacta MIA sus negativas
+     tras #43-#44. Afecta también la línea de abstención del RE-BASELINE.
+   - **M-2**: "Éxito de tarea 100%" mide `reached_draft` ("el turno produjo texto con cierre"),
+     no "cumplió lo pedido". En estas sondas lo correcto ERA no entregar borrador. El código lo
+     tiene claro; engaña la etiqueta del panel.
+5. **El residuo por oración quedó medido en vivo**: 24,0% / 23,5% / 20,6%. Leído oración por
+   oración es **casi todo metadiscurso legítimo** (por qué no puede, qué falta, qué sigue) —
+   evidencia empírica del sesgo que `scoring.py` L294 ya declaraba, y razón para que su
+   promoción a gate siga CONGELADA.
+6. Nota de método: 2 corridas del cruzado sufrieron `Connection closed mid-response` del CLI y
+   reintentaron; una llegó a 1 020 s y arrastra el p95 de esa sonda. Fallo de red, no del
+   sistema: ambas terminaron limpias.
+
+## Qué sigue (en orden)
+
+1. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: calidad de las 6 salidas + las 4
+   decisiones + priorizar el backlog ruflo + **las 2 decisiones nuevas de medición (M-1, M-2)**.
+2. **Referencia en nube** (tope USD 30 ya aprobado): RISK_CASES ×10 bajo `nube` +
+   `--agentic-compare`. Es lo único ejecutable sin Pipe y destraba la decisión pendiente sobre
+   lectura agéntica por defecto.
+3. **Cierre de F2**: con la referencia en nube arriba, queda solo el ítem 2 de la spec (fuga
+   detectada al 100% de ocurrencias con falsos positivos medidos — el caso de ataque).
+
+## Pendientes de Pipe
+
+Ninguno bloqueante para la máquina. Espera de Pipe: la **Sesión A** (calidad + 4 decisiones +
+prioridades del backlog ruflo) y, dentro de ella, **M-1 y M-2**.
+
+---
+
+# CIERRE — 2026-07-24 (2ª sesión) · Re-baseline con el prompt de #43-#44: la promesa se sostiene
 
 ## Arranque en una terminal nueva (prompt sugerido)
 
@@ -110,76 +180,5 @@ Rama `feat/fase1-inc1-cleanup-scaffolding`.
 
 Ninguno bloqueante. Lo único que espera de Pipe es la **Sesión A** (juzgar calidad + 4
 decisiones + prioridades del backlog ruflo).
-
----
-
-# CIERRE — 2026-07-24 · El criterio de Pipe entró a MIA: decisiones #43-#44 + backlog ruflo
-
-## Arranque en una terminal nueva (prompt sugerido)
-
-> Lee `HANDOFF.md` y `APRENDIZAJES.md` (reglas nuevas 49-51) de
-> `D:\Inteligencia Artificial\Mia-Super Agent\mia` y el plan maestro
-> (`C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`). Corre
-> `scripts\sonda_salud.ps1` ANTES de nada (ahora también chequea la DB portable; la tarea programada
-> del segador ya es permanente). Primer trabajo: **re-medir el baseline con el prompt nuevo** —
-> el prompt_hash cambió con las decisiones #43-#44 (`memory/decisions.md`), así que la línea base
-> `e0a4e15a39069bae` quedó desactualizada: correr `disciplina-citas-formas-abreviadas` ×10 y
-> `fuga-jurisdiccion-contrato-sin-pais` ×10 bajo `suscripcion` (gratis), en TROZOS foreground
-> `--repeat 1..2` <10 min (regla 45), agregando con `execution/aggregate_eval_runs.py`, y comparar
-> contra el baseline F1 (`memory/findings.md` §BASELINE F1). OJO al leer el panel: en el caso citas,
-> la mención del memo sellado CON ancla es disciplina correcta aunque el escáner crudo la cuente
-> (regla del 20% residual). Después: el resto de F2 (especificación de seguridad de salida POR
-> ORACIÓN) o la Sesión Pipe A si Pipe está disponible.
-
-Retrospectiva de esta sesión: `Pipe-OS\01-operacion\retrospectivas\retrospective-2026-07-24-001-mia-destilacion-principios.md`.
-Aprendizajes convertidos en regla: `APRENDIZAJES.md` 49-51 (alcance en destilaciones + verificación
-adversarial obligatoria para prompt core; prompts que alimentan parsers; MSYS_NO_PATHCONV para `!`)
-— con barreras: checks `std-1..std-5` en `test_prompt_builder.py` (51/51) y sonda de salud ampliada.
-
-Rama `feat/fase1-inc1-cleanup-scaffolding`, pusheada hasta este cierre.
-
-## Qué pasó en esta sesión (2026-07-23 → 24)
-
-1. **Los 4 pendientes de Pipe: APROBADOS Y EJECUTADOS.** Ramas remotas prescindibles borradas (solo
-   quedan `main` y esta rama; los 2 docs únicos de arranque-fptz34 rescatados en `abd1a25`), tarea
-   programada permanente del segador creada y verificada, tope USD 30 de referencia en nube
-   APROBADO (habilita RISK_CASES ×10 bajo `nube` + `--agentic-compare`).
-2. **Decisión #43 (`48d0ed5`)**: el manual de litigio de Pipe (metodologia-fable, 56 reglas) entró
-   DESTILADO al prompt core — L2 pasa a SEIS elementos con postura de litigio, catálogo de
-   confrontación, arquitectura del escrito, exhaustividad→selección y pasada del adversario; L8
-   facts/analysis/draft con lo operativo. Cero identidad, cero país (gate 104/104). La verificación
-   adversarial independiente encontró 2 MAYORES de ALCANCE que se corrigieron (adversarial
-   condicionado a encargos adversariales; transcripción de norma condicionada a ordenamiento
-   declarado).
-3. **Decisión #44 (`bc90628`)**: 5 skills más como PRINCIPIOS — Sala de estrategia (franqueza,
-   vacíos-como-preguntas, moderador que RESUELVE sin promediar y escribe DENTRO de los campos del
-   dictamen), `## aprendido` con vectores Funciona/Evitar/Lección + dedup ciego al vector,
-   pasada final de auto-verificación en draft, ficha de ESTÁNDAR DE CALIDAD por despacho en la
-   entrevista de guías (calidad = estructura + defectos, no puntaje), y convo-review resuelto:
-   ya está cubierto por `traces` FTS cross-asunto (candidato declarado: consulta espontánea).
-4. **Análisis ruflo (`c6c9665`, `memory/findings.md` §RUFLO)**: claude-flow renombrado; VETO de
-   instalación (telemetría+monetización sin disclosure, historial de fachadas); 5 ideas
-   destilables al backlog — decaimiento de confianza en lo aprendido (ALTA), consolidación
-   post-turno en cola presupuestada (ALTA), manifiesto sellado por entregable (MEDIA-ALTA,
-   candidata comercial), routing justificado (MEDIA), promoción explícita de memoria (MEDIA).
-   Valida el modo suscripción como modelo de negocio.
-5. **Verificación**: 2 rondas adversariales (11 hallazgos reales corregidos), 12 corridas de suites
-   en verde, 3 corridas EN VIVO con el prompt nuevo (fuga ×2 limpias; citas ×1 con disciplina
-   correcta — 2/2 respaldadas con ancla al memo sellado), USD 0.
-
-## Qué sigue (en orden)
-
-1. **Re-medir el baseline** N=10 con el prompt nuevo (ver prompt de arranque — es la deuda
-   declarada de #43/#44). → HECHO en la sesión siguiente (entrada de arriba).
-2. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: calidad de las 6 salidas + las 4
-   decisiones + AHORA TAMBIÉN priorizar el backlog ruflo dentro de F2.
-3. **Resto de F2**: especificación de seguridad de salida POR ORACIÓN + banco de sondas
-   adversariales de entailment (la pieza grande del plan maestro).
-4. Referencia en nube (tope USD 30 ya aprobado): RISK_CASES ×10 bajo `nube` + `--agentic-compare`.
-
-## Pendientes de Pipe
-
-Ninguno bloqueante. Lo único que espera de Pipe es la **Sesión A** (juzgar calidad + 4 decisiones +
-prioridades del backlog ruflo).
 
 ---
