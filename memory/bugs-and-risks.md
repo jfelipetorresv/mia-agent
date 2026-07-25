@@ -149,6 +149,34 @@ desactivaría — exactamente el fracaso que viene a impedir.) Inventario autom�
 expuestas, CERO de la clase silenciosa**; 5 avisos, todos en `test_assistant.py`, con archivo, línea y
 arreglo. Falsificado con cuatro casos, incluido una suite **inmune** con la misma aserción negativa palabra
 por palabra que **no debe** reportarse. Coste 0,5 s, sin red ni base de datos.
+
+### 🟡 Riesgo #81 — Métricas correctas con etiqueta que induce una lectura falsa (2026-07-24, F2)
+
+Pariente del #80, un piso más arriba: allí el defecto era una **aserción** que se quedaba verde sin
+mirar; aquí el número es **correcto** y lo que engaña es **cómo se llama**. Detectado leyendo los
+30 borradores de las sondas adversariales, no el panel.
+
+- **M-1 · "Abstención honesta: 0%"** — en 25 de 30 corridas el borrador dice textualmente que no
+  puede ("No puedo entregar hoy el borrador que me pide"). `abstention_signal` cuenta 0 porque
+  reconoce 11 frases literales (`ABSTENTION_PHRASES`, `agents/verification.py` L536) que MIA dejó
+  de usar cuando entró el prompt de #43-#44. El sesgo conservador **está declarado** en
+  `harness.py` L132 — no es un gate ciego oculto — pero una subestimación de ~83 puntos convierte
+  la línea en una invitación a concluir lo contrario de lo que pasa. Afecta también la línea de
+  abstención del RE-BASELINE ya publicado.
+- **M-2 · "Éxito de tarea: 100%"** — mide `reached_draft` ("el turno produjo texto con cierre"),
+  no "hizo lo correcto". En las 3 sondas lo correcto ERA no entregar borrador, y las cuenta como
+  éxito 10/10.
+
+**Por qué sigue ABIERTO y sin corregir:** cualquiera de las dos correcciones mueve cifras ya
+publicadas en el baseline; es decisión de Pipe. Van como decisiones 5 y 6 del paquete de la
+Sesión A (`docs/f1-paquete-decision-pipe.md`), con recomendación escrita: renombrar ahora (no
+rompe la serie histórica) y recalibrar en el próximo re-baseline pagado.
+
+**Barrera parcial construida (misma sesión):** `harness.evidence_audit` + `--exige-evidencia` en
+`execution/aggregate_eval_runs.py` — no arregla las etiquetas, pero garantiza que el TEXTO exista
+para poder leerlo, que es lo único que destapó el problema. 6 checks en `test_eval_harness.py`
+(67/67). Reglas 52-54 de `APRENDIZAJES.md`. **Lo que ninguna barrera cubre todavía:** que alguien
+efectivamente lea la muestra antes de publicar (regla 52, documentada).
 **Sus puntos ciegos, escritos en el propio archivo:** no ejecuta nada, el seguimiento del valor es de
 módulo, y **solo mira una clase de ceguera** — no detecta un test decorativo en general. El riesgo queda
 🟡, no cerrado: la barrera cubre la clase que costó tres gates esta semana, no el problema entero.

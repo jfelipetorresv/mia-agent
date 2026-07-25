@@ -430,6 +430,21 @@ L294 ya declaraba: el residuo **se infla con abstenciones honestas parafraseadas
 corridas son la evidencia empírica de ese sesgo y refuerzan que su promoción a gate siga
 CONGELADA.
 
+### Límite declarado de la evidencia (y la barrera que salió de ahí)
+
+De las 30 corridas, **29 tienen el borrador completo releíble**; la parte `f2sond_entail_smoke`
+corrió sin `MIA_EVAL_PERSIST_FULL=1` y su texto quedó truncado a 1 200 caracteres. Sus **números
+son válidos** (fuga, abstención y el informe por oración se calculan en `run_case` sobre el texto
+entero y viajan persistidos; el panel los agrega, no los recalcula sobre el preview), pero ese
+borrador **ya no se puede releer** — y `entailment` es justamente la sonda declarada de REVISIÓN
+HUMANA. Nada lo advirtió al agregar.
+
+Barrera construida en la misma sesión: `harness.evidence_audit` + el flag `--exige-evidencia` de
+`execution/aggregate_eval_runs.py`, que avisa siempre y reprueba cuando se le exige. Verificado
+en vivo: reprueba `f2sond_entail_n10` señalando el índice 0, y aprueba `sincita`/`cruzado` con
+10/10 releíbles. 6 checks nuevos en `execution/test_eval_harness.py` (67/67). Regla 52 de
+`APRENDIZAJES.md`.
+
 ### Nota de método
 
 `cruzado_d` tardó 1 020 s (p95 de su sonda) por un reintento del CLI ante

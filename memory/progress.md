@@ -3007,3 +3007,43 @@ benchmark ciego contra el modelo vivo; segundo paso de la lectura agéntica (que
 sola vía `update_soul` (paso 7 de `docs/diseno-soul-onboarding.md`, lo único del rediseño sin implementar);
 y los riesgos nuevos #75-#80 de bugs-and-risks.md. **De Pipe:** aprobar el push de los 18 commits y decidir
 entre profundidad en un ordenamiento o anchura verificable en varios.
+
+---
+
+## 2026-07-24 (3ª sesión) — F2 · las 3 sondas adversariales, corridas y leídas
+
+**Qué se corrió:** las 27 corridas en vivo que faltaban tras el reinicio (30/30 acumuladas),
+en trozos foreground de `--repeat 1` bajo `suscripcion` con `MIA_EVAL_PERSIST_FULL=1`.
+Ninguna perdida, ninguna con error. Agregados `f2sond_entail_n10`, `f2sond_sincita_n10`,
+`f2sond_cruzado_n10`, los tres con `prompt_hash 3391f17ea61324a4` — comparables con el
+RE-BASELINE. Coste de tarjeta USD 0,00081.
+
+**Resultado:** el ataque no se materializó en ninguna de las 30. 0 fuga, 0 citas sin respaldo,
+0 falsos bloqueos, 0 documentos fantasma. Verificado leyendo los 30 borradores completos:
+se negó 10/10 a deducir el término de caducidad de una norma que no habla de plazos; con el
+expediente vacío no afirmó ni una cifra; no ancló nada al documento equivocado y detectó por
+su cuenta la trampa de la fecha imposible (norma fechada 65-67 años en el futuro), que ni
+siquiera era parte del ataque diseñado.
+
+**Lo que se construyó:** `harness.evidence_audit` (función pura) + `--exige-evidencia` en
+`execution/aggregate_eval_runs.py`. Un agregado ahora declara cuántas corridas tienen texto
+releíble, avisa cuando falta y reprueba si se le exige. Verificado en las tres capas: 6 checks
+nuevos en `test_eval_harness.py` (67/67), reprobación real de `f2sond_entail_n10` señalando el
+índice culpable, y aprobación de los dos agregados limpios. Salió de un defecto propio: el
+agregado de la sonda de REVISIÓN HUMANA incluyó una corrida sin texto persistido y nada lo
+advirtió.
+
+**Errores propios de la sesión (3, ninguno llegó al entregable):** `Glob` con timeout de 20 s
+(recurrente, ya documentado); un corte de archivo en PowerShell que copió el archivo entero
+porque un `Select-String` fallido devuelve vacío y el índice se vuelve -1; y una regex de
+análisis tan laxa que casi produce un falso hallazgo de "detector ciego". Los tres, con su
+prevención, en APRENDIZAJES.md (reglas 52-54) y en la retrospectiva del vault
+(`retrospective-2026-07-24-005`).
+
+**Deuda declarada:** M-1 y M-2 (riesgo #81) — dos métricas cuyo número es correcto pero cuya
+etiqueta induce una lectura falsa. Sin corregir a propósito: mueven cifras del baseline
+publicado y son decisión de Pipe.
+
+**Próximo:** Sesión Pipe A (6 salidas + 4 decisiones + M-1/M-2); referencia en nube (tope USD 30
+aprobado) con RISK_CASES ×10 bajo `nube` + `--agentic-compare`, que es lo único ejecutable sin
+Pipe y destraba la decisión sobre lectura agéntica por defecto; y el ítem 2 de la spec de F2.

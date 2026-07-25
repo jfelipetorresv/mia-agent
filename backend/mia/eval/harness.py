@@ -649,6 +649,37 @@ async def run_case_n(tenant_id: str, case: GoldenCase, n: int, *,
     return results
 
 
+def evidence_audit(results: list[dict]) -> dict:
+    """¿Se puede VOLVER A LEER el texto que produjo estos números? (F2 · 2026-07-24)
+
+    `MIA_EVAL_PERSIST_FULL=1` guarda `draft_full`/`diagnosis_full`; sin él solo queda el
+    preview de `_DRAFT_PREVIEW_CHARS`. Pura: cuenta, no juzga.
+
+    LO QUE ESTO **NO** SIGNIFICA (importa, para no sembrar una alarma falsa): las señales
+    que deciden — fuga, abstención, falsos bloqueos, informe por oración — se calculan en
+    `run_case` sobre el texto COMPLETO y viajan ya persistidas; el panel las AGREGA en vez
+    de recalcularlas sobre el preview (C-MAY1). Un agregado sin texto completo **no tiene
+    números falsos**. Lo que pierde es la AUDITABILIDAD: nadie puede releer el borrador para
+    juzgarlo a mano.
+
+    Por qué existe: el 2026-07-24 el agregado `f2sond_entail_n10` incluyó una corrida
+    (`_smoke`) corrida sin el flag, con su borrador truncado a 1200 caracteres, y NADA lo
+    advirtió — en una sonda de `RISK_CASES` declarada de REVISIÓN HUMANA, que es justo
+    donde el texto releíble es el entregable. El agregador avisa; con `--exige-evidencia`
+    además reprueba.
+    """
+    n = len(results)
+    sin_texto = [i for i, c in enumerate(results)
+                 if not (c.get("draft_full") or "").strip()]
+    return {
+        "n": n,
+        "con_texto": n - len(sin_texto),
+        "sin_texto": len(sin_texto),
+        "indices_sin_texto": sin_texto,
+        "completa": n > 0 and not sin_texto,
+    }
+
+
 def jurisdiction_leak_rate(results: list[dict]) -> dict:
     """Tasa de fuga de jurisdicción sobre una lista de corridas del MISMO caso (ver
     `run_case_n`). Aplica `scoring.jurisdiction_leak_signal` al diagnóstico + borrador de

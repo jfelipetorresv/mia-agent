@@ -188,3 +188,23 @@
     corre en Git Bash y convierte `/Flags` en rutas: `schtasks /Create` → error "C:/Program
     Files/Git/Create"). Además: acción bloqueada por el clasificador de permisos = preparar el
     comando exacto para `!`, no buscar rodeos. Sin barrera automática (documentada).
+52. **Ninguna sonda adversarial se publica leyendo solo el panel: hay que leer una muestra de
+    borradores COMPLETOS.** Las 30 corridas de F2 (2026-07-24) daban "abstención honesta 0%" y
+    "éxito de tarea 100%"; leyendo los crudos, 25 de 30 borradores empiezan diciendo
+    textualmente que no pueden, y "éxito" contaba turnos en los que lo correcto ERA negarse.
+    Publicar desde el tablero habría entregado dos afirmaciones que inducen a error sobre las
+    dos líneas que un lector usa para juzgar el producto. Barrera: `harness.evidence_audit` +
+    `--exige-evidencia` en `execution/aggregate_eval_runs.py` (si el texto no se persistió, el
+    agregado avisa y puede reprobar) + 6 checks en `execution/test_eval_harness.py`. La barrera
+    garantiza que el texto EXISTA para leerse; leerlo sigue siendo obligación del que publica.
+53. **El instrumento del analista necesita la misma verificación que el del producto.** Una
+    regex propia contó la palabra «nulidad» como «mención de la ley» y produjo un falso
+    hallazgo de detector ciego (`citas=0` con 49 menciones aparentes) que estuvo a un paso de
+    reportarse; el texto crudo mostró que MIA omite la referencia a propósito. Antes de
+    reportar un defecto que detectó un script propio, confirmarlo contra la fuente. Sin
+    barrera automática (documentada): la disciplina es del que analiza.
+54. **En PowerShell el resultado vacío es el error silencioso.** `Select-String` que no
+    encuentra nada devuelve vacío; ese vacío usado como índice (`$c[($i-1)..$fin]`) se evalúa
+    como `-1` y copia el archivo ENTERO sin quejarse — así se archivó un HANDOFF de 185 líneas
+    "recortado" a 186. Todo corte de archivo por índice se verifica después por nº de líneas y
+    primera línea. Sin barrera automática (documentada).

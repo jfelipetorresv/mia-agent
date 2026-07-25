@@ -192,6 +192,40 @@ def offline_checks() -> None:
     check("run_eval: el camino --repeat respeta --run-id (no genera uno propio siempre)",
           "_run_repeat(run_id" in run_eval_src)
 
+    # ── EVIDENCIA AUDITABLE del agregado (F2 · 2026-07-24) ────────────────────
+    # Barrera del aprendizaje de la sesión: el agregado `f2sond_entail_n10` incluyó una
+    # corrida sin `MIA_EVAL_PERSIST_FULL=1` (borrador truncado al preview) y NADA lo
+    # advirtió, en una sonda declarada de REVISIÓN HUMANA. Aquí se prueba la señal y su
+    # cableado en el agregador; sin esto la lección quedaría "documentada", no aplicada.
+    completa = harness.evidence_audit([
+        {"draft_full": "texto entero del borrador"},
+        {"draft_full": "otro borrador entero"},
+    ])
+    check("evidencia: N corridas con draft_full → completa",
+          completa["completa"] and completa["con_texto"] == 2 and completa["sin_texto"] == 0)
+
+    incompleta = harness.evidence_audit([
+        {"draft_full": "texto entero"},
+        {"draft_preview": "solo el preview, sin texto completo"},   # corrida sin el flag
+        {"draft_full": "   "},                                       # presente pero vacío
+    ])
+    check("evidencia: una parte SIN draft_full → incompleta y la señala por índice",
+          (not incompleta["completa"]) and incompleta["sin_texto"] == 2
+          and incompleta["indices_sin_texto"] == [1, 2])
+
+    check("evidencia: lista vacía NO se declara completa (no hay nada que releer)",
+          not harness.evidence_audit([])["completa"])
+
+    # Cableado en el agregador: la señal se calcula, viaja al reporte, avisa y puede reprobar.
+    agg_src = (Path(__file__).resolve().parent / "aggregate_eval_runs.py").read_text(
+        encoding="utf-8")
+    check("aggregate_eval_runs: calcula la evidencia y la persiste en el reporte",
+          "evidence_audit(results)" in agg_src and '"evidencia": evidencia' in agg_src)
+    check("aggregate_eval_runs: avisa cuando la evidencia está incompleta",
+          "EVIDENCIA INCOMPLETA" in agg_src)
+    check("aggregate_eval_runs: --exige-evidencia puede REPROBAR el agregado",
+          "exige_evidencia" in agg_src and "REPRUEBA" in agg_src)
+
 
 # ── Frente E: casos de RIESGO + señales nuevas (todo OFFLINE, sin DB) ──────────
 def frente_e_offline_checks() -> None:

@@ -1114,3 +1114,33 @@ Qué sigue:
 - F3 wizard de bienvenida (llaves mínimas, política suscripción-first, §G).
 - F4: recompilar ambos exes + NSIS + E2E en frío (Riesgo #59 con 7 puntos acumulados).
 - Capa 3 de Pipe acumulada (sin cambios de esta sesión: fue backend/cáscara/packaging).
+
+## 2026-07-24 — Sesión 49 (3ª del día) · Las 27 sondas adversariales de F2
+
+TL;DR: MIA aguantó los 3 ataques 30/30, y leer los crudos —no el panel— destapó dos métricas
+cuyo nombre induce una lectura falsa.
+
+Qué construimos:
+- Las 27 corridas en vivo que faltaban (30/30 acumuladas) en trozos foreground bajo
+  `suscripcion`; 3 agregados con el mismo `prompt_hash 3391f17ea61324a4` del RE-BASELINE.
+  Coste de tarjeta USD 0,00081 (solo embeddings).
+- `harness.evidence_audit` + flag `--exige-evidencia` en `aggregate_eval_runs.py`: un agregado
+  avisa (y puede reprobar) cuando alguna parte se guardó sin texto releíble. 6 checks nuevos
+  en `test_eval_harness.py` → 67/67.
+- Reglas 52-54 en APRENDIZAJES.md; riesgo #81 en bugs-and-risks.md; §SONDAS en findings.md;
+  paquete de la Sesión A ampliado con las decisiones 5 y 6 y un ejemplar completo de revisión
+  humana.
+
+Qué decidimos:
+- NO corregir M-1 (métrica de abstención) ni M-2 (etiqueta de éxito): las dos mueven cifras del
+  baseline publicado, así que son decisión de Pipe en la Sesión A.
+- El agregado de `entailment` se conserva en N=10 con su límite DECLARADO (la parte `_smoke` no
+  es releíble); los números son válidos, la auditabilidad de esa corrida no.
+- No paralelizar corridas: competir por CPU distorsiona la latencia, que es un dato que se
+  publica.
+
+Qué sigue:
+- Sesión Pipe A (6 salidas + 4 decisiones + M-1 y M-2).
+- Referencia en nube (tope USD 30 aprobado): RISK_CASES ×10 bajo `nube` + `--agentic-compare`
+  — único frente ejecutable sin Pipe; destraba la decisión sobre lectura agéntica.
+- Cierre de F2: ítem 2 de la spec (fuga al 100% de ocurrencias con falsos positivos medidos).

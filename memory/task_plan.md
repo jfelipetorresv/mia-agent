@@ -485,3 +485,23 @@ esta hubo trabajo el 18 y el 19 de julio sin registrar aquí; su detalle está e
       en un ordenamiento** o **anchura verificable en varios** (hoy el producto insinúa lo segundo y
       entrega lo primero) · registrar las apps OAuth de Gmail/Outlook/OneDrive (pendiente de sesiones
       anteriores) · decidir qué hacer con los `Informe-Lucy-*.json` del escritorio (son de `lexter-os`)
+
+---
+
+## Estado de las fases del PLAN MAESTRO VIGENTE (aprobado 2026-07-21)
+
+> La lista de arriba («Plan maestro 2026-07-01, sesión 21») quedó superada. Las fases F0→F6 del
+> plan vigente se llevan en `HANDOFF.md` y en
+> `C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`. Aquí solo el hito.
+
+- [x] **F2 · sondas adversariales** (2026-07-24, 3ª sesión): las 3 sondas de `RISK_CASES`
+      corridas ×10 en vivo bajo `suscripcion` — 30/30, el ataque no se materializó. Agregados
+      con `prompt_hash 3391f17ea61324a4`. Ver `memory/findings.md` §SONDAS ADVERSARIALES F2.
+- [ ] **F2 · resto**: decisión con evidencia sobre lectura agéntica por defecto (espera el delta
+      on/off de la referencia en nube) e ítem 2 de la spec (fuga detectada al 100% de las
+      ocurrencias, con falsos positivos medidos).
+- [ ] **Referencia en nube** (tope USD 30 ya aprobado por Pipe): RISK_CASES ×10 bajo `nube` +
+      `--agentic-compare`. Único frente ejecutable sin Pipe.
+- [ ] **De Pipe · Sesión A**: calidad de las 6 salidas + 4 decisiones + prioridades del backlog
+      ruflo + las 2 decisiones nuevas de medición (M-1 abstención, M-2 etiqueta de éxito;
+      riesgo #81). Paquete listo en `docs/f1-paquete-decision-pipe.md`.
