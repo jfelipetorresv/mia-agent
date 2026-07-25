@@ -172,6 +172,19 @@ publicadas en el baseline; es decisión de Pipe. Van como decisiones 5 y 6 del p
 Sesión A (`docs/f1-paquete-decision-pipe.md`), con recomendación escrita: renombrar ahora (no
 rompe la serie histórica) y recalibrar en el próximo re-baseline pagado.
 
+**AMPLIACIÓN 2026-07-25 · N-1, el tercer caso y el más grave: el detector de FUGA no distingue
+mención de uso.** En la referencia en nube, `f2nube_entail_i` marcó fuga por la cita `Ley 4137`.
+La única aparición de esa norma en todo el turno es: «La numeración "Ley 4137" no corresponde a
+ninguna ley del repertorio hispanoamericano que pueda verificarse en mi memoria» — MIA la nombró
+para **desacreditarla** (`verification.citas = 0`, sin ancla, sin marca).
+`jurisdiction_leak_signal` cuenta cualquier aparición del patrón. **Por qué esto es peor que M-1
+y M-2:** la fuga SÍ es métrica que decide —es el defecto que F2 vino a cerrar— y si algún día se
+promueve a gate, bloquearía justo el mejor comportamiento posible. Va como **decisión 7** de la
+Sesión A, con el pasaje completo en el paquete. Tensión de criterio que resuelve Pipe: ¿«no
+escribir jamás el número» o «no afirmar una norma como aplicable sin respaldo»? Recomendación
+registrada: no contar como fuga una mención acompañada de su negación explícita en la misma
+oración.
+
 **Barrera parcial construida (misma sesión):** `harness.evidence_audit` + `--exige-evidencia` en
 `execution/aggregate_eval_runs.py` — no arregla las etiquetas, pero garantiza que el TEXTO exista
 para poder leerlo, que es lo único que destapó el problema. 6 checks en `test_eval_harness.py`

@@ -18,7 +18,7 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 
 ---
 
-# CIERRE — 2026-07-24 (3ª sesión) · Las 3 sondas adversariales corridas: 30/30 sin un solo fallo · EMPEZAR AQUÍ
+# CIERRE — 2026-07-24/25 (3ª sesión) · Sondas 30/30 + referencia en nube: el modo de venta empata · EMPEZAR AQUÍ
 
 ## Arranque en una terminal nueva (prompt sugerido)
 
@@ -27,13 +27,16 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 > Corre `scripts\sonda_salud.ps1` ANTES de nada; si la DB portable (55432) está apagada,
 > arráncala (clúster en `tools/pgdata-portable`). **F2 quedó sin trabajo de máquina
 > pendiente**: las 3 sondas adversariales están corridas ×10 en vivo y agregadas
-> (`memory/findings.md` §SONDAS ADVERSARIALES F2), con el mismo `prompt_hash 3391f17ea61324a4`
-> del RE-BASELINE. Lo que sigue es de Pipe: **Sesión A** con `docs/f1-paquete-decision-pipe.md`
-> — ahora con dos decisiones nuevas de medición (M-1 abstención, M-2 etiqueta de éxito). Si
-> Pipe no está disponible, lo único ejecutable sin él es la **referencia en nube** (tope USD 30
-> ya aprobado): RISK_CASES ×10 bajo `nube` + `--agentic-compare`, que es además lo que destraba
-> la decisión sobre lectura agéntica por defecto. **Al agregar cualquier sonda nueva, usa
-> `--exige-evidencia`** (barrera nueva de esta sesión: sin texto releíble el agregado reprueba).
+> (`memory/findings.md` §SONDAS ADVERSARIALES F2) y **la referencia en nube TAMBIÉN está hecha**
+> (§REFERENCIA EN NUBE, USD 7,38 de 30). Todo con `prompt_hash 3391f17ea61324a4`. Lo que sigue
+> es de Pipe: **Sesión A** con `docs/f1-paquete-decision-pipe.md` — ahora con **tres** decisiones
+> nuevas (M-1 abstención, M-2 etiqueta de éxito, **N-1 mención vs uso en el detector de fuga**,
+> que es la importante porque toca la métrica central). Sin Pipe, lo ejecutable es **construir un
+> caso de oro con expediente GRANDE**: sin él, `--agentic-compare` no puede decidir nada (ver
+> punto 11). **Al agregar cualquier serie, usa `--exige-evidencia`** (barrera de esta sesión: sin
+> texto releíble el agregado reprueba). Para correr en nube hay que **encender LiteLLM primero**
+> (`.venv-litellm\Scripts\litellm.exe --config litellm_config.yaml --port 4000`); la sonda de
+> salud NO lo verifica.
 
 Rama `feat/fase1-inc1-cleanup-scaffolding`.
 
@@ -90,15 +93,38 @@ Rama `feat/fase1-inc1-cleanup-scaffolding`.
    Gates HALT en verde (19/19, 9/9, 12/12) + `test_sentence_report` 47/47. Repo limpio y
    pusheado hasta `e05d9fa`.
 
+9. **REFERENCIA EN NUBE HECHA (2026-07-25) — USD 7,38 del tope de 30.** Los mismos 3 casos ×10
+   bajo `MIA_MODEL_POLICY=nube` (claude-sonnet vía LiteLLM), mismo `prompt_hash`, evidencia
+   10/10 en las tres (la barrera nueva en verde). Resultado para el modo de venta: **empate en
+   lo que importa** — 0 citas sin respaldo y 0 falsos bloqueos en las 60 corridas (30+30). La
+   nube escribe casi el doble (8,7k-11,4k vs 4,2k-7,6k), gasta MENOS tokens (33-36k vs 58-76k:
+   el exceso de la suscripción es andamiaje del CLI, no trabajo jurídico), es más predecible en
+   latencia y cuesta USD ~0,20 por consulta. Tabla completa en findings §REFERENCIA EN NUBE.
+10. **N-1 · hallazgo más grave que M-1/M-2**: la única «fuga» de las 60 corridas es un **falso
+   positivo verificado** — MIA nombró `Ley 4137` para decir que NO la reconoce, y el detector
+   cuenta la aparición sin distinguir mención de uso. La fuga SÍ es métrica que decide. Va como
+   **decisión 7** al paquete, con el pasaje completo. Riesgo #81 ampliado.
+11. **N-2 · lectura agéntica medida**: encendida cuesta ×4,6, tarda ×2 y trajo **0 fragmentos
+   nuevos** (3 ampliaciones insistiendo en un dato que el caso no contiene). Pero el límite es
+   honesto: los RISK_CASES tienen 0-2 fragmentos y la función es para expedientes de cientos, así
+   que «0 nuevos» es cierto POR CONSTRUCCIÓN. **Se paró el comparador ahí en vez de gastar el
+   tope en más casos pequeños**: la conclusión accionable es que el banco necesita un caso de oro
+   con expediente GRANDE antes de poder decidir «agéntica por defecto». Eso es más barato que
+   seguir comprando corridas.
+
 ## Qué sigue (en orden)
 
 1. **Sesión Pipe A** con `docs/f1-paquete-decision-pipe.md`: calidad de las 6 salidas + las 4
-   decisiones + priorizar el backlog ruflo + **las 2 decisiones nuevas de medición (M-1, M-2)**.
-2. **Referencia en nube** (tope USD 30 ya aprobado): RISK_CASES ×10 bajo `nube` +
-   `--agentic-compare`. Es lo único ejecutable sin Pipe y destraba la decisión pendiente sobre
-   lectura agéntica por defecto.
-3. **Cierre de F2**: con la referencia en nube arriba, queda solo el ítem 2 de la spec (fuga
-   detectada al 100% de ocurrencias con falsos positivos medidos — el caso de ataque).
+   decisiones + priorizar el backlog ruflo + **las 3 decisiones nuevas: M-1, M-2 y N-1** (esta
+   última es la importante: toca la métrica central).
+2. **Caso de oro con expediente GRANDE** (cientos de fragmentos) — es el prerrequisito para
+   decidir lectura agéntica por defecto; sin él, el `--agentic-compare` no puede concluir nada.
+   No requiere aprobación de Pipe: es construcción de banco.
+3. **Cierre de F2**: queda el ítem 2 de la spec (fuga detectada al 100% de ocurrencias con
+   falsos positivos medidos — que ahora tiene un falso positivo REAL documentado, N-1, como
+   primer caso de prueba).
+4. Sobra presupuesto de nube: **USD 22,6 de los 30** por si se quiere ampliar la referencia a
+   los otros 3 RISK_CASES (`fuga`, `disciplina-citas`, `procedencia`), a ~USD 0,20 por corrida.
 
 ## Pendientes de Pipe
 

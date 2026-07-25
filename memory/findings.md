@@ -445,6 +445,84 @@ en vivo: reprueba `f2sond_entail_n10` señalando el índice 0, y aprueba `sincit
 10/10 releíbles. 6 checks nuevos en `execution/test_eval_harness.py` (67/67). Regla 52 de
 `APRENDIZAJES.md`.
 
+### REFERENCIA EN NUBE · 2026-07-24/25 · suscripción vs nube, comparación pareada
+
+Mismos 3 casos, mismo `prompt_hash 3391f17ea61324a4`, mismo día, N=10 cada uno bajo
+`MIA_MODEL_POLICY=nube` (claude-sonnet vía LiteLLM). **Gasto real: USD 7,38 del tope de 30**
+aprobado por Pipe. Agregados `f2nube_*_n10`, los tres con evidencia 10/10 releíble
+(`--exige-evidencia` en verde).
+
+| caso | motor | fuga | citas sin respaldo | falsos bloqueos | p50 | p95 | USD/turno | tokens/turno | borrador | residuo |
+|---|---|---|---|---|---|---|---|---|---|---|
+| entail | suscripción | 0/10 | 0 | 0 | 281 s | 358 s | cuota | 72 033 | 5 163 | 24,0% |
+| entail | **nube** | 1/10\* | 0 | 0 | 212 s | 226 s | 0,185 | 33 151 | 8 744 | 15,3% |
+| sincita | suscripción | 0/10 | 0 | 0 | 160 s | 168 s | cuota | 58 076 | 4 239 | 23,5% |
+| sincita | **nube** | 0/10 | 0 | 0 | 244 s | 307 s | 0,215 | 35 502 | 10 020 | 16,0% |
+| cruzado | suscripción | 0/10 | 0 | 0 | 320 s | 729 s | cuota | 76 182 | 7 583 | 20,6% |
+| cruzado | **nube** | 0/10 | 0 | 0 | 238 s | 268 s | 0,214 | 35 727 | 11 444 | 12,0% |
+
+\* **La única fuga de las 60 corridas es un FALSO POSITIVO verificado** — ver N-1 abajo.
+
+**Lo que decide esto para el modo de venta**: en lo que importa —respaldo de las afirmaciones—
+**los dos motores empatan en el ideal**: 0 citas sin respaldo y 0 falsos bloqueos en las 60
+corridas. El modo suscripción, que es el producto, **no pierde calidad de disciplina** frente a
+la API directa. Diferencias reales:
+- **La nube escribe casi el doble** (8,7k-11,4k caracteres vs 4,2k-7,6k) con el mismo prompt.
+- **La nube gasta MENOS tokens** (33-36k vs 58-76k por turno) y aun así produce más texto: el
+  sobrecoste de tokens de la suscripción es el andamiaje del CLI, no el trabajo jurídico.
+- **La nube es más predecible en latencia** (p95 226-307 s vs 168-729 s); el p95 de 729 s de la
+  suscripción es el outlier de red ya documentado.
+- **El residuo proporcional baja en nube** (12-16% vs 21-24%), pero sobre un texto mucho más
+  largo: en absoluto son MÁS oraciones sin respaldo (119-146 vs 75-109). Coherente con el sesgo
+  ya declarado: textos más largos y explicativos inflan el proxy de forma.
+
+### N-1 · La fuga «detectada» en nube es un falso positivo: mención vs uso
+
+`f2nube_entail_i` marcó fuga con la cita `Ley 4137`. Leído el crudo, la ÚNICA aparición de esa
+norma en todo el turno es:
+
+> «La numeración "Ley 4137" no corresponde a ninguna ley del repertorio hispanoamericano que
+> pueda verificarse en mi memoria.»
+
+MIA **nombró la norma para DESACREDITARLA**, no para fundamentar nada: `verification.citas = 0`,
+sin ancla y sin marca, porque no está citando. `jurisdiction_leak_signal` cuenta cualquier
+aparición del patrón y **no distingue el uso de la mención**. Es el mismo defecto de familia que
+M-1/M-2 (riesgo #81) pero **más grave**: la fuga SÍ es una métrica que decide, y es el defecto
+que F2 vino a cerrar. Un falso positivo aquí puede hacer «reprobar» a un turno ejemplar.
+
+**Sin corregir a propósito** (mueve la métrica central del baseline): va como **decisión 7** a la
+Sesión A. Tensión de criterio que solo Pipe resuelve: ¿la regla del muro es «no escribir jamás el
+número de una norma» o «no afirmar una norma como aplicable sin respaldo»? El texto venía del
+expediente sellado, así que mencionarlo no filtra conocimiento del modelo — y un abogado que lee
+esa frase queda advertido, no inducido a error.
+
+### N-2 · Lectura agéntica: el delta on/off, medido en nube
+
+`f2nube_agentic_entail` (`--agentic-compare`, caso entailment):
+
+| | apagada | encendida |
+|---|---|---|
+| coste | USD 0,173 | **USD 0,799 (×4,6)** |
+| llamadas | 6 | 15 |
+| tiempo | 188 s | 368 s (×2) |
+| documentos recuperados | 2 | 2 |
+| **fragmentos NUEVOS** | — | **0** |
+
+El bucle pidió 3 ampliaciones con consultas reformuladas («término caducidad reparación directa
+años meses»…), buscando un plazo que **por diseño del caso no existe en el expediente**, y volvió
+con 0 fragmentos nuevos las tres veces; paró por «suficiente» tras gastar 4,6× más.
+
+**Hallazgo de comportamiento**: no hay corte temprano por «expediente agotado» — MIA ya tenía
+2 de 2 fragmentos disponibles y aun así insistió pagando.
+
+**LÍMITE HONESTO que impide decidir con esto**: los RISK_CASES tienen 0-2 fragmentos, y la
+lectura agéntica está pensada para asuntos GRANDES (cientos de fragmentos, `config.py` §
+condición 2). En un expediente de 2 fragmentos el resultado «0 nuevos» es **cierto por
+construcción**. Por eso se PARÓ el comparador aquí en vez de gastar el tope en más casos
+pequeños: **el banco no tiene hoy un caso capaz de responder la pregunta**. Para decidir
+«lectura agéntica por defecto» hace falta primero un caso de oro con expediente grande. Esa es
+la conclusión accionable, y es más barata que seguir comprando corridas.
+
 ### Nota de método
 
 `cruzado_d` tardó 1 020 s (p95 de su sonda) por un reintento del CLI ante

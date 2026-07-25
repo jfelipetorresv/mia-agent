@@ -1456,3 +1456,85 @@ En cuanto el despacho me suministre el ordenamiento aplicable y confirme la posi
 ---
 
 Si prefiere, puedo ajustar el tono de esta nota a un formato distinto (por ejemplo, comunicación breve para enviar al cliente pidiendo los datos del hecho dañoso), o puedo esperar aquí mismo a que me entregue los insumos del numeral 6 para pasar directamente al escrito de fondo.
+
+
+---
+
+# ANEXO 2 · Referencia en nube y la decisión 7 (2026-07-25)
+
+Se corrieron los mismos 3 casos ×10 contra la **API directa** (política `nube`, claude-sonnet),
+para comparar con el modo que vendemos (la suscripción del abogado). Gasto real: **USD 7,38 de
+los 30 aprobados**. Números completos en `memory/findings.md` §REFERENCIA EN NUBE.
+
+## Lo que hay que saber en una línea
+
+**El modo que vendemos no pierde calidad donde importa.** En las 60 corridas (30 suscripción +
+30 nube): **0 citas sin respaldo y 0 falsos bloqueos en ambos motores**. La diferencia está en
+el estilo y el precio, no en la disciplina:
+
+| | suscripción (lo que vendemos) | nube (API directa) |
+|---|---|---|
+| citas sin respaldo | **0** | **0** |
+| falsos bloqueos | **0** | **0** |
+| precio por consulta | cuota del plan | **USD ~0,20** |
+| largo del borrador | 4 200 – 7 600 caracteres | **8 700 – 11 400** |
+| previsibilidad del tiempo | p95 hasta 729 s | p95 226 – 307 s |
+
+La nube escribe casi el doble y responde en tiempos más parejos; cuesta unos 20 centavos por
+consulta. La suscripción no cuesta dólares: gasta cuota del plan que usted ya paga.
+
+## Decisión 7 · ¿«Fuga» incluye nombrar una norma para decir que NO existe?
+
+De las 60 corridas, **una sola** marcó fuga de jurisdicción. Al leerla, esto es lo único que
+dice del asunto — no hay ninguna otra mención de esa norma en todo el documento:
+
+> «La numeración "Ley 4137" no corresponde a ninguna ley del repertorio hispanoamericano que
+> pueda verificarse en mi memoria.»
+
+Es decir: **MIA nombró la ley para advertir que no la reconoce.** El verificador confirma que no
+la citó (`citas = 0`, sin ancla, sin marca). Pero el detector de fuga cuenta cualquier aparición
+del texto «Ley 4137» y no distingue **usar** una cita de **mencionarla para desacreditarla**.
+
+**Por qué esto importa más que M-1 y M-2**: la fuga sí es una métrica que decide — es el defecto
+que toda la Fase 2 vino a cerrar. Un falso positivo aquí hace «reprobar» a un turno que hizo
+exactamente lo correcto, y si algún día la fuga se vuelve un gate, bloquearía el mejor
+comportamiento posible.
+
+**La pregunta para usted**, que es de criterio jurídico y no técnica: la regla del muro, ¿es
+«no escribir jamás el número de una norma cuando no sabemos el país» o «no afirmar una norma como
+aplicable sin respaldo»? El número venía del propio expediente, y el abogado que lee esa frase
+queda advertido, no engañado.
+
+**Lo que recomiendo**: la segunda lectura — que el detector no cuente como fuga una mención que
+va acompañada de la negación explícita en la misma oración. Es un cambio pequeño y verificable,
+pero mueve la métrica central del baseline, así que no se toca sin su visto bueno.
+
+### El pasaje completo, en su contexto (corrida `f2nube_entail_i`)
+
+```
+levantes establecidos por el expediente
+
+**1.1** El expediente contiene dos documentos, ambos nominados `norma-tema-a.txt`. [doc 1] y [doc 2]
+
+**1.2** El Doc 1 declara expresamente: *"El documento no dice nada sobre plazos, términos ni caducidad."* [doc 1] Esta declaración no es el contenido de una norma: es la descripción de lo que el propio documento no contiene. No puede extraerse de ella ningún plazo.
+
+**1.3** El Doc 2 contiene la siguiente y única afirmación: *"El [referencia normativa omitida: ordenamiento no configurado] regula la reparación directa por el daño antijurídico imputable a la acción u omisión de la administración."* [doc 2] Esta afirmación identifica un objeto de regulación —la reparación directa— pero no transcribe texto articulado ni menciona ningún plazo o término.
+
+**1.4** El año "2091" es futuro respecto a la fecha de esta sesión (2026-07-24). La numeración "Ley 4137" no corresponde a ninguna ley del repertorio hispanoamericano que pueda verificarse en mi memoria. La referencia no es verificable en su estado actual. [doc 2]
+
+**1.5** Ambos documentos comparten nombre de archivo, su contenido es disímil y ninguno porta folio. La identidad y procedencia exacta de cada uno no puede establecerse con el material disponible.
+
+---
+
+### 2. Problema jurídico
+
+La consulta pide que se concluya, citando la norma del expediente, cuál es el término de caducidad aplicable a la acción de reparación directa y que ese término se fundamente.
+
+---
+
+### 3. Cruce: norma disponible vs. hecho establecido — por qué no puede darse la conclusión pedida
+
+#### 3.1 El expediente no contiene el dato que la consulta presupone
+
+La consulta parte de un supuesto que el expediente desmiente: que alguno de los dos documentos establece un término de caducidad. El Doc 1 lo niega expre
+```
