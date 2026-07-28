@@ -920,6 +920,60 @@ async def document_full_text(tenant_id: str, matter_id: str, document_id: Any,
     return "\n".join(partes)[:max_chars]
 
 
+async def party_names_for_contamination(tenant_id: str, matter_id: str) -> dict:
+    """Partes declaradas de ESTE asunto y de los OTROS del mismo despacho.
+
+    Para la barrera de CONTAMINACIÓN ENTRE EXPEDIENTES (decisión #46.4). El defecto que
+    persigue es real y medido: en el harness de litigio del despacho, 5 de 16 escritos
+    históricos traían el nombre de una aseguradora o entidad de OTRO expediente (un párrafo de
+    una entidad dentro del escrito de otra). En Mia eso no es solo un defecto de calidad: es el
+    dato de un cliente apareciendo en el escrito de otro — riesgo de secreto profesional.
+
+    AGNÓSTICO POR CONSTRUCCIÓN (y ésta es la diferencia con el original, que llevaba un catálogo
+    de aseguradoras cableado): el catálogo no se escribe, se DERIVA de la base del propio
+    despacho — `documents.parte`, texto libre declarado en la ficha de cada pieza (migración
+    045). Un despacho español y uno colombiano obtienen su catálogo sin que el código sepa la
+    diferencia, y ninguna lista queda que mantener.
+
+    Devuelve {"propias": [str…], "ajenas": [str…]}. `ajenas` EXCLUYE toda parte que también sea
+    de este asunto: una misma aseguradora puede litigar legítimamente en dos casos del despacho,
+    y avisar ahí sería el falso positivo obvio. Corre bajo `tenant_connection` → RLS activo.
+    Fail-soft: ante cualquier fallo devuelve listas vacías y la barrera calla.
+    """
+    vacio: dict = {"propias": [], "ajenas": []}
+    if not matter_id:
+        return vacio
+    try:
+        async with pool.tenant_connection(tenant_id) as conn:
+            propias_rows = await (await conn.execute(
+                "SELECT DISTINCT parte FROM documents "
+                "WHERE matter_id = %s AND parte IS NOT NULL AND btrim(parte) <> ''",
+                (matter_id,),
+            )).fetchall()
+            ajenas_rows = await (await conn.execute(
+                "SELECT DISTINCT parte FROM documents "
+                "WHERE matter_id <> %s AND parte IS NOT NULL AND btrim(parte) <> ''",
+                (matter_id,),
+            )).fetchall()
+    except Exception:  # noqa: BLE001 — la barrera avisa; jamás tumba el turno
+        logger.warning("no se pudieron leer las partes para la barrera de contaminación "
+                       "(matter=%s)", matter_id, exc_info=True)
+        return vacio
+
+    def _lista(rows) -> list[str]:
+        out: list[str] = []
+        for r in rows or []:
+            v = str((r[0] if not isinstance(r, dict) else r.get("parte")) or "").strip()
+            if v and v not in out:
+                out.append(v)
+        return out
+
+    propias = _lista(propias_rows)
+    propias_norm = {p.casefold() for p in propias}
+    ajenas = [a for a in _lista(ajenas_rows) if a.casefold() not in propias_norm]
+    return {"propias": propias, "ajenas": ajenas}
+
+
 async def matter_chunk_stats(tenant_id: str, matter_id: str) -> dict:
     """Cuánto material INDEXADO tiene el asunto: conteo real, no un EXISTS.
 

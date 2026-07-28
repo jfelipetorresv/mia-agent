@@ -1780,6 +1780,11 @@ class MatterGraphBuilder:
         aviso = await _check_negative_claims(state, annotated, docs)
         if aviso:
             report["afirmaciones_negativas"] = aviso
+        # CONTAMINACIÓN ENTRE EXPEDIENTES (decisión #46.4): ¿el escrito nombra partes de OTRO
+        # asunto del despacho? AVISO — un nombre ajeno puede ser legítimo, pero no inadvertido.
+        cruce = await _check_foreign_parties(state, annotated)
+        if cruce:
+            report["contaminacion_expediente"] = cruce
         return annotated
 
     # (`_check_negative_claims` vive como función del módulo, más abajo: no necesita `self` y
@@ -2193,4 +2198,43 @@ async def _check_negative_claims(state: MatterState, draft: str,
         }
     except Exception:  # noqa: BLE001 — la barrera avisa; jamás tumba el turno
         logger.debug("no se pudo confrontar las afirmaciones negativas", exc_info=True)
+        return None
+
+
+async def _check_foreign_parties(state: MatterState, draft: str) -> Optional[dict]:
+    """¿El escrito nombra partes que pertenecen a OTROS expedientes del despacho?
+
+    Defecto real y medido en el harness de litigio del despacho: 5 de 16 escritos históricos
+    traían el nombre de una aseguradora o entidad de otro expediente. Radicar con la parte
+    equivocada es riesgo procesal y reputacional, y en Mia es además el dato de un cliente
+    apareciendo en el escrito de otro — secreto profesional.
+
+    El catálogo NO está cableado: se deriva de la base del propio despacho
+    (`retrieval.party_names_for_contamination`), así que la barrera es agnóstica de jurisdicción
+    y no hay lista que mantener.
+
+    AVISO (decisión de dureza de Pipe): un nombre ajeno puede aparecer legítimamente —una cita
+    que nombra a un tercero, un antecedente—, así que decide el abogado. Fail-soft: cualquier
+    fallo devuelve None y el turno queda igual que antes de existir la comprobación.
+    """
+    try:
+        partes = await retrieval.party_names_for_contamination(
+            state["tenant_id"], state.get("matter_id") or "")
+        ajenas = partes.get("ajenas") or []
+        if not ajenas:
+            return None
+        hallazgos = verification.scan_foreign_parties(draft, ajenas, partes.get("propias"))
+        if not hallazgos:
+            return None
+        return {
+            "n_partes_ajenas": len(hallazgos),
+            "partes": hallazgos[:10],
+            "aviso": ("El escrito nombra partes que, según las fichas del despacho, pertenecen "
+                      "a OTRO expediente. Revíselo antes de radicar: puede ser legítimo (una "
+                      "cita que nombra a un tercero) o puede ser material de otro caso — y "
+                      "radicar con la parte equivocada compromete el asunto y la reserva del "
+                      "otro cliente."),
+        }
+    except Exception:  # noqa: BLE001 — la barrera avisa; jamás tumba el turno
+        logger.debug("no se pudo revisar la contaminación entre expedientes", exc_info=True)
         return None

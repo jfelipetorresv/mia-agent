@@ -895,6 +895,82 @@ def scan_negative_claims(draft: str, *, protected_spans: Optional[list] = None) 
     return salida
 
 
+# ── CONTAMINACIÓN ENTRE EXPEDIENTES (decisión de Pipe #46.4) ──────────────────
+# Defecto real y MEDIDO en el harness de litigio del despacho (`check-partes-docx.py`): 5 de 16
+# escritos históricos traían el nombre de una aseguradora o entidad de OTRO expediente — un
+# párrafo de una entidad dentro del escrito de otra, una sección titulada con la aseguradora
+# equivocada. Un escrito radicado con la parte equivocada es riesgo procesal y reputacional; en
+# Mia es además el dato de un cliente apareciendo en el escrito de otro, o sea secreto
+# profesional. Y hoy nada lo vigila.
+#
+# DIFERENCIA CON EL ORIGINAL: el del despacho lleva un catálogo de aseguradoras cableado. Aquí no
+# se cablea nada — el catálogo lo DERIVA la base del propio despacho de sus otros expedientes
+# (`retrieval.party_names_for_contamination`). Cada instalación protege lo suyo sin que el código
+# nombre un solo país ni una sola entidad.
+#
+# AVISO, no muro (decisión de dureza de Pipe): un nombre de otro expediente puede aparecer con
+# toda legitimidad (una cita jurisprudencial que nombra a un tercero, un antecedente). Quien
+# decide si contamina es el abogado; la barrera se limita a que no pase inadvertido.
+_PARTY_MIN_CHARS = 5  # un nombre más corto es demasiado ambiguo para avisar sobre él
+
+
+def _party_mention_re(nombre: str) -> Optional[re.Pattern]:
+    """Patrón para buscar un nombre de parte respetando límites de palabra. Puro.
+    None si el nombre es demasiado corto o vacío (no se avisa sobre ambigüedades)."""
+    n = (nombre or "").strip()
+    if len(n) < _PARTY_MIN_CHARS:
+        return None
+    # Se busca sobre el texto NORMALIZADO (sin tildes, minúsculas), así que el patrón también.
+    norm = _normalize(n)
+    if len(norm) < _PARTY_MIN_CHARS:
+        return None
+    return re.compile(r"(?<![0-9a-z])" + re.escape(norm) + r"(?![0-9a-z])")
+
+
+def scan_foreign_parties(draft: str, ajenas: Optional[list] = None,
+                         propias: Optional[list] = None) -> list[dict]:
+    """Nombres de partes de OTROS expedientes mencionados en este borrador. Pura.
+
+    `ajenas`: partes declaradas en otros asuntos del despacho (ya sin las de este). `propias`: las
+    de este asunto — se usan como salvaguarda: si el nombre ajeno está CONTENIDO en una parte
+    propia (p. ej. «Seguros X» ajena y «Seguros X Sucursal Norte» propia), no se avisa.
+
+    Devuelve [{"parte", "ocurrencias", "contexto"} …] ordenado por primera aparición. NO edita el
+    borrador, NO bloquea: esto es un aviso para el abogado.
+    """
+    text = draft or ""
+    if not text or not ajenas:
+        return []
+    norm = _normalize(text)
+    propias_norm = [_normalize(str(p or "")) for p in (propias or []) if p]
+    salida: list[dict] = []
+    for parte in ajenas:
+        nombre = str(parte or "").strip()
+        pat = _party_mention_re(nombre)
+        if pat is None:
+            continue
+        n_norm = _normalize(nombre)
+        # Salvaguarda: el nombre ajeno es un trozo de una parte propia → no es contaminación.
+        if any(n_norm in p and n_norm != p for p in propias_norm):
+            continue
+        hits = list(pat.finditer(norm))
+        if not hits:
+            continue
+        # Contexto para que el abogado lo ubique de un golpe. Se toma del texto normalizado: es
+        # una ayuda de ubicación, no una transcripción del escrito.
+        ini = max(0, hits[0].start() - 60)
+        salida.append({
+            "parte": nombre,
+            "ocurrencias": len(hits),
+            "contexto": norm[ini:hits[0].end() + 60].strip(),
+            "_pos": hits[0].start(),
+        })
+    salida.sort(key=lambda d: d["_pos"])
+    for d in salida:
+        d.pop("_pos", None)
+    return salida
+
+
 # ── BANCO DE CITAS QUEMADAS · el cotejo (decisión de Pipe #46.2) ──────────────
 # El almacenamiento es de cada despacho (`burned_citations`, migración 047) y el muro se aplica
 # en `annotate_draft`. Aquí vive solo la comparación, que es deliberadamente TONTA: normaliza y
