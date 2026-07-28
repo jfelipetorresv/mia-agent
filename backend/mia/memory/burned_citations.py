@@ -111,18 +111,24 @@ async def burn(tenant_id: str, citation: str, *, reason: str = "",
         return {"ok": False, "citation": cita, "citation_norm": "", "ya_estaba": False,
                 "error": "cita vacía"}
     async with pool.tenant_connection(tenant_id) as conn:
+        # `xmax = 0` distingue en la MISMA sentencia la fila insertada de la actualizada — es el
+        # dato que el UPSERT ya conoce. (La alternativa que se probó primero, comparar
+        # `created_at` con un intervalo de tiempo, es frágil por construcción: dos personas
+        # quemando la misma cita en el mismo segundo cambiarían la respuesta.)
         row = await (await conn.execute(
             "INSERT INTO burned_citations (tenant_id, citation, citation_norm, reason, "
             "burned_by, pasaje) VALUES (app_current_tenant(), %s, %s, %s, %s, %s) "
             "ON CONFLICT (tenant_id, citation_norm) DO UPDATE SET "
             "reason = CASE WHEN excluded.reason <> '' THEN excluded.reason "
             "              ELSE burned_citations.reason END "
-            "RETURNING (created_at < now() - interval '1 second') AS ya_estaba",
+            "RETURNING (xmax <> 0) AS ya_estaba",
             (cita, norm, str(reason or ""), str(burned_by or "abogado"), str(pasaje or "")),
         )).fetchone()
     invalidate(tenant_id)
-    ya = bool(row[0]) if row and not isinstance(row, dict) else bool(
-        (row or {}).get("ya_estaba") if isinstance(row, dict) else False)
+    if isinstance(row, dict):
+        ya = bool(row.get("ya_estaba"))
+    else:
+        ya = bool(row[0]) if row else False
     return {"ok": True, "citation": cita, "citation_norm": norm, "ya_estaba": ya}
 
 

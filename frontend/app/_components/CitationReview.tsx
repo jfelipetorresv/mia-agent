@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Landmark, ScrollText } from "lucide-react";
-import { apiGet } from "@/lib/api";
+import { AlertTriangle, Ban, CheckCircle2, Landmark, ScrollText } from "lucide-react";
+import { apiGet, apiSend, plainMessage } from "@/lib/api";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,9 @@ import { cn } from "@/lib/utils";
 export type Fuente = { tipo: string; referencia: string; titulo: string };
 export type CitaDetalle = {
   cita: string;
-  estado: "marcada" | "respaldada" | "anotada";
+  // "quemada": el despacho marcó antes esta cita como falsa, así que Mia la retiró del texto
+  // en vez de emitirla (el muro del banco de citas falsas).
+  estado: "marcada" | "respaldada" | "anotada" | "quemada" | "omitida";
   fuente?: Fuente;
 };
 export type Verification = {
@@ -28,6 +30,21 @@ export type Verification = {
   respaldadas: number;
   anotadas: number;
   detalle: CitaDetalle[];
+  // Presentes solo cuando el despacho tiene citas marcadas como falsas.
+  quemadas?: number;
+  aviso_quemadas?: string;
+  // Afirmaciones negativas sobre un documento que el texto COMPLETO de ese documento podría
+  // contradecir («el informe no menciona al garante», y el documento lo nombra cuatro veces).
+  afirmaciones_negativas?: {
+    n_afirmaciones: number;
+    n_a_revisar: number;
+    revisar?: { oracion: string; doc: number; archivo: string; terminos_no_vistos: string[] }[];
+  };
+  // Partes que, según las fichas del despacho, pertenecen a OTRO expediente.
+  contaminacion_expediente?: {
+    n_partes_ajenas: number;
+    partes?: { parte: string; ocurrencias: number }[];
+  };
 };
 
 // Respuesta de GET /api/sources/buscar — puede venir vacía (corpus aún pequeño).
@@ -49,6 +66,8 @@ const ESTADO_INFO: Record<
   respaldada: { label: "Con respaldo", icon: CheckCircle2, className: "text-success" },
   marcada: { label: "Verifícala tú", icon: AlertTriangle, className: "text-warning" },
   anotada: { label: "Sin respaldo — verifícala tú", icon: AlertTriangle, className: "text-warning" },
+  quemada: { label: "Retirada: la marcaste como falsa", icon: Ban, className: "text-destructive" },
+  omitida: { label: "Omitida: falta declarar el ordenamiento", icon: AlertTriangle, className: "text-warning" },
 };
 
 function plural(n: number, singular: string, pluralForm: string): string {
@@ -78,6 +97,18 @@ export default function CitationReview({ verification }: { verification: Verific
     <TooltipProvider>
       <div>
         <p className="text-sm text-muted-foreground">{resumenTexto(verification)}</p>
+        {verification.quemadas ? (
+          <p className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              {verification.quemadas === 1
+                ? "Retiré 1 cita que marcaste como falsa."
+                : `Retiré ${verification.quemadas} citas que marcaste como falsas.`}{" "}
+              No las vuelvo a usar, aunque una fuente parezca respaldarlas.
+            </span>
+          </p>
+        ) : null}
+        <AvisosDeRevision verification={verification} />
         {verification.detalle.length > 0 ? (
           <ul className="mt-3 space-y-2">
             {verification.detalle.map((d, i) => {
@@ -120,6 +151,62 @@ export default function CitationReview({ verification }: { verification: Verific
       </div>
       <CitationSourceDialog cita={openCita} onClose={() => setOpenCita(null)} />
     </TooltipProvider>
+  );
+}
+
+// Dos avisos que Mia levanta sola al revisar su propio borrador. Son AVISOS: no frenan nada y no
+// cambian el texto — quien decide es el abogado. Se muestran solo cuando hay algo que decir.
+function AvisosDeRevision({ verification }: { verification: Verification }) {
+  const neg = verification.afirmaciones_negativas;
+  const cruce = verification.contaminacion_expediente;
+  const hayNeg = Boolean(neg && neg.n_a_revisar > 0);
+  const hayCruce = Boolean(cruce && cruce.n_partes_ajenas > 0);
+  if (!hayNeg && !hayCruce) return null;
+
+  return (
+    <div className="mt-2 space-y-2">
+      {hayNeg && neg ? (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
+          <p className="flex items-start gap-2 font-medium text-warning">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {neg.n_a_revisar === 1
+              ? "Hay 1 afirmación de que un documento NO dice algo, y el documento completo podría contradecirla."
+              : `Hay ${neg.n_a_revisar} afirmaciones de que un documento NO dice algo, y el documento completo podría contradecirlas.`}
+          </p>
+          <ul className="mt-1.5 space-y-1.5">
+            {(neg.revisar || []).map((r, i) => (
+              <li key={i} className="text-muted-foreground">
+                <span className="font-serif text-foreground">“{r.oracion}”</span>
+                <br />
+                {r.archivo ? <>En {r.archivo}: </> : null}
+                aparece {r.terminos_no_vistos.join(", ")} en partes del documento que no llegué a
+                leer.
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-muted-foreground/80">
+            Vale la pena revisarlo: una negativa que se cae con una sola página arrastra el resto
+            del escrito.
+          </p>
+        </div>
+      ) : null}
+      {hayCruce && cruce ? (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
+          <p className="flex items-start gap-2 font-medium text-warning">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            El escrito nombra{" "}
+            {cruce.n_partes_ajenas === 1 ? "una parte" : `${cruce.n_partes_ajenas} partes`} de otro
+            expediente
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            {(cruce.partes || []).map((p) => p.parte).join(" · ")}
+          </p>
+          <p className="mt-1.5 text-muted-foreground/80">
+            Puede ser legítimo, o puede ser material de otro caso. Revísalo antes de radicar.
+          </p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -203,10 +290,117 @@ function CitationSourceDialog({ cita, onClose }: { cita: CitaDetalle | null; onC
             </p>
           )}
         </div>
+        {cita ? <MarcarCitaFalsa cita={cita.cita} yaRetirada={cita.estado === "quemada"} /> : null}
         <p className="text-xs text-muted-foreground/80">
           Mia propone; tú verificas la fuente oficial antes de radicar.
         </p>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// El abogado encontró una cita que NO existe, o que no dice lo que se le atribuye. Al marcarla,
+// entra al banco de citas falsas del despacho y Mia no la vuelve a emitir — ni aunque una fuente
+// parezca respaldarla. Es la única decisión de esta pantalla que cambia el comportamiento futuro,
+// así que pide confirmación y explica el alcance antes de hacerla.
+function MarcarCitaFalsa({ cita, yaRetirada }: { cita: string; yaRetirada: boolean }) {
+  const [abierto, setAbierto] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [hecho, setHecho] = useState("");
+  const [error, setError] = useState("");
+
+  // Al cambiar de cita, el formulario vuelve a cero: un motivo escrito para una cita no puede
+  // quedarse pegado en la siguiente.
+  useEffect(() => {
+    setAbierto(false);
+    setMotivo("");
+    setHecho("");
+    setError("");
+  }, [cita]);
+
+  async function marcar() {
+    setEnviando(true);
+    setError("");
+    try {
+      const r = await apiSend<{ mensaje?: string }>("POST", "/api/citas-quemadas", {
+        cita,
+        motivo: motivo.trim(),
+      });
+      setHecho(r?.mensaje || "Marcada. No la volveré a usar en este despacho.");
+      setAbierto(false);
+    } catch (e) {
+      setError(plainMessage(e, "No pude marcar la cita en este momento. Intenta de nuevo."));
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  if (hecho) {
+    return (
+      <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {hecho}
+      </p>
+    );
+  }
+
+  if (yaRetirada) {
+    return (
+      <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        Ya marcaste esta cita como falsa, así que la retiré del borrador.
+      </p>
+    );
+  }
+
+  if (!abierto) {
+    return (
+      <div className="space-y-1.5">
+        <button
+          type="button"
+          onClick={() => setAbierto(true)}
+          className="text-xs font-medium text-destructive underline-offset-2 hover:underline"
+        >
+          Esta cita no existe o no dice eso
+        </button>
+        {error ? <p className="text-xs text-warning">{error}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+      <p className="text-xs text-foreground">
+        La marcaré como falsa y no la volveré a usar en este despacho, ni aunque una fuente parezca
+        respaldarla. Puedes reactivarla después si te corriges.
+      </p>
+      <textarea
+        value={motivo}
+        onChange={(e) => setMotivo(e.target.value)}
+        rows={2}
+        placeholder="¿Qué está mal? (opcional — por ejemplo: la sentencia real trata otro tema)"
+        className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={marcar}
+          disabled={enviando}
+          className="rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground disabled:opacity-60"
+        >
+          {enviando ? "Marcando…" : "Marcar como falsa"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setAbierto(false)}
+          disabled={enviando}
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          Cancelar
+        </button>
+      </div>
+      {error ? <p className="text-xs text-warning">{error}</p> : null}
+    </div>
   );
 }

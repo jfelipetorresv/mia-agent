@@ -19,7 +19,7 @@ from ..db import pool
 from ..security import install_redacting_logging
 from ..setup import paths
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, atajos, auth, automations, curator, delegation,
+from .routes import (assistant, atajos, auth, automations, citas_quemadas, curator, delegation,
                      documents_review, folders, gold_cases, guides, hitl, learning, mailbox,
                      matter_folders, matter_mail, matter_sources, mcp, missions, notebooklm,
                      personas, playbook_health, policy, remote_drive, sessions, settings, setup,
@@ -220,6 +220,8 @@ app.include_router(sources.router, prefix="/api")
 # F3 (bienvenida + activación) · estado de la primera vez y llaves mínimas de
 # instalación (búsqueda documental / respaldo del motor) → /api/welcome/*.
 app.include_router(welcome.router, prefix="/api")
+# Banco de citas quemadas (#46.2): el prefix ya viene en el router.
+app.include_router(citas_quemadas.router)
 # Banco de oro (gold-set de calidad por-despacho) · captura anonimizada + rúbrica → /api/gold-cases/*.
 app.include_router(gold_cases.router, prefix="/api")
 app.include_router(playbook_health.router)
