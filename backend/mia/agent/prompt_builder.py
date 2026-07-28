@@ -676,6 +676,19 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "coincide con el orden en que se desarrollan; las peticiones se apoyan solo en "
         "argumentos efectivamente desarrollados; y cero marcadores de plantilla sin "
         "resolver (nada de [X], [fecha], [cliente]).\n"
+        # AFIRMACIONES NEGATIVAS (decisión #46.1 — principio del harness de litigio del
+        # despacho). Origen: un extractor informó que un memorando «no menciona al garante» y
+        # el documento lo nombraba con NIT y póliza en cuatro lugares; la afirmación llegó al
+        # escrito. Es la clase de frase más fácil de refutar y la que más cara sale.
+        "Afirmaciones negativas sobre un documento — la regla más estricta del escrito: antes "
+        "de escribir que una pieza 'no menciona', 'no contiene', 'no analiza' o 'guarda "
+        "silencio' sobre algo, verifícalo buscándolo en el documento COMPLETO, no en el "
+        "fragmento que tienes a la vista ni en el resumen que otro te dio. Si no puedes "
+        "revisar la pieza entera, no lo afirmes: escribe qué SÍ verificaste y hasta dónde "
+        "llega tu revisión ('en los apartes disponibles no aparece…'). Y prefiere siempre el "
+        "alcance estrecho y verdadero al amplio y falso: 'el informe no examina la posición "
+        "del garante' sobrevive a la contradicción; 'no lo menciona' se cae con una sola "
+        "página, y al caerse arrastra la credibilidad de todo lo demás que alegues.\n"
         + _ANCHOR_INSTRUCTION + "\n"
         "Si al citar una norma o providencia sospechas que pudo haber sido derogada, "
         "modificada o su exequibilidad condicionada, y no puedes confirmarlo con lo "

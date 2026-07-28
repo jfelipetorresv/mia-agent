@@ -773,6 +773,154 @@ def _sentence_abstains(text: str) -> bool:
     return any(p in t for p in _ABSTENTION_PHRASES_NORM)
 
 
+# ── AFIRMACIONES NEGATIVAS sobre el contenido de un documento (2026-07-27) ─────
+# Principio portado del harness de litigio del despacho (decisión #46.1), y su origen es un
+# defecto REAL que llegó hasta un radicable: el extractor forense informó que un memorando de
+# supervisión «no menciona al garante»; el escrito se construyó sobre esa base y la verificación
+# demostró que el documento nombraba a la aseguradora con NIT y póliza en CUATRO lugares.
+#
+# La regla: **el resumen de un extractor no sustituye al documento**. Toda afirmación negativa
+# sobre el contenido de una pieza («no menciona», «no contiene», «no analiza») se verifica por
+# búsqueda directa sobre el documento COMPLETO antes de escribirse.
+#
+# Por qué esto le apunta al talón de Mia: sus mejores salidas de hoy SON negativas («el
+# expediente no contiene norma citable»), y las produce leyendo los FRAGMENTOS que recuperó el
+# turno, no el documento entero. Misma causa, mismo error, más caro: una afirmación negativa es
+# la más fácil de refutar —basta una página— y al caerse contamina todo lo demás del escrito.
+# Corolario de la misma lección: el argumento estrecho y verdadero vale más que el amplio y
+# falso («el informe no examina la posición del garante» sobrevive; «no lo menciona» se cae).
+#
+# ESTA FUNCIÓN ES SOLO EL DETECTOR (pura, sin DB). Encuentra la afirmación y los términos que
+# habría que buscar; quien confronta contra el texto completo del documento es el nodo del grafo
+# (`agents.graph._check_negative_claims`), que sí puede consultar la base. Nace como AVISO al
+# abogado: NUNCA edita el borrador ni bloquea el turno (decisión de dureza de Pipe — una barrera
+# nueva no puede frenar trabajo bueno en manos de otro despacho hasta que se mida que no lo hace).
+#
+# AGNOSTICISMO (regla dura): cero léxico de país, corte o base normativa — solo negación y
+# verbos de contenido documental del español.
+_NEGATIVE_CONTENT_PATTERNS: tuple[str, ...] = (
+    "no menciona", "no mencionan", "no menciono",
+    "no contiene", "no contienen",
+    "no analiza", "no analizan",
+    "no incluye", "no incluyen",
+    "no dice nada", "nada dice",
+    "no se refiere", "no hace referencia", "no hacen referencia",
+    "no aparece", "no aparecen",
+    "no consta", "no constan",
+    "no figura", "no figuran",
+    "no identifica", "no identifican",
+    "no acredita", "no acreditan",
+    "no examina", "no examinan",
+    "no alude", "no aluden",
+    "guarda silencio",
+    "omite toda", "omite cualquier", "omite por completo",
+    "en ningun lugar",
+    "no obra en el expediente", "no existe en el expediente",
+)
+_NEGATIVE_CONTENT_NORM: tuple[str, ...] = tuple(
+    _normalize(p) for p in _NEGATIVE_CONTENT_PATTERNS)
+
+# Palabras que NO sirven como término de búsqueda: función gramatical, meta-vocabulario del
+# propio informe y los verbos de la negación. Sin esta lista el detector propondría buscar
+# «documento» o «expediente» en el documento — y los encontraría siempre.
+_STOP_TERMS: frozenset[str] = frozenset((
+    "documento", "documentos", "expediente", "expedientes", "archivo", "archivos",
+    "folio", "folios", "pieza", "piezas", "material", "informe", "informes",
+    "menciona", "mencionan", "contiene", "contienen", "analiza", "analizan",
+    "incluye", "incluyen", "refiere", "referencia", "aparece", "aparecen",
+    "consta", "constan", "figura", "figuran", "identifica", "identifican",
+    "acredita", "acreditan", "examina", "examinan", "alude", "aluden", "omite",
+    "silencio", "nada", "ningun", "ninguna", "ninguno", "ningunos", "ningunas",
+    "sobre", "acerca", "respecto", "cuanto", "tampoco", "siquiera", "alguna",
+    "alguno", "algun", "cualquier", "cualquiera", "propio", "propia", "mismo", "misma",
+    "este", "esta", "esto", "esos", "esas", "aquel", "aquella", "dicho", "dicha",
+    "sino", "porque", "aunque", "donde", "cuando", "como", "para", "pero", "sino",
+    "todo", "toda", "todos", "todas", "otro", "otra", "otros", "otras",
+    "puede", "pueden", "podria", "debe", "deben", "seria", "hay", "haya",
+    "turno", "sesion", "despacho", "abogado", "cliente", "asunto",
+    "lugar", "parte", "partes", "texto", "contenido", "referencias",
+))
+_WORD_RE = re.compile(r"[a-záéíóúüñ]{4,}", re.IGNORECASE)
+
+
+def _claim_terms(oracion: str, *, limite: int = 6) -> list[str]:
+    """Términos de CONTENIDO de una afirmación negativa — lo que habría que buscar en el
+    documento completo. Puros: palabras de 4+ letras, sin el meta-vocabulario ni los verbos de
+    la negación, en orden de aparición y sin repetir. `limite` acota el ruido."""
+    vistos: list[str] = []
+    for m in _WORD_RE.finditer(_normalize(oracion or "")):
+        w = m.group(0)
+        if w in _STOP_TERMS or w in vistos:
+            continue
+        vistos.append(w)
+        if len(vistos) >= limite:
+            break
+    return vistos
+
+
+def scan_negative_claims(draft: str, *, protected_spans: Optional[list] = None) -> list[dict]:
+    """Afirmaciones NEGATIVAS sobre el contenido de un documento presentes en el borrador.
+
+    Determinista y pura — NO toca DB, NO edita el borrador, NO bloquea nada. Devuelve
+    [{"oracion", "inicio", "fin", "patron", "docs": [n…], "terminos": [str…]} …] ordenado por
+    posición. `docs` son las anclas [doc n] presentes LITERALMENTE en la oración: sin ancla, la
+    afirmación es genérica («el expediente no contiene…») y no hay un documento concreto contra
+    el que confrontarla — se devuelve igual, con `docs` vacío, porque el abogado debe verla.
+    """
+    text = draft or ""
+    if not text:
+        return []
+    salida: list[dict] = []
+    for ini, fin in segment_sentences(text, protected_spans):
+        oracion = text[ini:fin]
+        norm = _normalize(oracion)
+        patron = next((p for p in _NEGATIVE_CONTENT_NORM if p in norm), None)
+        if patron is None:
+            continue
+        salida.append({
+            "oracion": oracion.strip(),
+            "inicio": ini,
+            "fin": fin,
+            "patron": patron,
+            "docs": _sentence_doc_refs(oracion),
+            "terminos": _claim_terms(oracion),
+        })
+    return salida
+
+
+def confront_negative_claim(terminos: list, texto_completo: str,
+                            texto_visto: str = "") -> dict:
+    """¿El documento COMPLETO contradice la afirmación negativa? Pura.
+
+    `texto_completo` es el documento entero (todos sus fragmentos); `texto_visto`, lo que el
+    turno tenía a la vista cuando escribió. Un término presente en el completo y AUSENTE en lo
+    visto es la firma exacta del defecto que este principio persigue: la negativa se afirmó
+    sobre un resumen o un fragmento.
+
+    Devuelve {"contradice", "terminos_en_documento", "terminos_no_vistos"}. Conservador: si no
+    hay texto completo que confrontar, no contradice nada (`contradice=False`) — la barrera
+    calla antes que inventar una alarma.
+
+    QUÉ CUENTA COMO CONTRADICCIÓN (corregido al medir, 2026-07-27): cuando se sabe qué tenía el
+    turno a la vista, contradice solo el término presente en el documento y AUSENTE de lo visto.
+    Exigir menos producía ruido garantizado: los términos del SUJETO de la frase («el informe de
+    SUPERVISIÓN no menciona…») están en el documento por definición, y contarlos habría hecho
+    saltar el aviso en toda afirmación negativa correcta. Sin `texto_visto` no hay con qué
+    discriminar y basta la presencia — el llamador debe pasar el fragmento siempre que lo tenga.
+    """
+    completo = _normalize(texto_completo or "")
+    visto = _normalize(texto_visto or "")
+    if not completo:
+        return {"contradice": False, "terminos_en_documento": [], "terminos_no_vistos": []}
+    en_doc = [t for t in (terminos or []) if _normalize(str(t)) in completo]
+    no_vistos = [t for t in en_doc if _normalize(str(t)) not in visto] if visto else list(en_doc)
+    return {
+        "contradice": bool(no_vistos) if visto else bool(en_doc),
+        "terminos_en_documento": en_doc,
+        "terminos_no_vistos": no_vistos,
+    }
+
+
 def _is_assertive_residue(text: str) -> bool:
     """Heurística de asertividad (§2.3): FORMA asertiva, sin cita/ancla/abstención. SESGADA en
     ambas direcciones (M2/M3/M4) — mide una tendencia de forma, NUNCA estima el hueco (1) ni

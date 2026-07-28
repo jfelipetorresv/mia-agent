@@ -1767,7 +1767,75 @@ class MatterGraphBuilder:
 
         annotated, report = await asyncio.to_thread(_scan)
         md[report_key] = report
+        # AFIRMACIONES NEGATIVAS (decisión #46.1): se confrontan contra el TEXTO COMPLETO del
+        # documento anclado, no contra el fragmento que el turno recuperó. AVISO, nunca bloqueo.
+        aviso = await self._check_negative_claims(state, annotated, docs)
+        if aviso:
+            report["afirmaciones_negativas"] = aviso
         return annotated
+
+    async def _check_negative_claims(self, state: MatterState, draft: str,
+                                     docs: list) -> Optional[dict]:
+        """¿Alguna afirmación negativa del borrador la contradice el documento COMPLETO?
+
+        El principio (harness de litigio del despacho, decisión #46.1) nace de un defecto real:
+        un extractor informó que un memorando «no menciona al garante» y el documento lo nombraba
+        con NIT y póliza en cuatro lugares — la afirmación llegó hasta el escrito. Mia corre el
+        mismo riesgo por construcción: escribe sus negativas leyendo los FRAGMENTOS que recuperó,
+        no la pieza entera.
+
+        Nace como AVISO (decisión de dureza de Pipe): informa al abogado, no edita el borrador ni
+        bloquea el turno. Fail-soft en todo: cualquier fallo devuelve None y el turno sigue igual
+        que antes de existir esta comprobación — una barrera de calidad no puede tumbar trabajo.
+        """
+        try:
+            claims = verification.scan_negative_claims(draft)
+            if not claims:
+                return None
+            revisar: list[dict] = []
+            # Solo las afirmaciones ANCLADAS a un [doc n] son confrontables: sin ancla no hay
+            # una pieza concreta contra la que buscar. Las genéricas se cuentan y se dicen, pero
+            # no se pueden confrontar — decirlo es parte del aviso, no un vacío escondido.
+            for c in claims:
+                for n in c.get("docs") or []:
+                    if not (1 <= int(n) <= len(docs)):
+                        continue  # fuera de rango: eso ya lo caza el guardián de fantasmas
+                    d = docs[int(n) - 1]
+                    if not isinstance(d, dict):
+                        continue
+                    doc_id = d.get("document_id") or d.get("id")
+                    completo = await retrieval.document_full_text(
+                        state["tenant_id"], state.get("matter_id") or "", doc_id)
+                    if not completo:
+                        continue
+                    veredicto = verification.confront_negative_claim(
+                        c.get("terminos") or [], completo, str(d.get("content") or ""))
+                    if veredicto["contradice"]:
+                        revisar.append({
+                            "oracion": c["oracion"][:400],
+                            "doc": int(n),
+                            "archivo": str(d.get("filename") or ""),
+                            "terminos_en_documento": veredicto["terminos_en_documento"],
+                            # La firma del defecto: estaba en el documento y NO en lo que el
+                            # turno tenía a la vista.
+                            "terminos_no_vistos": veredicto["terminos_no_vistos"],
+                        })
+            if not revisar:
+                return {"n_afirmaciones": len(claims), "n_a_revisar": 0,
+                        "n_sin_ancla": sum(1 for c in claims if not c.get("docs"))}
+            return {
+                "n_afirmaciones": len(claims),
+                "n_a_revisar": len(revisar),
+                "n_sin_ancla": sum(1 for c in claims if not c.get("docs")),
+                "revisar": revisar[:10],
+                "aviso": ("Hay afirmaciones negativas sobre el contenido de un documento que el "
+                          "texto COMPLETO de ese documento podría contradecir. Verifíquelas "
+                          "antes de usar el escrito: una negativa falsa se refuta con una sola "
+                          "página y arrastra la credibilidad del resto."),
+            }
+        except Exception:  # noqa: BLE001 — la barrera avisa; jamás tumba el turno
+            logger.debug("no se pudo confrontar las afirmaciones negativas", exc_info=True)
+            return None
 
     # ── 6 · verification (CP9 · especialista de VERIFICACIÓN, determinista) ──
     async def verification_node(self, state: MatterState) -> dict:

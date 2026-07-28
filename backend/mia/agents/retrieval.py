@@ -876,6 +876,50 @@ async def matter_has_chunks(tenant_id: str, matter_id: str) -> bool:
     return bool(row[0])
 
 
+async def document_full_text(tenant_id: str, matter_id: str, document_id: Any,
+                             *, max_chars: int = 400_000) -> str:
+    """TEXTO COMPLETO de un documento del asunto (todos sus fragmentos, en orden).
+
+    Existe para una sola cosa: verificar AFIRMACIONES NEGATIVAS sobre el contenido de una pieza
+    («el informe no menciona al garante»). Esa clase de afirmación NO se puede verificar sobre
+    los fragmentos que recuperó el turno —es exactamente así como se cuela el defecto: el
+    fragmento no lo menciona, el documento sí— ni sobre el resumen de un extractor. Ver
+    `agents.verification.scan_negative_claims` y la decisión #46.1.
+
+    Corre bajo `tenant_connection` → RLS activo, igual que `retrieve_rrf`: el aislamiento entre
+    despachos no se afloja para verificar nada. El filtro por `matter_id` además impide leer un
+    documento de OTRO asunto del mismo despacho.
+
+    `max_chars` acota la lectura (un expediente puede traer piezas enormes y esto corre dentro
+    del turno). Fail-soft: ante cualquier fallo devuelve "" y quien llama trata la verificación
+    como no concluyente — nunca como «la afirmación es correcta».
+    """
+    if not document_id:
+        return ""
+    try:
+        async with pool.tenant_connection(tenant_id) as conn:
+            rows = await (await conn.execute(
+                "SELECT c.content FROM chunks c JOIN documents d ON d.id = c.document_id "
+                "WHERE d.matter_id = %s AND c.document_id = %s ORDER BY c.ord",
+                (matter_id, document_id),
+            )).fetchall()
+    except Exception:  # noqa: BLE001 — leer el documento jamás puede tumbar el turno
+        logger.warning("no se pudo leer el texto completo del documento (matter=%s doc=%s)",
+                       matter_id, document_id, exc_info=True)
+        return ""
+    partes: list[str] = []
+    total = 0
+    for r in rows or []:
+        t = str((r[0] if not isinstance(r, dict) else r.get("content")) or "")
+        if not t:
+            continue
+        partes.append(t)
+        total += len(t)
+        if total >= max_chars:
+            break
+    return "\n".join(partes)[:max_chars]
+
+
 async def matter_chunk_stats(tenant_id: str, matter_id: str) -> dict:
     """Cuánto material INDEXADO tiene el asunto: conteo real, no un EXISTS.
 
