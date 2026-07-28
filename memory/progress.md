@@ -3047,3 +3047,39 @@ publicado y son decisión de Pipe.
 **Próximo:** Sesión Pipe A (6 salidas + 4 decisiones + M-1/M-2); referencia en nube (tope USD 30
 aprobado) con RISK_CASES ×10 bajo `nube` + `--agentic-compare`, que es lo único ejecutable sin
 Pipe y destraba la decisión sobre lectura agéntica por defecto; y el ítem 2 de la spec de F2.
+
+## 2026-07-27/28 (sesión 51) — La Sesión Pipe A ejecutada: F2 cerrada y las 4 barreras del harness
+
+**Qué pasó.** Pipe tomó en vivo las 7 decisiones que esperaban (`decisions.md` #45-#47) y se
+construyó todo lo que dependía de ellas. Seis commits, todos pusheados: `656dc20` (N-1+M-1+M-2),
+`99fb4a2` (afirmaciones negativas), `ba1fbde` (muro de citas quemadas), `ae42b96` (contaminación
+entre expedientes), `6aaef70` (cierre de F2), `2c7ff04` (la puerta del banco en la interfaz) y
+`cdc0f7c` (hallazgo del gate de bienvenida).
+
+**Las tres de medición.** La fuga real del baseline pasa a **0/63** — la única marca de las 63
+corridas guardadas era el falso positivo de «Ley 4137» (MIA nombrando una norma PARA decir que no
+la reconoce). La abstención pasa de 0/30 a **29/29** en las sondas de suscripción tras recalibrar
+el detector midiendo los 62 borradores reales. Y el panel deja de decir «Éxito de tarea» —que
+medía «no se cayó» y se leía «acertó»— para decir «Turnos completados» + «Se negó correctamente».
+
+**Las cuatro barreras del harness de litigio de Pipe, traducidas y graduadas.** Afirmaciones
+negativas verificadas contra el documento COMPLETO (su caso del garante, convertido en control);
+banco de citas quemadas (ÚNICO muro: la cita que el abogado demuestra falsa no vuelve a salir ni
+con respaldo del corpus); contaminación entre expedientes (catálogo derivado de la propia base, no
+cableado como el original); y «ninguna lección sin barrera» como regla de trabajo. Las tres
+primeras nacen como AVISO por decisión de dureza: MIA va a manos de otros despachos, donde una
+barrera mal afinada bloquea trabajo bueno.
+
+**Dos defectos propios encontrados AL MEDIR, no al revisar:** (1) contar como contradicción
+cualquier término presente en el documento hacía saltar el aviso en toda afirmación negativa
+correcta —los términos del SUJETO están ahí por definición—, lo destapó un check de la propia
+barrera nueva; (2) «ya estaba quemada» se decidía comparando marcas de tiempo, frágil por
+construcción, ahora sale del dato que el UPSERT ya conoce.
+
+**Deuda declarada:** la verificación VISUAL del botón nuevo y de los dos avisos NO se hizo. El
+gate de bienvenida exige perfil del despacho y no se salta omitiendo pasos (regla 62). Pendiente
+con dueño: `execution/seed_despacho_demo.py`.
+
+**Próximo:** el sembrador de despacho de prueba (destraba toda verificación visual, incluida la
+Fase 3 de bienvenida); caso de oro con expediente GRANDE; producto (instalador y bienvenida). De
+Pipe: lectura de calidad de las 6 salidas y los dos trámites de terceros.

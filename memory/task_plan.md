@@ -497,11 +497,27 @@ esta hubo trabajo el 18 y el 19 de julio sin registrar aquí; su detalle está e
 - [x] **F2 · sondas adversariales** (2026-07-24, 3ª sesión): las 3 sondas de `RISK_CASES`
       corridas ×10 en vivo bajo `suscripcion` — 30/30, el ataque no se materializó. Agregados
       con `prompt_hash 3391f17ea61324a4`. Ver `memory/findings.md` §SONDAS ADVERSARIALES F2.
-- [ ] **F2 · resto**: decisión con evidencia sobre lectura agéntica por defecto (espera el delta
-      on/off de la referencia en nube) e ítem 2 de la spec (fuga detectada al 100% de las
-      ocurrencias, con falsos positivos medidos).
-- [ ] **Referencia en nube** (tope USD 30 ya aprobado por Pipe): RISK_CASES ×10 bajo `nube` +
-      `--agentic-compare`. Único frente ejecutable sin Pipe.
-- [ ] **De Pipe · Sesión A**: calidad de las 6 salidas + 4 decisiones + prioridades del backlog
-      ruflo + las 2 decisiones nuevas de medición (M-1 abstención, M-2 etiqueta de éxito;
-      riesgo #81). Paquete listo en `docs/f1-paquete-decision-pipe.md`.
+- [x] **Referencia en nube** (2026-07-25, USD 7,38 de 30): RISK_CASES ×10 bajo `nube` +
+      `--agentic-compare`. El modo de venta EMPATA en disciplina. Quedan USD 22,6 sin gastar.
+- [x] **F2 · CERRADA** (2026-07-27/28, decisión de Pipe #47.2): con N-1 aplicada, **fuga real
+      0/63**. El ítem 2 de la spec se cierra con el falso positivo de «Ley 4137» convertido en el
+      primer caso de prueba del detector corregido. Ver `memory/findings.md` §CIERRE DE F2 —
+      y LEER ALLÍ LOS TRES CORTES DE SERIE antes de comparar cualquier cifra con el pasado.
+- [x] **De Pipe · Sesión A** (2026-07-27): las 7 decisiones tomadas y aplicadas
+      (`memory/decisions.md` #45, #46, #47). Riesgo #81 cerrado. Los casos de RIESGO entran al
+      examen por defecto (3 → 9 casos) y el «Modo A» (Docker) sale del alcance de la v1.
+      **Pendiente de Pipe, único**: la lectura de CALIDAD de las 6 salidas del paquete y del
+      ejemplar `f2sond_entail_g` — juicio jurídico, ningún agente lo sustituye.
+- [x] **Las 4 barreras del harness de litigio de Pipe** (decisión #46): afirmaciones negativas
+      verificadas contra el documento completo · banco de citas quemadas (MURO, migración 047,
+      con su puerta en la interfaz) · contaminación entre expedientes · ninguna lección sin
+      barrera. Regla de dureza: nacen como AVISO y solo suben a muro si se mide que no bloquean
+      trabajo bueno.
+- [ ] **Sembrador de despacho de prueba** (`execution/seed_despacho_demo.py`): sin él NO hay
+      verificación visual posible — el gate de bienvenida exige perfil y no se salta omitiendo
+      pasos (regla 62 de APRENDIZAJES). Bloqueó las capturas del botón nuevo y bloqueará la
+      Fase 3 de bienvenida.
+- [ ] **Caso de oro con expediente GRANDE** (cientos de fragmentos): prerrequisito para decidir
+      «lectura agéntica por defecto» (N-2). No requiere aprobación.
+- [ ] **De Pipe · trámites de terceros** (decisión #47.3, ya disparados): Azure Trusted Signing y
+      apps OAuth de Google/Microsoft. Pasos en `docs/tramites-terceros-pipe.md`.

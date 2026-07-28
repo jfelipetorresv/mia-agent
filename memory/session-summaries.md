@@ -1144,3 +1144,50 @@ Qué sigue:
 - Referencia en nube (tope USD 30 aprobado): RISK_CASES ×10 bajo `nube` + `--agentic-compare`
   — único frente ejecutable sin Pipe; destraba la decisión sobre lectura agéntica.
 - Cierre de F2: ítem 2 de la spec (fuga al 100% de ocurrencias con falsos positivos medidos).
+
+---
+
+## 2026-07-27/28 — Sesión 51 · La Sesión Pipe A, ejecutada: F2 cerrada y las 4 barreras del harness
+
+TL;DR: Pipe tomó las 7 decisiones pendientes en vivo, se aplicaron las tres de medición (la fuga
+real del baseline queda en 0/63), se cerró F2 y entraron las cuatro barreras de su propio harness
+de litigio, graduadas: tres avisan, una es muro. Commits `656dc20` → `cdc0f7c`, todos pusheados.
+
+Qué construimos:
+- **N-1** (`656dc20`): `jurisdiction_leak_signal` deja de contar como fuga la mención de una norma
+  acompañada de negación explícita en su misma oración; `harness.leak_signal_vigente` resuelve las
+  señales persistidas con la regla vieja (recalcula si el texto es releíble, o las marca
+  `revision_pendiente`). Verificado recalculando los 63 crudos guardados: 1 → 0.
+- **M-1**: `ABSTENTION_PHRASES` recalibrado MIDIENDO los 62 borradores completos (11 → 46 formas)
+  con criterio de admisión declarado; barrera nueva `test_abstention_recalibrada.py` (18/18) que
+  impide que vuelva a caer a cero en silencio.
+- **M-2**: el panel dice «Turnos completados» y, en casos de RIESGO, «Se negó correctamente».
+- **Barrera de afirmaciones negativas** (`99fb4a2`): `scan_negative_claims` +
+  `retrieval.document_full_text` + confrontación en el grafo + regla y corolario en el prompt.
+- **MURO del banco de citas quemadas** (`ba1fbde`): migración 047 con RLS, `memory/burned_citations`,
+  cotejo en `annotate_draft` ANTES de toda vía de respaldo.
+- **Barrera de contaminación entre expedientes** (`ae42b96`): catálogo derivado de
+  `documents.parte` del propio despacho — sin listas cableadas.
+- **Cierre de F2** (`6aaef70`): casos de RIESGO en el examen por defecto (3 → 9 casos),
+  `docs/tramites-terceros-pipe.md`, riesgo #81 cerrado, reglas 55-63 en APRENDIZAJES.
+- **La puerta del banco** (`2c7ff04`): `/api/citas-quemadas` (POST/GET/DELETE) + enlace «Esta cita
+  no existe o no dice eso» en el diálogo de cada cita + los dos avisos nuevos pintados en la
+  pantalla de revisión.
+
+Qué decidimos (las 7 de Pipe, en `decisions.md` #45-#47):
+- La regla del muro es «no afirmar sin respaldo», no «no escribir el número» (N-1).
+- Recalibrar la abstención YA y declarar el corte de serie, en vez de pagar un re-baseline (M-1).
+- Dos líneas separadas en el panel: funcionó ≠ acertó (M-2).
+- Los casos de RIESGO entran al examen por defecto; F2 se cierra sin endurecer más ni gastar los
+  USD 22,6 restantes de nube; se disparan los dos trámites de terceros; el «Modo A» (Docker) sale
+  del alcance de la v1.
+- **Dureza transversal**: toda barrera nueva nace como AVISO y solo sube a muro cuando se mida que
+  no bloquea trabajo bueno. Única excepción: el banco de citas quemadas.
+
+Qué sigue:
+- **Helper de siembra de un despacho de prueba CON PERFIL** (`execution/seed_despacho_demo.py`):
+  sin él no hay verificación visual posible — el gate de bienvenida no se salta omitiendo pasos
+  (regla 62). Es lo que bloqueó las capturas del botón nuevo.
+- Caso de oro con expediente GRANDE (sigue siendo el prerrequisito de N-2).
+- Producto: instalador y bienvenida de F3.
+- De Pipe: la lectura de calidad de las 6 salidas y los dos trámites (Azure + OAuth).
