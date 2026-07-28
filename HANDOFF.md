@@ -77,9 +77,17 @@ Rama `feat/fase1-inc1-cleanup-scaffolding`. Pusheado hasta el commit de esta ent
 
 ## Qué sigue (en orden)
 
-1. **Alta del banco de citas quemadas desde la interfaz**: endpoint + botón en el HITL de rechazo
-   con motivo. Hoy el banco se llena por API interna; el muro ya opera. Es la pieza que convierte
-   la barrera en algo que el abogado usa solo.
+1. **Helper de siembra para verificación visual** (`execution/seed_despacho_demo.py`, no existe):
+   un despacho de prueba CON PERFIL, para poder capturar pantallas sin correr la entrevista.
+   Motivo: el gate de bienvenida no se salta con `setup/steps/perfil/skip` (devuelve 200 pero
+   mira si el perfil existe), así que hoy toda captura de UI cuesta 20 minutos de andamiaje y
+   quedó SIN verificación visual el botón de marcar cita falsa y los dos avisos nuevos de la
+   pantalla de revisión (regla 62 de `APRENDIZAJES.md`). El andamiaje que sí quedó listo: venv
+   con Playwright y script de captura en el scratchpad de la sesión.
+2. ~~Alta del banco de citas quemadas desde la interfaz~~ **HECHA** (`2c7ff04`): endpoint
+   `/api/citas-quemadas` (POST/GET/DELETE, 18/18 con RLS por HTTP) + enlace «Esta cita no existe
+   o no dice eso» en el diálogo de cada cita, y los avisos de afirmaciones negativas y
+   contaminación entre expedientes ya se pintan.
 2. **Caso de oro con expediente GRANDE** (cientos de fragmentos): sigue siendo el prerrequisito
    para decidir «lectura agéntica por defecto» (N-2). No requiere aprobación.
 3. **Mostrar los avisos nuevos en la pantalla**: `afirmaciones_negativas` y

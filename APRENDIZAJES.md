@@ -249,7 +249,19 @@
     mantener. La versión portada deriva el catálogo de `documents.parte` de los otros asuntos del
     propio despacho: misma protección, cero literales de país. Barrera:
     `execution/test_contaminacion_expediente.py`.
-61. **Un `self` simulado en un test es contrato: la lógica que no necesita `self` no debe ser
+62. **Para verificar VISUALMENTE cualquier pantalla de Mia hace falta un despacho CON PERFIL, y
+    omitir los pasos del recorrido NO basta.** Intentando capturar los avisos nuevos de la
+    revisión de citas: el layout manda al login sin token (se siembra en `localStorage` con la
+    clave `mia_token`, JWT firmado con `JWT_SECRET` del `.env`), y con token manda al onboarding
+    hasta que el despacho tiene perfil — `POST /api/setup/steps/perfil/skip` devuelve 200 pero el
+    gate de bienvenida no lo respeta, porque mira si el perfil EXISTE. Consecuencia práctica: una
+    captura de UI exige sembrar el perfil del despacho (o correr la entrevista, que gasta modelo).
+    **Pendiente con dueño**: un helper de siembra (`execution/seed_despacho_demo.py`) que deje un
+    despacho listo para capturas; sin él, toda verificación visual cuesta 20 minutos de andamiaje.
+    Sin barrera automática (documentada). Nota de entorno del mismo intento: el backend arranca
+    con `python -m mia.api.run` **desde `backend/` como directorio de trabajo** — lanzado desde la
+    raíz, el pool muere con `ProactorEventLoop` aunque el runner fije la política.
+63. **Un `self` simulado en un test es contrato: la lógica que no necesita `self` no debe ser
     método.** Colgar la comprobación de afirmaciones negativas como método de la clase del grafo
     rompió `test_sentence_report.w_cableado`, que invoca `_verify_draft` con un
     `SimpleNamespace()`. Se movió a función de módulo. Barrera: el propio
