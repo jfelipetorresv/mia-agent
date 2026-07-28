@@ -150,7 +150,27 @@ expuestas, CERO de la clase silenciosa**; 5 avisos, todos en `test_assistant.py`
 arreglo. Falsificado con cuatro casos, incluido una suite **inmune** con la misma aserción negativa palabra
 por palabra que **no debe** reportarse. Coste 0,5 s, sin red ni base de datos.
 
-### 🟡 Riesgo #81 — Métricas correctas con etiqueta que induce una lectura falsa (2026-07-24, F2)
+### ✅ Riesgo #81 — CERRADO 2026-07-27/28 por decisión de Pipe (Sesión A) + barreras
+
+> **CIERRE.** Las tres partes quedaron resueltas con criterio de Pipe y barrera ejecutable:
+> - **N-1** (la grave, la que decidía): la regla del muro es «no afirmar una norma como aplicable
+>   sin respaldo», no «no escribir jamás el número». `jurisdiction_leak_signal` ya no cuenta como
+>   fuga la mención acompañada de negación explícita en su misma oración; la reporta aparte en
+>   `negadas`. Resultado sobre los crudos: **fuga real 0/63** (la única marca era el falso
+>   positivo de «Ley 4137»). `leak_signal_vigente` resuelve las señales persistidas con la regla
+>   vieja o las marca `revision_pendiente`. Barrera: checks G1-G9 de `test_eval_substance.py`.
+> - **M-1**: `ABSTENTION_PHRASES` recalibrado midiendo los 62 borradores reales (11 → 46 formas),
+>   con corte de serie declarado (Pipe eligió declararlo en vez de pagar un re-baseline).
+>   Cobertura: 29/29 en las sondas de suscripción, antes 0/30. Barrera:
+>   `test_abstention_recalibrada.py` (18/18), cuyo bloque C impide que vuelva a caer a cero.
+> - **M-2**: el panel dice «Turnos completados» y, en casos de RIESGO, «Se negó correctamente».
+>   `exito_tarea` queda como alias. Barrera: checks M-2 de `test_eval_panel.py`.
+>
+> Reglas que quedan en `APRENDIZAJES.md`: 56 (un detector léxico miente en verde), 57 (la etiqueta
+> es parte de la métrica), 58 (una métrica que cuenta apariciones castiga el mejor comportamiento).
+> Detalle y cortes de serie: `memory/findings.md` §CIERRE DE F2.
+
+### 🟡 Riesgo #81 — Métricas correctas con etiqueta que induce una lectura falsa (2026-07-24, F2) · HISTORIA
 
 Pariente del #80, un piso más arriba: allí el defecto era una **aserción** que se quedaba verde sin
 mirar; aquí el número es **correcto** y lo que engaña es **cómo se llama**. Detectado leyendo los

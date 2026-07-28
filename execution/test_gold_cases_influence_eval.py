@@ -53,7 +53,7 @@ from mia.agent.prompt_builder import (                    # noqa: E402
 )
 from mia.agents.state import thread_id_for                # noqa: E402
 from mia.db import pool                                   # noqa: E402
-from mia.eval import harness                              # noqa: E402
+from mia.eval import cases, harness                       # noqa: E402
 
 _results: list[tuple[str, bool]] = []
 
@@ -157,8 +157,14 @@ async def db_checks() -> None:
         matter_ids = [str(c["matter_id"]) for c in report["cases"] if c.get("matter_id")]
 
         case_ids = {c["case_id"] for c in report["cases"]}
-        check("run_full_suite: corre los 3 sintéticos + el confirmado (n==4)",
-              report["summary"]["n_casos"] == 4)
+        # El número de casos sintéticos se DERIVA del banco, no se cablea: desde la decisión
+        # #47.1 los casos de RIESGO entran por defecto (3 → 9) y un test que fijara "4" se
+        # rompería con cada caso nuevo. Lo que esta barrera cuida es la relación —el confirmado
+        # se SUMA al examen canónico—, no una constante.
+        n_sinteticos = len(cases.load_golden_cases())
+        check(f"run_full_suite: corre los {n_sinteticos} sintéticos + el confirmado "
+              f"(n=={n_sinteticos + 1})",
+              report["summary"]["n_casos"] == n_sinteticos + 1)
         check("run_full_suite: el caso CONFIRMADO aparece en el reporte",
               gid_confirmed in case_ids)
         check("run_full_suite: el caso DRAFT (sin confirmar) NO aparece en el reporte",
@@ -204,8 +210,10 @@ def http_checks() -> None:
             report = r.json() or {}
             matter_ids = [str(c["matter_id"]) for c in report.get("cases", []) if c.get("matter_id")]
             case_ids = {c.get("case_id") for c in report.get("cases", [])}
-            check(":evaluate: el reporte trae 4 casos (3 sintéticos + 1 confirmado)",
-                  report.get("summary", {}).get("n_casos") == 4)
+            n_sinteticos = len(cases.load_golden_cases())
+            check(f":evaluate: el reporte trae {n_sinteticos + 1} casos ({n_sinteticos} "
+                  f"sintéticos + 1 confirmado)",
+                  report.get("summary", {}).get("n_casos") == n_sinteticos + 1)
             check(":evaluate: el reporte incluye el caso confirmado del despacho", gid in case_ids)
     finally:
         _drop_tenant(tenant, matter_ids)

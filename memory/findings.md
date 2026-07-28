@@ -529,3 +529,70 @@ la conclusión accionable, y es más barata que seguir comprando corridas.
 `API Error: Connection closed mid-response`; `cruzado_j` tuvo el mismo reintento. Son fallos de
 red del CLI, no del sistema: ambos terminaron limpios. El p95 de 729 s de esa sonda arrastra ese
 outlier — sin él, la sonda está en línea con las otras dos.
+
+## CIERRE DE F2 · 2026-07-27/28 (Sesión Pipe A ejecutada) — prompt_hash 8388c516a2156de2
+
+**F2 queda CERRADA** por decisión de Pipe (#47.2). El defecto que la fase vino a cerrar era la
+fuga de jurisdicción, y con su criterio de N-1 aplicado la cifra es **fuga real 0/63** sobre todas
+las corridas guardadas (60 de las tres sondas ×10 en los dos motores + 3 del comparador de lectura
+agéntica). El ítem 2 de la spec —fuga medida al 100% de ocurrencias con falsos positivos
+medidos— se cierra con el falso positivo de «Ley 4137» documentado y convertido en el primer caso
+de prueba del detector corregido.
+
+NO se endureció el detector antes de avanzar y NO se amplió la referencia en nube: **los USD 22,6
+del tope quedan sin gastar**.
+
+### TRES CORTES DE SERIE declarados (leer antes de comparar con cualquier cifra anterior)
+
+Ninguna cifra anterior al 2026-07-27 es comparable con las posteriores, por tres razones
+independientes que se acumulan:
+
+1. **Fuga (N-1)**: el detector dejó de contar como fuga la mención de una norma acompañada de
+   negación explícita en su misma oración. `harness.leak_signal_vigente` recalcula las señales
+   persistidas cuando el texto completo quedó guardado; si no, viajan marcadas
+   `revision_pendiente` y NO se hacen pasar por medida vigente. Verificado sobre los crudos: 1 → 0.
+2. **Abstención (M-1)**: repertorio recalibrado MIDIENDO los 62 borradores completos (11 → 46
+   formas), con criterio de admisión declarado. Cobertura medida: 29/29 en las sondas de
+   suscripción (antes 0/30) y 30/33 en nube. Pipe eligió declarar el corte en vez de pagar un
+   re-baseline.
+3. **prompt_hash**: `3391f17ea61324a4` → `8388c516a2156de2`, al entrar en el prompt la regla de
+   afirmaciones negativas (#46.1). Cualquier corrida nueva pertenece a otra serie.
+
+Y una cuarta, de composición del examen: **los casos de RIESGO entran por defecto** (#47.1), así
+que el examen canónico pasa de 3 casos a 9 y `n_casos` tampoco es comparable. Para la serie vieja
+queda `cases.load_golden_cases(include_risk=False)`.
+
+### Lo que el panel dice ahora (M-2)
+
+Desaparece «Éxito de tarea» —medía que el turno no se cayó e invitaba a leer «acertó»— y aparecen
+dos líneas: **«Turnos completados»** y, en los casos de RIESGO, **«Se negó correctamente»**
+(reconoció el límite sin cita sin respaldo ni fuga). Medido sobre las sondas ya corridas: **10/10
+en nube y 9/9 en suscripción**. Es una señal que antes no existía.
+
+### Las cuatro barreras del harness del despacho (#46), con su dureza
+
+| barrera | dureza | qué la fija |
+|---|---|---|
+| afirmaciones negativas verificadas contra el documento COMPLETO | aviso | `test_afirmaciones_negativas.py` 27/27 |
+| banco de citas quemadas del despacho | **MURO** | `test_citas_quemadas.py` 20/20 + `test_citas_quemadas_db.py` (RLS real) |
+| contaminación entre expedientes | aviso | `test_contaminacion_expediente.py` 17/17 |
+| ninguna lección sin barrera | regla de trabajo | esta tabla y las reglas nuevas de `APRENDIZAJES.md` |
+
+Las tres primeras nacen como AVISO por decisión de dureza de Pipe: MIA va a manos de otros
+despachos, donde una barrera mal afinada bloquea trabajo bueno y se siente como que MIA no sirve.
+El muro es la excepción porque no admite falso positivo.
+
+**Lección de diseño ganada al medir**: `confront_negative_claim` solo cuenta como contradicción el
+término presente en el documento y AUSENTE de lo que el turno vio. Exigir menos hacía saltar el
+aviso en toda afirmación negativa correcta — los términos del SUJETO de la frase («el informe de
+SUPERVISIÓN no menciona…») están en el documento por definición. Lo destapó un check de la propia
+barrera nueva, no una corrida pagada.
+
+### Deuda declarada al cerrar
+
+- El alta del banco de citas quemadas desde la interfaz (endpoint + botón en el HITL de rechazo
+  con motivo) NO está: hoy se llena por API interna. El muro ya opera.
+- La barrera de contaminación depende de que las fichas traigan `documents.parte`; en un expediente
+  sin fichas declaradas no tiene catálogo y calla (fail-soft, declarado).
+- Sigue pendiente de Pipe la lectura de calidad de las 6 salidas del paquete y del ejemplar
+  `f2sond_entail_g` — juicio jurídico; ningún agente lo sustituye.

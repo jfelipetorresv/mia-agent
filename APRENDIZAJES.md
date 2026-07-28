@@ -208,3 +208,49 @@
     como `-1` y copia el archivo ENTERO sin quejarse — así se archivó un HANDOFF de 185 líneas
     "recortado" a 186. Todo corte de archivo por índice se verifica después por nº de líneas y
     primera línea. Sin barrera automática (documentada).
+
+## Barreras, medición y honestidad de las etiquetas (Sesión Pipe A · 2026-07-27/28)
+
+55. **NINGUNA LECCIÓN SIN BARRERA — regla de trabajo, adoptada del harness de litigio del
+    despacho (decisión #46.3).** Toda lección de una retrospectiva nombra la barrera ejecutable
+    que la vigila (un test, un check, un gate) o se marca **«documentada»**, no «aplicada». El
+    principio de fondo del harness es «lo que no tiene barrera, vuelve»: allí una contradicción
+    de formato vivió una semana en 13 archivos y una cita fabricada reapareció en un banco
+    autodenominado verificado, en los dos casos porque nada las vigilaba. Barrera de esta regla:
+    la tabla de barreras de `memory/findings.md` §CIERRE DE F2, que enumera cada principio con
+    el test que lo fija.
+56. **Un detector léxico se desfasa en silencio cada vez que cambia el prompt: no falla, MIENTE
+    EN VERDE.** El contador de abstención reconocía 11 frases y, tras las decisiones #43-#44,
+    MIA dejó de usarlas: 25 de 30 borradores decían textualmente que no podían y el panel
+    mostraba «Abstención honesta: 0%». Lo mismo puede pasarle a cualquier lista de frases del
+    repo. Regla: todo detector por léxico se recalibra MIDIENDO los textos reales (no inventando
+    frases) y su cobertura queda fijada por un test que impide que vuelva a caer a cero. Barrera:
+    `execution/test_abstention_recalibrada.py` (bloque C, piso medido sobre los crudos).
+57. **La etiqueta de una métrica es parte de la métrica.** «Éxito de tarea: 100%» medía «el turno
+    no se cayó» y se leía como «acertó» — en casos de ataque donde lo correcto era NO entregar
+    borrador. El código estaba bien; engañaba el rótulo. Regla: el nombre de cada línea del panel
+    dice lo que la línea MIDE, y cuando «funcionó» y «acertó» son cosas distintas, van en dos
+    líneas. Barrera: los checks M-2 de `execution/test_eval_panel.py`.
+58. **Una métrica que cuenta apariciones de texto castiga el mejor comportamiento posible.** La
+    única «fuga» de 60 corridas era MIA nombrando una norma PARA DECIR que no la reconoce: el
+    detector contaba la aparición sin distinguir uso de mención. Regla: antes de convertir
+    cualquier detector en gate, buscar el caso en que su mejor comportamiento dispara la alarma
+    — y que ese caso sea un test. Barrera: checks G1-G9 de `execution/test_eval_substance.py`,
+    cuyo primer dato es el pasaje real de `f2nube_entail_i`.
+59. **Una barrera nueva nace como AVISO y solo sube a MURO cuando se mide que no bloquea trabajo
+    bueno (decisión de dureza de Pipe).** El harness del despacho es duro porque es su taller —
+    una barrera de más solo le molesta a él. MIA va a manos de otros despachos, donde un falso
+    positivo se siente como que MIA no sirve. Excepción única: el banco de citas quemadas, que no
+    admite falso positivo por construcción (la cita está en la lista que el propio abogado
+    construyó, o no está).
+60. **Al portar una barrera de otro repo, traducir el MÉTODO y derivar los datos; no copiar la
+    lista.** El `check-partes-docx.py` del despacho lleva un catálogo de aseguradoras cableado —
+    en MIA eso habría violado el agnosticismo de jurisdicción y habría creado una lista que
+    mantener. La versión portada deriva el catálogo de `documents.parte` de los otros asuntos del
+    propio despacho: misma protección, cero literales de país. Barrera:
+    `execution/test_contaminacion_expediente.py`.
+61. **Un `self` simulado en un test es contrato: la lógica que no necesita `self` no debe ser
+    método.** Colgar la comprobación de afirmaciones negativas como método de la clase del grafo
+    rompió `test_sentence_report.w_cableado`, que invoca `_verify_draft` con un
+    `SimpleNamespace()`. Se movió a función de módulo. Barrera: el propio
+    `execution/test_sentence_report.py`, que falla si vuelve a acoplarse.

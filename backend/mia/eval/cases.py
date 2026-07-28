@@ -117,11 +117,17 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
 
 # ── casos de RIESGO (Frente E) ─────────────────────────────────────────────────
 # Cada uno ataca un riesgo REAL destapado en pruebas EN VIVO contra el modelo — no una
-# forma genérica de análisis jurídico como los de arriba. Viven APARTE de `GOLDEN_CASES`
-# a propósito: `load_golden_cases()` los deja fuera para no romper a nadie que ya cuenta
-# con el examen de siempre en `n_casos` (p. ej. `execution/test_gold_cases_influence_eval.py`
-# asume "3 sintéticos + 1 confirmado = 4"; ajeno, no se toca). Se corren a propósito, por
-# id, con `execution/run_eval.py --case <id>` (y `--repeat N` para el riesgo intermitente).
+# forma genérica de análisis jurídico como los de arriba.
+#
+# ENTRAN AL EXAMEN POR DEFECTO desde el 2026-07-27 (decisión de Pipe #47.1). Antes vivían aparte
+# y se corrían por id; ahora `load_golden_cases()` los incluye, porque es en las trampas donde se
+# ve si la disciplina aguanta y un retroceso ahí debe aparecer el mismo día. Se siguen pudiendo
+# correr uno a uno con `execution/run_eval.py --case <id>` (y `--repeat N` para el riesgo
+# INTERMITENTE, que sigue exigiendo N corridas y no una).
+#
+# CONSECUENCIA DECLARADA: el examen por defecto pasa de 3 casos a 9, así que `n_casos` y toda
+# cifra agregada dejan de ser comparables con las series anteriores a esa fecha. Quien necesite
+# el examen viejo tiene `load_golden_cases(include_risk=False)`.
 #
 # 1. FUGA DE JURISDICCIÓN — expediente VACÍO, despacho SIN ordenamiento configurado.
 #    Bajo jurisdicción desconocida el prompt PROHÍBE citar articulado concreto de un país
@@ -250,15 +256,23 @@ RISK_CASES: tuple[GoldenCase, ...] = (
 )
 
 
-def load_golden_cases() -> list[GoldenCase]:
-    """El set canónico de casos de oro (sintéticos). Copia defensiva no hace falta:
-    los GoldenCase son frozen. NO incluye `RISK_CASES` (ver su comentario): esos se corren
-    por id, a propósito, no como parte del examen "antes/después" de siempre.
+def load_golden_cases(*, include_risk: bool = True) -> list[GoldenCase]:
+    """El set canónico de casos de oro (sintéticos) INCLUYENDO los de RIESGO.
 
-    Tampoco incluye el HOLDOUT (`eval.holdout`): ese es el candado del grupo (c) — si el
-    cargador del bucle de arreglo lo devolviera, el holdout dejaría de serlo. Ver
-    `EVAL_GROUPS` abajo."""
-    return list(GOLDEN_CASES)
+    Copia defensiva no hace falta: los GoldenCase son frozen.
+
+    LOS CASOS DE RIESGO ENTRAN POR DEFECTO desde el 2026-07-27 (decisión de Pipe #47.1). Antes
+    se corrían aparte, por id. El motivo del cambio, en sus palabras: es en las trampas
+    —expediente vacío, norma que no sostiene lo que se le pide, citas abreviadas— donde se ve si
+    la disciplina aguanta, y un retroceso ahí tiene que aparecer el mismo día y no en manos de un
+    abogado. Cuesta más tiempo y más cuota por examen; se paga a sabiendas.
+
+    `include_risk=False` sigue disponible para comparar contra una serie vieja medida sin ellos
+    (las cifras de un examen con trampas y otro sin ellas NO son comparables).
+
+    NO incluye el HOLDOUT (`eval.holdout`): ese es el candado del grupo (c) — si el cargador del
+    bucle de arreglo lo devolviera, el holdout dejaría de serlo. Ver `EVAL_GROUPS` abajo."""
+    return list(GOLDEN_CASES) + (list(RISK_CASES) if include_risk else [])
 
 
 # ── TRES GRUPOS DE EVALUACIÓN (separación anti-sobreajuste) ───────────────────
