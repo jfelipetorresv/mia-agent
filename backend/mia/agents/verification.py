@@ -31,6 +31,13 @@ VERIFY_MARK = "[VERIFICAR]"
 # del abogado, sin nombrar ningún país (el módulo sigue agnóstico). El texto original de
 # la cita omitida queda en el informe de verificación, no en el texto emitido.
 OMIT_MARK = "[referencia normativa omitida: ordenamiento no configurado]"
+# MURO · BANCO DE CITAS QUEMADAS (decisión de Pipe #46.2, 2026-07-27). Reemplazo de una cita
+# que el despacho marcó como FALSA. Mismo mecanismo que la omisión —el span se sustituye y el
+# texto original queda en el informe, nunca en lo emitido— pero por una razón distinta: no es
+# que falte respaldo, es que el abogado ya demostró que la cita no existe o no dice lo que se le
+# atribuye. Por eso es MURO y no aviso: no admite falso positivo (la cita está en la lista que
+# él mismo construyó, o no está) y el error nunca vuelve.
+BURNED_MARK = "[cita retirada: el despacho la marcó como no verificable]"
 # Ventana hacia adelante en la que una marca existente "cubre" la cita. Cubre el
 # patrón usual del redactor: la marca va al lado o al final de la frase de la cita.
 MARK_WINDOW_CHARS = 160
@@ -888,6 +895,43 @@ def scan_negative_claims(draft: str, *, protected_spans: Optional[list] = None) 
     return salida
 
 
+# ── BANCO DE CITAS QUEMADAS · el cotejo (decisión de Pipe #46.2) ──────────────
+# El almacenamiento es de cada despacho (`burned_citations`, migración 047) y el muro se aplica
+# en `annotate_draft`. Aquí vive solo la comparación, que es deliberadamente TONTA: normaliza y
+# cruza. Ni parecidos, ni distancias, ni familias de citas — una barrera que decide por
+# semejanza empieza a retirar citas buenas, y este es el único muro de la familia.
+def _burned_index(burned: Optional[list]) -> frozenset[str]:
+    """Lista de citas quemadas → conjunto normalizado listo para cotejar. Pura.
+    Acepta strings o dicts con "citation"/"citation_norm" (como vienen de la tabla)."""
+    out: set[str] = set()
+    for b in burned or []:
+        if isinstance(b, dict):
+            cru = b.get("citation_norm") or b.get("citation") or ""
+        else:
+            cru = b
+        n = _normalize(str(cru or ""))
+        if n:
+            out.add(n)
+    return frozenset(out)
+
+
+def _is_burned(citation: str, burned_norm: frozenset[str]) -> bool:
+    """¿Esta cita está quemada? Coincidencia por forma normalizada, en los dos sentidos.
+
+    Se acepta también que la cita del borrador CONTENGA una entrada quemada (o viceversa)
+    porque la misma cita se escribe con y sin sus complementos: quemar «Sentencia C-832 de
+    2002» tiene que atrapar «Sentencia C-832 de 2002, M.P. …». Ese contenido es literal y
+    contiguo, no un parecido: no abre la puerta a retirar una cita distinta.
+    """
+    n = _normalize(citation or "")
+    if not n:
+        return False
+    for b in burned_norm:
+        if n == b or b in n or n in b:
+            return True
+    return False
+
+
 def confront_negative_claim(terminos: list, texto_completo: str,
                             texto_visto: str = "") -> dict:
     """¿El documento COMPLETO contradice la afirmación negativa? Pura.
@@ -1001,6 +1045,7 @@ def annotate_draft(
     omit_unbacked: bool = False,
     lawyer_text: Optional[str] = None,
     sentence_report: bool = False,
+    burned: Optional[list] = None,
 ) -> tuple[str, dict]:
     """Anota el borrador y produce el informe del especialista de verificación.
 
@@ -1066,7 +1111,9 @@ def annotate_draft(
     # modo sentence_report; el cap de 50 de `detalle` (abajo) dejaría a las citas 51+ sin
     # estado y rotularía mal sus oraciones en silencio.
     clasificadas: list = []
-    marcadas = respaldadas = anotadas = omitidas = 0
+    marcadas = respaldadas = anotadas = omitidas = quemadas = 0
+    # MURO de citas quemadas: la lista del despacho, normalizada UNA vez por turno.
+    quemada_norm = _burned_index(burned)
     # ediciones (start, end, reemplazo); una inserción es (pos, pos, " [VERIFICAR]").
     # scan_citations garantiza spans disjuntos, así que aplicarlas de atrás hacia
     # adelante nunca desplaza offsets pendientes ni pisa otra edición.
@@ -1075,6 +1122,21 @@ def annotate_draft(
     for c in citations:
         fuente = None
         anchor_n: Optional[int] = None
+        # ── MURO · BANCO DE CITAS QUEMADAS (decisión de Pipe #46.2) ──
+        # Va PRIMERO, antes de cualquier vía de respaldo, y es lo único de esta familia que
+        # bloquea en vez de avisar: una cita que el abogado marcó como falsa no vuelve a salir
+        # NI aunque el corpus la respalde (que es justo lo que pasó en el caso que originó el
+        # principio: un banco «verificado» respaldaba una cita fabricada). El respaldo no puede
+        # ganarle al juicio del abogado sobre su propio ordenamiento.
+        if quemada_norm and _is_burned(c["citation"], quemada_norm):
+            quemadas += 1
+            estado = "quemada"
+            edits.append((c["start"], c["end"], BURNED_MARK))
+            if sentence_report:
+                clasificadas.append((c["start"], c["end"], c["citation"], estado, None))
+            if len(detalle) < 50:
+                detalle.append({"cita": c["citation"], "estado": estado})
+            continue
         if c["marked"] and not omit_unbacked:
             marcadas += 1
             estado = "marcada"
@@ -1140,6 +1202,16 @@ def annotate_draft(
     if omit_unbacked:
         # La clave solo existe en el modo nuevo: el informe clásico queda idéntico.
         report["omitidas"] = omitidas
+    if quemada_norm:
+        # MURO de citas quemadas. La clave solo aparece cuando el despacho tiene banco: sin
+        # banco, el informe queda byte a byte como antes de existir esta barrera.
+        report["quemadas"] = quemadas
+        report["banco_quemadas"] = len(quemada_norm)
+        if quemadas:
+            report["aviso_quemadas"] = (
+                "Se retiraron del borrador citas que este despacho marcó como falsas. No se "
+                "vuelven a emitir aunque una fuente parezca respaldarlas: el juicio del "
+                "abogado sobre su propio ordenamiento manda sobre el corpus.")
     # Guardián de referencias [doc n] fantasma DESPUÉS del escáner legal: así el
     # escáner de citas legales evalúa su ventana de marcado sobre el borrador crudo
     # (sin ver las marcas del guardián) y no hay diafonía entre ambos tipos de marca.
