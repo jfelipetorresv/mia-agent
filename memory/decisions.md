@@ -881,3 +881,98 @@ profundas que las mías"). Qué se destiló y a dónde:
 **Verificación**: adversarial independiente (Opus fresco) — 0 MAYORES, 4 menores corregidos + 1
 transversal (prosa del moderador descartada). Suites: jurisdiction_agnostic 104/104 ·
 prompt_builder 46/46 · gates_no_ciegos 9/9 · aprendido 34/34 · guide_interview · warroom — todas PASS.
+
+## #45 — 2026-07-27 · Sesión Pipe A (parte 1): las tres decisiones de medición
+
+Decididas por Pipe en vivo, en el orden en que el paquete las presentaba. Ninguna cambia lo que
+MIA hace; las tres cambian cómo se mide o cómo se rotula.
+
+1. **N-1 · La regla del muro es «no afirmar sin respaldo», no «no escribir el número».**
+   Pipe: mencionar el número de una norma para advertir que no se reconoce es comportamiento
+   CORRECTO. El detector de fuga deja de contar la mención acompañada de negación explícita en la
+   misma oración. Consecuencia inmediata: la única «fuga» de las 60 corridas era falso positivo →
+   **fuga real 0/60** en ambos motores, y la métrica pasa a medir daño (afirmar sin respaldo) en
+   vez de coincidencias de texto. Razón de fondo: el número venía del propio expediente y el
+   abogado que lee la frase queda ADVERTIDO, no engañado. Habilita que la fuga pueda ser gate
+   algún día sin bloquear el mejor comportamiento posible.
+2. **M-1 · Recalibrar YA el detector de abstención + declarar el corte de la serie.**
+   Pipe eligió la opción que el paquete NO recomendaba (recomendaba renombrar y recalibrar en el
+   próximo re-baseline pagado): ampliar `ABSTENTION_PHRASES` a cómo MIA redacta hoy sus negativas
+   tras #43-#44, y **declarar el corte** en lugar de re-correr el baseline. Las cifras de
+   abstención anteriores al corte quedan marcadas como NO comparables; no se gasta cuota en
+   re-medir historia.
+3. **M-2 · Dos líneas separadas en el panel.** «Turnos completados» (la máquina respondió sin
+   caerse) y, en los casos de `RISK_CASES`, «Se negó correctamente» al lado. Se elimina la
+   etiqueta «Éxito de tarea», que inducía a leer «acertó» donde solo decía «no se cayó».
+
+## #46 — 2026-07-27 · Cuatro principios del harness LLOS de Pipe entran a MIA (graduados)
+
+Pipe pidió analizar `D:\Lexia Abogados SAS\lexia-litigio-os-harness` (su propio taller, con
+barreras ejecutables por retrospectiva) y portar principios «sin ser tan exacto y fuerte».
+El principio de fondo del harness es «**lo que no tiene barrera, vuelve**»: toda lección se
+convierte en check que corre, o se marca solo como documentada.
+
+**Traducción, no copia.** El harness es el taller de Pipe: una barrera de más solo le molesta a
+él. MIA va a manos de otros despachos, donde una barrera mal afinada bloquea trabajo bueno y se
+siente como que MIA no sirve (ver `feedback-mia-foco-capacidad-no-seguridad`: nunca volverla
+rígida). De ahí la decisión de dureza.
+
+**Los cuatro aprobados:**
+
+1. **Afirmaciones negativas verificadas** (de R57 + su corolario de la 6.ª corrida real: el
+   extractor forense dijo «el informe no menciona al garante» y el memorando nombraba a Mundial
+   con NIT y póliza en cuatro lugares). Es el talón expuesto de MIA: sus MEJORES salidas de hoy
+   son negativas («el expediente no contiene norma citable»), y las produce leyendo fragmentos,
+   no el documento completo — misma causa, mismo error. Regla: toda afirmación negativa sobre el
+   contenido de un documento («no menciona / no contiene / no analiza») se verifica por búsqueda
+   directa sobre el documento COMPLETO antes de escribirse; si no se puede confirmar, se escribe
+   con reserva. Corolario portado: **el argumento estrecho y verdadero vale más que el amplio y
+   falso**.
+2. **Banco de citas quemadas del despacho** (de `check-citas-quemadas.py`). Cuando el abogado
+   marca una cita como falsa, queda quemada PARA SIEMPRE en su instalación y MIA no la vuelve a
+   emitir. **Única de las cuatro que nace como muro duro**: no admite falso positivo (la cita
+   está en la lista o no está). Agnóstica de jurisdicción por construcción — cada despacho llena
+   su propio banco. Portar también la lección de redacción del original: al documentar una cita
+   quemada hay que usar los marcadores canónicos, o el propio check dispara falso positivo.
+3. **Ninguna lección sin barrera** (de la cadencia obligatoria del harness). Regla de trabajo
+   nuestra, no del producto: toda lección de retrospectiva nombra su barrera ejecutable (test,
+   check, gate) o se marca «documentada», no «aplicada». Cierra la deuda declarada en #43: el
+   estándar de litigio hoy es INSTRUCCIÓN y no algo verificado.
+4. **Contaminación entre expedientes** (de `check-partes-docx.py`: 5 de 16 escritos históricos
+   del despacho traían aseguradoras de OTRO caso). En MIA no es solo defecto de calidad: es el
+   dato de un cliente apareciendo en el escrito de otro — riesgo de secreto profesional, y hoy
+   nada lo vigila.
+
+**Decisión de dureza (transversal):** cada barrera nueva **nace como AVISO** al abogado y solo
+sube a MURO cuando se mida que no produce falsos positivos. Es la lección de N-1 aplicada antes
+de cometerla a escala: un detector que cuenta apariciones de texto reprobaba al turno que se
+comportó mejor. Excepción única: el banco de citas quemadas, que es muro desde el día uno.
+
+**No se portó** (deliberadamente): puerta única y grafo modular del plugin (arquitectura de
+skills, no aplica), y la dureza global del harness. Sí se retiene como lección de ingeniería su
+`check-barreras-unificado.py`: los guards que lanzan cientos de procesos se cuelgan bajo carga de
+antivirus justo cuando más se necesitan — los gates de MIA corren en UNA pasada, no en cascada.
+
+## #47 — 2026-07-27 · Sesión Pipe A (parte 2): las 4 decisiones originales del paquete
+
+1. **Los casos de RIESGO entran al examen por defecto.** El banco mide cada versión también
+   contra las trampas (expediente vacío, norma que no sostiene lo pedido, citas abreviadas), no
+   solo contra casos normales. Cuesta más tiempo y cuota por examen; el beneficio es que un
+   retroceso de disciplina se detecta el mismo día y no en manos de un abogado.
+2. **F2 se CIERRA.** Con N-1 aplicada: 0 citas sin respaldo y **fuga real 0/60** en los dos
+   motores. El ítem 2 de la spec (fuga al 100% de ocurrencias con falsos positivos medidos) se
+   cierra con el falso positivo de «Ley 4137» documentado como primer caso de prueba del detector
+   corregido. NO se endurece el detector antes de avanzar y NO se amplía la referencia en nube
+   (los USD 22,6 restantes quedan disponibles, sin gastar). El trabajo pasa a producto + las 4
+   barreras de #46.
+3. **Se disparan LOS DOS trámites de terceros**: Azure Trusted Signing (firma de Windows — sin
+   ella el abogado ve «aplicación no reconocida» al abrir) y el registro de apps OAuth
+   (Google/Microsoft, para Gmail/Outlook/OneDrive). Ambos son gestión de Pipe y de alta latencia;
+   se piden ya para que la espera no sea el cuello de botella de la entrega.
+4. **«Modo A» (Docker/servidor) queda FUERA de la v1.** La v1 se entrega solo como programa de
+   escritorio de doble clic. El modo servidor se anota como posible después; se deja de fingir
+   que está en alcance (no existe ni un Dockerfile).
+
+**Pendiente ÚNICO de la Sesión A**: la lectura de calidad de las 6 salidas del paquete
+(`docs/f1-paquete-decision-pipe.md`) + el ejemplar de revisión humana `f2sond_entail_g`. Es
+juicio jurídico de Pipe; ningún agente lo sustituye. No bloquea el trabajo de máquina.

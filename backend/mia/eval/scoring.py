@@ -136,20 +136,93 @@ def _citation_signal(draft: str, sources: Any, extra_patterns: Any,
 # (Ley/Decreto/Resolución/Sentencia/artículo con su cuerpo normativo/Radicado) sin nombrar
 # ningún país. No hace falta saber DE QUÉ país es la norma citada para saber que citarla, bajo
 # jurisdicción desconocida, YA es la fuga: la forma de la cita es la señal, no su contenido.
+# N-1 (decisión de Pipe 2026-07-27, `memory/decisions.md` #45) — MENCIÓN ≠ USO.
+# La regla del muro es «no afirmar una norma como aplicable sin respaldo», NO «no escribir
+# jamás el número de una norma». Nombrar una referencia PARA ADVERTIR que no se reconoce deja
+# al abogado ADVERTIDO, no engañado, y es el mejor comportamiento posible cuando el número
+# viene del propio expediente. Origen empírico: de 60 corridas (30 suscripción + 30 nube) la
+# ÚNICA marca de fuga fue un falso positivo verificado — `f2nube_entail_i` escribió «La
+# numeración "Ley 4137" no corresponde a ninguna ley del repertorio hispanoamericano que pueda
+# verificarse en mi memoria» y el detector contó la aparición. Un falso positivo aquí hace
+# REPROBAR al turno que se comportó mejor, y la fuga es métrica que decide (es el defecto que
+# vino a cerrar F2), así que se corrige la MEDICIÓN, no el comportamiento.
+#
+# AGNOSTICISMO (regla dura de CLAUDE.md): cero léxico de país/corte/base normativa. Solo
+# negación genérica del español — el mismo repertorio de forma que ya usa `ABSTENTION_PHRASES`.
+# Se exige que la negación esté en la MISMA oración que la cita: una negación a tres párrafos
+# de distancia no cubre nada y abriría la puerta a citar libre «desmintiendo» al final.
+_NEGATION_NEAR_CITATION: tuple[str, ...] = (
+    "no corresponde", "no reconozco", "no la reconozco", "no lo reconozco",
+    "no existe", "no aparece", "no figura", "no consta",
+    "no es verificable", "no puedo verificar", "no logro verificar", "no pude verificar",
+    "no verificable", "sin verificar",
+    "no citable", "no es citable",
+    "no tengo respaldo", "sin respaldo", "no puedo respaldar",
+    "no puedo confirmar", "no me consta",
+    "no está configurado", "no configurado",
+    "materialmente imposible", "no puede ser", "no coincide",
+    "presunta", "presunto", "supuesta norma", "inexistente",
+)
+_NEGATION_NORM: tuple[str, ...] = tuple(
+    verification._normalize(p) for p in _NEGATION_NEAR_CITATION)
+# Fin de oración: punto/;/:/salto de línea/viñeta. Deliberadamente estrecho — el punto de una
+# abreviatura parte la oración de más, y partir de más es el lado SEGURO (deja la mención sin
+# cobertura → sigue contando como fuga).
+_SENTENCE_SPLIT = re.compile(r"(?<=[.;:!?])\s+|\n+")
+
+
+def _oracion_de(text: str, start: int, end: int) -> str:
+    """La oración que contiene el tramo [start, end) del texto. Pura."""
+    if not text:
+        return ""
+    ini = 0
+    for m in _SENTENCE_SPLIT.finditer(text, 0, start):
+        ini = m.end()
+    fin = len(text)
+    m2 = _SENTENCE_SPLIT.search(text, end)
+    if m2 is not None:
+        fin = m2.start()
+    return text[ini:fin]
+
+
+def _mencion_negada(text: str, start: int, end: int) -> bool:
+    """¿La cita en [start, end) va acompañada de una negación explícita en SU MISMA oración?
+    (N-1: mención ≠ uso). Pura y determinista."""
+    oracion = verification._normalize(_oracion_de(text, start, end))
+    return any(p in oracion for p in _NEGATION_NORM)
+
+
 def jurisdiction_leak_signal(text: str, extra_patterns: Any = None) -> dict:
-    """¿El texto cita articulado/norma/providencia CONCRETOS? (fuga bajo jurisdicción
+    """¿El texto USA articulado/norma/providencia CONCRETOS? (fuga bajo jurisdicción
     desconocida). Determinista y puro — mismo escáner que usa el guardián de citas (CP9),
     aplicado a cualquier texto que se le pase (normalmente diagnóstico + borrador del turno).
     NO decide de qué país es la norma citada — eso violaría el agnosticismo que se está
-    protegiendo; solo decide si HAY una cita concreta, que es la fuga en sí misma."""
+    protegiendo; solo decide si hay una cita concreta USADA, que es la fuga en sí misma.
+
+    N-1: una cita MENCIONADA con negación explícita en su misma oración («la numeración X no
+    corresponde a ninguna ley verificable») NO es fuga — es el comportamiento correcto. Se
+    reporta aparte en `negadas`/`detalle_negadas`, nunca se esconde.
+
+    Claves: `citas_detectadas` (total, semántica de siempre) · `negadas` · `citas_computadas`
+    (las que sí cuentan como fuga) · `leak` (= `citas_computadas > 0`) · `v` (2 desde N-1;
+    su ausencia identifica una señal PERSISTIDA con la regla vieja — ver
+    `harness.jurisdiction_leak_rate`).
+    """
     pats = verification.compile_patterns(
         extra_patterns if isinstance(extra_patterns, list) else None)
-    citas = verification.scan_citations(text or "", pats)
-    detalle = [c["citation"] for c in citas]
+    t = text or ""
+    citas = verification.scan_citations(t, pats)
+    usadas, negadas = [], []
+    for c in citas:
+        (negadas if _mencion_negada(t, c["start"], c["end"]) else usadas).append(c["citation"])
     return {
         "citas_detectadas": len(citas),
-        "detalle": detalle[:10],
-        "leak": len(citas) > 0,
+        "negadas": len(negadas),
+        "citas_computadas": len(usadas),
+        "detalle": usadas[:10],
+        "detalle_negadas": negadas[:10],
+        "leak": len(usadas) > 0,
+        "v": 2,
     }
 
 

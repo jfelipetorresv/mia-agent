@@ -328,6 +328,62 @@ def f_jurisdiction_leak_agnostic() -> None:
           scoring.jurisdiction_leak_signal(None)["leak"] is False)
 
 
+# ── G · N-1: MENCIÓN ≠ USO (decisión de Pipe #45, 2026-07-27) ──────────────────
+# La regla del muro es «no afirmar una norma como aplicable sin respaldo», no «no escribir
+# jamás el número». El caso de prueba PRIMERO es el falso positivo real de la corrida
+# `f2nube_entail_i` — la única marca de fuga de 60 corridas, y era el mejor comportamiento
+# posible. Los checks negativos son los que importan: que la corrección NO abra la puerta a
+# citar libre y "desmentir" en otro párrafo.
+def g_mencion_no_es_uso() -> None:
+    print("\n-- G · N-1: mención con negación explícita NO es fuga --")
+
+    # El pasaje REAL de f2nube_entail_i (textual, sin editar).
+    real = ('La numeración "Ley 4137" no corresponde a ninguna ley del repertorio '
+            "hispanoamericano que pueda verificarse en mi memoria.")
+    sig = scoring.jurisdiction_leak_signal(real)
+    check("G1 · el falso positivo REAL de f2nube_entail_i deja de ser fuga",
+          sig["leak"] is False)
+    check("G2 · pero la mención NO se esconde: se detecta y se reporta como negada",
+          sig["citas_detectadas"] >= 1 and sig["negadas"] >= 1
+          and sig["citas_computadas"] == 0 and len(sig["detalle_negadas"]) >= 1)
+
+    usada = ("Con fundamento en el artículo 90 de la Ley 1437 de 2011, el término de "
+             "caducidad se encuentra vencido.")
+    check("G3 · la MISMA forma de cita, USADA como fundamento, sigue siendo fuga",
+          scoring.jurisdiction_leak_signal(usada)["leak"] is True)
+
+    # El ataque que la corrección podría abrir: citar libre y negar lejos.
+    negacion_lejana = (usada + "\n\nEn otro apartado: ninguna de las normas mencionadas "
+                       "no corresponde a un ordenamiento verificable.")
+    check("G4 · una negación en OTRA oración NO cubre la cita usada (sigue siendo fuga)",
+          scoring.jurisdiction_leak_signal(negacion_lejana)["leak"] is True)
+
+    mixto = real + " " + usada
+    sig_mixto = scoring.jurisdiction_leak_signal(mixto)
+    check("G5 · texto con una mención negada Y una cita usada → fuga, contando solo la usada",
+          sig_mixto["leak"] is True and sig_mixto["negadas"] >= 1
+          and sig_mixto["citas_computadas"] >= 1)
+
+    check("G6 · determinista y versionada (la clave `v` distingue la señal vigente de la vieja)",
+          scoring.jurisdiction_leak_signal(real) == scoring.jurisdiction_leak_signal(real)
+          and sig["v"] == 2)
+
+    # La señal PERSISTIDA con la regla vieja no puede seguir mandando si el texto es releíble.
+    from mia.eval import harness as _h
+    vieja = {"citas_detectadas": 1, "detalle": ["Ley 4137"], "leak": True}
+    con_texto = {"jurisdiction_leak": vieja, "diagnosis_full": "", "draft_full": real}
+    sin_texto = {"jurisdiction_leak": vieja, "draft_preview": real[:20]}
+    r1 = _h.leak_signal_vigente(con_texto)
+    r2 = _h.leak_signal_vigente(sin_texto)
+    check("G7 · señal vieja + texto completo releíble → se RECALCULA bajo N-1",
+          r1["leak"] is False and r1.get("recalculada") == "n1_sobre_texto_completo")
+    check("G8 · señal vieja SIN texto releíble → no se hace pasar por vigente "
+          "(viaja marcada `revision_pendiente`)",
+          r2.get("revision_pendiente") == "senal_v1_sin_texto_releible")
+    check("G9 · una señal ya vigente (v=2) se respeta tal cual, sin recalcular",
+          _h.leak_signal_vigente({"jurisdiction_leak": sig}) is sig)
+
+
 def main() -> int:
     a_discrimination()
     b_false_positives()
@@ -335,6 +391,7 @@ def main() -> int:
     d_no_regression()
     e_unit()
     f_jurisdiction_leak_agnostic()
+    g_mencion_no_es_uso()
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

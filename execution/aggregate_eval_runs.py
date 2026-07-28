@@ -92,6 +92,19 @@ def main() -> int:
     run_dir = harness.persist_report(report)
     print(f"Agregado {args.out}: {len(results)} corridas de {len(args.parts)} partes -> {run_dir}")
     print(f"  fuga: {leak['n_con_fuga']}/{leak['n']} ({leak['tasa']:.0%}) · prompt_hash: {report['version']['prompt_hash']}")
+    # N-1 (decisión #45): mención con negación explícita ≠ uso. Se dice cuántas hubo y se avisa
+    # de las corridas cuya señal quedó bajo la regla vieja sin texto para re-decidir.
+    if leak.get("n_menciones_negadas"):
+        print(f"  (N-1) menciones negadas — NO cuentan como fuga: "
+              f"{leak['n_menciones_negadas']}")
+    if leak.get("n_revision_pendiente"):
+        print(f"  AVISO (N-1) — {leak['n_revision_pendiente']} corrida(s) con señal de fuga de "
+              f"la regla ANTERIOR y sin texto releíble: esa cifra no es comparable.")
+    # M-2 (decisión #45): en un caso de RIESGO, «no entregar borrador» puede ser lo correcto.
+    neg = panel.get("negativa_correcta")
+    if isinstance(neg, dict) and neg.get("n_casos_riesgo"):
+        print(f"  se negó correctamente (casos de RIESGO): {neg['n_negativa_correcta']}/"
+              f"{neg['n_casos_riesgo']} ({neg['tasa']:.0%})")
     if not evidencia["completa"]:
         print(f"  AVISO — EVIDENCIA INCOMPLETA: {evidencia['sin_texto']} de {evidencia['n']} "
               f"corridas se guardaron sin texto completo (corridas sin "

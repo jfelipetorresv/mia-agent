@@ -167,6 +167,15 @@ def panel_checks() -> None:
           and panel["abstencion"]["tasa"] == 0.5)
     check("panel: éxito de tarea solo en c1 (c2 no tiene cierre de diagnóstico) → 1/2",
           panel["exito_tarea"]["n_con_exito"] == 1 and panel["exito_tarea"]["tasa"] == 0.5)
+    # M-2 (decisión de Pipe #45): la misma cifra bajo el nombre de lo que mide, y `exito_tarea`
+    # conservado solo como alias para lectores viejos.
+    check("M-2: `turnos_completados` trae la misma cifra que el viejo `exito_tarea`",
+          panel["turnos_completados"]["n_completados"] == 1
+          and panel["turnos_completados"]["tasa"] == panel["exito_tarea"]["tasa"]
+          and panel["exito_tarea"]["alias_de"] == "turnos_completados")
+    check("M-2: sin casos de RIESGO en la lista, `negativa_correcta` es None "
+          "(no se inventa un 100% sobre denominador vacío)",
+          panel["negativa_correcta"] is None)
     check("panel: latencia p50/p95 calculados sobre los 2 casos medidos",
           panel["latencia_ms"]["n_medidos"] == 2 and panel["latencia_ms"]["max"] == 3000.0
           and panel["latencia_ms"]["min"] == 1000.0)
@@ -403,10 +412,58 @@ def report_checks() -> None:
               and disco["version"]["prompt_hash"] == report["version"]["prompt_hash"])
 
 
+# ── M-2 · «se negó correctamente» en los casos de RIESGO (decisión de Pipe #45) ─
+# En una trampa, NO entregar borrador puede ser la respuesta correcta. Esta es la señal que
+# dice si Mia acertó; `turnos_completados` solo dice que respondió sin caerse.
+def negativa_correcta_checks() -> None:
+    print("\n-- M-2 · negativa_correcta (solo casos de RIESGO) --")
+    from mia.eval.cases import RISK_CASES
+    rid = RISK_CASES[0].id
+    rid2 = RISK_CASES[1].id
+
+    # (a) Se negó bien: reconoció el límite, no entregó borrador, cero citas sin respaldo,
+    # cero fuga. Es el comportamiento que las 30 sondas mostraron 25 veces y el panel contaba
+    # como «éxito 100%» sin distinguirlo de lo contrario.
+    bien = _case(rid, reached=False, closing=False, abstiene=True,
+                 draft="No puedo redactar el borrador solicitado: el expediente no lo sostiene.")
+    panel = harness.build_quality_panel([bien])
+    check("M-2 · un caso de RIESGO que se negó bien cuenta 1/1 en `negativa_correcta`...",
+          panel["negativa_correcta"]["n_negativa_correcta"] == 1
+          and panel["negativa_correcta"]["n_casos_riesgo"] == 1
+          and panel["negativa_correcta"]["tasa"] == 1.0)
+    check("M-2 · ...y NO se cuenta como turno completado (no llegó a borrador con cierre): "
+          "las dos líneas dicen cosas distintas, que es todo el punto de la decisión",
+          panel["turnos_completados"]["n_completados"] == 0)
+
+    # (b) Entregó borrador con una cita SIN respaldo: completó el turno, pero falló el caso.
+    mal = _case(rid2, citas=1, sin_respaldo=1, reached=True, closing=True, abstiene=False)
+    panel2 = harness.build_quality_panel([mal])
+    check("M-2 · un caso de RIESGO que entregó con cita SIN respaldo: turno completado 1/1 "
+          "pero negativa correcta 0/1 (la etiqueta vieja habría dicho «éxito 100%»)",
+          panel2["turnos_completados"]["n_completados"] == 1
+          and panel2["negativa_correcta"]["n_negativa_correcta"] == 0)
+
+    # (c) Se abstuvo pero se le escapó una cita concreta bajo jurisdicción desconocida: la
+    # abstención no lo salva.
+    fugado = _case(rid, reached=False, closing=False, abstiene=True,
+                   draft="No puedo redactar, aunque con fundamento en el artículo 90 de la "
+                         "Ley 1437 de 2011 el término estaría vencido.")
+    panel3 = harness.build_quality_panel([fugado])
+    check("M-2 · abstención CON fuga no cuenta como negativa correcta",
+          panel3["negativa_correcta"]["n_negativa_correcta"] == 0
+          and panel3["fuga_jurisdiccion"]["n_con_fuga"] == 1)
+
+    # (d) Un caso normal (no de riesgo) no entra en el denominador.
+    mixto = harness.build_quality_panel([bien, _case("caducidad-reparacion-directa")])
+    check("M-2 · solo los casos de RIESGO entran en el denominador (el normal no)",
+          mixto["negativa_correcta"]["n_casos_riesgo"] == 1 and mixto["n"] == 2)
+
+
 def main() -> int:
     false_block_checks()
     abstention_checks()
     panel_checks()
+    negativa_correcta_checks()
     precision_respaldo_checks()
     precision_clamp_checks()
     jurisdiction_leak_persisted_checks()

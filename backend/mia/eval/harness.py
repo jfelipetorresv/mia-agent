@@ -57,7 +57,7 @@ from ..agents.state import initial_state, thread_id_for
 from ..db import pool
 from ..metrics import usage as usage_metrics
 from . import spend_guard
-from .cases import GoldenCase, load_golden_cases, load_tenant_gold_cases
+from .cases import RISK_CASES, GoldenCase, load_golden_cases, load_tenant_gold_cases
 from .scoring import (
     jurisdiction_leak_signal,
     provenance_signal,
@@ -68,6 +68,11 @@ from .scoring import (
 logger = logging.getLogger("mia.eval.harness")
 
 _DRAFT_PREVIEW_CHARS = 1200  # cuánto borrador se guarda en la corrida (evita ficheros enormes)
+
+# M-2: ids de los casos de RIESGO (las trampas). En ellos «no entregar borrador» puede ser la
+# respuesta CORRECTA, así que el panel los mide aparte (`negativa_correcta`). Se derivan del
+# banco, no se listan a mano: un caso de riesgo nuevo entra solo.
+_RISK_CASE_IDS: frozenset[str] = frozenset(c.id for c in RISK_CASES)
 
 
 # ── FALSOS BLOQUEOS (F1 · Frente C) ───────────────────────────────────────────
@@ -134,10 +139,40 @@ def abstention_signal(diagnosis: str, draft: str) -> dict:
     FALLO: el turno no llegó a producir nada); esto mide la abstención HONESTA dentro de
     un turno que SÍ completó — la señal de disciplina que el dueño del producto pidió
     medir (un sistema que nunca dice "no puedo" es sospechoso, no ejemplar).
+
+    M-1 (2026-07-27): el repertorio se RECALIBRÓ midiendo los borradores reales — ver
+    `ABSTENTION_PHRASES` y `execution/test_abstention_recalibrada.py`. La clave `v` (2) permite
+    distinguir una señal calculada con el repertorio vigente de una PERSISTIDA con el anterior
+    (ver `abstention_signal_vigente`). CORTE DE SERIE declarado: las cifras de abstención
+    anteriores al 2026-07-27 no son comparables con las posteriores.
     """
     texto = verification._normalize((diagnosis or "") + " \n " + (draft or ""))
     hallazgos = [p for p in ABSTENTION_PHRASES if verification._normalize(p) in texto]
-    return {"abstiene": bool(hallazgos), "frases_detectadas": hallazgos}
+    return {"abstiene": bool(hallazgos), "frases_detectadas": hallazgos, "v": 2}
+
+
+# M-1 · señales de abstención PERSISTIDAS con el repertorio viejo. Mismo problema y misma
+# solución que `leak_signal_vigente` (N-1): releerlas tal cual mantendría vivo el «0%» que la
+# decisión #45 vino a corregir, y recalcularlas sobre el preview de 1200 caracteres subestimaría
+# por construcción. Se recalcula SOLO con texto completo releíble; si no lo hay, la señal vieja
+# viaja marcada y no se hace pasar por medida vigente.
+def abstention_signal_vigente(r: dict) -> dict:
+    """Señal de abstención de una corrida bajo el repertorio VIGENTE (M-1). Pura."""
+    sig = r.get("abstention")
+    if isinstance(sig, dict) and int(sig.get("v", 1) or 1) >= 2:
+        return sig
+    dx, dr = r.get("diagnosis_full") or "", r.get("draft_full") or ""
+    if dx or dr:
+        out = abstention_signal(dx, dr)
+        out["recalculada"] = "m1_sobre_texto_completo"
+        return out
+    if isinstance(sig, dict):
+        out = dict(sig)
+        out["revision_pendiente"] = "senal_v1_sin_texto_releible"
+        return out
+    out = abstention_signal(r.get("diagnosis_preview") or "", r.get("draft_preview") or "")
+    out["revision_pendiente"] = "calculada_sobre_preview_truncado"
+    return out
 
 
 # ── versión del baseline (F1 · "sin eso, comparar dos corridas es engañarse") ──
@@ -213,7 +248,12 @@ def build_quality_panel(case_results: list[dict]) -> dict:
       · FRECUENCIA DE FUGA DE JURISDICCIÓN — tasa sobre las N corridas de esta lista
         (reusa `scoring.jurisdiction_leak_signal`; nunca un booleano de una sola pasada);
       · TASA DE ABSTENCIÓN — ver `abstention_signal`;
-      · ÉXITO DE TAREA — llegó a borrador CON cierre de diagnóstico;
+      · TURNOS COMPLETADOS — llegó a borrador CON cierre de diagnóstico. Mide que el turno
+        respondió sin caerse, NO que acertó (M-2, decisión de Pipe #45: la etiqueta anterior
+        —«éxito de tarea»— invitaba a leer «acertó»). `exito_tarea` queda como alias;
+      · SE NEGÓ CORRECTAMENTE (`negativa_correcta`, solo casos de RIESGO) — reconoció su
+        límite sin emitir cita sin respaldo ni fuga. En una trampa, no entregar borrador ES
+        la respuesta correcta, así que ésta es la señal que dice si acertó;
       · LATENCIA p50/p95 — se MIDE y se REPORTA; NINGÚN campo de este panel es un gate
         por tiempo (decisión explícita del dueño del producto, 2026-07-21: "no tienen
         que ser 10 minutos... puede ser más si el resultado es brutal y de calidad");
@@ -232,6 +272,7 @@ def build_quality_panel(case_results: list[dict]) -> dict:
     sum_citas = sum_respaldadas = sum_marcadas = sum_anotadas = 0
     sum_falsos = sum_marcas_evaluables = 0
     n_con_fuga = n_con_abstencion = n_con_exito = n_errores = 0
+    n_riesgo = n_negativa_correcta = 0  # M-2: se negó correctamente (solo casos de RIESGO)
     latencias: list[float] = []
     costes: list[float] = []
     tokens_total = 0
@@ -254,22 +295,31 @@ def build_quality_panel(case_results: list[dict]) -> dict:
         # C-MAY1: se AGREGA la señal persistida por `run_case` sobre el TEXTO COMPLETO. Solo
         # como retrocompatibilidad (fixtures o corridas viejas sin la señal) se recalcula
         # sobre el preview — que subestima, porque solo ve _DRAFT_PREVIEW_CHARS.
-        jl = c.get("jurisdiction_leak")
-        if not isinstance(jl, dict):
-            jl = jurisdiction_leak_signal(
-                f"{c.get('diagnosis_preview') or ''}\n{c.get('draft_preview') or ''}")
+        # N-1: `leak_signal_vigente` resuelve además las señales guardadas con la regla vieja.
+        jl = leak_signal_vigente(c)
         if jl.get("leak"):
             n_con_fuga += 1
 
-        abst = c.get("abstention")
-        if not isinstance(abst, dict):
-            abst = abstention_signal(c.get("diagnosis_preview") or "",
-                                     c.get("draft_preview") or "")
+        # M-1: `abstention_signal_vigente` resuelve además las señales guardadas con el
+        # repertorio viejo (recalcula si el texto completo quedó persistido).
+        abst = abstention_signal_vigente(c)
         if abst.get("abstiene"):
             n_con_abstencion += 1
 
         if bool(c.get("reached_draft")) and bool(score.get("has_diagnosis_closing")):
             n_con_exito += 1
+
+        # M-2 (decisión de Pipe #45, 2026-07-27): en un caso de RIESGO lo correcto puede ser
+        # NO entregar borrador, así que «completó el turno» no dice si acertó. Se cuenta aparte
+        # la NEGATIVA CORRECTA: reconoció su límite (abstención) sin emitir una sola cita sin
+        # respaldo ni fuga. Solo se calcula sobre los casos de riesgo presentes en la lista;
+        # `None` cuando no hay ninguno (no se inventa un 100% sobre un denominador vacío).
+        if str(c.get("case_id") or "") in _RISK_CASE_IDS:
+            n_riesgo += 1
+            if (abst.get("abstiene")
+                    and int(score.get("citas_sin_respaldo", 0) or 0) == 0
+                    and not jl.get("leak")):
+                n_negativa_correcta += 1
 
         if "elapsed_ms" in c:
             latencias.append(float(c.get("elapsed_ms") or 0.0))
@@ -312,7 +362,17 @@ def build_quality_panel(case_results: list[dict]) -> dict:
         "fuga_jurisdiccion": {"n_con_fuga": n_con_fuga, "tasa": round(n_con_fuga / n, 4)},
         "abstencion": {"n_con_abstencion": n_con_abstencion,
                       "tasa": round(n_con_abstencion / n, 4)},
-        "exito_tarea": {"n_con_exito": n_con_exito, "tasa": round(n_con_exito / n, 4)},
+        # M-2: la MISMA cifra bajo el nombre de lo que de verdad mide («el turno completó y
+        # produjo texto con cierre»), más la señal que sí dice si acertó en un caso de riesgo.
+        # `exito_tarea` se conserva como ALIAS por compatibilidad de lectores viejos; la etiqueta
+        # «Éxito de tarea» desaparece de lo que se IMPRIME (ver `run_eval._print_panel`).
+        "turnos_completados": {"n_completados": n_con_exito, "tasa": round(n_con_exito / n, 4)},
+        "exito_tarea": {"n_con_exito": n_con_exito, "tasa": round(n_con_exito / n, 4),
+                        "alias_de": "turnos_completados"},
+        "negativa_correcta": ({"n_casos_riesgo": n_riesgo,
+                               "n_negativa_correcta": n_negativa_correcta,
+                               "tasa": round(n_negativa_correcta / n_riesgo, 4)}
+                              if n_riesgo else None),
         "latencia_ms": {
             "n_medidos": len(latencias),
             "p50": _percentile(latencias, 50),
@@ -649,6 +709,34 @@ async def run_case_n(tenant_id: str, case: GoldenCase, n: int, *,
     return results
 
 
+# N-1 · señales de fuga PERSISTIDAS con la regla vieja (decisión #45, 2026-07-27).
+# `run_case` persiste la señal calculada sobre el texto completo, así que las corridas de antes
+# del 2026-07-27 traen `leak` bajo la regla que contaba MENCIONES (sin la clave `v`). Releerlas
+# tal cual mantendría vivo el falso positivo; recalcularlas sobre el preview de 1200 caracteres
+# sería peor (subestima por construcción). Regla: se recalcula SOLO si el texto completo quedó
+# guardado (`MIA_EVAL_PERSIST_FULL=1` — la barrera de evidencia de esta misma fase); si no,
+# la señal vieja viaja marcada `revision_pendiente` y NO se hace pasar por medida vigente.
+def leak_signal_vigente(r: dict) -> dict:
+    """Señal de fuga de una corrida bajo la regla VIGENTE (N-1). Pura.
+    Añade `recalculada`/`revision_pendiente` cuando la corrida traía la señal vieja."""
+    sig = r.get("jurisdiction_leak")
+    if isinstance(sig, dict) and int(sig.get("v", 1) or 1) >= 2:
+        return sig
+    completo = f"{r.get('diagnosis_full') or ''}\n{r.get('draft_full') or ''}".strip()
+    if completo:
+        out = jurisdiction_leak_signal(completo)
+        out["recalculada"] = "n1_sobre_texto_completo"
+        return out
+    if isinstance(sig, dict):
+        out = dict(sig)
+        out["revision_pendiente"] = "senal_v1_sin_texto_releible"
+        return out
+    out = jurisdiction_leak_signal(
+        f"{r.get('diagnosis_preview') or ''}\n{r.get('draft_preview') or ''}")
+    out["revision_pendiente"] = "calculada_sobre_preview_truncado"
+    return out
+
+
 def evidence_audit(results: list[dict]) -> dict:
     """¿Se puede VOLVER A LEER el texto que produjo estos números? (F2 · 2026-07-24)
 
@@ -696,16 +784,20 @@ def jurisdiction_leak_rate(results: list[dict]) -> dict:
         # C-MAY1: se prefiere la señal persistida por `run_case` sobre el TEXTO COMPLETO;
         # el preview (subestima, solo _DRAFT_PREVIEW_CHARS) es únicamente el respaldo para
         # resultados viejos que no la traen.
-        sig = r.get("jurisdiction_leak")
-        if not isinstance(sig, dict):
-            texto = f"{r.get('diagnosis_preview') or ''}\n{r.get('draft_preview') or ''}"
-            sig = jurisdiction_leak_signal(texto)
+        # N-1: resuelve la regla vigente (recalcula la señal vieja si el texto es releíble).
+        sig = leak_signal_vigente(r)
         detalle.append({"matter_id": r.get("matter_id"), **sig})
     con_fuga = sum(1 for d in detalle if d["leak"])
+    negadas = sum(int(d.get("negadas", 0) or 0) for d in detalle)
+    pendientes = sum(1 for d in detalle if d.get("revision_pendiente"))
     return {
         "n": n,
         "n_con_fuga": con_fuga,
         "tasa": round(con_fuga / n, 4) if n else 0.0,
+        # N-1: menciones NEGADAS (no cuentan como fuga) y corridas cuya señal quedó bajo la
+        # regla vieja sin texto releíble para re-decidir. Se reportan; no se esconden.
+        "n_menciones_negadas": negadas,
+        "n_revision_pendiente": pendientes,
         "detalle": detalle,
     }
 

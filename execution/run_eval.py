@@ -184,11 +184,31 @@ def _print_panel(panel: dict) -> None:
     print(f"  Quién detectó la falta de respaldo: guardián determinista "
           f"{det.get('tasa_guardian_determinista', 0.0):.0%} de las citas · modelo obediente "
           f"(se marcó solo) {det.get('tasa_modelo_obediente', 0.0):.0%} de las citas")
+    # M-2 (decisión de Pipe #45): «Éxito de tarea» inducía a leer «acertó» donde solo decía
+    # «no se cayó». Se imprime lo que mide —turnos completados— y, cuando la corrida incluye
+    # casos de RIESGO, al lado la señal que sí dice si acertó: se negó correctamente.
+    completados = panel.get("turnos_completados") or {
+        "n_completados": exito.get("n_con_exito", 0), "tasa": exito.get("tasa", 0.0)}
     print(f"  Fuga de jurisdicción: {fuga.get('n_con_fuga', 0)}/{n} corridas "
           f"({fuga.get('tasa', 0.0):.0%}) · Abstención honesta ('no puedo respaldar esto'): "
           f"{abst.get('n_con_abstencion', 0)}/{n} ({abst.get('tasa', 0.0):.0%}) · "
-          f"Éxito de tarea (llegó a borrador con cierre): {exito.get('n_con_exito', 0)}/{n} "
-          f"({exito.get('tasa', 0.0):.0%})")
+          f"Turnos completados (respondió sin caerse, con cierre): "
+          f"{completados.get('n_completados', 0)}/{n} ({completados.get('tasa', 0.0):.0%})")
+    neg = panel.get("negativa_correcta")
+    if isinstance(neg, dict) and neg.get("n_casos_riesgo"):
+        print(f"  Se negó correctamente (casos de RIESGO — reconoció el límite sin citas sin "
+              f"respaldo ni fuga): {neg.get('n_negativa_correcta', 0)}/"
+              f"{neg.get('n_casos_riesgo', 0)} ({neg.get('tasa', 0.0):.0%}) — en una trampa, "
+              f"NO entregar borrador puede ser la respuesta correcta; ésta es la señal que "
+              f"dice si acertó, no la de arriba")
+    # N-1: menciones negadas y señales viejas sin texto releíble, si las hubo.
+    if fuga.get("n_menciones_negadas"):
+        print(f"  (N-1) menciones de una norma acompañadas de negación explícita — NO cuentan "
+              f"como fuga: {fuga.get('n_menciones_negadas')}")
+    if fuga.get("n_revision_pendiente"):
+        print(f"  AVISO (N-1) — {fuga.get('n_revision_pendiente')} corrida(s) traen la señal de "
+              f"fuga con la regla ANTERIOR y sin texto releíble para re-decidir: su cifra no es "
+              f"comparable. Correr con MIA_EVAL_PERSIST_FULL=1 para que lo sea.")
     if lat.get("n_medidos"):
         print(f"  Latencia (informativa, NUNCA un gate): p50={lat.get('p50', 0.0)/1000:.1f}s · "
               f"p95={lat.get('p95', 0.0)/1000:.1f}s · rango "
