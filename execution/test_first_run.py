@@ -62,6 +62,10 @@ def run_first_run(app_dir: Path, pg_bin: Path, pg_data: Path, pg_port: int) -> s
          "--pg-bin", str(pg_bin), "--pg-data", str(pg_data),
          "--pg-port", str(pg_port), "--app-dir", str(app_dir)],
         cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=600,
+        # first_run fija su stdout en UTF-8 (la cascara lo lee con UTF-8
+        # estricto). Sin esto el test lo decodifica con el locale de Windows
+        # y los acentos del mensaje en llano llegan corruptos.
+        encoding="utf-8", errors="replace",
     )
 
 

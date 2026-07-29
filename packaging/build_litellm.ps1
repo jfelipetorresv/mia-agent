@@ -110,14 +110,21 @@ Write-Host "Spec:        $SpecFile" -ForegroundColor Cyan
 # build/ completos: ambos son compartidos con mia-backend.spec (E1) y borrarlos
 # enteros destruiria un build del backend ya compilado (archivos por ejecutor
 # disjuntos, plan F2).
-if (Test-Path $OutDir) {
-    Write-Host "Limpiando $OutDir previo..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $OutDir
+# Borrado robusto (sesion 52): ver build_backend.ps1. El arbol onedir de
+# PyInstaller supera MAX_PATH y Remove-Item aborta el build entero.
+function Remove-TreeRobusto([string]$path) {
+    if (-not (Test-Path $path)) { return }
+    Write-Host "Limpiando $path ..." -ForegroundColor Yellow
+    $empty = Join-Path ([System.IO.Path]::GetTempPath()) 'mia_empty_dir'
+    if (-not (Test-Path $empty)) { New-Item -ItemType Directory -Path $empty | Out-Null }
+    $null = robocopy $empty $path /MIR /NFL /NDL /NJH /NJS /NP /R:1 /W:1
+    $global:LASTEXITCODE = 0
+    Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
+    if (Test-Path $path) { throw "No se pudo limpiar $path (queda contenido). Cierra procesos que lo esten usando." }
 }
-if (Test-Path $WorkSubDir) {
-    Write-Host "Limpiando $WorkSubDir previo..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $WorkSubDir
-}
+
+Remove-TreeRobusto $OutDir
+Remove-TreeRobusto $WorkSubDir
 
 $start = Get-Date
 # Igual que build_backend.ps1: PyInstaller escribe su log INFO/WARNING a

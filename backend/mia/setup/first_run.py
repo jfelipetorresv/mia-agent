@@ -285,6 +285,18 @@ def stop_own_postgres(pg_bin: Path, pg_data: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # La cascara Tauri lee este stdout con fs::read_to_string (UTF-8 estricto)
+    # para mostrarle al abogado la ULTIMA LINEA como motivo del fallo. En
+    # Windows, sin esto, Python decide la codificacion segun el locale de la
+    # maquina (cp1252 en un Windows en espanol): los acentos del mensaje
+    # saldrian en bytes que Rust no puede leer y el abogado se quedaria sin
+    # motivo. Se fija explicitamente para no depender de la maquina destino.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass  # fail-soft: nunca impedir el primer arranque por esto
+
     parser = argparse.ArgumentParser(prog="mia-backend --first-run")
     parser.add_argument("--pg-bin", required=True)
     parser.add_argument("--pg-data", required=True)

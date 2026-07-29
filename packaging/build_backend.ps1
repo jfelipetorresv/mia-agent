@@ -68,14 +68,30 @@ Write-Host "Repo:        $RepoRoot" -ForegroundColor Cyan
 Write-Host "PyInstaller: $VenvPyInstaller" -ForegroundColor Cyan
 Write-Host "Spec:        $SpecFile" -ForegroundColor Cyan
 
-if (Test-Path $DistPath) {
-    Write-Host "Limpiando dist/ previo..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $DistPath
+# Borrado robusto (sesion 52): el arbol de PyInstaller contiene rutas que
+# superan MAX_PATH (p.ej. _internal\PIL\...), y ahi Remove-Item falla con
+# "No se puede encontrar una parte de la ruta de acceso" y ABORTA el build
+# entero por $ErrorActionPreference='Stop'. robocopy /MIR contra una carpeta
+# vacia si maneja rutas largas; se usa como vaciado previo y luego se quita
+# el directorio ya vacio.
+function Remove-TreeRobusto([string]$path) {
+    if (-not (Test-Path $path)) { return }
+    Write-Host "Limpiando $path ..." -ForegroundColor Yellow
+    $empty = Join-Path ([System.IO.Path]::GetTempPath()) 'mia_empty_dir'
+    if (-not (Test-Path $empty)) { New-Item -ItemType Directory -Path $empty | Out-Null }
+    $null = robocopy $empty $path /MIR /NFL /NDL /NJH /NJS /NP /R:1 /W:1
+    $global:LASTEXITCODE = 0
+    Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
+    if (Test-Path $path) { throw "No se pudo limpiar $path (queda contenido). Cierra procesos que lo esten usando." }
 }
-if (Test-Path $WorkPath) {
-    Write-Host "Limpiando build/ previo..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $WorkPath
-}
+
+# Se limpia SOLO lo que este build produce (sesion 52). $DistPath es
+# packaging/dist COMPLETO, compartido con los payloads de litellm y frontend:
+# borrarlo entero dejaba el arbol inservible para `build_installer -SkipPayloads`
+# (los otros dos payloads desaparecian sin aviso). build_litellm y build_frontend
+# ya limpian solo su subcarpeta; este ahora hace lo mismo.
+Remove-TreeRobusto (Join-Path $DistPath 'mia-backend')
+Remove-TreeRobusto (Join-Path $WorkPath 'mia-backend')
 
 $start = Get-Date
 # PyInstaller escribe su log INFO/WARNING a stderr. En PowerShell 5.1, con
