@@ -640,7 +640,17 @@ def substantive_score(
 # El match es por inclusión NORMALIZADA (minúsculas, sin tildes, separadores colapsados), la
 # misma normalización que usa la cobertura de citas: así "otrosí 3" casa con "Otrosi 3" y con
 # "otrosi  3". No hay umbral difuso ni keywords parciales — un marcador aparece o no aparece.
-FLAG_MISSING_BURIED_FACT = "no_leyo_fragmento_enterrado"
+#
+# LÍMITE DECLARADO (la regla del muro aplicada a esta métrica). Que el dato APAREZCA prueba que
+# se leyó. Que NO aparezca tiene DOS explicaciones posibles y esta señal no las distingue:
+#   (a) el fragmento nunca se recuperó — problema de alcance de lectura;
+#   (b) se recuperó y la respuesta no lo usó — problema de redacción o de criterio.
+# Por eso la bandera se llama «ausente en la respuesta» y no «no lo leyó»: para separarlas hay
+# que mirar qué fragmentos entraron al turno (el diagnóstico los enumera con su [doc n]). En la
+# primera corrida en vivo (sesión 52) resultó ser (a) — el diagnóstico enumeró los documentos
+# vistos y ni el acta 87 ni la comunicación 65 estaban—, pero eso se comprobó leyendo, no lo
+# afirma esta señal.
+FLAG_MISSING_BURIED_FACT = "dato_enterrado_ausente_en_la_respuesta"
 
 
 def recall_markers_signal(diagnosis: str, draft: str, markers: tuple[str, ...] | list[str]) -> dict:

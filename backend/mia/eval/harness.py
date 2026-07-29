@@ -1010,7 +1010,19 @@ def compare_agentic_reports(off_report: dict, on_report: dict) -> dict:
                    if aplica_rec else [])
 
         delta_tokens = n_tokens - o_tokens
-        if not aplica_rec:
+        # PRIMERO de todo: si el bucle agéntico NO corrió, esto NO es una comparación entre el
+        # camino clásico y el agéntico — son dos corridas del MISMO camino clásico, y su
+        # diferencia es ruido del modelo. Cualquier veredicto de mejor/igual/peor sería una
+        # etiqueta engañosa (la corrida real de la sesión 52 lo produjo: dijo «IGUAL, encontró
+        # los mismos datos leyendo menos» cuando la lectura agéntica no se había ejecutado ni
+        # una vez, porque el motor de la suscripción no admite herramientas).
+        if trace is None:
+            veredicto = "no_concluyente"
+            llano = ("La lectura agéntica NO corrió en este caso, así que estas dos corridas son "
+                     "del mismo camino clásico y su diferencia es ruido: no decide nada. El "
+                     "motor de la política de modelo activa no admite herramientas (o el tope "
+                     "de ampliaciones está en 0).")
+        elif not aplica_rec:
             veredicto = "solo_coste"
             llano = ("Este caso no declara datos enterrados que verificar, así que solo se "
                      "compara el coste.")
@@ -1048,11 +1060,14 @@ def compare_agentic_reports(off_report: dict, on_report: dict) -> dict:
             "lectura_llana": llano,
         })
 
-    con_recall = [c for c in per_case if c["recall_aplica"]]
+    # Solo los casos donde el bucle agéntico CORRIÓ y hay datos enterrados que verificar pueden
+    # sostener un veredicto: los demás no comparan los dos caminos (ver arriba).
+    con_recall = [c for c in per_case if c["recall_aplica"] and c["corrio_agentic"]]
+    n_corrio = sum(1 for c in per_case if c["corrio_agentic"])
     return {
         "cases": per_case,
         "n_total": len(per_case),
-        "n_corrio_agentic": sum(1 for c in per_case if c["corrio_agentic"]),
+        "n_corrio_agentic": n_corrio,
         "only_off": sorted(cid for cid in off_idx if cid not in on_idx),
         "only_on": sorted(cid for cid in on_idx if cid not in off_idx),
         # Fail-safe deliberado (mismo criterio que `compare.py`): UN solo caso que pierda un dato
@@ -1060,7 +1075,8 @@ def compare_agentic_reports(off_report: dict, on_report: dict) -> dict:
         "n_con_recall": len(con_recall),
         "n_perdio_dato": sum(1 for c in con_recall if c["recall_perdidos"]),
         "veredicto_agregado": (
-            "sin_datos_que_verificar" if not con_recall
+            "no_concluyente" if per_case and n_corrio == 0
+            else "sin_datos_que_verificar" if not con_recall
             else "peor" if any(c["recall_perdidos"] for c in con_recall)
             else "mejor" if any(c["recall_ganados"] for c in con_recall)
             else "igual"

@@ -143,8 +143,10 @@ def main() -> int:  # noqa: C901 — un gate lineal se lee mejor entero
     s_falta = recall_markers_signal("diagnóstico", f"Solo menciono {markers[0]}.", markers)
     check("REPRUEBA cuando falta un dato", not s_falta["ok"])
     check("nombra el dato que falta", markers[1] in s_falta["faltantes"])
-    check("marca la bandera de fragmento no leído",
+    check("marca la bandera de dato ausente en la respuesta",
           s_falta["flags"] == [FLAG_MISSING_BURIED_FACT])
+    check("la bandera NO afirma que no lo leyó (límite declarado de la señal)",
+          "no_leyo" not in FLAG_MISSING_BURIED_FACT, FLAG_MISSING_BURIED_FACT)
     check("la cobertura refleja lo que falta", 0.0 < (s_falta["cobertura"] or 0) < 1.0,
           f"cobertura={s_falta['cobertura']}")
 
@@ -164,8 +166,8 @@ def main() -> int:  # noqa: C901 — un gate lineal se lee mejor entero
 
     print("\n5 · el comparador cruza AHORRO con RECUPERACIÓN (el corazón de N-2)")
 
-    def _rep(cobertura_encontrados: list[str], tokens: int) -> dict:
-        return {"cases": [{
+    def _rep(cobertura_encontrados: list[str], tokens: int, *, corrio: bool = True) -> dict:
+        caso = {
             "case_id": CASE_ID,
             "score": {"total_tokens": tokens},
             "recall_enterrado": {
@@ -174,8 +176,10 @@ def main() -> int:  # noqa: C901 — un gate lineal se lee mejor entero
                 "encontrados": cobertura_encontrados,
                 "faltantes": [m for m in markers if m not in cobertura_encontrados],
             },
-            "agentic_reading": {"stop": "sin_mas_que_leer", "expansions": 2},
-        }]}
+        }
+        if corrio:
+            caso["agentic_reading"] = {"stop": "sin_mas_que_leer", "expansions": 2}
+        return {"cases": [caso]}
 
     # (a) ahorra tokens pero PIERDE un dato → PEOR, no mejora.
     peor = compare_agentic_reports(_rep(list(markers), 100_000),
@@ -205,14 +209,36 @@ def main() -> int:  # noqa: C901 — un gate lineal se lee mejor entero
           gana["cases"][0]["veredicto"] == "mejor" and gana["cases"][0]["delta_tokens"] > 0)
     check("el veredicto agregado recoge la mejora", gana["veredicto_agregado"] == "mejor")
 
-    # (d) sin marcadores: NO se inventa veredicto de recuperación.
+    # (d) EL BUCLE NO CORRIÓ → no concluyente. Esto pasó DE VERDAD en la primera corrida en vivo
+    # (sesión 52): el motor de la suscripción sale por el CLI y no admite herramientas, así que
+    # las dos pasadas fueron del MISMO camino clásico. El comparador daba «IGUAL — encontró los
+    # mismos datos leyendo menos», que es una etiqueta engañosa sobre ruido del modelo.
+    no_corrio = compare_agentic_reports(_rep(list(markers), 122_941, corrio=False),
+                                        _rep(list(markers), 116_314, corrio=False))
+    cnc = no_corrio["cases"][0]
+    check("si la lectura agéntica NO corrió, el veredicto por caso es NO CONCLUYENTE",
+          cnc["veredicto"] == "no_concluyente", f"veredicto={cnc['veredicto']}")
+    check("y el agregado también (no se sostiene un veredicto sin haber medido)",
+          no_corrio["veredicto_agregado"] == "no_concluyente")
+    check("la explicación dice que la diferencia de tokens es ruido",
+          "ruido" in cnc["lectura_llana"].lower())
+    check("no cuenta como caso con recuperación verificada (no corrió el bucle)",
+          no_corrio["n_con_recall"] == 0)
+    check("run_eval.py imprime el veredicto NO CONCLUYENTE en llano",
+          "NO CONCLUYENTE" in run_eval_src)
+
+    # (e) sin marcadores: NO se inventa veredicto de recuperación.
+    # El bucle SÍ corrió (si no, manda «no concluyente», que es la regla de más arriba), pero el
+    # caso no declara datos enterrados: entonces solo se puede hablar de coste, y se dice.
+    _traza = {"stop": "sin_mas_que_leer", "expansions": 1}
     sin = compare_agentic_reports(
-        {"cases": [{"case_id": "x", "score": {"total_tokens": 10}}]},
-        {"cases": [{"case_id": "x", "score": {"total_tokens": 5}}]},
+        {"cases": [{"case_id": "x", "score": {"total_tokens": 10}, "agentic_reading": _traza}]},
+        {"cases": [{"case_id": "x", "score": {"total_tokens": 5}, "agentic_reading": _traza}]},
     )
     check("un caso sin datos enterrados NO recibe veredicto de recuperación inventado",
           sin["cases"][0]["veredicto"] == "solo_coste"
-          and sin["veredicto_agregado"] == "sin_datos_que_verificar")
+          and sin["veredicto_agregado"] == "sin_datos_que_verificar",
+          f"veredicto={sin['cases'][0]['veredicto']} agregado={sin['veredicto_agregado']}")
 
     print("\n6 · sintético y agnóstico de jurisdicción")
     check("declarado SINTÉTICO (candado de datos reales)", caso.synthetic is True)

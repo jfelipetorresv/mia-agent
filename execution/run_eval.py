@@ -471,7 +471,13 @@ def _print_agentic_compare(result: dict) -> None:
         else:
             print(f"      {c.get('lectura_llana', '')}")
 
-    if result.get("n_con_recall"):
+    if result.get("veredicto_agregado") == "no_concluyente":
+        print("\n  VEREDICTO: NO CONCLUYENTE — la lectura agéntica no corrió en ninguno de los "
+              "casos, así que esta comparación NO decide si debe quedar encendida. Con el motor "
+              "de la suscripción (aliases 'cli-*', que salen por subproceso al CLI) no hay "
+              "herramientas y la lectura agéntica está estructuralmente apagada: para decidir "
+              "N-2 hay que correr esto bajo una política cuyo motor las admita.")
+    elif result.get("n_con_recall"):
         print(f"\n  VEREDICTO ({result['n_con_recall']} caso(s) con datos enterrados que "
               f"verificar): {result['veredicto_agregado'].upper()}")
         if result["veredicto_agregado"] == "peor":
