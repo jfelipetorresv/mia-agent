@@ -261,9 +261,14 @@ def _print_summary(report: dict) -> None:
 
 def _all_cases() -> list:
     """Casos registrados que `run_eval.py` puede correr por id: los canónicos + los de
-    riesgo (Frente E). `load_tenant_gold_cases` (Banco de oro confirmado) NO entra aquí:
-    exige un tenant real, y este comando trabaja sobre el despacho EFÍMERO de prueba."""
-    return list(cases_mod.load_golden_cases()) + list(cases_mod.RISK_CASES)
+    riesgo (Frente E) + los de expediente GRANDE (N-2). `load_tenant_gold_cases` (Banco de oro
+    confirmado) NO entra aquí: exige un tenant real, y este comando trabaja sobre el despacho
+    EFÍMERO de prueba.
+
+    `load_golden_cases()` YA incluye los de riesgo desde el 2026-07-27, así que sumarlos otra
+    vez los duplicaba en la lista de disponibles. Los GRANDES sí van aparte a propósito: no
+    están en el examen por defecto (ver `cases.LARGE_CASES`)."""
+    return list(cases_mod.load_golden_cases()) + list(cases_mod.load_large_cases())
 
 
 def _find_case(case_id: str):
@@ -278,9 +283,15 @@ def _print_case_list() -> None:
     print("Casos canónicos (mia.eval.cases.GOLDEN_CASES — examen 'antes/después' de siempre):")
     for c in cases_mod.load_golden_cases():
         print(f"  · {c.id} — {c.title}")
-    print("\nCasos de RIESGO (mia.eval.cases.RISK_CASES — Frente E, se corren por id):")
+    print("\nCasos de RIESGO (mia.eval.cases.RISK_CASES — Frente E; ya vienen incluidos arriba):")
     for c in cases_mod.RISK_CASES:
         print(f"  · {c.id} — {c.title}")
+    print("\nCasos de EXPEDIENTE GRANDE (mia.eval.cases.LARGE_CASES — FUERA del examen por "
+          "defecto: cuestan cientos de embeddings y cambiarían la composición del examen. "
+          "Se corren a propósito, por id, para decidir si la lectura agéntica queda encendida):")
+    for c in cases_mod.load_large_cases():
+        n_frag = sum(len(d.chunks) for d in c.documents)
+        print(f"  · {c.id} — {c.title} ({len(c.documents)} documentos, {n_frag} fragmentos)")
 
 
 def _load_report(run_id: str) -> dict:
@@ -452,6 +463,24 @@ def _print_agentic_compare(result: dict) -> None:
         print(f"  · {c['case_id']}: tokens off={c['tokens_off']} on={c['tokens_on']} "
               f"(Δ={c['delta_tokens']:+d}) · ampliaciones={c['ampliaciones']} · "
               f"motivo_parada={motivo}")
+        # Segundo eje: ¿encontró los datos enterrados? Sin esto, un ahorro de tokens no se
+        # puede leer (leer menos es también la forma de perder el dato).
+        if c.get("recall_aplica"):
+            print(f"      datos enterrados encontrados: apagada {c['recall_off']:.0%} → "
+                  f"encendida {c['recall_on']:.0%} · {c['lectura_llana']}")
+        else:
+            print(f"      {c.get('lectura_llana', '')}")
+
+    if result.get("n_con_recall"):
+        print(f"\n  VEREDICTO ({result['n_con_recall']} caso(s) con datos enterrados que "
+              f"verificar): {result['veredicto_agregado'].upper()}")
+        if result["veredicto_agregado"] == "peor":
+            print("  Basta UN caso que pierda un dato del expediente para que la lectura "
+                  "agéntica NO deba quedar encendida por defecto, por mucho que ahorre.")
+    else:
+        print("\n  VEREDICTO: no se corrió ningún caso con datos enterrados que verificar, así "
+              "que esta comparación NO decide si la lectura agéntica debe quedar encendida. "
+              "Para eso hay que correr un caso de expediente GRANDE (--list para verlos).")
 
 
 def main() -> int:

@@ -236,11 +236,23 @@ def frente_e_offline_checks() -> None:
           len(cases_mod.RISK_CASES) >= 3 and all(c.synthetic for c in cases_mod.RISK_CASES))
     check("risk cases: cada uno trae id y mensaje",
           all(c.id and c.message for c in cases_mod.RISK_CASES))
-    check("risk cases: no se coló ninguno en el set canónico (load_golden_cases sigue en 3, "
-          "sin romper a execution/test_gold_cases_influence_eval.py que asume n==4)",
-          len(cases_mod.load_golden_cases()) == 3
-          and not (set(c.id for c in cases_mod.RISK_CASES)
-                   & set(c.id for c in cases_mod.load_golden_cases())))
+    # Este check cableaba `load_golden_cases() == 3`, y quedó en rojo el 2026-07-27 cuando la
+    # decisión #47.1 metió los casos de RIESGO al examen por defecto (3 → 9). Se actualiza al
+    # criterio vigente y se DERIVA el número, para que la próxima vez que cambie la composición
+    # el gate siga midiendo su propósito en vez de un total congelado. Lo que importa hoy:
+    # el examen es exactamente canónicos + riesgo, sin duplicados ni pérdidas, y el examen
+    # ANTERIOR sigue disponible por `include_risk=False` (así una serie vieja se puede repetir).
+    canonicos = cases_mod.load_golden_cases(include_risk=False)
+    con_riesgo = cases_mod.load_golden_cases()
+    ids_canonicos = {c.id for c in canonicos}
+    ids_riesgo = {c.id for c in cases_mod.RISK_CASES}
+    check("risk cases: el examen por defecto es exactamente canónicos + riesgo, sin duplicados",
+          {c.id for c in con_riesgo} == (ids_canonicos | ids_riesgo)
+          and len(con_riesgo) == len(canonicos) + len(cases_mod.RISK_CASES))
+    check("risk cases: ninguno se coló en el set canónico puro (include_risk=False)",
+          not (ids_riesgo & ids_canonicos))
+    check("risk cases: los de EXPEDIENTE GRANDE quedan FUERA del examen por defecto",
+          not ({c.id for c in cases_mod.load_large_cases()} & {c.id for c in con_riesgo}))
 
     fuga = next(c for c in cases_mod.RISK_CASES if c.id == "fuga-jurisdiccion-contrato-sin-pais")
     check("risk cases: el caso de fuga de jurisdicción tiene expediente VACÍO a propósito",

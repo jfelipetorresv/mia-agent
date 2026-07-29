@@ -630,6 +630,48 @@ def substantive_score(
     return result
 
 
+# ── RECUPERACIÓN de fragmentos ENTERRADOS (expediente grande · N-2) ───────────
+# Qué prueba y qué NO. Prueba UNA cosa, verificable sin juez: que el turno llegó a leer un
+# fragmento que estaba sellado lejos del inicio de un expediente voluminoso, porque el dato
+# reaparece literalmente en la respuesta. NO dice que el análisis sea correcto, ni que el dato
+# se haya usado bien: eso es criterio jurídico y aquí no se mide. Por eso vive aparte de
+# `substantive_score` y NUNCA se agrega con él (ver `cases.GoldenCase.recall_markers`).
+#
+# El match es por inclusión NORMALIZADA (minúsculas, sin tildes, separadores colapsados), la
+# misma normalización que usa la cobertura de citas: así "otrosí 3" casa con "Otrosi 3" y con
+# "otrosi  3". No hay umbral difuso ni keywords parciales — un marcador aparece o no aparece.
+FLAG_MISSING_BURIED_FACT = "no_leyo_fragmento_enterrado"
+
+
+def recall_markers_signal(diagnosis: str, draft: str, markers: tuple[str, ...] | list[str]) -> dict:
+    """¿La respuesta demuestra haber leído los fragmentos enterrados del expediente?
+
+    Devuelve siempre la misma forma (aunque no haya marcadores) para que el panel y el
+    comparador puedan leerla sin ramas especiales. Sin marcadores declarados: `aplica=False`
+    — y NO se reporta como 1.0, para que un caso sin marcadores no se lea como recuperación
+    perfecta (sería un PASS vacío, del que este proyecto ya tiene historia).
+    """
+    limpios = [str(m) for m in (markers or []) if str(m).strip()]
+    if not limpios:
+        return {
+            "aplica": False, "cobertura": None, "encontrados": [], "faltantes": [],
+            "n_marcadores": 0, "flags": [], "ok": True,
+        }
+
+    texto_norm = _normalize_cita(f"{diagnosis or ''}\n{draft or ''}")
+    encontrados = [m for m in limpios if _normalize_cita(m) in texto_norm]
+    faltantes = [m for m in limpios if m not in encontrados]
+    return {
+        "aplica": True,
+        "cobertura": round(len(encontrados) / len(limpios), 4),
+        "encontrados": encontrados,
+        "faltantes": faltantes,
+        "n_marcadores": len(limpios),
+        "flags": [FLAG_MISSING_BURIED_FACT] if faltantes else [],
+        "ok": not faltantes,
+    }
+
+
 # ── PROCEDENCIA: no atribuir al despacho lo que no llegó sellado ──────────────
 # Con el despacho VACÍO (cero documentos recuperados en el turno) no hay nada que el turno
 # haya "manejado antes" en el sentido de expediente o conocimiento propio: cualquier frase

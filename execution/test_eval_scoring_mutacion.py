@@ -332,8 +332,14 @@ def g_tres_grupos() -> None:
     riesgo = {c.id for c in cases_mod.RISK_CASES}
     hold = {c.id for c in holdout_mod.HOLDOUT_CASES}
 
-    check(f"G: el grupo (a) trae los canónicos ({len(visibles)}) y los de riesgo ({len(riesgo)})",
-          len(visibles) == 3 and len(riesgo) == 6)  # 3 originales + 3 sondas de entailment (F2)
+    # Cableaba `len(visibles) == 3`, y quedó en rojo el 2026-07-27 con la decisión #47.1 (los
+    # casos de riesgo entraron al examen: 3 → 9). Se DERIVA: el grupo (a) es canónicos + riesgo,
+    # y lo que el check protege es que ninguno de los dos sub-conjuntos se quede vacío por un
+    # error de carga, no un total congelado.
+    canonicos = {c.id for c in cases_mod.load_golden_cases(include_risk=False)}
+    check(f"G: el grupo (a) son los canónicos ({len(canonicos)}) MÁS los de riesgo "
+          f"({len(riesgo)}) = {len(visibles)}",
+          visibles == (canonicos | riesgo) and len(canonicos) >= 3 and len(riesgo) >= 3)
     check("G: CANDADO — `load_golden_cases()` (el cargador del bucle de arreglo) NO devuelve "
           "ni un solo caso del holdout", not (visibles & hold))
     check("G: los ids del holdout tampoco colisionan con los de riesgo", not (riesgo & hold))

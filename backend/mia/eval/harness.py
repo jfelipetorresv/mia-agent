@@ -61,6 +61,7 @@ from .cases import RISK_CASES, GoldenCase, load_golden_cases, load_tenant_gold_c
 from .scoring import (
     jurisdiction_leak_signal,
     provenance_signal,
+    recall_markers_signal,
     score_turn,
     substantive_score,
 )
@@ -646,6 +647,14 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
     if "agentic_reading" in md:
         result["agentic_reading"] = md["agentic_reading"]
 
+    # RECUPERACIÓN de fragmentos enterrados (expediente GRANDE · N-2): solo cuando el caso
+    # declara marcadores. Se calcula sobre el texto COMPLETO del turno (mismo motivo que la
+    # fuga: el preview de 1200 caracteres es para MOSTRAR, no para MEDIR — un dato enterrado
+    # que aparece en el minuto 9 del borrador caería fuera del preview y se leería como "no lo
+    # leyó"). Va aparte de `substantive`: mide lectura, no derecho.
+    if getattr(case, "recall_markers", ()):
+        result["recall_enterrado"] = recall_markers_signal(diagnosis, draft, case.recall_markers)
+
     # Hook sustantivo: si el caso trae rúbrica confirmada, calificar la respuesta nueva contra
     # ella. El juez corre FUERA de la ruta pura (callback); sin rúbrica, no se toca nada.
     if getattr(case, "rubric", None):
@@ -967,7 +976,14 @@ def compare_agentic_reports(off_report: dict, on_report: dict) -> dict:
     admita herramientas (`agents.retrieval.chain_supports_tools`, lectura de solo lectura
     para este frente). Si no las admite, el turno se comporta igual que apagado y
     `agentic_reading` viaja en None; este comparador lo REPORTA como tal
-    (`corrio_agentic: False`) en vez de esconderlo o inventar un motivo de parada."""
+    (`corrio_agentic: False`) en vez de esconderlo o inventar un motivo de parada.
+
+    DOS EJES, NO UNO (sesión 52). Comparar solo tokens no permite decidir N-2: leer menos es
+    barato y también es la forma de PERDER el dato enterrado, así que un ahorro grande puede ser
+    el síntoma del defecto, no la mejora. Cuando el caso declara `recall_markers` (los casos de
+    expediente GRANDE), este comparador cruza el ahorro con la RECUPERACIÓN y lo dice en llano:
+    ahorrar perdiendo un dato del expediente se reporta como PEOR, no como mejora. Los casos sin
+    marcadores no ganan un veredicto de recuperación inventado: viajan en None."""
     off_idx = {c["case_id"]: c for c in off_report.get("cases", []) if c.get("case_id")}
     on_idx = {c["case_id"]: c for c in on_report.get("cases", []) if c.get("case_id")}
     common = sorted(set(off_idx) & set(on_idx))
@@ -979,22 +995,76 @@ def compare_agentic_reports(off_report: dict, on_report: dict) -> dict:
         n_tokens = int((n.get("score") or {}).get("total_tokens", 0) or 0)
         trace = n.get("agentic_reading")
         trace = trace if isinstance(trace, dict) else None
+
+        # Eje 2 · RECUPERACIÓN del dato enterrado. Solo existe si el caso declaró marcadores
+        # (`recall_enterrado.aplica`); si no, todo lo de recuperación viaja en None y el
+        # veredicto se apoya únicamente en el coste, diciéndolo.
+        o_rec = o.get("recall_enterrado") or {}
+        n_rec = n.get("recall_enterrado") or {}
+        aplica_rec = bool(o_rec.get("aplica")) and bool(n_rec.get("aplica"))
+        o_cov = o_rec.get("cobertura") if aplica_rec else None
+        n_cov = n_rec.get("cobertura") if aplica_rec else None
+        perdidos = (sorted(set(o_rec.get("encontrados") or []) - set(n_rec.get("encontrados") or []))
+                    if aplica_rec else [])
+        ganados = (sorted(set(n_rec.get("encontrados") or []) - set(o_rec.get("encontrados") or []))
+                   if aplica_rec else [])
+
+        delta_tokens = n_tokens - o_tokens
+        if not aplica_rec:
+            veredicto = "solo_coste"
+            llano = ("Este caso no declara datos enterrados que verificar, así que solo se "
+                     "compara el coste.")
+        elif perdidos:
+            veredicto = "peor"
+            llano = ("Con lectura agéntica dejó de encontrar un dato que el expediente sí tiene "
+                     f"({', '.join(perdidos)}). Ahorrar así no es una mejora.")
+        elif ganados:
+            veredicto = "mejor"
+            llano = (f"Con lectura agéntica encontró además: {', '.join(ganados)}.")
+        elif delta_tokens < 0:
+            veredicto = "mejor"
+            llano = "Encontró los mismos datos leyendo menos."
+        elif delta_tokens > 0:
+            veredicto = "igual_mas_caro"
+            llano = "Encontró los mismos datos, pero leyendo más."
+        else:
+            veredicto = "igual"
+            llano = "Mismos datos y mismo coste."
+
         per_case.append({
             "case_id": cid,
             "tokens_off": o_tokens,
             "tokens_on": n_tokens,
-            "delta_tokens": n_tokens - o_tokens,
+            "delta_tokens": delta_tokens,
             "motivo_parada": trace.get("stop") if trace else None,
             "ampliaciones": trace.get("expansions") if trace else None,
             "corrio_agentic": trace is not None,
+            "recall_aplica": aplica_rec,
+            "recall_off": o_cov,
+            "recall_on": n_cov,
+            "recall_perdidos": perdidos,
+            "recall_ganados": ganados,
+            "veredicto": veredicto,
+            "lectura_llana": llano,
         })
 
+    con_recall = [c for c in per_case if c["recall_aplica"]]
     return {
         "cases": per_case,
         "n_total": len(per_case),
         "n_corrio_agentic": sum(1 for c in per_case if c["corrio_agentic"]),
         "only_off": sorted(cid for cid in off_idx if cid not in on_idx),
         "only_on": sorted(cid for cid in on_idx if cid not in off_idx),
+        # Fail-safe deliberado (mismo criterio que `compare.py`): UN solo caso que pierda un dato
+        # del expediente manda el veredicto agregado, por mucho que el resto ahorre tokens.
+        "n_con_recall": len(con_recall),
+        "n_perdio_dato": sum(1 for c in con_recall if c["recall_perdidos"]),
+        "veredicto_agregado": (
+            "sin_datos_que_verificar" if not con_recall
+            else "peor" if any(c["recall_perdidos"] for c in con_recall)
+            else "mejor" if any(c["recall_ganados"] for c in con_recall)
+            else "igual"
+        ),
     }
 
 

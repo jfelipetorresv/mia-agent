@@ -48,6 +48,15 @@ class GoldenCase:
     # (que solo miden DISCIPLINA vía score_turn); presente en los casos de oro por-despacho, y
     # entonces el harness añade el `substantive_score` sobre la respuesta nueva.
     rubric: dict = field(default_factory=dict)
+    # MARCADORES DE RECUPERACIÓN (sesión 52) — NO son criterio jurídico y no se mezclan con
+    # `rubric` a propósito. Son cadenas literales que están SELLADAS en el expediente del caso,
+    # enterradas lejos del inicio, y cuya aparición en la respuesta prueba una sola cosa
+    # verificable sin juez: que el turno LLEGÓ A LEER ese fragmento. Existen para los casos de
+    # expediente GRANDE, donde la pregunta viva es de recuperación (¿encontró el dato enterrado?)
+    # y no de derecho. Reutilizar `rubric` para esto habría producido una métrica con etiqueta
+    # engañosa —«cobertura sustantiva» que en realidad mide recuperación—, que es exactamente el
+    # riesgo #81 ya cerrado una vez. Vacío = no se calcula nada.
+    recall_markers: tuple[str, ...] = ()
 
 
 # ── set canónico (SINTÉTICO) ──────────────────────────────────────────────────
@@ -254,6 +263,127 @@ RISK_CASES: tuple[GoldenCase, ...] = (
         profile={"despacho": "Litigio civil y comercial."},
     ),
 )
+
+
+# ── casos de EXPEDIENTE GRANDE (N-2) ─────────────────────────────────────────
+# POR QUÉ EXISTEN: la decisión pendiente N-2 es si la LECTURA AGÉNTICA
+# (`config.MIA_AGENTIC_READING`) debe quedar encendida por defecto. Con los casos de arriba no
+# se puede decidir: tienen 1-2 documentos de 2 fragmentos, así que la primera lectura ya ve el
+# expediente entero y arrancar corto o largo da lo mismo. La diferencia solo aparece cuando el
+# expediente NO cabe: cientos de fragmentos, el dato decisivo enterrado lejos del inicio, y la
+# pregunta exigiendo CRUZAR varios datos que viven en documentos distintos.
+#
+# NO ENTRAN AL EXAMEN POR DEFECTO (`load_golden_cases` no los incluye), por dos razones:
+#   · coste — sembrar cientos de fragmentos genera embeddings pagados en CADA corrida, y
+#     `--agentic-compare` siembra dos veces;
+#   · comparabilidad — meterlos cambiaría otra vez la composición del examen y quemaría la
+#     serie de cifras, como ya pasó al entrar los casos de RIESGO (3 → 9). Se corren a
+#     propósito: `execution/run_eval.py --case expediente-voluminoso-cruce-disperso`.
+#
+# QUÉ SE MIDE Y QUÉ NO. Se mide, determinista: (a) la traza de la lectura agéntica (cuántas
+# ampliaciones, motivo de parada, coste en tokens — `harness.compare_agentic_reports`), y (b) si
+# la respuesta demuestra haber leído los fragmentos enterrados (`recall_markers`). NO se mide si
+# el análisis jurídico es correcto: eso exigiría un juez y aquí no lo hay. El caso es un
+# instrumento de RECUPERACIÓN, no de derecho.
+
+_RELLENO_ACTAS_N = 96
+_RELLENO_CORREOS_N = 72
+_RELLENO_ANEXOS_N = 84
+
+
+def _actas_de_obra() -> tuple[str, ...]:
+    """Cuaderno de actas de obra numeradas. Relleno PLAUSIBLE y determinista, con el hecho
+    generador sellado en el acta 87 — al final, para que un arranque corto no lo vea."""
+    chunks: list[str] = []
+    for i in range(1, _RELLENO_ACTAS_N + 1):
+        if i == 87:
+            chunks.append(
+                "Acta 87 de obra. Se deja constancia de que el 14 de abril de 2019 se "
+                "suspendió la ejecución por orden de la interventoría, y que la suspensión "
+                "se mantuvo hasta la reanudación registrada en el acta siguiente."
+            )
+            continue
+        chunks.append(
+            f"Acta {i} de obra. Se verifica el avance de los frentes de trabajo y se "
+            f"consignan las cantidades ejecutadas del periodo. La interventoría no formula "
+            f"observaciones que afecten el plazo contractual en esta acta."
+        )
+    return tuple(chunks)
+
+
+def _correos_del_contrato() -> tuple[str, ...]:
+    """Correspondencia. La reclamación formal va sellada en el correo 65, no en el primero."""
+    chunks: list[str] = []
+    for i in range(1, _RELLENO_CORREOS_N + 1):
+        if i == 65:
+            chunks.append(
+                "Comunicación 65. La Constructora Aurelia S.A. radicó su reclamación formal "
+                "ante el Instituto Metropolitano de Obras el 2 de agosto de 2022, solicitando "
+                "el restablecimiento económico del contrato."
+            )
+            continue
+        chunks.append(
+            f"Comunicación {i}. Intercambio entre las partes sobre trámites de facturación, "
+            f"designación de supervisores y logística de los frentes de obra. No contiene "
+            f"reclamación económica ni objeción al plazo."
+        )
+    return tuple(chunks)
+
+
+def _anexos_y_otrosies() -> tuple[str, ...]:
+    """Anexos contractuales. El otrosí 3 (que amplió el plazo) va enterrado entre anexos
+    técnicos: es el dato que REFUTA la lectura obvia del plazo original."""
+    chunks: list[str] = []
+    for i in range(1, _RELLENO_ANEXOS_N + 1):
+        if i == 58:
+            chunks.append(
+                "Anexo 58 — Otrosí 3 al contrato. Las partes ampliaron el plazo de ejecución "
+                "en ocho meses contados desde el vencimiento pactado inicialmente, y acordaron "
+                "que los términos para reclamar se contarían desde la nueva fecha de "
+                "liquidación."
+            )
+            continue
+        chunks.append(
+            f"Anexo {i}. Especificaciones técnicas, memorias de cálculo y planillas de "
+            f"materiales del frente correspondiente. Sin efectos sobre plazos ni sobre el "
+            f"régimen de reclamaciones."
+        )
+    return tuple(chunks)
+
+
+LARGE_CASES: tuple[GoldenCase, ...] = (
+    GoldenCase(
+        id="expediente-voluminoso-cruce-disperso",
+        title="Expediente voluminoso: cruce de datos dispersos en cientos de fragmentos",
+        message=(
+            "Este expediente es voluminoso. Determina si la reclamación de la contratista se "
+            "presentó en tiempo, precisando de qué fecha se cuenta el término y por qué. "
+            "Indica el documento de respaldo de cada dato que uses y señala expresamente lo "
+            "que el expediente no permita establecer."
+        ),
+        documents=(
+            GoldenCaseDoc(filename="cuaderno-actas-de-obra.txt", chunks=_actas_de_obra()),
+            GoldenCaseDoc(filename="correspondencia-contractual.txt", chunks=_correos_del_contrato()),
+            GoldenCaseDoc(filename="anexos-y-otrosies.txt", chunks=_anexos_y_otrosies()),
+        ),
+        # Despacho SIN ordenamiento configurado a propósito: así el caso mide RECUPERACIÓN sin
+        # tentar articulado de ningún país (y de paso vigila que no haya fuga de jurisdicción).
+        profile={"despacho": "Litigio contractual y de infraestructura."},
+        # Los tres datos enterrados que hay que cruzar para responder. Están sellados
+        # literalmente en el expediente, cada uno en un documento distinto y lejos del inicio.
+        recall_markers=(
+            "14 de abril de 2019",   # acta 87 — suspensión (hecho generador)
+            "2 de agosto de 2022",   # comunicación 65 — reclamación
+            "otrosí 3",              # anexo 58 — la prórroga que refuta el plazo obvio
+        ),
+    ),
+)
+
+
+def load_large_cases() -> list[GoldenCase]:
+    """Casos de EXPEDIENTE GRANDE. Deliberadamente FUERA del examen por defecto (ver el
+    comentario de `LARGE_CASES`): se corren a propósito, por id, para decidir N-2."""
+    return list(LARGE_CASES)
 
 
 def load_golden_cases(*, include_risk: bool = True) -> list[GoldenCase]:
