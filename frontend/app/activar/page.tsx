@@ -591,7 +591,12 @@ export default function ActivarPage() {
             icon={Sparkles}
             title="Mi suscripción"
             badge="Recomendado"
-            description="Razono usando la suscripción que ya tienes. Es lo más simple y lo que te recomiendo."
+            // La recomendación del plan Max va AQUÍ, en la instalación, y no solo cuando ya
+            // pasó (decisión de Pipe, sesión 52). Medido con un expediente real de 174
+            // páginas: una suscripción normal no alcanzó a responderlo y el trabajo se
+            // resolvió con crédito de pago. Mejor que el abogado lo sepa al elegir el motor
+            // que enterarse por un cargo. En llano y sin cifras que no podemos sostener.
+            description="Razono usando la suscripción que ya tienes. Es lo más simple y lo que te recomiendo. Para expedientes grandes te conviene un plan Max: los trabajos pesados caben en lo que ya pagas, sin consumir crédito aparte."
             detected={status.motor_detectado.claude}
             detectedLabel="Ya la detecté lista en este equipo."
             selected={politica === "suscripcion"}

@@ -156,6 +156,23 @@ def main() -> int:  # noqa: C901
     check("ni jerga ni nombres de motor en el texto del abogado",
           not filtrados, f"aparece: {', '.join(filtrados)}")
 
+    print("\n8 · la recomendación del plan Max también en la INSTALACIÓN")
+    # Pipe: el aviso no puede llegar solo cuando ya se gastó crédito; al elegir el motor, el
+    # abogado tiene que leer que para expedientes grandes le conviene un plan Max.
+    activar = (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8")
+    check("la pantalla de activación existe y ofrece la suscripción",
+          'title="Mi suscripción"' in activar)
+    check("recomienda el plan Max al elegir el motor", "plan Max" in activar)
+    check("y explica el beneficio en llano (cabe en lo que ya pagas)",
+          "ya pagas" in activar)
+    check("lo dice donde se elige la suscripción, no en otra pantalla suelta",
+          activar.index("plan Max") > activar.index('title="Mi suscripción"')
+          and activar.index("plan Max") - activar.index('title="Mi suscripción"') < 1200)
+    # §G también aquí: la pantalla la lee un abogado, no un ingeniero.
+    trozo = activar[activar.index('title="Mi suscripción"'):][:1200].lower()
+    jerga = [p for p in ("api", "token", "fallback", "litellm", "endpoint") if p in trozo]
+    check("sin jerga técnica en ese texto", not jerga, f"aparece: {', '.join(jerga)}")
+
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)
     print(f"\nRESULT: {passed}/{total} checks PASS")
