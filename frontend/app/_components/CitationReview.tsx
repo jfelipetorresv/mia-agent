@@ -33,6 +33,8 @@ export type Verification = {
   // Presentes solo cuando el despacho tiene citas marcadas como falsas.
   quemadas?: number;
   aviso_quemadas?: string;
+  // Citas retiradas del texto por falta de ordenamiento declarado (modo genérico).
+  omitidas?: number;
   // Afirmaciones negativas sobre un documento que el texto COMPLETO de ese documento podría
   // contradecir («el informe no menciona al garante», y el documento lo nombra cuatro veces).
   afirmaciones_negativas?: {
@@ -75,19 +77,43 @@ function plural(n: number, singular: string, pluralForm: string): string {
 }
 
 // Resumen legible de la revisión de citas, sin porcentajes fríos (método Lexia).
+//
+// El resumen cuenta las TRES suertes que puede correr una cita, no dos. Las retiradas del
+// texto —omitidas por falta de ordenamiento declarado, o quemadas porque el despacho las
+// marcó como falsas— no son ni respaldadas ni pendientes de verificar. Cuando solo se
+// contaban dos, un borrador cuya única cita se había OMITIDO se resumía como «todas con
+// respaldo en sus fuentes»: exactamente lo contrario de lo ocurrido, y en la línea que el
+// abogado lee primero. Se vio mirando la pantalla, no leyendo el código.
 function resumenTexto(v: Verification): string {
   if (v.citas === 0) return "Mia no encontró citas de normas o sentencias en este borrador.";
   const porVerificar = v.marcadas + v.anotadas;
+  const retiradas = (v.omitidas || 0) + (v.quemadas || 0);
   const citasTxt = plural(v.citas, "1 cita", `${v.citas} citas`);
-  if (porVerificar === 0) {
+  if (v.respaldadas === v.citas) {
     return `Mia revisó ${citasTxt}: todas con respaldo en sus fuentes.`;
   }
-  if (v.respaldadas === 0) {
+  if (porVerificar === v.citas) {
     return `Mia revisó ${citasTxt}: todas para tu verificación.`;
   }
-  const respaldoTxt = plural(v.respaldadas, "1 con respaldo", `${v.respaldadas} con respaldo`);
-  const verificarTxt = plural(porVerificar, "1 para tu verificación", `${porVerificar} para tu verificación`);
-  return `Mia revisó ${citasTxt}: ${respaldoTxt} en sus fuentes, ${verificarTxt}.`;
+  if (retiradas === v.citas) {
+    return plural(v.citas,
+      "Mia revisó 1 cita y la retiró del texto.",
+      `Mia revisó ${v.citas} citas y las retiró del texto.`);
+  }
+  const partes: string[] = [];
+  if (v.respaldadas > 0) {
+    partes.push(plural(v.respaldadas,
+      "1 con respaldo en sus fuentes", `${v.respaldadas} con respaldo en sus fuentes`));
+  }
+  if (porVerificar > 0) {
+    partes.push(plural(porVerificar,
+      "1 para tu verificación", `${porVerificar} para tu verificación`));
+  }
+  if (retiradas > 0) {
+    partes.push(plural(retiradas,
+      "1 retirada del texto", `${retiradas} retiradas del texto`));
+  }
+  return `Mia revisó ${citasTxt}: ${partes.join(", ")}.`;
 }
 
 export default function CitationReview({ verification }: { verification: Verification }) {

@@ -80,6 +80,10 @@ function normalizarInforme(raw: unknown): InformeCitas | null {
       ) as CitaDetalle[])
     : [];
   const df = r.docs_fantasma;
+  // Los campos que el backend solo manda cuando hay algo que decir (citas retiradas,
+  // afirmaciones negativas, contaminación) se copian TAL CUAL. Descartarlos aquí era
+  // silenciarlos: el componente sabe pintarlos, pero en un proyecto nunca los recibía.
+  const opcional = (k: string) => (r[k] !== undefined ? { [k]: r[k] } : {});
   return {
     citas: num(r.citas),
     marcadas: num(r.marcadas),
@@ -87,7 +91,12 @@ function normalizarInforme(raw: unknown): InformeCitas | null {
     anotadas: num(r.anotadas),
     detalle,
     fantasmas: df && typeof df === "object" ? num((df as Record<string, unknown>).fantasmas) : 0,
-  };
+    ...opcional("quemadas"),
+    ...opcional("aviso_quemadas"),
+    ...opcional("omitidas"),
+    ...opcional("afirmaciones_negativas"),
+    ...opcional("contaminacion_expediente"),
+  } as InformeCitas;
 }
 
 function fmtDate(s?: string): string {
@@ -613,7 +622,8 @@ function RevisionCitas({ informe }: { informe: InformeCitas }) {
   const [abierto, setAbierto] = useState(false);
   const porConfirmar = informe.marcadas + informe.anotadas;
   const expandible = informe.citas > 0 && informe.detalle.length > 0;
-  const alerta = porConfirmar > 0 || informe.fantasmas > 0;
+  const alerta = porConfirmar > 0 || informe.fantasmas > 0
+    || (informe.omitidas || 0) + (informe.quemadas || 0) > 0;
 
   // Sin citas y sin referencias colgando no hay nada que revisar: una línea al pie,
   // no una caja. Se dice igual — que Mia miró es información para el abogado.
@@ -625,16 +635,22 @@ function RevisionCitas({ informe }: { informe: InformeCitas }) {
     );
   }
 
+  // Mismo cuidado que en el resumen del borrador: una cita RETIRADA del texto (omitida o
+  // marcada como falsa por el despacho) no está «con respaldo en el material». Decirlo así
+  // era afirmar lo contrario de lo ocurrido en la primera línea que se lee.
+  const retiradas = (informe.omitidas || 0) + (informe.quemadas || 0);
   const titular =
     porConfirmar > 0
       ? plural(porConfirmar, "1 cita por confirmar", `${porConfirmar} citas por confirmar`)
-      : informe.citas > 0
-        ? plural(
-            informe.citas,
-            "1 cita revisada, con respaldo en el material",
-            `${informe.citas} citas revisadas, todas con respaldo en el material`,
-          )
-        : "Revisa las referencias a documentos";
+      : retiradas > 0
+        ? plural(retiradas, "1 cita retirada del texto", `${retiradas} citas retiradas del texto`)
+        : informe.citas > 0
+          ? plural(
+              informe.citas,
+              "1 cita revisada, con respaldo en el material",
+              `${informe.citas} citas revisadas, todas con respaldo en el material`,
+            )
+          : "Revisa las referencias a documentos";
 
   const Icon = alerta ? AlertTriangle : CheckCircle2;
 
