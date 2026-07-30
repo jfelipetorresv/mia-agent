@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import logging
 import time
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar, Token
 from typing import Any
 
@@ -296,6 +297,86 @@ def reset_model_policy(token: Token) -> None:
 
 # CP-S3 · opt-in de OpenRouter por tenant (decisión de confidencialidad, regla 2).
 _allow_openrouter: ContextVar[bool] = ContextVar("mia_allow_openrouter", default=False)
+
+
+# ── CAMBIOS DE MOTOR del turno (sesión 52) ────────────────────────────────────
+# El modo de venta es la SUSCRIPCIÓN que el abogado ya paga, y la cadena de respaldo puede
+# acudir a crédito de API o a OpenRouter cuando la suscripción no alcanza — eso es deliberado
+# (decisión de Pipe). Lo que faltaba era DECÍRSELO: en el piloto con un expediente real la
+# suscripción expiró y el turno se atendió con crédito de tarjeta sin que nada en pantalla lo
+# mencionara. Un cargo que el abogado no esperaba es un cargo que no autorizó.
+#
+# Aquí solo se ACUMULA el hecho; el aviso en llano lo arma `aviso_cambio_de_motor` y quien
+# pinta la pantalla decide dónde ponerlo. Se usa un ContextVar (mismo patrón que la política de
+# modelo y el tope de gasto) para no tener que pasar un acumulador por toda la pila de llamadas.
+_cambios_de_motor: ContextVar[list[dict] | None] = ContextVar("mia_cambios_de_motor", default=None)
+
+# Prefijo de los aliases que corren sobre la suscripción del abogado (subproceso al CLI). Su
+# coste es CUOTA, no dólares. Todo lo demás en la cadena cuesta dinero o es local.
+_PREFIJO_SUSCRIPCION = "cli-"
+
+
+def _registrar_cambio_de_motor(task: str | None, desde: str, hacia: str, motivo: str) -> None:
+    """Anota que el turno cambió de motor. Nunca falla: si no hay recolector activo, no hace nada
+    (así los tests y los scripts que llaman a `call_llm` directo no necesitan montar contexto)."""
+    registro = _cambios_de_motor.get()
+    if registro is None:
+        return
+    registro.append({"task": task, "desde": desde, "hacia": hacia, "motivo": motivo})
+
+
+@contextmanager
+def recolectar_cambios_de_motor() -> Iterator[list[dict]]:
+    """Recoge los cambios de motor que ocurran dentro del bloque.
+
+    La lista se puede leer DESPUÉS de salir del bloque (es la misma que se fue llenando), que es
+    como la usa el turno: abre el recolector alrededor del grafo y al terminar arma el aviso.
+    """
+    registro: list[dict] = []
+    token = _cambios_de_motor.set(registro)
+    try:
+        yield registro
+    finally:
+        _cambios_de_motor.reset(token)
+
+
+def aviso_cambio_de_motor(cambios: list[dict] | None) -> dict | None:
+    """Aviso EN LLANO de que la suscripción no alcanzó y el turno se atendió con crédito.
+
+    Devuelve None cuando no hay nada que decir: sin cambios, o cuando el cambio no salió de la
+    suscripción hacia un motor de pago (p. ej. un salto entre motores de nube, que no cambia
+    quién paga, o una caída al motor local, que tampoco cuesta dinero).
+
+    §G: ni un alias, ni un nombre de proveedor, ni la palabra 'fallback' — el abogado lee qué
+    pasó, qué le costó y qué puede hacer.
+    """
+    if not cambios:
+        return None
+    desde_suscripcion = [c for c in cambios
+                         if str(c.get("desde", "")).startswith(_PREFIJO_SUSCRIPCION)
+                         and not str(c.get("hacia", "")).startswith(_PREFIJO_SUSCRIPCION)
+                         and str(c.get("hacia", "")) != "mia-local"]
+    if not desde_suscripcion:
+        return None
+
+    por_tiempo = any(c.get("motivo") == "timeout" for c in desde_suscripcion)
+    causa = ("El trabajo era demasiado grande para tu suscripción y no alcanzó a responder"
+             if por_tiempo else
+             "Tu suscripción no pudo atender esta consulta")
+    return {
+        "hubo_cambio": True,
+        "veces": len(desde_suscripcion),
+        "por_tiempo": por_tiempo,
+        "aviso": (
+            f"{causa}, así que esta consulta se resolvió con crédito de pago y tiene un costo "
+            "que verás en el consumo de este turno. Tu suscripción se sigue usando primero "
+            "siempre; el crédito solo entra cuando ella no alcanza."
+        ),
+        "sugerencia": (
+            "Si esto te pasa seguido con expedientes grandes, un plan de suscripción Max hace "
+            "que estos trabajos quepan en lo que ya pagas, en vez de consumir crédito."
+        ),
+    }
 
 
 def set_openrouter_allowed(allowed: bool) -> Token:
@@ -786,6 +867,24 @@ def _call_with_retries(
                                task, alias, exc)
                 raise                          # propaga original: lo maneja la compresión
 
+            # SALTO RÁPIDO ante timeout de la SUSCRIPCIÓN (sesión 52, medido con un expediente
+            # real). Un timeout del CLI de la suscripción con un expediente grande no es un
+            # tropiezo transitorio: es que el trabajo no cabe en ese motor, y el reintento manda
+            # EL MISMO prompt gigante, que vuelve a expirar. En el piloto costó tres esperas de
+            # 300s —15 minutos tirados— antes de saltar al motor de crédito, que respondió a la
+            # primera. Ante timeout de un alias `cli-*` se salta ya, en vez de agotar reintentos
+            # que por construcción van a fallar igual. Los demás errores del CLI (y los timeouts
+            # de cualquier otro proveedor, que sí suelen ser transitorios) mantienen su política
+            # de reintento intacta.
+            if (kind is LLMErrorKind.TIMEOUT and alias.startswith("cli-")
+                    and attempt < max_retries and next_alias):
+                logger.warning(
+                    "call_llm: timeout de la suscripción (task=%s alias=%s) — el trabajo no cabe "
+                    "en ese motor y reintentar manda el mismo prompt: se salta ya a %s sin gastar "
+                    "los %d reintentos", task, alias, next_alias, max_retries)
+                _registrar_cambio_de_motor(task, alias, next_alias, kind.value)
+                raise _FallbackNeeded(kind, exc) from exc
+
             # Reintento dentro del alias mientras queden intentos y sea transitorio.
             if is_retryable(kind) and attempt < max_retries:
                 delay = retry_delay(kind, attempt)
@@ -804,6 +903,7 @@ def _call_with_retries(
                 )
                 logger.warning("call_llm salta de proveedor [%s] task=%s %s→%s (tras %d intentos)",
                                kind.value, task, alias, next_alias, attempt + 1)
+                _registrar_cambio_de_motor(task, alias, next_alias, kind.value)
                 raise _FallbackNeeded(kind, exc) from exc
 
             # CP-S3/CP-OR (revisión capa 2, H2): los aliases de OpenRouter (respaldo
