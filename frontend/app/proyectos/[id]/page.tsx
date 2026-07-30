@@ -24,6 +24,7 @@ import {
 import { apiDownload, apiGet, apiSend, streamPost } from "@/lib/api";
 import MicButton from "../../_components/MicButton";
 import FuentesPanel from "../../_components/FuentesPanel";
+import AvisoDeCosto, { type AvisoDeCostoData } from "../../_components/AvisoDeCosto";
 import CitationReview, { type CitaDetalle, type Verification } from "../../_components/CitationReview";
 import { SectionTitle } from "../../_components/SectionTitle";
 import { Button } from "@/components/ui/button";
@@ -117,6 +118,8 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
+  // Aviso de costo del turno: la suscripción no alcanzó y hubo que pagar crédito.
+  const [avisoCosto, setAvisoCosto] = useState<AvisoDeCostoData | null>(null);
   const [streaming, setStreaming] = useState(false);
   const streamAbortRef = useRef<AbortController | null>(null);
   const [dictationNotice, setDictationNotice] = useState("");
@@ -180,8 +183,17 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
       // evento: el texto y su revisión no pueden separarse nunca.
       verificacion?: unknown;
       propuesta?: DelegationProposal;
+      sugerencia?: string;
+      veces?: number;
     };
-    if (event === "thinking") {
+    if (event === "aviso_de_costo") {
+      // El backend arma el texto (una sola redacción que auditar); aquí solo se muestra.
+      setAvisoCosto({
+        message: payload.message || "",
+        sugerencia: payload.sugerencia,
+        veces: payload.veces,
+      });
+    } else if (event === "thinking") {
       setStatus(payload.message || "Mia está trabajando…");
     } else if (event === "awaiting_delegation") {
       setStatus(payload.message || "Mia propone pedirle ayuda a un asistente externo.");
@@ -422,6 +434,7 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
             )}
           </div>
           <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
+            <AvisoDeCosto aviso={avisoCosto} onDismiss={() => setAvisoCosto(null)} />
             <div className="mb-2 flex min-h-5 items-center text-sm text-muted-foreground">{status}</div>
             <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-2 shadow-lg shadow-primary/5 transition-shadow focus-within:border-primary/40 focus-within:shadow-primary/10">
               <textarea

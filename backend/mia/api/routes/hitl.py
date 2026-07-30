@@ -21,6 +21,7 @@ from ...agents.state import thread_id_for
 from ...db import pool
 from ...memory.wiki_manager import WikiManager
 from ._common import assert_owns_matter, require_awaiting_review, sse
+from .stream import turno_sse
 
 router = APIRouter(tags=["matters"])
 logger = logging.getLogger("mia.api.hitl")
@@ -44,78 +45,76 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
         raise HTTPException(status_code=401, detail="Sin contexto de tenant")
     await assert_owns_matter(tenant_id, matter_id)  # tenant cruzado -> 401
 
-    async def gen():
-        yield sse("finalizing", "Mia está finalizando el borrador…")
-        try:
-            async with open_checkpointer() as cp:
-                graph = build_matter_graph(cp)
-                cfg = {"configurable": {"thread_id": thread_id_for(tenant_id, matter_id)}}
-                await require_awaiting_review(graph, cfg)
-                final_draft = None
-                async for chunk in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
-                    if "finalize" in chunk:
-                        final_draft = (chunk["finalize"] or {}).get("draft")
-                # Riesgo #25: la decisión quedó tomada (approve/reject/edit) —
-                # el asunto ya no tiene borrador esperando revisión. Se resetea también
-                # el debounce del aviso (CP-B3): un borrador NUEVO avisa de inmediato.
-                async with pool.tenant_connection(tenant_id) as conn:
-                    await conn.execute(
-                        "UPDATE matters SET pending_review = false, "
-                        "pending_review_notified_at = NULL "
-                        "WHERE id = %s::uuid", (matter_id,))
-                if command.get("decision") == "approved":
-                    # El aprendizaje del despacho (wiki) hace VARIAS llamadas al modelo
-                    # y puede tardar minutos: no puede retener el "done" — la decisión
-                    # del abogado ya quedó registrada arriba. Corre en segundo plano,
-                    # fail-open: si falla se pierde UNA actualización de wiki (queda en
-                    # el log), nunca la aprobación.
-                    async def _wiki_update(tid: str = tenant_id, mid: str = matter_id) -> None:
-                        try:
-                            await WikiManager().update_from_approved_matter(tid, mid)
-                        except Exception:
-                            logger.exception("wiki update falló (tenant=%s matter=%s)", tid, mid)
-                    task = asyncio.create_task(_wiki_update())
-                    _BACKGROUND_TASKS.add(task)
-                    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    async def eventos():
+        async with open_checkpointer() as cp:
+            graph = build_matter_graph(cp)
+            cfg = {"configurable": {"thread_id": thread_id_for(tenant_id, matter_id)}}
+            await require_awaiting_review(graph, cfg)
+            final_draft = None
+            async for chunk in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
+                if "finalize" in chunk:
+                    final_draft = (chunk["finalize"] or {}).get("draft")
+            # Riesgo #25: la decisión quedó tomada (approve/reject/edit) —
+            # el asunto ya no tiene borrador esperando revisión. Se resetea también
+            # el debounce del aviso (CP-B3): un borrador NUEVO avisa de inmediato.
+            async with pool.tenant_connection(tenant_id) as conn:
+                await conn.execute(
+                    "UPDATE matters SET pending_review = false, "
+                    "pending_review_notified_at = NULL "
+                    "WHERE id = %s::uuid", (matter_id,))
+            if command.get("decision") == "approved":
+                # El aprendizaje del despacho (wiki) hace VARIAS llamadas al modelo
+                # y puede tardar minutos: no puede retener el "done" — la decisión
+                # del abogado ya quedó registrada arriba. Corre en segundo plano,
+                # fail-open: si falla se pierde UNA actualización de wiki (queda en
+                # el log), nunca la aprobación.
+                async def _wiki_update(tid: str = tenant_id, mid: str = matter_id) -> None:
+                    try:
+                        await WikiManager().update_from_approved_matter(tid, mid)
+                    except Exception:
+                        logger.exception("wiki update falló (tenant=%s matter=%s)", tid, mid)
+                task = asyncio.create_task(_wiki_update())
+                _BACKGROUND_TASKS.add(task)
+                task.add_done_callback(_BACKGROUND_TASKS.discard)
 
-                # La sección «lo que he ido aprendiendo de tu trabajo» del perfil se
-                # enriquece sola: de este borrador Mia infiere 0..N patrones de metodología
-                # del despacho y los deposita en el perfil. Corre al APROBAR y también al
-                # CORREGIR (F2: el path `editing` estaba sin cablear y una corrección del
-                # abogado es la señal de metodología más rica que existe — el texto final ya
-                # incorpora lo que él cambió; la fuente lo dice: SOURCE_CORREGIDO). También
-                # en segundo plano y fail-soft absoluto — `learn_from_approved_draft` nunca
-                # lanza, pero se envuelve igual: NINGÚN fallo aquí puede rozar la decisión,
-                # que ya quedó cerrada arriba. Solo si hubo un borrador que mostrar.
-                decision = command.get("decision")
-                if final_draft and decision in ("approved", "editing"):
-                    async def _aprender(tid: str = tenant_id, mid: str = matter_id,
-                                        texto: str = final_draft,
-                                        dec: str = decision) -> None:
-                        try:
-                            from ...memory.aprendido import (
-                                SOURCE_APROBADO,
-                                SOURCE_CORREGIDO,
-                                learn_from_approved_draft,
-                            )
-                            await learn_from_approved_draft(
-                                tid, texto,
-                                source=(SOURCE_CORREGIDO if dec == "editing"
-                                        else SOURCE_APROBADO))
-                        except Exception:
-                            logger.exception("aprendido update falló (tenant=%s matter=%s)",
-                                             tid, mid)
-                    task_ap = asyncio.create_task(_aprender())
-                    _BACKGROUND_TASKS.add(task_ap)
-                    task_ap.add_done_callback(_BACKGROUND_TASKS.discard)
-                yield sse("done", "Listo.", draft=final_draft, status=command.get("decision"))
-        except HTTPException:
-            raise
-        except Exception:
-            logger.exception("resume HITL falló (tenant=%s matter=%s)", tenant_id, matter_id)
-            yield sse("error", "No se pudo finalizar el borrador. Intenta de nuevo.")
+            # La sección «lo que he ido aprendiendo de tu trabajo» del perfil se
+            # enriquece sola: de este borrador Mia infiere 0..N patrones de metodología
+            # del despacho y los deposita en el perfil. Corre al APROBAR y también al
+            # CORREGIR (F2: el path `editing` estaba sin cablear y una corrección del
+            # abogado es la señal de metodología más rica que existe — el texto final ya
+            # incorpora lo que él cambió; la fuente lo dice: SOURCE_CORREGIDO). También
+            # en segundo plano y fail-soft absoluto — `learn_from_approved_draft` nunca
+            # lanza, pero se envuelve igual: NINGÚN fallo aquí puede rozar la decisión,
+            # que ya quedó cerrada arriba. Solo si hubo un borrador que mostrar.
+            decision = command.get("decision")
+            if final_draft and decision in ("approved", "editing"):
+                async def _aprender(tid: str = tenant_id, mid: str = matter_id,
+                                    texto: str = final_draft,
+                                    dec: str = decision) -> None:
+                    try:
+                        from ...memory.aprendido import (
+                            SOURCE_APROBADO,
+                            SOURCE_CORREGIDO,
+                            learn_from_approved_draft,
+                        )
+                        await learn_from_approved_draft(
+                            tid, texto,
+                            source=(SOURCE_CORREGIDO if dec == "editing"
+                                    else SOURCE_APROBADO))
+                    except Exception:
+                        logger.exception("aprendido update falló (tenant=%s matter=%s)",
+                                         tid, mid)
+                task_ap = asyncio.create_task(_aprender())
+                _BACKGROUND_TASKS.add(task_ap)
+                task_ap.add_done_callback(_BACKGROUND_TASKS.discard)
+            yield sse("done", "Listo.", draft=final_draft, status=command.get("decision"))
 
-    return EventSourceResponse(gen())
+    # El cierre del borrador también razona (finalize), así que también puede quedarse sin
+    # suscripción y acabar en crédito de pago: mismo envoltorio que el turno, mismo aviso.
+    return EventSourceResponse(turno_sse(
+        "Mia está finalizando el borrador…", eventos, tenant_id, matter_id,
+        error_msg="No se pudo finalizar el borrador. Intenta de nuevo.",
+    ))
 
 
 @router.post("/matters/{matter_id}/approve")

@@ -25,6 +25,10 @@ import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
 import CitationReview, { type Verification } from "../../_components/CitationReview";
 import FuentesPanel from "../../_components/FuentesPanel";
+import AvisoDeCosto, {
+  recogerAvisoDeCosto,
+  type AvisoDeCostoData,
+} from "../../_components/AvisoDeCosto";
 import GuideInterviewWizard from "../../_components/GuideInterviewWizard";
 import SalaEstrategiaDialog from "./_components/SalaEstrategiaDialog";
 import SalaEstrategiaResult from "./_components/SalaEstrategiaResult";
@@ -106,6 +110,9 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
+  // Aviso de costo del turno: se pinta cuando la suscripción no alcanzó y hubo que pagar
+  // crédito. Lo cierra el abogado; no desaparece solo.
+  const [avisoCosto, setAvisoCosto] = useState<AvisoDeCostoData | null>(null);
   const [hasDraft, setHasDraft] = useState(false);
   const [delegation, setDelegation] = useState<DelegationProposal | null>(null);
   const [delegationRemember, setDelegationRemember] = useState(false);
@@ -154,6 +161,13 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  // Aviso de costo dejado en depósito por la pantalla de revisión (cerrar el borrador
+  // también puede acabar en crédito de pago, y esa pantalla vuelve aquí enseguida).
+  useEffect(() => {
+    const pendiente = recogerAvisoDeCosto();
+    if (pendiente) setAvisoCosto(pendiente);
+  }, []);
 
   // Fase 3.1(B) · Plan de trabajo (aside): contador liviano para el header de la card.
   const [missionsSummary, setMissionsSummary] = useState<MissionsSummary | null>(null);
@@ -348,8 +362,18 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       diagnosis_summary?: DiagnosisSummary | null;
       verification?: Verification | null;
       propuesta?: DelegationProposal;
+      sugerencia?: string;
+      veces?: number;
     };
-    if (event === "thinking") setStatus(payload.message || "Mia está analizando...");
+    if (event === "aviso_de_costo") {
+      // El turno se resolvió con crédito de pago porque la suscripción no alcanzó. El
+      // backend arma el texto; aquí solo se muestra hasta que el abogado lo cierre.
+      setAvisoCosto({
+        message: payload.message || "",
+        sugerencia: payload.sugerencia,
+        veces: payload.veces,
+      });
+    } else if (event === "thinking") setStatus(payload.message || "Mia está analizando...");
     else if (event === "draft_ready") setStatus("Mia está redactando...");
     else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
     else if (event === "awaiting_delegation") {
@@ -775,6 +799,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
           />
         </div>
         <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
+          <AvisoDeCosto aviso={avisoCosto} onDismiss={() => setAvisoCosto(null)} />
           <div className="mb-2 flex min-h-5 items-center justify-between text-sm">
             <span className="text-muted-foreground">{status}</span>
             <div className="flex items-center gap-2">

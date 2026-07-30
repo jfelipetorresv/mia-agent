@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import CitationReview, { type Verification } from "../../../_components/CitationReview";
+import { depositarAvisoDeCosto } from "../../../_components/AvisoDeCosto";
 import { renderInline } from "@/components/MiaMarkdown";
 import { PageShell } from "@/app/_components/PageShell";
 import { cardVariants } from "@/components/ui/card";
@@ -134,7 +135,14 @@ async function resumeDraft(path: string, body: unknown): Promise<void> {
   let errMsg = "";
   await streamPost(path, body, (event, data) => {
     if (event === "done") ok = true;
-    else if (event === "error") {
+    else if (event === "aviso_de_costo") {
+      // Cerrar el borrador también razona y puede acabar en crédito de pago. Esta
+      // pantalla vuelve al asunto enseguida, así que el aviso viaja con el abogado.
+      const d = (data || {}) as { message?: string; sugerencia?: string; veces?: number };
+      if (d.message) {
+        depositarAvisoDeCosto({ message: d.message, sugerencia: d.sugerencia, veces: d.veces });
+      }
+    } else if (event === "error") {
       const d = data as { message?: string } | string | null;
       errMsg = typeof d === "string" ? d : d?.message || "";
     }

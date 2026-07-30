@@ -23,6 +23,7 @@ from ...agents.graph import (DELEGATION_INTERRUPT_KIND, PROJECT_VERIFICATION_NOD
                              PROPOSAL_PROMPT, build_matter_graph, build_project_graph)
 from ...agents.personas import persona_service
 from ...agents.state import initial_state, thread_id_for
+from ...agent import llm
 from ...config import MIA_CONTEXT_WINDOW
 from ...db import pool
 from ...observability import audit
@@ -237,6 +238,60 @@ async def _recover_project_history(graph: Any, tenant_id: str, matter_id: str) -
     return _budget_project_history(st.values.get("history") or [])
 
 
+# ── Aviso de costo: la suscripción se apalanca, el crédito se avisa (sesión 53) ──
+# `llm` ACUMULA los cambios de motor del turno y arma el texto; aquí se decide cuándo
+# llega a la pantalla. Es el enganche que faltaba: sin esto el abogado podía pagar
+# crédito de tarjeta sin que nada se lo dijera (piloto real, USD 0,57 en silencio).
+AVISO_DE_COSTO_EVENT = "aviso_de_costo"
+
+
+def evento_aviso_de_costo(cambios: list[dict] | None) -> dict | None:
+    """Traduce los cambios de motor del turno a un evento SSE, o None si no hay nada
+    que decirle al abogado (la regla de cuándo hay algo que decir vive en `llm`)."""
+    aviso = llm.aviso_cambio_de_motor(cambios)
+    if aviso is None:
+        return None
+    return sse(
+        AVISO_DE_COSTO_EVENT, aviso["aviso"],
+        sugerencia=aviso["sugerencia"], veces=aviso["veces"], por_tiempo=aviso["por_tiempo"],
+    )
+
+
+async def turno_sse(
+    saludo: str,
+    eventos: Callable[[], AsyncIterator[dict]],
+    tenant_id: str,
+    matter_id: str,
+    error_msg: str = "Mia no pudo completar el turno. Intenta de nuevo.",
+) -> AsyncIterator[dict]:
+    """Cuerpo del SSE de un turno: saludo, los eventos del grafo y —al cerrar— el aviso
+    de costo si la suscripción no alcanzó y hubo que pagar crédito.
+
+    El recolector se abre ANTES de tocar el grafo (los async generators no aíslan
+    contexto, así que el ContextVar queda visible para todo lo que corra dentro, incluidas
+    las tareas que el grafo cree). El aviso se emite también cuando el turno FALLA: si ya
+    se gastó crédito, el abogado tiene que enterarse aunque la respuesta no llegara.
+
+    Extraído del endpoint para poder ejercerlo con dobles, sin DB ni modelo (regla 57:
+    ninguna lección sin barrera, y una barrera que no puede correr no es barrera)."""
+    yield sse("thinking", saludo)
+    cambios: list[dict] = []
+    try:
+        with llm.recolectar_cambios_de_motor() as registro:
+            cambios = registro
+            async for ev in eventos():
+                yield ev
+    except HTTPException:
+        # El ciclo de vida (409/401) es una respuesta HTTP, no un evento del turno.
+        raise
+    except Exception:  # noqa: BLE001 — el turno falla en llano, nunca con un stacktrace
+        logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)
+        yield sse("error", error_msg)
+    aviso = evento_aviso_de_costo(cambios)
+    if aviso is not None:
+        yield aviso
+
+
 class StreamBody(BaseModel):
     message: str = Field(..., min_length=1)
 
@@ -326,43 +381,34 @@ async def stream_matter(
         retrieval_query=retrieval_query, persona=persona_state, history=prior_history,
     )
 
-    async def gen():
-        if kind == "proyecto":
-            yield sse("thinking", "Mia está revisando las fuentes del proyecto…")
-        else:
-            yield sse("thinking", "Mia está revisando el expediente…")
-        try:
-            async with open_checkpointer() as cp:
-                graph = graph_builder(cp)
-                if kind == "proyecto":
-                    async for ev in _stream_project_events(
-                        graph, turn_input, cfg, tenant_id, matter_id,
-                        request.is_disconnected, checkpointer=cp,
-                    ):
-                        yield ev
-                else:
-                    async for ev in _stream_turn_events(
-                        graph, turn_input, cfg, tenant_id, matter_id,
-                        request.is_disconnected, checkpointer=cp,
-                    ):
-                        yield ev
-                # TODO(pieza-4e · cierre automático a ~65%): ESTE es el punto de integración
-                # exacto para un cierre auto disparado desde el backend, PERO hoy no hay aquí un
-                # presupuesto de contexto que crezca: `prepare_new_turn` BORRA el checkpoint al
-                # terminar el turno (_common.py: `adelete_thread` cuando el grafo llega a END),
-                # así que `graph.aget_state(cfg)` no acumula la conversación entre turnos y la
-                # compresión del runner es REACTIVA (solo ante CONTEXT_TOO_LONG), no un medidor
-                # de llenado. El tamaño real de la conversación vive en el FRONTEND (el hilo
-                # visible). Por eso el disparo automático lo hace el frontend llamando a
-                # POST /api/matters/{id}/cierre con {auto: true, messages: <hilo visible>} cuando
-                # detecta ~65% de llenado — misma ruta que el botón manual. Si en el futuro el
-                # runner conserva un transcript persistente por sesión, invocar AQUÍ (fail-soft,
-                # sin bloquear el cierre del SSE):
-                #     await session_briefing.maybe_auto_cierre(tenant_id, matter_id, <messages>)
-                # NO se cablea una llamada al LLM dentro del generador SSE sin una fuente real de
-                # la conversación (sería inventar el mecanismo — regla dura: cero cron/heurística).
-        except Exception:
-            logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)
-            yield sse("error", "Mia no pudo completar el turno. Intenta de nuevo.")
+    async def eventos_del_grafo():
+        async with open_checkpointer() as cp:
+            graph = graph_builder(cp)
+            emisor = _stream_project_events if kind == "proyecto" else _stream_turn_events
+            async for ev in emisor(
+                graph, turn_input, cfg, tenant_id, matter_id,
+                request.is_disconnected, checkpointer=cp,
+            ):
+                yield ev
+            # TODO(pieza-4e · cierre automático a ~65%): ESTE es el punto de integración
+            # exacto para un cierre auto disparado desde el backend, PERO hoy no hay aquí un
+            # presupuesto de contexto que crezca: `prepare_new_turn` BORRA el checkpoint al
+            # terminar el turno (_common.py: `adelete_thread` cuando el grafo llega a END),
+            # así que `graph.aget_state(cfg)` no acumula la conversación entre turnos y la
+            # compresión del runner es REACTIVA (solo ante CONTEXT_TOO_LONG), no un medidor
+            # de llenado. El tamaño real de la conversación vive en el FRONTEND (el hilo
+            # visible). Por eso el disparo automático lo hace el frontend llamando a
+            # POST /api/matters/{id}/cierre con {auto: true, messages: <hilo visible>} cuando
+            # detecta ~65% de llenado — misma ruta que el botón manual. Si en el futuro el
+            # runner conserva un transcript persistente por sesión, invocar AQUÍ (fail-soft,
+            # sin bloquear el cierre del SSE):
+            #     await session_briefing.maybe_auto_cierre(tenant_id, matter_id, <messages>)
+            # NO se cablea una llamada al LLM dentro del generador SSE sin una fuente real de
+            # la conversación (sería inventar el mecanismo — regla dura: cero cron/heurística).
 
-    return EventSourceResponse(gen(), ping=SSE_PING_SECONDS)
+    saludo = ("Mia está revisando las fuentes del proyecto…" if kind == "proyecto"
+              else "Mia está revisando el expediente…")
+    return EventSourceResponse(
+        turno_sse(saludo, eventos_del_grafo, tenant_id, matter_id),
+        ping=SSE_PING_SECONDS,
+    )

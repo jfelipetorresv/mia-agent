@@ -82,6 +82,86 @@ def _correr_un_alias(alias: str, next_alias: str | None, max_retries: int = 3):
     return cliente.intentos, salto
 
 
+def _correr_turno_sse(fallar: bool, registrar: bool) -> list[dict]:
+    """Ejerce el cuerpo real del SSE del turno con un grafo de mentira: sin DB, sin modelo.
+
+    `registrar` simula que la cadena de motores saltó de la suscripción a un motor de pago
+    DENTRO del turno (que es donde ocurre de verdad); `fallar` simula que el turno revienta
+    después de haber gastado ese crédito."""
+    import asyncio
+
+    from mia.agent import llm as _llm
+    from mia.api.routes import stream as _stream
+
+    async def eventos():
+        yield {"event": "thinking", "data": '{"message": "trabajando"}'}
+        if registrar:
+            _llm._registrar_cambio_de_motor("main", "cli-claude", "claude-sonnet", "timeout")
+        if fallar:
+            raise RuntimeError("el turno reventó después de gastar crédito")
+        yield {"event": "awaiting_review", "data": '{"message": "listo"}'}
+
+    async def consumir():
+        return [ev async for ev in _stream.turno_sse("hola", eventos, "t", "m")]
+
+    return asyncio.run(consumir())
+
+
+def _gate_enganche_backend() -> None:
+    import json
+
+    from mia.api.routes import stream as _stream
+
+    normales = _correr_turno_sse(fallar=False, registrar=True)
+    eventos = [e["event"] for e in normales]
+    check("el turno emite el aviso de costo", _stream.AVISO_DE_COSTO_EVENT in eventos,
+          str(eventos))
+    check("y lo emite AL FINAL, después del resultado del turno",
+          eventos and eventos[-1] == _stream.AVISO_DE_COSTO_EVENT, str(eventos))
+    if _stream.AVISO_DE_COSTO_EVENT in eventos:
+        data = json.loads(normales[-1]["data"])
+        check("el evento lleva el texto que lee el abogado",
+              "costo" in data.get("message", "").lower())
+        check("y la recomendación del plan Max",
+              "max" in (data.get("sugerencia") or "").lower())
+
+    sin_cambio = [e["event"] for e in _correr_turno_sse(fallar=False, registrar=False)]
+    check("un turno que NO cambió de motor no dice nada",
+          _stream.AVISO_DE_COSTO_EVENT not in sin_cambio, str(sin_cambio))
+
+    roto = [e["event"] for e in _correr_turno_sse(fallar=True, registrar=True)]
+    check("si el turno falla DESPUÉS de gastar crédito, el aviso sale igual",
+          "error" in roto and _stream.AVISO_DE_COSTO_EVENT in roto, str(roto))
+
+    # El cierre del borrador también razona: mismo envoltorio, mismo aviso.
+    hitl = (ROOT / "backend" / "mia" / "api" / "routes" / "hitl.py").read_text(encoding="utf-8")
+    check("la aprobación del borrador usa el mismo envoltorio", "turno_sse(" in hitl)
+
+
+def _gate_enganche_frontend() -> None:
+    fe = ROOT / "frontend" / "app"
+    comp = (fe / "_components" / "AvisoDeCosto.tsx")
+    check("existe el componente del aviso", comp.exists())
+    if not comp.exists():
+        return
+    texto_comp = comp.read_text(encoding="utf-8")
+    # §G: el componente NO redacta — muestra lo que manda el backend. Si redactara, habría
+    # dos textos que auditar y solo uno cubierto por los checks de arriba.
+    check("el componente no inventa su propio texto para el abogado",
+          "crédito" not in texto_comp.lower() or "aviso.message" in texto_comp)
+
+    for pantalla in ("asuntos/[id]/page.tsx", "proyectos/[id]/page.tsx"):
+        src = (fe / pantalla).read_text(encoding="utf-8")
+        check(f"{pantalla} atiende el evento", '"aviso_de_costo"' in src)
+        check(f"{pantalla} lo pinta", "<AvisoDeCosto" in src)
+
+    revisar = (fe / "asuntos" / "[id]" / "revisar" / "page.tsx").read_text(encoding="utf-8")
+    check("la revisión del borrador no pierde el aviso al volver al asunto",
+          '"aviso_de_costo"' in revisar and "depositarAvisoDeCosto" in revisar)
+    asunto = (fe / "asuntos" / "[id]" / "page.tsx").read_text(encoding="utf-8")
+    check("y el asunto lo recoge al volver", "recogerAvisoDeCosto" in asunto)
+
+
 def main() -> int:  # noqa: C901
     print("== gate: la suscripción se apalanca, el crédito se avisa ==")
 
@@ -177,6 +257,14 @@ def main() -> int:  # noqa: C901
     trozo = activar[activar.index('title="Mi suscripción"'):][:1200].lower()
     jerga = [p for p in ("api", "token", "fallback", "litellm", "endpoint") if p in trozo]
     check("sin jerga técnica en ese texto", not jerga, f"aparece: {', '.join(jerga)}")
+
+    print("\n9 · el aviso LLEGA A LA PANTALLA (enganche, sesión 53)")
+    # El defecto que esto custodia: en la sesión 52 el aviso quedó calculado y probado, pero
+    # nadie lo emitía. Un aviso que no sale de la memoria del proceso no avisa a nadie.
+    _gate_enganche_backend()
+
+    print("\n10 · y la pantalla lo PINTA")
+    _gate_enganche_frontend()
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)
