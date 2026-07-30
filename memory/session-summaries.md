@@ -1191,3 +1191,39 @@ Qué sigue:
 - Caso de oro con expediente GRANDE (sigue siendo el prerrequisito de N-2).
 - Producto: instalador y bienvenida de F3.
 - De Pipe: la lectura de calidad de las 6 salidas y los dos trámites (Azure + OAuth).
+
+## 2026-07-29 — Sesión 52
+TL;DR: instalador re-ensamblado y verde, caso de oro GRANDE construido, y el primer piloto con un
+expediente REAL destapó tres defectos de capacidad que el banco sintético no podía ver.
+
+Qué construimos:
+- Instalador `Mia_0.1.0_x64-setup.exe` 434,2 MB con F1/F2 y las 47 migraciones dentro. Tres
+  defectos cerrados: el borrado de rutas largas que abortaba el build entero, el compilador del
+  backend que borraba los payloads vecinos, y el mensaje de error del primer arranque que podía
+  llegarle ilegible al abogado (verificado en el .exe real).
+- Barrera `test_sin_instrumentacion_debug.py`: el instalador anterior llevaba dentro código de
+  depuración de otra sesión que hacía POST a 127.0.0.1:7610 desde la máquina del abogado.
+- Caso de oro `expediente-voluminoso-cruce-disperso` (252 fragmentos, tres datos enterrados en
+  documentos distintos) + señal `recall_markers_signal` + el segundo eje del comparador agéntico
+  (ahorrar perdiendo un dato del expediente = PEOR).
+- `execution/purgar_piloto.py`: borrado verificable en tres sitios, incluidos los transcripts del
+  CLI de la suscripción, que están FUERA de MIA y nadie esperaba.
+- Embeddings por lotes: la ingesta de un expediente grande fallaba entera contra el tope del
+  proveedor, y le pasaba igual al abogado al subir un documento grande.
+- Política de motores: salto rápido ante timeout de la suscripción + aviso de crédito al abogado +
+  plan Max como REQUISITO en la instalación.
+
+Qué decidimos:
+- El caso de oro grande queda FUERA del examen por defecto (coste y comparabilidad de las series).
+- La rúbrica jurídica NO se reutiliza para medir recuperación: sería una etiqueta engañosa (#81).
+- Sin ejecución del brazo agéntico no hay veredicto de N-2, sino NO CONCLUYENTE.
+- Piloto con expediente real autorizado por Pipe, con borrado demostrado; lo anonimizado queda como
+  la única vía para lo que ya salió de la máquina.
+- Max se enuncia como requisito, no como consejo (copy aprobado tras cinco iteraciones).
+
+Qué sigue:
+1. Enganchar el aviso de cambio de motor a la pantalla (lo único a medias).
+2. El ALCANCE en expedientes voluminosos: 22% leído, medido y sin resolver. La lectura agéntica no
+   sirve (apagada bajo suscripción): subir cobertura de la primera lectura o relectura dirigida.
+3. `seed_despacho_demo.py` y con él la verificación visual.
+4. Bienvenida de F3.

@@ -1743,3 +1743,25 @@ como caso de oro" + pantalla) se pueda usar con datos reales, hacer una ÚLTIMA 
 confidencialidad end-to-end** (que la UI muestre los spans de sospecha resaltados y obligue la revisión
 antes de confirmar). **VERIFICACIÓN DIFERIDA:** la parte RLS de `test_gold_cases` (sección 3) NO se
 corrió (DB dev apagada, puerto 55432) — correr con la DB encendida; patrón idéntico a 015.
+
+## Riesgos abiertos en la sesión 52 (2026-07-29)
+
+- **#82 · ALCANCE en expedientes voluminosos (ABIERTO, el de más valor).** Con un expediente real de
+  174 páginas / 574 fragmentos, MIA leyó 128 (22%) y perdió los datos de FECHA enterrados; en el
+  caso sintético equivalente encontró 1 de 3. Consecuencia medida: subestimó la excepción de
+  prescripción que el despacho puso primera. La lectura agéntica NO es la salida — está
+  estructuralmente apagada bajo suscripción porque el CLI no admite herramientas. Vías: subir la
+  cobertura de la primera lectura, o relectura dirigida por código (sin tool-calling).
+- **#83 · La suscripción no da para expedientes grandes (ABIERTO, mitigado).** El CLI expiró 3 veces
+  a 300s y el turno se resolvió con crédito (USD 0,573). Mitigado con salto rápido + aviso + plan
+  Max como requisito en la instalación; NO resuelto de fondo.
+- **#84 · El aviso de cambio de motor no está enganchado a la pantalla (DEUDA CORTA).**
+  `aviso_cambio_de_motor` se calcula y está probado (26/26) pero nadie lo pinta: falta abrir
+  `recolectar_cambios_de_motor` alrededor del turno en el grafo.
+- **#85 · El rastro de un expediente vive también fuera de MIA (DECLARADO).** El CLI de la
+  suscripción guarda el prompt completo de cada turno en `~/.claude/projects/<slug de MIA_HOME>/`.
+  Cubierto por `purgar_piloto.py`, pero cualquier promesa de borrado que no lo contemple es falsa.
+  Y lo ya enviado al proveedor de embeddings y al modelo no se deshace: para eso, anonimizar antes.
+- **#81 · CERRADO en s51, pero su FAMILIA reapareció dos veces en s52**: el comparador agéntico dio
+  veredicto sin haber ejecutado el brazo B, y la señal de recuperación se llamaba «no leyó» cuando
+  solo prueba «no apareció». Las métricas propias necesitan la regla del muro igual que el producto.

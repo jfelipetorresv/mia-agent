@@ -266,3 +266,51 @@
     rompió `test_sentence_report.w_cableado`, que invoca `_verify_draft` con un
     `SimpleNamespace()`. Se movió a función de módulo. Barrera: el propio
     `execution/test_sentence_report.py`, que falla si vuelve a acoplarse.
+
+64. **Un `git status` sucio que nadie mira acaba DENTRO del producto.** Una sesión de depuración
+    agéntica dejó bloques `#region agent log` en tres archivos; nadie los quitó y al recompilar
+    los payloads viajaron al instalador: un chunk de Next.js ya compilado hacía POST a
+    `127.0.0.1:7610/ingest/...` desde la máquina del abogado. Se detectó por casualidad al mirar
+    `git status` antes de un commit. Barrera: `test_sin_instrumentacion_debug.py`, y su capa
+    importante NO es la del código fuente sino la del BUNDLE — la fuente limpia no basta porque
+    el paquete puede venir de un árbol sucio anterior.
+
+65. **Un borrado que no puede demostrar su resultado no da certeza, la simula.** Al construir el
+    purgador del piloto, sus dos defectos peores fueron los que TRANQUILIZABAN: el slug de la
+    carpeta de transcripts no contemplaba los espacios de la ruta, así que no la encontraba y
+    reportaba «0 coincidencias»; y la búsqueda por subcadena marcaba para borrado cuatro corridas
+    viejas ajenas porque «Nexa» casa dentro de «anexa». Reglas: cuando no se puede verificar un
+    sitio hay que DECIRLO como problema (nunca como limpio), y la coincidencia es por palabra
+    completa cuando de ella depende un borrado.
+
+66. **El rastro de un expediente no está solo donde uno lo puso.** En la política 'suscripcion'
+    MIA razona invocando el CLI con `cwd = MIA_HOME`, y ese CLI guarda el PROMPT COMPLETO de cada
+    turno en `~/.claude/projects/<slug de MIA_HOME>/*.jsonl`: fuera de MIA, fuera del alcance de
+    cualquier borrado interno, y con el expediente dentro (verificado). Antes de prometerle a un
+    abogado que «no queda nada», inventariar los canales, no las tablas.
+
+67. **Un defecto de capacidad se descubre con material real, no con casos de prueba.** Los casos
+    sintéticos del banco tenían 2 fragmentos por documento; con ellos `embed_texts` nunca pasó del
+    tope del proveedor. El primer expediente real (174 páginas) lo pasó a la primera y la ingesta
+    falló ENTERA — y lo mismo le pasaba al abogado al subir un documento grande, porque
+    `upload_document` usa la misma función. Corolario: al arreglar un troceo, lo peligroso no es
+    trocear sino el ORDEN (quien llama empareja `vectors[i]` con `texts[i]`; desordenarlos guarda
+    cada fragmento con el embedding de otro, y eso envenena la búsqueda SIN delatarse).
+
+68. **Reintentar no arregla lo que falló por tamaño.** El CLI de la suscripción expiró tres veces
+    a 300s con un expediente grande antes de saltar al motor de crédito, que respondió a la
+    primera: 15 minutos tirados haciendo lo que iba a hacer igual. Un timeout por volumen es
+    determinista, no transitorio: se salta de motor ya. Y si el salto cambia QUIÉN PAGA, hay que
+    decírselo al abogado — un cargo que no esperaba es un cargo que no autorizó.
+
+69. **Un gate de copy no puede cablear la redacción.** El check exigía la frase literal «ya pagas»
+    y se puso rojo al simplificar el texto sin que nada hubiera empeorado. Un gate así obliga a
+    «arreglarlo» en cada mejora de copy y entrena a ignorarlo: se verifica el CONCEPTO aceptando
+    varias formulaciones. (El texto costó cinco iteraciones: ver
+    `feedback-copy-mia-registro-profesional` en la memoria del harness.)
+
+70. **Antes de comparar dos caminos, verificar que el segundo camino CORRIÓ.** `--agentic-compare`
+    informó «IGUAL — encontró los mismos datos leyendo menos» cuando la lectura agéntica no se
+    había ejecutado ni una vez (el motor de la suscripción no admite herramientas): las dos
+    pasadas eran del MISMO camino clásico y su diferencia de tokens era ruido del modelo. Sin
+    ejecución del brazo B no hay veredicto, hay etiqueta engañosa — la familia del riesgo #81.

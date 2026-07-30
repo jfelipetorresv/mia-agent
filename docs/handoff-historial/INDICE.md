@@ -3,6 +3,7 @@
 > Entradas archivadas del HANDOFF.md, de la más reciente a la más antigua.
 > En HANDOFF.md viven solo la entrada vigente y la anterior.
 
+- [CIERRE — 2026-07-24/25 (3ª sesión) · Sondas 30/30 + referencia en nube: el modo de venta empata](058-cierre-2026-07-24-25-3a-sesion-sondas-30-30-referencia-nube.md)
 - [CIERRE — 2026-07-24 (2ª sesión) · Re-baseline con el prompt de #43-#44: la promesa se sostiene](057-cierre-2026-07-24-2a-sesion-re-baseline-decisiones-43-44.md)
 - [CIERRE — 2026-07-24 · El criterio de Pipe entró a MIA: decisiones #43-#44 + backlog ruflo](056-cierre-2026-07-24-criterio-de-pipe-decisiones-43-44-backlog-ruflo.md)
 - [CIERRE — 2026-07-22 (2ª sesión) · F1 HECHA + F2 casi entera](055-cierre-2026-07-22-2a-sesion-f1-hecha-f2-casi-entera.md)
