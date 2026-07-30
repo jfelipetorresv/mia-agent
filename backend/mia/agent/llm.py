@@ -368,13 +368,14 @@ def aviso_cambio_de_motor(cambios: list[dict] | None) -> dict | None:
         "veces": len(desde_suscripcion),
         "por_tiempo": por_tiempo,
         "aviso": (
-            f"{causa}, así que esta consulta se resolvió con crédito de pago y tiene un costo "
-            "que verás en el consumo de este turno. Tu suscripción se sigue usando primero "
-            "siempre; el crédito solo entra cuando ella no alcanza."
+            f"{causa}. Para no dejarte sin respuesta lo resolví con crédito de pago, y eso tiene "
+            "un costo que verás en el consumo de este turno. Tu suscripción se usa primero "
+            "siempre; el crédito solo entra cuando ella se queda corta."
         ),
         "sugerencia": (
-            "Si esto te pasa seguido con expedientes grandes, un plan de suscripción Max hace "
-            "que estos trabajos quepan en lo que ya pagas, en vez de consumir crédito."
+            "Esto es exactamente lo que evita un plan Max: los expedientes grandes caben "
+            "completos en lo que ya pagas, sin cargos aparte y sin que yo tenga que quedarme a "
+            "medias. Si trabajas asuntos de este tamaño, te lo recomiendo de una."
         ),
     }
 
