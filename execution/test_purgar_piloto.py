@@ -150,13 +150,39 @@ def main() -> int:  # noqa: C901
     check("NO borra los archivos originales del abogado (solo lo que MIA derivó)",
           original.exists())
 
-    print("\n5 · las tablas se descubren del catálogo, no de una lista cableada")
+    print("\n4b · las coincidencias son por PALABRA COMPLETA (este comando borra lo que halla)")
+    # Buscando 'Nexa' con subcadena, cuatro corridas viejas del banco que solo decían 'anexa'
+    # quedaron marcadas para borrado: material ajeno al piloto destruido por un falso positivo.
+    check("'Nexa' NO casa dentro de 'anexa' ni 'conexa'",
+          pp._contar("documento anexa y prueba conexa", ["Nexa"]) == 0,
+          str(pp._contar("documento anexa y prueba conexa", ["Nexa"])))
+    check("pero sí casa cuando es la palabra", pp._contar("el personal de Nexa S.A.", ["Nexa"]) == 1)
+    check("insensible a mayúsculas", pp._contar("NEXA y nexa", ["Nexa"]) == 2)
+    check("los nombres compuestos siguen casando",
+          pp._contar("demanda del Banco Popular S.A.", ["Banco Popular"]) == 1)
+    check("un término vacío no cuenta nada", pp._contar("cualquier texto", ["", "  "]) == 0)
+
+    print("\n5 · la conexión a la base funciona de verdad")
+    # Este check existe porque el comando reventó con AttributeError justo al llegar a la base
+    # —la parte que da la certeza— por usar nombres de config que no existen (POSTGRES_* en vez
+    # de PG_*). Un gate que no toca esta función no habría visto nada.
+    try:
+        kw = pp._pg_kwargs()
+        check("_pg_kwargs() no revienta y trae los cinco parámetros",
+              set(kw) == {"host", "port", "dbname", "user", "password"}, str(sorted(kw)))
+    except Exception as exc:  # noqa: BLE001
+        check("_pg_kwargs() no revienta y trae los cinco parámetros", False,
+              f"{type(exc).__name__}: {exc}")
+    check("NO usa nombres de config inexistentes (POSTGRES_*)",
+          "config.POSTGRES_" not in fuente)
+
+    print("\n6 · las tablas se descubren del catálogo, no de una lista cableada")
     check("la consulta busca la columna tenant_id en information_schema",
           "information_schema.columns" in fuente and "column_name='tenant_id'" in fuente)
     check("y el propio código dice por qué (una tabla nueva entra sola)",
           "entra sola" in fuente)
 
-    print("\n6 · el informe advierte lo que NO puede deshacer")
+    print("\n7 · el informe advierte lo que NO puede deshacer")
     check("dice que lo ya enviado a los proveedores no se revierte",
           "NO deshace lo que ya salió" in fuente)
     check("y remite a la anonimización como la vía para eso",

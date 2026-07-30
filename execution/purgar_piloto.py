@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -70,13 +71,19 @@ EXT_TEXTO = {".md", ".json", ".jsonl", ".txt", ".log", ".yaml", ".yml", ".csv"}
 
 
 def _pg_kwargs() -> dict:
-    return {
-        "host": config.POSTGRES_HOST,
-        "port": config.POSTGRES_PORT,
-        "dbname": config.POSTGRES_DB,
-        "user": config.POSTGRES_USER,
-        "password": config.POSTGRES_PASSWORD,
-    }
+    """Conexión como superusuario, con las MISMAS variables que usa execution/run_eval.py.
+
+    Los nombres son PG_* (no POSTGRES_*): usar los que no existen en `config` hacía que el
+    comando reventara justo al llegar a la base — o sea, en la parte que da la certeza. El gate
+    `test_purgar_piloto.py` lo comprueba ahora contra el módulo de config real.
+    """
+    return dict(
+        host=os.getenv("PG_HOST", "127.0.0.1"),
+        port=os.getenv("PG_PORT", "5432"),
+        dbname=os.getenv("PG_DB", "mia"),
+        user="postgres",
+        password=os.getenv("PG_PASSWORD", ""),
+    )
 
 
 def _slug(texto: str) -> str:
@@ -183,6 +190,24 @@ def purgar_db(tenant: str, *, purgar: bool) -> dict:
 
 
 # ── disco ─────────────────────────────────────────────────────────────────────
+def _contar(texto: str, terminos: list[str]) -> int:
+    """Cuenta apariciones de los términos como PALABRAS COMPLETAS.
+
+    Con búsqueda por subcadena, un término corto arrastra falsos positivos y este comando BORRA
+    lo que encuentra: buscando 'Nexa' marcó cuatro corridas viejas del banco que solo decían
+    'anexa'. Habría destruido material ajeno al piloto por una coincidencia dentro de otra
+    palabra. Los límites de palabra son lo que de verdad se quiere decir con «aparece el nombre
+    del cliente»; los nombres compuestos ('Banco Popular') siguen casando igual.
+    """
+    total = 0
+    for t in terminos:
+        t = (t or "").strip()
+        if not t:
+            continue
+        total += len(re.findall(rf"(?<!\w){re.escape(t)}(?!\w)", texto, flags=re.IGNORECASE))
+    return total
+
+
 def _barrer_archivos(base: Path, terminos: list[str], *, desde: float | None) -> list[tuple[Path, int]]:
     """Archivos de texto bajo `base` que contienen alguno de los términos. Devuelve
     (ruta, coincidencias). NUNCA devuelve el texto."""
@@ -198,7 +223,7 @@ def _barrer_archivos(base: Path, terminos: list[str], *, desde: float | None) ->
             texto = p.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        n = sum(texto.lower().count(t.lower()) for t in terminos)
+        n = _contar(texto, terminos)
         if n:
             hallazgos.append((p, n))
     return hallazgos
@@ -256,7 +281,7 @@ def purgar_cli(terminos: list[str], *, purgar: bool, desde: float | None) -> dic
                 texto = p.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 continue
-            tiene_termino = any(t.lower() in texto.lower() for t in terminos)
+            tiene_termino = _contar(texto, terminos) > 0
             if not (tiene_termino or en_ventana):
                 continue
             try:
