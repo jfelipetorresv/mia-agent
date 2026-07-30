@@ -596,7 +596,7 @@ export default function ActivarPage() {
             // páginas: una suscripción normal no alcanzó a responderlo y el trabajo se
             // resolvió con crédito de pago. Mejor que el abogado lo sepa al elegir el motor
             // que enterarse por un cargo. En llano y sin cifras que no podemos sostener.
-            description="Razono con la suscripción que ya tienes. Usa un plan Max: con el básico, un expediente de cientos de páginas no cabe completo y lo que falta se paga con crédito aparte. Con Max cabe todo, sin costo extra."
+            description="Trabajo con la suscripción que ya pagas. Necesitas plan Max: con planes menores un expediente grande no cabe y acabas pagando crédito extra. Con Max trabajas sin costo extra."
             detected={status.motor_detectado.claude}
             detectedLabel="Ya la detecté lista en este equipo."
             selected={politica === "suscripcion"}
