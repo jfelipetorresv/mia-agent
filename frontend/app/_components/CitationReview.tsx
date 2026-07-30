@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Ban, CheckCircle2, Landmark, ScrollText } from "lucide-react";
+import { AlertTriangle, Ban, BookOpen, CheckCircle2, Landmark, ScrollText } from "lucide-react";
 import { apiGet, apiSend, plainMessage } from "@/lib/api";
 import {
   Dialog,
@@ -46,6 +46,14 @@ export type Verification = {
   contaminacion_expediente?: {
     n_partes_ajenas: number;
     partes?: { parte: string; ocurrencias: number }[];
+  };
+  // Qué parte del expediente alcanzó a leer el turno. Presente solo cuando leyó una
+  // fracción: en un expediente que cabe entero, no hay nada que advertir.
+  alcance_lectura?: {
+    leidos: number;
+    total: number;
+    porcentaje: number;
+    aviso: string;
   };
 };
 
@@ -185,9 +193,11 @@ export default function CitationReview({ verification }: { verification: Verific
 function AvisosDeRevision({ verification }: { verification: Verification }) {
   const neg = verification.afirmaciones_negativas;
   const cruce = verification.contaminacion_expediente;
+  const alcance = verification.alcance_lectura;
   const hayNeg = Boolean(neg && neg.n_a_revisar > 0);
   const hayCruce = Boolean(cruce && cruce.n_partes_ajenas > 0);
-  if (!hayNeg && !hayCruce) return null;
+  const hayAlcance = Boolean(alcance && alcance.total > 0);
+  if (!hayNeg && !hayCruce && !hayAlcance) return null;
 
   return (
     <div className="mt-2 space-y-2">
@@ -230,6 +240,19 @@ function AvisosDeRevision({ verification }: { verification: Verification }) {
           <p className="mt-1.5 text-muted-foreground/80">
             Puede ser legítimo, o puede ser material de otro caso. Revísalo antes de radicar.
           </p>
+        </div>
+      ) : null}
+      {hayAlcance && alcance ? (
+        // No es una alerta de error: es el alcance de la lectura, dicho en voz alta. Un
+        // expediente voluminoso no cabe entero en un turno, y el abogado necesita saber
+        // sobre cuánto material se pronunció Mia para decidir si él tiene que mirar más.
+        <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs">
+          <p className="flex items-start gap-2 font-medium text-foreground">
+            <BookOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            Leí {alcance.porcentaje}% de este expediente ({alcance.leidos} de {alcance.total}{" "}
+            fragmentos)
+          </p>
+          <p className="mt-1 text-muted-foreground">{alcance.aviso}</p>
         </div>
       ) : null}
     </div>

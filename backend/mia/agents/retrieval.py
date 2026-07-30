@@ -1011,6 +1011,163 @@ async def matter_chunk_stats(tenant_id: str, matter_id: str) -> dict:
             "avg_chars": (total_chars / n_chunks) if n_chunks else 0.0}
 
 
+# ── PISO DE COBERTURA POR PIEZA (relectura dirigida, sin herramientas) ───────
+# Medido en el piloto real: 128 fragmentos leídos de 574, y las FECHAS que sostenían la
+# prescripción nunca entraron. La causa no es el ranking sino su naturaleza: ordena por
+# parecido con la pregunta, y el dato decisivo suele estar donde nadie preguntó. Una pieza
+# entera del expediente puede quedar en cero sin que nada lo advierta.
+#
+# La respuesta es de CÓDIGO, no de modelo: se detecta qué piezas quedaron sin leer y se
+# lee un poco de cada una. Sin herramientas (funciona bajo suscripción, donde la lectura
+# agéntica está apagada), sin una llamada más al modelo, y sin gastar más contexto: los
+# fragmentos de cobertura sustituyen a la COLA de la lista principal, la parte del ranking
+# donde el parecido ya es marginal.
+
+
+def unread_documents(docs: list[dict], inventory: list[dict]) -> list[dict]:
+    """Piezas del expediente de las que NO se leyó ni un fragmento. Función PURA.
+
+    `inventory` es lo que hay (de `matter_document_inventory`); `docs`, lo que se leyó.
+    Ordena por tamaño descendente: cuanto más material sin ver, más expediente ciego
+    queda si esa pieza no entra."""
+    leidos = {str(d.get("document_id")) for d in (docs or []) if d.get("document_id")}
+    huerfanas = [d for d in (inventory or []) if str(d.get("document_id")) not in leidos]
+    return sorted(huerfanas, key=lambda d: -int(d.get("n_chunks") or 0))
+
+
+def plan_coverage(docs: list[dict], inventory: list[dict], top_k: int) -> tuple[list[dict], int]:
+    """Qué posiciones del expediente hay que leer para que no quede ninguna ZONA ciega.
+
+    Función PURA. Devuelve ([{document_id, filename, ords: [int…]} …], fragmentos_reservados).
+
+    POR QUÉ POR ZONAS Y NO SOLO POR PIEZA. El primer intento cubría las piezas huérfanas —de
+    las que no se había leído nada— y en el caso de oro voluminoso no movió la aguja: sus tres
+    documentos recibían fragmentos, y aun así dos de los tres datos enterrados (dos FECHAS)
+    seguían sin verse. El sesgo no está solo entre piezas: está DENTRO de cada pieza. El
+    ranking recupera lo que se parece a la pregunta, y un dato que nadie preguntó —una fecha
+    en el acta 87— no se parece a nada.
+
+    Lo que hace: reparte la reserva entre las piezas en proporción a su tamaño y, dentro de
+    cada una, elige posiciones EQUIESPACIADAS que el ranking no trajo. No sustituye al
+    ranking (se queda con la mayoría del presupuesto): le añade un barrido regular del
+    expediente entero, para que la lectura deje de estar concentrada donde ya se sabía mirar.
+
+    Lo que NO promete, dicho en el propio código: esto no garantiza ver un dato concreto.
+    Con 98 fragmentos leídos de 252 se ve el 39% del expediente lea como lea; lo que cambia
+    es DÓNDE cae ese 39% — repartido en vez de amontonado. Para un dato que nadie preguntó,
+    eso sube la probabilidad de verlo de casi cero a la cobertura real. Ni más ni menos.
+
+    La reserva sale del `top_k` del turno (no se suma): ni un token de más. Y nunca deja la
+    lista principal por debajo de la mitad."""
+    if top_k <= 0 or not inventory:
+        return [], 0
+    piso = max(1, int(config.MIA_RETRIEVAL_DOC_FLOOR))
+    reserva_max = int(top_k * float(config.MIA_RETRIEVAL_COVERAGE_RESERVE_FRACTION))
+    # La cobertura sale de la COLA de lo ya leído: no puede pedir más de lo que hay que
+    # ceder, ni dejar la lista principal por debajo de la mitad del turno.
+    reserva_max = min(reserva_max, max(0, len(docs or []) - max(1, top_k // 2)))
+    if reserva_max < piso:
+        return [], 0
+
+    total_chunks = sum(max(0, int(d.get("n_chunks") or 0)) for d in inventory)
+    if total_chunks <= 0:
+        return [], 0
+    leidos_por_doc: dict[str, set] = {}
+    for d in (docs or []):
+        doc_id = str(d.get("document_id") or "")
+        if doc_id:
+            leidos_por_doc.setdefault(doc_id, set()).add(int(d.get("ord") or 0))
+
+    # Se atiende primero a la pieza con más material SIN VER: es donde más expediente
+    # ciego queda si el barrido no llega.
+    orden = sorted(
+        inventory,
+        key=lambda d: -(int(d.get("n_chunks") or 0)
+                        - len(leidos_por_doc.get(str(d.get("document_id")), ()))),
+    )
+    plan: list[dict] = []
+    gastado = 0
+    for pieza in orden:
+        if gastado >= reserva_max:
+            break
+        doc_id = str(pieza.get("document_id") or "")
+        n = max(0, int(pieza.get("n_chunks") or 0))
+        if not doc_id or n <= 0:
+            continue
+        cuota = max(piso, int(round(reserva_max * n / total_chunks)))
+        cuota = min(cuota, reserva_max - gastado, n)
+        if cuota <= 0:
+            continue
+        vistos = leidos_por_doc.get(doc_id, set())
+        # Posiciones equiespaciadas sobre TODA la pieza, saltando lo ya leído: el barrido
+        # no gasta reserva en releer.
+        paso = n / float(cuota)
+        ords: list[int] = []
+        for i in range(cuota):
+            pos = min(n - 1, int(i * paso + paso / 2))
+            candidatos = [p for p in (pos, pos + 1, pos - 1)
+                          if 0 <= p < n and p not in vistos and p not in ords]
+            if candidatos:
+                ords.append(candidatos[0])
+        if ords:
+            plan.append({"document_id": doc_id, "filename": pieza.get("filename"),
+                         "ords": ords})
+            gastado += len(ords)
+    return plan, gastado
+
+
+async def matter_document_inventory(tenant_id: str, matter_id: str) -> list[dict]:
+    """Las piezas indexadas del asunto: [{document_id, filename, n_chunks}].
+
+    Fail-soft: ante cualquier fallo devuelve [] y el turno lee exactamente como antes de
+    existir esta comprobación."""
+    try:
+        async with pool.tenant_connection(tenant_id) as conn:
+            rows = await (await conn.execute(
+                "SELECT c.document_id, d.filename, count(*)::bigint "
+                "FROM chunks c JOIN documents d ON d.id = c.document_id "
+                "WHERE d.matter_id = %s AND c.embedding IS NOT NULL "
+                "GROUP BY c.document_id, d.filename",
+                (matter_id,),
+            )).fetchall()
+    except Exception:  # noqa: BLE001 — el inventario nunca puede tumbar el turno
+        logger.warning("no se pudo inventariar las piezas del asunto (matter=%s)",
+                       matter_id, exc_info=True)
+        return []
+    return [{"document_id": str(r[0]), "filename": r[1], "n_chunks": int(r[2])}
+            for r in rows]
+
+
+async def retrieve_document_ords(tenant_id: str, matter_id: str, document_id: str,
+                                 ords: list[int]) -> list[dict]:
+    """Trae fragmentos de una pieza por su POSICIÓN, no por parecido.
+
+    Es la mitad que le faltaba al barrido: pedir «lo más parecido a la pregunta dentro de
+    esta pieza» devolvería otra vez material del mismo tenor, y el dato que se busca es
+    justamente el que no se parece a nada de lo preguntado. Por eso la selección la hace
+    `plan_coverage` (posiciones equiespaciadas) y aquí solo se leen.
+
+    Fail-soft: devuelve [] ante cualquier fallo."""
+    if not document_id or not ords:
+        return []
+    try:
+        async with pool.tenant_connection(tenant_id) as conn:
+            rows = await (await conn.execute(
+                "SELECT c.id, c.content, c.document_id, c.ord, d.filename, c.folio_ancla "
+                "FROM chunks c JOIN documents d ON d.id = c.document_id "
+                "WHERE d.matter_id = %s AND c.document_id = %s AND c.ord = ANY(%s) "
+                "AND c.embedding IS NOT NULL ORDER BY c.ord",
+                (matter_id, document_id, [int(o) for o in ords]),
+            )).fetchall()
+    except Exception:  # noqa: BLE001
+        logger.warning("no se pudo leer la pieza %s del asunto %s", document_id, matter_id,
+                       exc_info=True)
+        return []
+    return [{"id": str(r[0]), "content": r[1], "score": 0.0,
+             "filename": r[4], "folio_ancla": r[5],
+             "document_id": str(r[2]), "ord": int(r[3])} for r in rows]
+
+
 # ── Lectura AGÉNTICA: que el modelo PIDA más material ────────────────────────
 # Todo el bloque anterior ADIVINA cuánto leer ANTES de leer. Funciona, pero obliga a
 # fijar una proporción del presupuesto (COVERAGE) que siempre es un compromiso: la

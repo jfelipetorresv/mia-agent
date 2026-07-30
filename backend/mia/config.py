@@ -128,6 +128,32 @@ MIA_RETRIEVAL_MIN_TOP_K = int(os.getenv("MIA_RETRIEVAL_MIN_TOP_K", "8"))
 # deja holgado a propósito para que siga siendo lo que dice ser —una red de seguridad— y no
 # el límite operativo. Un riel que muerde en todos los casos aplasta la adaptabilidad.
 MIA_RETRIEVAL_MAX_TOP_K = int(os.getenv("MIA_RETRIEVAL_MAX_TOP_K", "128"))
+# ── PISO DE COBERTURA POR PIEZA (sesión 53) ──────────────────────────────────
+# El defecto que corrige, medido en el piloto con expediente real: Mia leyó 128 de 574
+# fragmentos y NO vio las fechas que necesitaba para sostener la prescripción. No fue un
+# fallo del ranking sino su consecuencia natural: un ranking global concentra la lectura
+# en las piezas que más se parecen a la pregunta, y una pieza ENTERA puede quedar en cero
+# — precisamente la que guarda el dato que nadie pensó en preguntar. `max_per_document`
+# evita que UNA pieza acapare; nada garantizaba que las demás aparecieran.
+#
+# Regla: ninguna pieza del expediente se queda sin leer si hay sitio. Los fragmentos de
+# cobertura salen del MISMO presupuesto (se recorta la cola de la lista principal): esto
+# reparte la lectura, no la agranda — ni un token ni un dólar de más por turno.
+#
+# Determinista y sin modelo: una consulta por pieza huérfana, con el vector del turno. No
+# necesita herramientas, así que funciona BAJO SUSCRIPCIÓN, que es donde la lectura
+# agéntica no puede correr (ese fue el hallazgo que dejó N-2 sin decidir).
+MIA_RETRIEVAL_DOC_FLOOR = int(os.getenv("MIA_RETRIEVAL_DOC_FLOOR", "2"))
+# Cuánto del top_k puede dedicarse, como máximo, a cubrir piezas huérfanas. El resto
+# sigue siendo del ranking: la cobertura no puede comerse la relevancia.
+MIA_RETRIEVAL_COVERAGE_RESERVE_FRACTION = float(
+    os.getenv("MIA_RETRIEVAL_COVERAGE_RESERVE_FRACTION", "0.25"))
+# Por debajo de esta fracción del expediente leída, el turno DECLARA su alcance al abogado.
+# Ninguna técnica de recuperación garantiza haber visto un dato puntual —para eso habría que
+# leerlo todo, y no cabe en la ventana—, así que el límite se dice en vez de esconderse: es
+# la misma disciplina del muro de citas aplicada a la lectura. 0.95 y no 1.0 porque llegar al
+# último fragmento por dedup o por tope por pieza no es leer de menos.
+MIA_ALCANCE_AVISO_UMBRAL = float(os.getenv("MIA_ALCANCE_AVISO_UMBRAL", "0.95"))
 # Se piden más filas de las que se van a entregar porque el dedup y el tope por documento
 # descartan algunas: sin este colchón, "leer 100" acababa entregando 70.
 MIA_RETRIEVAL_OVERFETCH = float(os.getenv("MIA_RETRIEVAL_OVERFETCH", "1.5"))

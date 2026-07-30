@@ -261,6 +261,60 @@ async def _read_matter_adaptive(tenant_id: str, matter_id: str, msg: str,
     return docs
 
 
+async def _cover_unread_documents(tenant_id: str, matter_id: str, qvec: list[float],
+                                  plan, docs: list[dict]) -> list[dict]:
+    """Barrido de cobertura: que ninguna ZONA del expediente quede ciega.
+
+    Por qué existe, medido en el piloto con expediente real: el ranking concentró la lectura
+    donde se parecía a la pregunta y las FECHAS que sostenían la prescripción nunca entraron.
+    Mia no razonó mal: no vio el material. El sesgo no está solo entre piezas —también
+    dentro de cada una—, así que la corrección es un barrido regular del expediente entero,
+    no un piso por documento (eso se probó primero y no movió la aguja).
+
+    NO gasta contexto de más: los fragmentos del barrido sustituyen a la COLA de la lista,
+    donde el parecido ya es marginal. NO llama al modelo ni a embeddings. NO necesita
+    herramientas, así que corre bajo suscripción, que es donde la lectura agéntica está
+    apagada — el hallazgo que dejó esta decisión sin poder tomarse.
+
+    Fail-soft de principio a fin: cualquier fallo devuelve la lectura tal cual estaba."""
+    try:
+        if not docs or plan.top_k <= 0:
+            return docs
+        inventario = await retrieval.matter_document_inventory(tenant_id, matter_id)
+        if not inventario:
+            return docs
+        piezas, reservados = retrieval.plan_coverage(docs, inventario, plan.top_k)
+        if not piezas:
+            return docs
+        nuevos: list[dict] = []
+        for pieza in piezas:
+            nuevos += await retrieval.retrieve_document_ords(
+                tenant_id, matter_id, pieza["document_id"], pieza["ords"])
+        if not nuevos:
+            return docs
+        # El dedup se aplica ANTES de decidir cuánta cola se cede. Midiendo la primera
+        # versión se vio que hacerlo al revés ENCOGÍA la lectura: se apartaban 22 fragmentos
+        # de cola, el dedup descartaba parte del barrido por solaparse con lo ya leído, y el
+        # turno acababa leyendo 86 donde antes leía 98. Barrer no puede costar material.
+        ya = {str(d.get("id")) for d in docs}
+        utiles = [d for d in retrieval.dedupe_chunks(docs + nuevos)
+                  if str(d.get("id")) not in ya]
+        if not utiles:
+            return docs
+        # Se recorta por la COLA (lo menos pertinente) y el barrido va al final: el orden
+        # de la lista es el orden en que el prompt presenta el material.
+        conservados = docs[: max(1, len(docs) - len(utiles))]
+        salida = conservados + utiles
+        logger.info("barrido de cobertura: %s fragmentos de %s piezas (reserva %s de un "
+                    "top_k de %s); la lectura pasa de %s a %s fragmentos",
+                    len(nuevos), len(piezas), reservados, plan.top_k, len(docs), len(salida))
+        return salida
+    except Exception:  # noqa: BLE001 — barrer el expediente jamás puede tumbar el turno
+        logger.warning("no se pudo aplicar el barrido de cobertura (matter=%s)",
+                       matter_id, exc_info=True)
+        return docs
+
+
 def _expansion_plan(plan, top_k: int):
     """Plan de UNA ampliación: el mismo plan del turno con otro tamaño de lectura.
 
@@ -329,7 +383,11 @@ async def _read_matter_agentic(tenant_id: str, matter_id: str, msg: str,
     if enabled is None:
         enabled = retrieval.agentic_reading_available()
     if not enabled:
-        return docs, None
+        # Sin herramientas (el caso de la suscripción, que es el modo de venta) la única
+        # corrección posible al sesgo del ranking es de código: que ninguna pieza del
+        # expediente se quede en cero. Va DESPUÉS de leer, porque solo entonces se sabe
+        # qué quedó fuera.
+        return await _cover_unread_documents(tenant_id, matter_id, qvec, plan, docs), None
 
     async def _read_more(query: str, top_k: int) -> list[dict]:
         """La puerta a la base que se le presta al modelo: la MISMA tubería de siempre.
@@ -359,6 +417,9 @@ async def _read_matter_agentic(tenant_id: str, matter_id: str, msg: str,
     logger.info("lectura agéntica: %s ampliaciones, %s fragmentos nuevos, corte por '%s' "
                 "(%s/%s tokens del bucle)", trace.get("expansions"), trace.get("added"),
                 trace.get("stop"), trace.get("tokens_spent"), trace.get("budget_tokens"))
+    # El piso de cobertura también aquí: que el modelo pueda pedir más no garantiza que
+    # pida por la pieza en la que nunca pensó — el sesgo del ranking es el mismo.
+    docs = await _cover_unread_documents(tenant_id, matter_id, qvec, plan, docs)
     return docs, trace
 
 
@@ -1208,6 +1269,17 @@ class MatterGraphBuilder:
         # contexto (intake) y viaja por metadata para que analysis/draft comprriman UNA sola vez.
         md.setdefault("llm_turn", TurnLLMState().to_dict())
         md.update(stage="intake", retrieved=len(docs))
+        # ALCANCE DE LA LECTURA (sesión 53). En un expediente voluminoso el turno lee una
+        # FRACCIÓN del material: 128 de 574 fragmentos en el piloto real, y de ahí salió
+        # que Mia subestimara la prescripción —no vio las fechas—. El barrido y la
+        # relectura dirigida reparten mejor esa fracción, pero NINGUNA técnica de
+        # recuperación garantiza haber visto un dato puntual: para eso habría que leerlo
+        # todo, y no cabe. Lo que sí se puede es DECIRLO. Un límite que el abogado conoce
+        # es un límite que él puede cubrir; uno invisible es una trampa.
+        if plan is not None and getattr(plan, "n_chunks", 0):
+            md["alcance_lectura"] = {"leidos": len(docs), "total": int(plan.n_chunks)}
+        else:
+            md.pop("alcance_lectura", None)
         # Trazabilidad de la lectura agéntica: cuántas ampliaciones pidió el modelo, con
         # qué consulta y motivo, cuánto material nuevo entró y por qué se detuvo. Sin ella
         # no se puede MEDIR después si de verdad cuesta menos, que es el argumento entero
@@ -1521,6 +1593,13 @@ class MatterGraphBuilder:
     async def analysis_node(self, state: MatterState) -> dict:
         msg = _last_user_message(state)
         docs = state.get("documents") or []
+        # RELECTURA DIRIGIDA (sesión 53). La primera lectura se buscó con la PREGUNTA del
+        # abogado, que es lo único que había. A esta altura del turno hay algo mejor: los
+        # hechos que el equipo estableció y su memoria de investigación ya nombran los ejes
+        # del caso —los que la pregunta no nombraba— y con esos términos la base devuelve
+        # material que el primer vector no podía alcanzar. Cuesta un embedding y una
+        # consulta; ninguna llamada más al modelo.
+        docs = await self._relectura_dirigida(state, docs)
         knowledge = state.get("knowledge") or []
         md = dict(state.get("metadata") or {})
         facts = str(md.get("facts") or "")
@@ -1596,6 +1675,51 @@ class MatterGraphBuilder:
             md.pop("diagnosis_summary", None)
         _accum_usage(md, usage)
         return {"metadata": md}
+
+    async def _relectura_dirigida(self, state: MatterState,
+                                  docs: list[dict]) -> list[dict]:
+        """Vuelve a leer el expediente con lo que el turno YA aprendió del caso.
+
+        El defecto que ataca, medido: el turno busca material con el vector de la pregunta
+        del abogado. Si la pregunta no nombra el eje que decide el asunto —y no lo nombra
+        casi nunca: para eso se contrata al abogado— el material de ese eje no puede salir
+        en la búsqueda. En el piloto real Mia detectó la prescripción pero la desarrolló
+        mal: las fechas vivían en fragmentos que su búsqueda no podía alcanzar.
+
+        Aquí se busca otra vez con los HECHOS establecidos y la memoria de investigación,
+        que sí nombran esos ejes. Un embedding y una consulta; cero llamadas al modelo.
+
+        Como el barrido, se paga con la COLA de la lista: la lectura no crece.
+        Fail-soft: cualquier fallo devuelve `docs` tal cual."""
+        try:
+            md = state.get("metadata") or {}
+            consulta = " ".join(x for x in (str(md.get("facts") or "")[:1500],
+                                            str(md.get("research") or "")[:1500])
+                                if x.strip()).strip()
+            matter_id = state.get("matter_id") or ""
+            if not consulta or not docs or not matter_id:
+                return docs
+            cupo = int(len(docs) * float(config.MIA_RETRIEVAL_COVERAGE_RESERVE_FRACTION))
+            if cupo < 1:
+                return docs
+            vecs = await asyncio.to_thread(embeddings.embed_texts, [consulta])
+            if not vecs:
+                return docs
+            frescos = await retrieval.retrieve_rrf(
+                state["tenant_id"], matter_id, consulta, vecs[0],
+                top_k=cupo, candidates=max(config.MIA_RETRIEVAL_MIN_CANDIDATES, cupo * 3))
+            vistos = {str(d.get("id")) for d in docs}
+            nuevos = [d for d in frescos if str(d.get("id")) not in vistos][:cupo]
+            if not nuevos:
+                return docs
+            salida = docs[: max(1, len(docs) - len(nuevos))] + nuevos
+            logger.info("relectura dirigida: %s fragmentos nuevos con los ejes del caso "
+                        "(la lectura sigue en %s)", len(nuevos), len(salida))
+            return salida
+        except Exception:  # noqa: BLE001 — releer mejor jamás puede tumbar el turno
+            logger.warning("no se pudo hacer la relectura dirigida (matter=%s)",
+                           state.get("matter_id"), exc_info=True)
+            return docs
 
     async def _warroom_dictamen(self, state: MatterState) -> str:
         """El dictamen vigente de la Sala de estrategia de este asunto, ya renderizado, o ''.
@@ -1785,6 +1909,12 @@ class MatterGraphBuilder:
         cruce = await _check_foreign_parties(state, annotated)
         if cruce:
             report["contaminacion_expediente"] = cruce
+        # ALCANCE DE LA LECTURA: en un expediente voluminoso el turno vio una parte del
+        # material. Decirlo no es una disculpa: es el dato que el abogado necesita para
+        # saber si tiene que mirar él lo que falta.
+        alcance = _aviso_de_alcance(state.get("metadata") or md)
+        if alcance:
+            report["alcance_lectura"] = alcance
         return annotated
 
     # (`_check_negative_claims` vive como función del módulo, más abajo: no necesita `self` y
@@ -2135,6 +2265,39 @@ def build_project_graph(checkpointer: Any, *, trace_capture: Optional[TraceCaptu
     """Atajo: construye el grafo del proyecto (Bloque A) con el checkpointer dado."""
     return MatterGraphBuilder(trace_capture, agent_hub).build_project(checkpointer)
 
+
+
+def _aviso_de_alcance(md: dict) -> Optional[dict]:
+    """Cuánto del expediente vio este turno, y el aviso si vio una parte. PURA.
+
+    Devuelve None cuando el turno leyó el expediente entero (o casi: por encima del umbral
+    no hay nada que advertir) y cuando no hay medición — nunca se inventa una cifra.
+
+    El aviso NO dice «puede que me haya equivocado»: dice qué parte se leyó y qué implica.
+    Es la misma disciplina del muro de citas aplicada al alcance — lo que no se puede
+    garantizar, se declara."""
+    datos = (md or {}).get("alcance_lectura")
+    if not isinstance(datos, dict):
+        return None
+    total = int(datos.get("total") or 0)
+    leidos = int(datos.get("leidos") or 0)
+    if total <= 0 or leidos <= 0:
+        return None
+    fraccion = min(1.0, leidos / total)
+    if fraccion >= config.MIA_ALCANCE_AVISO_UMBRAL:
+        return None
+    return {
+        "leidos": leidos,
+        "total": total,
+        "porcentaje": int(round(fraccion * 100)),
+        "aviso": (
+            f"De este expediente leí {leidos} de {total} fragmentos "
+            f"({int(round(fraccion * 100))}%). Reparto la lectura por todas las piezas y "
+            "vuelvo sobre los ejes del caso, pero un dato puntual —una fecha, una cláusula "
+            "suelta— puede haber quedado fuera. Si el asunto depende de un dato así, "
+            "indícame dónde buscarlo o pregúntame por él directamente."
+        ),
+    }
 
 
 async def _check_negative_claims(state: MatterState, draft: str,
