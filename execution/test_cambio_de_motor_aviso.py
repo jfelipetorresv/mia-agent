@@ -163,8 +163,13 @@ def main() -> int:  # noqa: C901
     check("la pantalla de activación existe y ofrece la suscripción",
           'title="Mi suscripción"' in activar)
     check("recomienda el plan Max al elegir el motor", "plan Max" in activar)
-    check("y explica el beneficio en llano (cabe en lo que ya pagas)",
-          "ya pagas" in activar)
+    # Se exige el CONCEPTO, no una redacción literal: el texto se ha reescrito dos veces por
+    # claridad y un check atado a las palabras exactas lo rompe cada vez sin que nada haya
+    # empeorado. Lo sustantivo es que diga que con Max no se paga aparte.
+    beneficio = any(f in activar for f in ("ya pagas", "sin costo extra", "sin cargos"))
+    check("y explica el beneficio en llano (con Max no se paga aparte)", beneficio)
+    check("nombra el problema que evita (el expediente que no cabe)",
+          "no me cabe" in activar or "no cabe" in activar or "a medias" in activar)
     check("lo dice donde se elige la suscripción, no en otra pantalla suelta",
           activar.index("plan Max") > activar.index('title="Mi suscripción"')
           and activar.index("plan Max") - activar.index('title="Mi suscripción"') < 1200)
