@@ -314,3 +314,46 @@
     había ejecutado ni una vez (el motor de la suscripción no admite herramientas): las dos
     pasadas eran del MISMO camino clásico y su diferencia de tokens era ruido del modelo. Sin
     ejecución del brazo B no hay veredicto, hay etiqueta engañosa — la familia del riesgo #81.
+
+71. **Un aviso calculado no es un aviso dado.** El texto que le dice al abogado que su consulta se
+    pagó con crédito quedó una sesión entera escrito, probado y sin que nadie lo emitiera: vivía en
+    la memoria del proceso. La regla del muro tiene su gemela en la interfaz — una barrera que no
+    llega a la pantalla no protege a nadie, y su gate tiene que ejercer el CAMINO (aquí, el cuerpo
+    real del SSE con un grafo de mentira), no solo la función que arma la frase.
+
+72. **Mirar la pantalla encuentra lo que ningún test mira.** La primera hora de tener un despacho de
+    prueba sembrado destapó dos defectos con años de superficie: un resumen que decía «todas con
+    respaldo en sus fuentes» cuando la única cita se había RETIRADO del texto (la cuenta tenía dos
+    casillas y las citas retiradas no caían en ninguna), y un normalizador que descartaba en
+    silencio los avisos que el componente sí sabía pintar. Los dos estaban en la primera línea que
+    lee el abogado. Corolario: el coste de mirar es lo que decide si se mira — bajarlo a un comando
+    vale más que cualquier propósito de mirar más.
+
+73. **Una prueba que depende de un empate es una prueba intermitente.** El gate del despacho de
+    prueba pasaba y fallaba según qué fragmento recuperara el turno, porque todos los vectores del
+    doble eran idénticos y el orden lo decidía un desempate arbitrario de la base. Un doble tiene
+    que FORZAR la condición que la prueba afirma, no confiar en que salga. Aquí: los términos que
+    deben quedar enterrados se embeben ortogonales a la consulta.
+
+74. **Barrer no puede costar material.** La primera versión del barrido de cobertura apartaba 22
+    fragmentos de la cola y luego deduplicaba: el dedup se comía parte del barrido y el turno
+    acababa leyendo 86 donde antes leía 98. Cuando una mejora sustituye material por material, el
+    descarte va ANTES de decidir cuánto se cede — si no, la mejora es una pérdida con buena
+    intención. Solo se vio midiendo en vivo (el log del turno lo decía: «pasa de 98 a 86»).
+
+75. **Repartir la lectura no es leer más, y hay que decir cuál de las dos se hizo.** El barrido y la
+    relectura dirigida cambiaron DÓNDE cae la lectura (44 de 98 fragmentos vienen ahora de sitios
+    que el ranking no habría traído), pero el recall de datos enterrados siguió en 1/3: leer 98 de
+    252 ve el 39% del expediente se reparta como se reparta. Ninguna técnica de recuperación
+    garantiza haber visto un fragmento concreto. Lo honesto no es prometer el dato: es declarar el
+    alcance («leí 86 de 252») — la disciplina del muro de citas aplicada a la lectura.
+
+76. **La palanca obvia estaba medida en contra.** Doblar el techo de lectura (128 → 256) parecía la
+    respuesta al alcance; en vivo el turno dejó de caber en la suscripción, saltó a crédito (USD
+    1,01 de tarjeta en UNA consulta) y agotó la cadena. Antes de proponerle a Pipe una palanca de
+    gasto, correrla: una corrida convierte una discusión de criterio en un dato.
+
+77. **Antes de creer que la pantalla está rota, dudar del andamiaje.** El recorrido automatizado no
+    conseguía marcar un país y parecía un bloqueo del onboarding; era el selector del script (la
+    casilla es `sr-only` bajo la ficha). Un clic real la marcó a la primera. Una herramienta de
+    verificación también falla, y su fallo se disfraza de defecto del producto.

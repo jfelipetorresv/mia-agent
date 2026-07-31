@@ -1227,3 +1227,30 @@ Qué sigue:
    sirve (apagada bajo suscripción): subir cobertura de la primera lectura o relectura dirigida.
 3. `seed_despacho_demo.py` y con él la verificación visual.
 4. Bienvenida de F3.
+
+## 2026-07-30 — Sesión 53
+
+TL;DR: los cuatro pendientes de la 52, cerrados; el alcance quedó medido, repartido y DECLARADO
+(el recall de datos enterrados no subió: el límite es estructural y ahora se dice en pantalla).
+
+Qué construimos:
+- El aviso de crédito llega a la pantalla (`turno_sse` en asunto, proyecto y cierre del borrador;
+  también cuando el turno falla, porque el crédito ya se gastó). Gate 41/41.
+- `execution/seed_despacho_demo.py` + su gate: despacho con perfil, expediente y borrador esperando
+  revisión generado por el grafo real. Con él se ve por fin la interfaz sin veinte minutos de
+  andamiaje — y encontró dos defectos de pantalla el primer día.
+- Alcance: barrido de cobertura por zonas + relectura dirigida por los hechos/investigación del
+  turno + aviso de alcance en el informe («leí 86 de 252 fragmentos»). Gate nuevo 40/40.
+- Bienvenida F3: la pregunta de jurisdicción pasa de 21 filas con scroll a fichas con buscador.
+
+Qué decidimos:
+- La corrección del alcance es de CÓDIGO, no de modelo: bajo suscripción no hay herramientas.
+- Cubrir solo piezas huérfanas no basta (medido): el sesgo también está dentro de cada pieza.
+- Ninguna recuperación garantiza ver un fragmento concreto → el alcance se declara, no se promete.
+- Subir el techo de lectura queda DESCARTADO con dato: 128→256 sacó el turno de la suscripción y
+  costó USD 1,01 de tarjeta en una sola consulta.
+
+Qué sigue:
+1. E2E automatizado de la primera vez (salida medible de F3), cronometrado y con capturas.
+2. El alcance, si Pipe quiere una vía distinta a las tres implementadas.
+3. Lo que quede de F3 tras el E2E.

@@ -1752,12 +1752,11 @@ corrió (DB dev apagada, puerto 55432) — correr con la DB encendida; patrón i
   prescripción que el despacho puso primera. La lectura agéntica NO es la salida — está
   estructuralmente apagada bajo suscripción porque el CLI no admite herramientas. Vías: subir la
   cobertura de la primera lectura, o relectura dirigida por código (sin tool-calling).
+  **ACT. 2026-07-30 (s53, `d481a85`): MITIGADO Y DECLARADO, no resuelto.** Tres piezas de código: barrido de cobertura por zonas, relectura dirigida con los hechos/investigación del turno y AVISO DE ALCANCE en el informe. Medido en el caso de oro voluminoso: 44 de 98 fragmentos vienen ahora de sitios que el ranking no habría traído, pero el recall de datos enterrados sigue 1/3 — leer 98 de 252 ve el 39% se reparta como se reparta. Subir el techo (128→256) está PROBADO Y DESCARTADO: sacó el turno de la suscripción y costó USD 1,01 de tarjeta en una consulta. Queda ABIERTO como límite estructural, ahora visible para el abogado.
 - **#83 · La suscripción no da para expedientes grandes (ABIERTO, mitigado).** El CLI expiró 3 veces
   a 300s y el turno se resolvió con crédito (USD 0,573). Mitigado con salto rápido + aviso + plan
   Max como requisito en la instalación; NO resuelto de fondo.
-- **#84 · El aviso de cambio de motor no está enganchado a la pantalla (DEUDA CORTA).**
-  `aviso_cambio_de_motor` se calcula y está probado (26/26) pero nadie lo pinta: falta abrir
-  `recolectar_cambios_de_motor` alrededor del turno en el grafo.
+- **#84 · CERRADO 2026-07-30 (s53, `c644c91`).** El aviso de cambio de motor se emite como evento `aviso_de_costo` al final del turno (asunto, proyecto y cierre del borrador) y las tres pantallas lo pintan; sale también cuando el turno falla, porque el crédito ya se gastó. Gate 41/41 ejerciendo el cuerpo real del SSE.
 - **#85 · El rastro de un expediente vive también fuera de MIA (DECLARADO).** El CLI de la
   suscripción guarda el prompt completo de cada turno en `~/.claude/projects/<slug de MIA_HOME>/`.
   Cubierto por `purgar_piloto.py`, pero cualquier promesa de borrado que no lo contemple es falsa.
