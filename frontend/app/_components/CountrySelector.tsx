@@ -32,7 +32,7 @@
 //         un beneficio de elegir un país, así que no se anuncia como tal.
 // Si alguien completa y verifica festivos o términos, ESE es el momento de ampliar el
 // texto de abajo — no antes.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiGetSoft } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -177,10 +177,38 @@ export function CountrySelector({
 
   const mensaje = explicacion();
 
+  // Filtro de escritura. Se ve MIRANDO la pantalla: veintiún países en filas con casilla
+  // convertían la única pregunta de contexto en una lista con scroll, y el wizard —que es
+  // una pregunta a la vez— perdía su ritmo justo aquí. En fichas caben de un vistazo, y
+  // quien ya sabe su país lo escribe y lo tiene delante en dos teclas.
+  const [filtro, setFiltro] = useState("");
+  const normalizar = (s: string) =>
+    s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const visibles = useMemo(() => {
+    const q = normalizar(filtro.trim());
+    const lista = q
+      ? COUNTRY_OPTIONS.filter((o) => normalizar(o.name).includes(q))
+      : COUNTRY_OPTIONS;
+    // Los que ya están marcados primero: lo elegido no puede desaparecer al filtrar.
+    return [...lista].sort((a, b) => {
+      const ma = value.includes(a.code) ? 0 : 1;
+      const mb = value.includes(b.code) ? 0 : 1;
+      return ma - mb;
+    });
+  }, [filtro, value]);
+
   return (
     <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-2">
-        {COUNTRY_OPTIONS.map((option) => {
+      <input
+        type="search"
+        value={filtro}
+        onChange={(e) => setFiltro(e.target.value)}
+        placeholder="Escribe para encontrar tu país"
+        aria-label="Buscar país"
+        className="h-10 w-full rounded-xl border border-input bg-card px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/40"
+      />
+      <div className="flex flex-wrap gap-2">
+        {visibles.map((option) => {
           const checked = value.includes(option.code);
           // La insignia solo se pinta cuando el servidor CONFIRMÓ que hay material. La
           // ausencia de insignia nunca se convierte en un sello de "no tengo nada": los
@@ -190,23 +218,34 @@ export function CountrySelector({
             <label
               key={option.code}
               className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-colors",
-                checked ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-primary/25",
+                "flex cursor-pointer items-center gap-2 rounded-full border px-3.5 py-2 text-sm transition-colors",
+                checked
+                  ? "border-primary/50 bg-primary/10 text-foreground"
+                  : "border-border bg-card text-muted-foreground hover:border-primary/30 hover:text-foreground",
               )}
             >
+              {/* La casilla sigue existiendo (teclado y lectores de pantalla la usan); lo
+                  que cambia es que la ficha entera es la superficie visible. */}
               <input
                 type="checkbox"
                 checked={checked}
                 onChange={(e) => toggle(option.code, e.target.checked)}
-                className="h-4 w-4 shrink-0 rounded border-input accent-[hsl(var(--primary))]"
+                className="sr-only"
               />
-              <span className="min-w-0">
-                <span className="block">{option.name}</span>
+              <span
+                aria-hidden
+                className={cn(
+                  "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px]",
+                  checked ? "border-primary bg-primary text-primary-foreground" : "border-input",
+                )}
+              >
+                {checked ? "✓" : ""}
               </span>
+              <span>{option.name}</span>
               {listo ? (
                 <span
                   title={`Ya vengo preparada: ${PREPARED_MEANING}.`}
-                  className="ml-auto shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium leading-tight text-primary"
+                  className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium leading-tight text-primary"
                 >
                   {PREPARED_BADGE}
                 </span>
@@ -214,6 +253,11 @@ export function CountrySelector({
             </label>
           );
         })}
+        {visibles.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            Ninguno de la lista se llama así. Escríbelo abajo y seguimos igual.
+          </p>
+        ) : null}
       </div>
       {mensaje ? (
         <p aria-live="polite" className="text-xs leading-relaxed text-muted-foreground">
