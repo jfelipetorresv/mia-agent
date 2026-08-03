@@ -1773,7 +1773,12 @@ class MatterGraphBuilder:
         user_parts.append(profile_txt)
         if pb_active:
             user_parts.append(pb_active)
-        user_parts.append("Redacta el borrador del escrito.")
+            
+        gate_feedback = md_in.get("gate_feedback")
+        if gate_feedback:
+            user_parts.append(f"El gate de calidad rechazó el borrador anterior:\n{gate_feedback}\n\nReescribe el borrador corrigiendo las citas y asegurando respaldo literal exacto.")
+        else:
+            user_parts.append("Redacta el borrador del escrito.")
         md = dict(md_in)
 
         def _messages(parts: list[str], index: str = pb_index) -> list[dict]:
@@ -1920,17 +1925,44 @@ class MatterGraphBuilder:
     # (`_check_negative_claims` vive como función del módulo, más abajo: no necesita `self` y
     # así el nodo sigue probándose con un `self` simulado — ver test_sentence_report.w_cableado.)
 
-    # ── 6 · verification (CP9 · especialista de VERIFICACIÓN, determinista) ──
-    async def verification_node(self, state: MatterState) -> dict:
-        """Sin LLM: escáner de citas + anotación [VERIFICAR] (agents/verification.py).
-
-        Nunca borra texto del borrador — solo AÑADE marcas donde una cita quedó sin
-        marca y sin respaldo en las fuentes del corpus recuperadas en el turno. El
-        informe viaja en metadata a la Pantalla 2/3 (transparencia hacia el abogado)."""
+    # ── 6 · verificador_citas (Gate de Calidad con LLM) ──────────────────────
+    async def verificador_citas_node(self, state: MatterState) -> dict:
+        """Gate de calidad LLM determinista para auditar citas contra el expediente.
+        Si falla, anota [Fallo de Gate] y lo devuelve a redacción."""
         md = dict(state.get("metadata") or {})
-        annotated = await self._verify_draft(state, md, state.get("draft") or "")
-        md["stage"] = "verification"
+        draft = state.get("draft") or ""
+        
+        annotated, usage = await self._llm([
+            {"role": "system", "content": prompt_builder.build_graph_system(
+                state, "verificador_citas", matter_context=_matter_context_for(state),
+                persona_voice=_persona_voice(state))},
+            {"role": "user", "content": f"Borrador:\n{draft}"},
+        ], task="main", state=state, md=md, node="verificador_citas", model=_persona_alias(state))
+        
+        _accum_usage(md, usage)
+        md["stage"] = "verificador_citas"
+        
+        if "[Fallo de Gate]" in annotated:
+            md["gate_feedback"] = annotated
+            attempts = md.get("gate_attempts", 0) + 1
+            md["gate_attempts"] = attempts
+            if attempts >= 3:
+                # Si supera 3 intentos, lo deja pasar para revisión humana con un aviso
+                annotated = annotated.replace("[Fallo de Gate]", "[Aviso de Gate - Máximos intentos superados]")
+                md.pop("gate_feedback", None)
+                md.pop("gate_attempts", None)
+                return {"draft": annotated, "metadata": md}
+            return {"metadata": md}
+            
+        md.pop("gate_feedback", None)
+        md.pop("gate_attempts", None)
         return {"draft": annotated, "metadata": md}
+
+    def route_verificador_citas(self, state: MatterState) -> str:
+        md = state.get("metadata") or {}
+        if md.get("gate_feedback") and md.get("gate_attempts", 0) < 3:
+            return "draft"
+        return "hitl_checkpoint"
 
     # ── work (Bloque A · PROYECTO: espacio de trabajo libre, sin HITL) ───────
     async def work_node(self, state: MatterState) -> dict:
@@ -2095,6 +2127,9 @@ class MatterGraphBuilder:
         decision = (state.get("metadata") or {}).get("hitl_decision") or {}
         draft = state.get("draft") or ""
         md = dict(state.get("metadata") or {})
+        
+        if "original_draft" not in md:
+            md["original_draft"] = draft
 
         if status == "editing":
             final, usage = await self._llm([
@@ -2187,6 +2222,24 @@ class MatterGraphBuilder:
             "metadata": md,
         }
 
+    # ── 9 · harvest ──────────────────────────────────────────────────────────
+    async def harvest_node(self, state: MatterState) -> dict:
+        md = dict(state.get("metadata") or {})
+        draft_original = md.get("original_draft", "")
+        draft_final = state.get("draft", "")
+        
+        report, usage = await self._llm([
+            {"role": "system", "content": prompt_builder.build_graph_system(
+                state, "harvest", matter_context=_matter_context_for(state),
+                persona_voice=_persona_voice(state))},
+            {"role": "user", "content": f"Borrador original de Mia:\n{draft_original}\n\nVersión final aprobada por el abogado:\n{draft_final}"},
+        ], task="main", state=state, md=md, node="harvest", model=_persona_alias(state))
+        
+        _accum_usage(md, usage)
+        md["harvest_report"] = report
+        
+        return {"metadata": md}
+
     # ── ensamblaje ───────────────────────────────────────────────────────────
     def build(self, checkpointer: Any):
         """Compila el grafo con el checkpointer (AsyncPostgresSaver en runtime)."""
@@ -2197,9 +2250,10 @@ class MatterGraphBuilder:
         g.add_node("research", self.research_node)
         g.add_node("analysis", self.analysis_node)
         g.add_node("draft", self.draft_node)
-        g.add_node("verification", self.verification_node)
+        g.add_node("verificador_citas", self.verificador_citas_node)
         g.add_node("hitl_checkpoint", self.hitl_checkpoint_node)
         g.add_node("finalize", self.finalize_node)
+        g.add_node("harvest", self.harvest_node)
 
         g.add_edge(START, "intake")
         # CP-HUB2: la delegación va JUSTO después de intake y ANTES del equipo de
@@ -2213,10 +2267,14 @@ class MatterGraphBuilder:
         g.add_edge("facts", "research")
         g.add_edge("research", "analysis")
         g.add_edge("analysis", "draft")
-        g.add_edge("draft", "verification")
-        g.add_edge("verification", "hitl_checkpoint")
+        g.add_edge("draft", "verificador_citas")
+        g.add_conditional_edges("verificador_citas", self.route_verificador_citas, {
+            "draft": "draft",
+            "hitl_checkpoint": "hitl_checkpoint"
+        })
         g.add_edge("hitl_checkpoint", "finalize")
-        g.add_edge("finalize", END)
+        g.add_edge("finalize", "harvest")
+        g.add_edge("harvest", END)
 
         return g.compile(checkpointer=checkpointer)
 
