@@ -186,6 +186,25 @@ Cuando Pipe diga "wrap up", "guardar" o "cerrar sesión":
 5. Revisar memory/bugs-and-risks.md: cerrar riesgos resueltos,
    agregar riesgos nuevos detectados en la sesión.
 No escribir nada sin trigger explícito del usuario.
+## H · Sistema de tres memorias (no mezclar)
+
+El ecosistema Mia tiene exactamente tres tipos de memoria. Mezclarlas es la causa raíz de la mayoría de inconsistencias entre sesiones.
+
+| Memoria | Dónde vive | Qué guarda |
+|---|---|---|
+| **Canónica del despacho** | `Lexia-Vault\` (Obsidian, indexado por Mia) | Jurisprudencia, normativa, plantillas, procedimientos, criterios, aprendizajes del despacho |
+| **De construcción de Mia** | `/memory/` en este repo + `APRENDIZAJES.md` | Decisiones de arquitectura, errores resueltos, estado del proyecto — ESTE repo |
+| **De herramienta/sesión** | Contexto interno del agente (Claude Code, Antigravity, Cursor) | Atajos locales, quirks del entorno — caché, no verdad |
+
+**Criterio de frontera:**
+- ¿Sirve a cualquier LLM en cualquier herramienta del despacho? → **Lexia-Vault**
+- ¿Es sobre el código o la arquitectura de Mia? → **`/memory/` de este repo**
+- ¿Solo sirve a esta sesión? → **memoria de herramienta** (no persistir)
+
+**Vault governance:** Las reglas de juego del Lexia-Vault viven en `Lexia-Vault\AGENTS.md`.
+Las plantillas para crear vaults de nuevos abogados/despachos viven en `mia/specs/vault-scaffold/`.
+El script de creación automática es `mia/scripts/create_vault_scaffold.py`.
+El hook de onboarding está en `execution/init_knowledge_stores.py` (lee `OBSIDIAN_VAULT_*` del `.env`).
 
 ---
 
