@@ -131,6 +131,8 @@ const config: Config = {
       boxShadow: {
         flat: "var(--elev-flat)",
         raised: "var(--elev-raised)",
+        "neu-raised": "var(--neu-raised)",
+        "neu-sunken": "var(--neu-sunken)",
       },
       /* ESPACIADO — respiración. La app entera era densidad de cabina
        * (gap-2 ×183 contra gap-6 ×4). `gap-block` separa bloques dentro de una
@@ -179,6 +181,11 @@ const config: Config = {
           "0%, 100%": { opacity: "0.35", transform: "scale(1)" },
           "50%": { opacity: "0.7", transform: "scale(1.12)" },
         },
+        // Levitación 3D para el empty state.
+        float: {
+          "0%, 100%": { transform: "translateY(0px) rotateX(4deg) rotateY(-4deg)" },
+          "50%": { transform: "translateY(-12px) rotateX(-4deg) rotateY(4deg)" },
+        },
       },
       /* Todas las animaciones comparten MIA_EASE = cubic-bezier(0.22, 1, 0.36, 1),
        * la curva de la bienvenida (app/_welcome/motion.ts:12). Excepciones
@@ -194,6 +201,7 @@ const config: Config = {
         "message-in": "message-in 0.3s cubic-bezier(0.22, 1, 0.36, 1)",
         blink: "blink 1s step-end infinite",
         "pulse-soft": "pulse-soft 2.2s ease-in-out infinite",
+        float: "float 6s ease-in-out infinite",
       },
     },
   },

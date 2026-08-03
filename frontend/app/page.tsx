@@ -147,17 +147,32 @@ function AsuntosPageContent() {
           <Skeleton className="h-20 w-full rounded-xl" />
         </div>
       ) : matters.length === 0 ? (
-        <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-            <FolderOpen className="h-6 w-6" />
+        <div className="animate-slide-up rounded-2xl bg-card/60 backdrop-blur-md px-6 py-16 text-center shadow-neu-raised border border-border/20">
+          <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-transparent text-primary animate-float" style={{ transformStyle: "preserve-3d" }}>
+            <svg viewBox="0 0 200 200" className="h-24 w-24 drop-shadow-[0_8px_16px_rgba(0,128,128,0.15)]">
+              <defs>
+                <linearGradient id="geomGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0.8" />
+                  <stop offset="100%" stopColor="hsl(var(--cta))" stopOpacity="0.2" />
+                </linearGradient>
+                <linearGradient id="geomGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stopColor="hsl(var(--cta))" stopOpacity="0.7" />
+                  <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="0.3" />
+                </linearGradient>
+              </defs>
+              <circle cx="100" cy="100" r="50" fill="url(#geomGrad1)" filter="blur(6px)" opacity="0.4" />
+              <path d="M100 30 L155 62 L155 138 L100 170 L45 138 L45 62 Z" fill="url(#geomGrad2)" stroke="hsl(var(--primary) / 0.25)" strokeWidth="1.5" opacity="0.8" />
+              <path d="M100 50 L135 70 L135 130 L100 150 L65 130 L65 70 Z" fill="hsl(var(--card) / 0.4)" stroke="hsl(var(--primary) / 0.4)" strokeWidth="1" />
+              <circle cx="100" cy="100" r="10" fill="hsl(var(--cta))" className="animate-pulse" />
+            </svg>
           </div>
-          <h2 className="text-lg font-medium">Crea tu primer asunto</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Crea tu primer asunto</h2>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Un asunto es un caso de tu despacho: conectas carpetas, subes el expediente y
             conversas con Mia — y todo termina en un borrador que tú apruebas antes de que
             salga. Si prefieres que te responda directo, sin ese paso, usa un proyecto.
           </p>
-          <Button onClick={() => setShowModal(true)} className="mt-6 gap-2">
+          <Button onClick={() => setShowModal(true)} className="mt-6 gap-2 shadow-neu-raised hover:-translate-y-0.5 active:shadow-neu-sunken transition-all duration-200">
             <Plus className="h-4 w-4" />
             Nuevo asunto
           </Button>
@@ -170,8 +185,8 @@ function AsuntosPageContent() {
                   así el abogado conserva teclado, foco y "abrir en pestaña nueva", y
                   el botón de revisar puede ser un hermano real —sin anidar controles—
                   aunque visualmente viva dentro de la tarjeta. */}
-              <div className="group relative flex w-full items-center gap-4 rounded-xl border border-border bg-card px-5 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform duration-200 group-hover:scale-105">
+              <div className="group relative flex w-full items-center gap-4 rounded-xl bg-card/85 backdrop-blur-sm px-5 py-4 text-left shadow-neu-raised border border-border/10 transition-all duration-300 hover:-translate-y-1 hover:shadow-[var(--neu-raised),_0_12px_24px_-8px_hsl(var(--primary)/0.12)] dark:hover:shadow-[var(--neu-raised),_0_12px_24px_-8px_hsl(var(--primary)/0.25)]">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary shadow-neu-sunken text-primary transition-transform duration-300 group-hover:scale-105">
                   <FolderOpen className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex-1">

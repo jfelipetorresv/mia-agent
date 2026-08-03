@@ -90,6 +90,13 @@
       0 1px 2px hsl(var(--foreground) / 0.04),
       0 14px 32px -16px hsl(var(--foreground) / 0.2),
       inset 0 1px 0 hsl(var(--primary) / 0.18);
+    --neu-raised:
+      6px 6px 14px hsl(210 20% 90%),
+      -6px -6px 14px hsl(0 0% 100%),
+      inset 0 1px 0 hsl(var(--primary) / 0.05);
+    --neu-sunken:
+      inset 4px 4px 8px hsl(210 20% 90%),
+      inset -4px -4px 8px hsl(0 0% 100%);
 
     /* ESPACIADO — respiración. La app medía gap-2 ×183 contra gap-6 ×4: era
        densidad de cabina en superficies de lectura. Dos tokens bastan. */
@@ -148,6 +155,13 @@
       0 1px 2px hsl(var(--background) / 0.5),
       0 18px 38px -16px hsl(var(--background) / 0.72),
       inset 0 1px 0 hsl(0 0% 100% / 0.05);
+    --neu-raised:
+      8px 8px 20px hsl(0 0% 0% / 0.6),
+      -8px -8px 20px hsl(180 10% 12% / 0.35),
+      inset 0 1px 1px hsl(180 55% 52% / 0.15);
+    --neu-sunken:
+      inset 6px 6px 12px hsl(0 0% 0% / 0.7),
+      inset -6px -6px 12px hsl(180 10% 12% / 0.2);
   }
 }
 
@@ -298,6 +312,15 @@
   }
 }
 
+@keyframes mesh-shift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
 @layer utilities {
   /* Aurora: lavado radial TEAL de marca para pantallas hero (chat, login, panel).
      Da profundidad sin ruido; se intensifica y gana un toque de verde CTA en dark,
@@ -367,6 +390,48 @@
   .elev-raised,
   .card-depth {
     box-shadow: var(--elev-raised);
+  }
+  
+  .shadow-neu-raised {
+    box-shadow: var(--neu-raised);
+  }
+  
+  .shadow-neu-sunken {
+    box-shadow: var(--neu-sunken);
+  }
+  
+  .bg-mesh-living {
+    background-color: hsl(var(--background));
+    background-image: 
+      radial-gradient(at 0% 0%, hsl(var(--primary) / 0.04) 0px, transparent 55%),
+      radial-gradient(at 50% 0%, hsl(var(--cta) / 0.02) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsl(var(--primary) / 0.04) 0px, transparent 55%);
+    background-size: 200% 200%;
+    animation: mesh-shift 25s ease-in-out infinite;
+    position: relative;
+  }
+  
+  .dark .bg-mesh-living {
+    background-color: hsl(var(--background));
+    background-image: 
+      radial-gradient(at 0% 0%, hsl(var(--primary) / 0.12) 0px, transparent 60%),
+      radial-gradient(at 50% 0%, hsl(var(--cta) / 0.07) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsl(var(--primary) / 0.1) 0px, transparent 60%);
+  }
+  
+  .bg-mesh-living::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.03;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  }
+  
+  .dark .bg-mesh-living::after {
+    opacity: 0.045;
   }
 
   /* Cifras alineadas en columna (importes, plazos, contadores, tablas): sin
