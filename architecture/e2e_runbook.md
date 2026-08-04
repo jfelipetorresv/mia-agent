@@ -1,5 +1,26 @@
 # Mia · Runbook — Smoke test E2E en vivo (navegador, Modo B)
-# Última actualización: 2026-07-21 (sincronizado contra el código real — ver evidencia en cada sección)
+# Última actualización: 2026-08-04 (recorrido AUTOMATIZADO de primera vez incorporado)
+
+## 0-bis · El recorrido automatizado (F3) — correr esto antes que el manual
+
+El recorrido completo de primera vez está AUTOMATIZADO con Playwright:
+
+    # con DB (55432) + LiteLLM (4000) + backend (8000) + frontend (3100) arriba:
+    .venv\Scripts\python.exe e2e\generar_expediente.py        # una vez: expediente fijo
+    node e2e\recorrido_primera_vez.mjs --corrida N
+
+Cubre `/register` → `/activar` (auto-salto en dev) → `/onboarding` (7 pasos) →
+crear asunto → subir expediente fijo (caso de oro voluminoso, 3 .txt, 252
+fragmentos derivados de `backend/mia/eval/cases.py`) → pregunta → borrador →
+gate de citas → aprobar → sonda del `## aprendido`. Cronometrado wall-clock por
+paso (el reloj arranca al abrir la app con los servicios ya arriba); screenshot
+por paso y `tiempos.json` en `validation/screenshots/corrida-N/`. El tiempo se
+reporta, no es umbral (decisión de Pipe 2026-07-21). Cada corrida registra un
+despacho nuevo (`e2e-<ts>@mia.test`); el freno de registro es 10/hora/IP — si el
+429 aparece iterando, reiniciar el backend resetea el contador (vive en memoria).
+Resultados y defectos de cada tanda: `validation/validation-log.md`.
+
+El recorrido manual de abajo sigue valiendo como verificación visual humana.
 
 Este runbook es el recorrido MANUAL que ejecuta el fundador para confirmar que Mia
 funciona de verdad en un navegador (no solo en TestClient). El gate automatizado
