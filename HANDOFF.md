@@ -137,12 +137,13 @@ recorrido real, no de vista).
 
 Rama `feat/fase1-inc1-cleanup-scaffolding`. Repo limpio tras `af49c19` + este cierre.
 
-## OJO: tres commits ajenos sin documentar
+## Tres commits de PIPE entre la 53 y esta (confirmado por él, 2026-08-04)
 
-Entre la sesión 53 y esta aparecieron `f264b1e` (principios Lexia en el grafo), `e7ff81b`
-(gobierno de vaults) y `f52c945` (rediseño «Neumorfismo Pro») — de otra herramienta, sin entrada
-de HANDOFF. Esta sesión trabajó SOBRE ese estado y el recorrido pasó, así que no rompen el flujo
-principal, pero nadie ha auditado qué más tocaron (`graph.py`, `prompt_builder.py`).
+`f264b1e` (principios Lexia en el grafo), `e7ff81b` (gobierno de vaults) y `f52c945` (rediseño
+«Neumorfismo Pro») los hizo Pipe desde otra herramienta y LOS QUIERE — no revertir. Esta sesión
+trabajó sobre ese estado y el recorrido completo pasó en verde encima del rediseño. Queda solo
+una revisión técnica ligera de lo que tocaron en `graph.py`/`prompt_builder.py` (calidad, no
+permanencia).
 
 ## Qué pasó en esta sesión (2026-08-04, 54ª)
 
@@ -173,8 +174,8 @@ corrió 3 veces consecutivas en verde sin intervención manual, y quedó medido 
 ## Qué sigue (en orden, sin necesitar a Pipe)
 
 1. **Arreglar el DEFECTO UI-A** (el aside sobre «Revisar borrador») y re-correr el E2E.
-2. **Auditar los 3 commits ajenos** (`f264b1e`, `e7ff81b`, `f52c945`): qué cambiaron en el
-   grafo y el prompt, y si merecen su entrada de traspaso o revertirse.
+2. **Revisión técnica ligera de los 3 commits de Pipe** (`f264b1e`, `e7ff81b`, `f52c945`):
+   son deseados y se quedan; solo verificar calidad de lo que tocaron en grafo y prompt.
 3. Checklist de honestidad de UI por paso (la otra mitad de la salida medible de F3).
 4. Producto (plan maestro): lo que quede de F3.
 
