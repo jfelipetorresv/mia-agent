@@ -1,8 +1,8 @@
-# Especificación Técnica de Diseño: "MIA Neumorfismo Pro & Azul Oxígeno"
+# Especificación Técnica de Diseño: "MIA Espacial de Lujo & Cristal Prismático"
 
 > [!IMPORTANT]
-> **REGLA DE ORO ESTÉTICA OBLIGATORIA:** 
-> El estilo visual de referencia absoluto para toda la aplicación es el de **"MIA Onboarding Unificado"** (el tema claro con la pieza geométrica de cristal flotando en tonos Teal/Acero, sombras neumórficas tridimensionales y tipografía de lujo minimalista). Toda página, componente, pestaña y modal nuevo o refactorizado de MIA debe ser estéticamente coherente y alinearse con esta firma visual de alta gama.
+> **REGLA DE ORO ESTÉTICA OBLIGATORIA (MASTER STYLE):** 
+> El estilo visual de referencia absoluto y definitivo para toda la aplicación MIA es el de **`mia_onboarding_unified_1785902705160.jpg`** (Arquitectura espacial de lujo con fondo luminoso en curvas blancas, titular en degradado dorado elegante "Bienvenido a Mia", escultura 3D de cristal prismático translúcido con orbe interior resplandeciente y anillos metálicos orbitales, tarjetas de cristal neumórficas "REGÍSTRATE / PERSONALIZA / EXPLORA" y botón píldora Azul Teal "EMPEZAR AHORA"). Toda página, componente, pestaña y modal nuevo o refactorizado de MIA debe responder a este estándar espacial de alta gama.
 
 Este documento es la **fuente de verdad** para que cualquier desarrollador o agente de IA (como Claude Code o Gemini) implemente y aplique la nueva interfaz visual unificada en el frontend.
 
