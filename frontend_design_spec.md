@@ -5,7 +5,8 @@
 > Toda la aplicación MIA debe responder de forma estricta y coherente a la integración de tres piezas canónicas:
 > 1. **Onboarding Principal:** Estilo de lujo espacial con titular dorado, escultura 3D de cristal y botón píldora Azul Teal (`mia_onboarding_unified_1785902705160.jpg`).
 > 2. **Dashboard de Asuntos:** Layout Neumórfico Pro con barra lateral de navegación, buscador incrustado, filtros y tarjetas Bento (`Revisión Contrato Suministro TechCorp S.A.` con badge `Borrador por revisar`, `Demanda Laboral v. López`, `Constitución Novatech`, `Acuerdo Confidencialidad XY`, `Litigio Patente Z`).
-> 3. **MIA Command Center Modal:** Ventana modal flotante con cabecera `M MIA COMMAND CENTER`, buscador destacado con borde teal y acciones rápidas (`Nuevo asunto`, `Buscar jurisprudencia`, `Revisar citas`, `Redactar documento`).
+> 3. **MIA Command Center Modal:** Ventana modal flotante con cabecera `M MIA COMMAND CENTER`, buscador destacado y acciones rápidas (`Nuevo asunto`, `Buscar jurisprudencia`, `Revisar citas`, `Redactar documento`).
+> 4. **Logotipo Maestro de Marca (Opción A):** Isotipo 3D del Octaedro de Cristal Prismático rodeado por el Anillo Orbital en Plata Liquid/Titanium sobre fondo negro profundo y tipografía `MIA - Legal Intelligence` en platino monocromático.
 
 Este documento es la **fuente de verdad** para que cualquier desarrollador o agente de IA (como Claude Code o Gemini) implemente y aplique la nueva interfaz visual unificada en el frontend.
 

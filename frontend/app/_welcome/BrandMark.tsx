@@ -13,30 +13,25 @@ type BrandSize = "sm" | "md" | "lg" | "xl";
  * sidebar (text-xl, tracking 0.3em) para que el refactor no cambie su look.
  * `xl` emula la pantalla de arranque de escritorio (~72px, tracking 0.14–0.16em).
  */
-const SIZE: Record<BrandSize, { text: string; tracking: string; halo: string }> = {
-  sm: { text: "text-xl", tracking: "tracking-[0.3em]", halo: "blur-lg" },
-  md: { text: "text-3xl", tracking: "tracking-[0.28em]", halo: "blur-xl" },
-  lg: { text: "text-5xl", tracking: "tracking-[0.2em]", halo: "blur-2xl" },
-  xl: { text: "text-7xl", tracking: "tracking-[0.16em]", halo: "blur-3xl" },
+const ICON_SIZE: Record<BrandSize, { box: string; text: string; subtitle: string }> = {
+  sm: { box: "h-9 w-9 p-1.5 rounded-xl", text: "text-base", subtitle: "text-[7.5px]" },
+  md: { box: "h-11 w-11 p-2 rounded-2xl", text: "text-xl", subtitle: "text-[8.5px]" },
+  lg: { box: "h-14 w-14 p-2.5 rounded-2xl", text: "text-3xl", subtitle: "text-[10px]" },
+  xl: { box: "h-20 w-20 p-3.5 rounded-3xl", text: "text-5xl", subtitle: "text-[12px]" },
 };
 
 export interface BrandMarkProps {
-  /** Tamaño del wordmark. `sm` = idéntico al de la sidebar. Default `md`. */
+  /** Tamaño del logotipo. Default `md`. */
   size?: BrandSize;
-  /** Halo teal que "respira" detrás del wordmark (presencia viva de Mia). */
+  /** Halo que respira suavemente. */
   breathing?: boolean;
-  /** Resplandor estático tipo splash de escritorio (text-shadow teal). */
+  /** Resplandor plateado. */
   glow?: boolean;
-  /** Si se pasa, el wordmark enlaza a esa ruta (como en la sidebar → "/"). */
+  /** Enlace a ruta. */
   href?: string;
   className?: string;
 }
 
-/**
- * Wordmark compartido "MIA" — la M y la A en el color de texto del tema y la I
- * en teal de marca (#2EA9A9). Componente único reutilizable en sidebar, splash
- * web y toda la bienvenida. Solo anima opacity/scale del halo (accesible).
- */
 export default function BrandMark({
   size = "md",
   breathing = false,
@@ -44,31 +39,32 @@ export default function BrandMark({
   href,
   className,
 }: BrandMarkProps) {
-  const reduce = useReducedMotion();
-  const s = SIZE[size];
+  const s = ICON_SIZE[size];
 
   const word = (
-    <span className="inline-flex items-center gap-3.5 group">
-      <span className="relative h-11 w-11 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-black border border-white/30 shadow-[0_6px_20px_rgba(0,0,0,0.3),_inset_0_1px_1px_rgba(255,255,255,0.4)] flex items-center justify-center p-2 overflow-hidden transition-transform duration-300 group-hover:scale-105 shrink-0">
+    <span className="inline-flex items-center gap-3 group">
+      {/* Emblem Octaedro de Cristal 3D Monocromo (Opción A) */}
+      <span className={cn("relative bg-gradient-to-br from-slate-900 via-slate-950 to-black border border-white/30 shadow-[0_6px_20px_rgba(0,0,0,0.4),_inset_0_1px_1px_rgba(255,255,255,0.4)] flex items-center justify-center overflow-hidden transition-transform duration-300 group-hover:scale-105 shrink-0", s.box)}>
         <svg viewBox="0 0 100 100" className="w-full h-full filter drop-shadow-[0_0_6px_rgba(255,255,255,0.6)]">
           <defs>
-            <linearGradient id="silverGradBM" x1="0%" y1="0%" x2="100%" y2="100%">
+            <linearGradient id={`silverGradBM_${size}`} x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#ffffff" />
               <stop offset="50%" stopColor="#cbd5e1" />
               <stop offset="100%" stopColor="#64748b" />
             </linearGradient>
           </defs>
-          <ellipse cx="50" cy="50" rx="42" ry="16" fill="none" stroke="url(#silverGradBM)" strokeWidth="4" transform="rotate(-20 50 50)" />
+          <ellipse cx="50" cy="50" rx="42" ry="16" fill="none" stroke={`url(#silverGradBM_${size})`} strokeWidth="4" transform="rotate(-20 50 50)" />
           <circle cx="50" cy="50" r="14" fill="#ffffff" opacity="0.85" />
-          <path d="M 50 15 L 75 50 L 50 85 L 25 50 Z" fill="none" stroke="url(#silverGradBM)" strokeWidth="5" strokeLinejoin="round" />
+          <path d="M 50 15 L 75 50 L 50 85 L 25 50 Z" fill="none" stroke={`url(#silverGradBM_${size})`} strokeWidth="5" strokeLinejoin="round" />
           <path d="M 25 50 L 75 50 M 50 15 L 50 85" stroke="#ffffff" strokeWidth="2" opacity="0.9" />
         </svg>
       </span>
+
       <span className="flex flex-col">
-        <span className="font-serif font-extrabold text-xl tracking-[0.15em] leading-none text-slate-900">
+        <span className={cn("font-serif font-extrabold tracking-[0.15em] leading-none text-foreground", s.text)}>
           MIA
         </span>
-        <span className="text-[8.5px] uppercase tracking-[0.25em] font-extrabold text-slate-500 leading-tight mt-0.5">
+        <span className={cn("uppercase tracking-[0.25em] font-extrabold text-muted-foreground leading-tight mt-0.5", s.subtitle)}>
           Legal Intelligence
         </span>
       </span>
