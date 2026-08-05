@@ -1,8 +1,11 @@
-# Especificación Técnica de Diseño: "MIA Espacial de Lujo & Cristal Prismático"
+# Especificación Técnica de Diseño: "MIA Onboarding, Dashboard & Command Center Unificados"
 
 > [!IMPORTANT]
-> **REGLA DE ORO ESTÉTICA OBLIGATORIA (MASTER STYLE):** 
-> El estilo visual de referencia absoluto y definitivo para toda la aplicación MIA es el de **`mia_onboarding_unified_1785902705160.jpg`** (Arquitectura espacial de lujo con fondo luminoso en curvas blancas, titular en degradado dorado elegante "Bienvenido a Mia", escultura 3D de cristal prismático translúcido con orbe interior resplandeciente y anillos metálicos orbitales, tarjetas de cristal neumórficas "REGÍSTRATE / PERSONALIZA / EXPLORA" y botón píldora Azul Teal "EMPEZAR AHORA"). Toda página, componente, pestaña y modal nuevo o refactorizado de MIA debe responder a este estándar espacial de alta gama.
+> **REGLA DE ORO ESTÉTICA OBLIGATORIA (MASTER SYSTEM):** 
+> Toda la aplicación MIA debe responder de forma estricta y coherente a la integración de tres piezas canónicas:
+> 1. **Onboarding Principal:** Estilo de lujo espacial con titular dorado, escultura 3D de cristal y botón píldora Azul Teal (`mia_onboarding_unified_1785902705160.jpg`).
+> 2. **Dashboard de Asuntos:** Layout Neumórfico Pro con barra lateral de navegación, buscador incrustado, filtros y tarjetas Bento (`Revisión Contrato Suministro TechCorp S.A.` con badge `Borrador por revisar`, `Demanda Laboral v. López`, `Constitución Novatech`, `Acuerdo Confidencialidad XY`, `Litigio Patente Z`).
+> 3. **MIA Command Center Modal:** Ventana modal flotante con cabecera `M MIA COMMAND CENTER`, buscador destacado con borde teal y acciones rápidas (`Nuevo asunto`, `Buscar jurisprudencia`, `Revisar citas`, `Redactar documento`).
 
 Este documento es la **fuente de verdad** para que cualquier desarrollador o agente de IA (como Claude Code o Gemini) implemente y aplique la nueva interfaz visual unificada en el frontend.
 
