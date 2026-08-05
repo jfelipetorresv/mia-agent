@@ -48,31 +48,27 @@ export default function BrandMark({
   const s = SIZE[size];
 
   const word = (
-    <span className="inline-flex items-center gap-3 group">
-      <span className="relative h-10 w-10 rounded-2xl bg-gradient-to-br from-white via-slate-50 to-slate-100 border border-amber-300/40 shadow-[0_6px_16px_rgba(13,122,130,0.15),_inset_0_1px_2px_rgba(255,255,255,1)] flex items-center justify-center p-2 overflow-hidden transition-transform duration-300 group-hover:scale-105 shrink-0">
-        <span className="absolute inset-0 bg-gradient-to-tr from-teal-500/15 via-amber-400/10 to-transparent"></span>
-        <svg viewBox="0 0 100 100" className="w-full h-full filter drop-shadow-[0_2px_4px_rgba(13,122,130,0.3)]">
+    <span className="inline-flex items-center gap-3.5 group">
+      <span className="relative h-11 w-11 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-black border border-white/30 shadow-[0_6px_20px_rgba(0,0,0,0.3),_inset_0_1px_1px_rgba(255,255,255,0.4)] flex items-center justify-center p-2 overflow-hidden transition-transform duration-300 group-hover:scale-105 shrink-0">
+        <svg viewBox="0 0 100 100" className="w-full h-full filter drop-shadow-[0_0_6px_rgba(255,255,255,0.6)]">
           <defs>
-            <linearGradient id="logoGoldBM" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#c5a059" />
-              <stop offset="50%" stopColor="#e5c887" />
-              <stop offset="100%" stopColor="#9a7632" />
-            </linearGradient>
-            <linearGradient id="logoTealBM" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#0d7a82" />
-              <stop offset="100%" stopColor="#00e5ff" />
+            <linearGradient id="silverGradBM" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#ffffff" />
+              <stop offset="50%" stopColor="#cbd5e1" />
+              <stop offset="100%" stopColor="#64748b" />
             </linearGradient>
           </defs>
-          <path d="M 20 75 L 20 25 L 50 55 L 80 25 L 80 75" fill="none" stroke="url(#logoTealBM)" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
-          <path d="M 20 25 L 50 55 L 80 25" fill="none" stroke="url(#logoGoldBM)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
-          <circle cx="50" cy="55" r="4" fill="#00e5ff" />
+          <ellipse cx="50" cy="50" rx="42" ry="16" fill="none" stroke="url(#silverGradBM)" strokeWidth="4" transform="rotate(-20 50 50)" />
+          <circle cx="50" cy="50" r="14" fill="#ffffff" opacity="0.85" />
+          <path d="M 50 15 L 75 50 L 50 85 L 25 50 Z" fill="none" stroke="url(#silverGradBM)" strokeWidth="5" strokeLinejoin="round" />
+          <path d="M 25 50 L 75 50 M 50 15 L 50 85" stroke="#ffffff" strokeWidth="2" opacity="0.9" />
         </svg>
       </span>
       <span className="flex flex-col">
-        <span className="font-serif font-extrabold text-xl tracking-widest leading-none bg-gradient-to-r from-amber-700 via-amber-600 to-slate-900 bg-clip-text text-transparent">
+        <span className="font-serif font-extrabold text-xl tracking-[0.15em] leading-none text-slate-900">
           MIA
         </span>
-        <span className="text-[9px] uppercase tracking-widest font-extrabold text-teal-800 leading-tight mt-0.5">
+        <span className="text-[8.5px] uppercase tracking-[0.25em] font-extrabold text-slate-500 leading-tight mt-0.5">
           Legal Intelligence
         </span>
       </span>
