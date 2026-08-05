@@ -31,10 +31,10 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
             href={l.href}
             onClick={onNavigate}
             className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200",
               active
-                ? "glow-teal bg-primary/15 text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                ? "shadow-neu-sunken bg-primary/15 text-primary font-semibold"
+                : "text-muted-foreground hover:shadow-neu-raised hover:bg-accent/40 hover:text-foreground"
             )}
           >
             <Icon className="h-4 w-4 shrink-0" />
@@ -69,14 +69,14 @@ export default function Sidebar() {
       {/* Desktop — la barra lateral es SIEMPRE oscura (identidad de marca), sin
           importar el tema claro/oscuro del resto de la app: se fuerza el scope
           "dark" para que todos los tokens (fondo, bordes, texto) resuelvan fijos. */}
-      <aside className="dark hidden w-64 shrink-0 flex-col border-r border-border bg-background md:flex">
+      <aside className="dark hidden w-64 shrink-0 flex-col border-r border-border/10 bg-background/90 backdrop-blur-md md:flex">
         <div className="px-5 py-5">
           <BrandMark size="sm" href="/" />
         </div>
         <div className="px-3">
           <button
             onClick={openCommandPalette}
-            className="flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
+            className="flex w-full items-center gap-2 rounded-md border border-border/20 bg-secondary/30 shadow-neu-sunken px-3 py-2 text-sm text-muted-foreground transition-all hover:bg-accent/40"
           >
             <Search className="h-4 w-4" />
             <span>Buscar…</span>

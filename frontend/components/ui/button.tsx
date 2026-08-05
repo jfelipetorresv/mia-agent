@@ -42,36 +42,13 @@ const buttonVariants = cva(
        * declarada y no parezca un olvido.
        */
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-flat",
-        /**
-         * CTA principal de marca: degradado verde Lexia + texto casi negro.
-         *
-         * CONTRASTE VERIFICADO contra su fondo REAL (el degradado), no contra
-         * blanco. Medido con la fórmula de luminancia relativa de WCAG 2.1
-         * sobre los valores resueltos de los tokens
-         * (--cta-foreground #0A0A0A sobre --cta-gradient-from #98E4BF →
-         * --cta-gradient-to #00F5A2):
-         *
-         *   reposo   extremo claro 13.37:1 · medio 13.14:1 · extremo verde 13.75:1
-         *   hover:opacity-90 en tema claro   peor caso 10.81:1
-         *   hover:opacity-90 en tema oscuro  peor caso 10.73:1
-         *
-         * Peor caso global 10.73:1 → cumple AA (4.5:1) y AAA (7:1) con holgura.
-         * `hover:opacity-90` compone TODO el botón (texto incluido) contra el
-         * fondo de la página, por eso se midió también compuesto y en los dos
-         * temas: bajar la opacidad del conjunto sí puede romper un contraste.
-         *
-         * OJO AL ERROR YA COMETIDO EN ESTE REPO: medir el VERDE contra BLANCO
-         * da 1.44:1 y hace pensar que el CTA está roto. Es una medición sin
-         * sentido — el verde es el fondo del botón, no su texto, y ese botón
-         * nunca se pinta sobre blanco. Lo que se mide es texto sobre degradado.
-         */
-        cta: "bg-gradient-cta text-cta-foreground shadow-flat hover:opacity-90",
-        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-flat",
-        success: "bg-success text-success-foreground hover:bg-success/90 shadow-flat",
-        outline: "border border-input bg-transparent hover:bg-accent hover:text-accent-foreground",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
+        default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-neu-raised active:shadow-neu-sunken",
+        cta: "bg-gradient-cta text-cta-foreground shadow-neu-raised hover:opacity-95 active:shadow-neu-sunken",
+        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-neu-raised active:shadow-neu-sunken",
+        success: "bg-success text-success-foreground hover:bg-success/90 shadow-neu-raised active:shadow-neu-sunken",
+        outline: "border border-border/20 bg-card/60 backdrop-blur-sm hover:bg-accent hover:text-accent-foreground shadow-neu-raised active:shadow-neu-sunken",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 shadow-neu-raised active:shadow-neu-sunken",
+        ghost: "hover:bg-accent hover:text-accent-foreground active:shadow-neu-sunken",
         link: "text-primary underline-offset-4 hover:underline",
       },
       /**

@@ -208,4 +208,11 @@ El hook de onboarding está en `execution/init_knowledge_stores.py` (lee `OBSIDI
 
 ---
 
+## I · Estándar de Diseño Frontend Obligatorio
+- **Referencia Canónica Estética:** "MIA Onboarding Unificado" (Neumorfismo Pro en Tema Claro/Oscuro con paleta Teal/Azul Oxígeno, elevación tridimensional suave `shadow-neu-raised`, inputs incrustados `shadow-neu-sunken`, fondo vivo `bg-mesh-living`, tipografía premium y elementos 3D cristalizados flotantes `animate-float`).
+- Cualquier desarrollo o modificación en `frontend/` DEBE seguir la especificación técnica en [`frontend_design_spec.md`](file:///d:/Inteligencia%20Artificial/Mia-Super%20Agent/mia/frontend_design_spec.md).
+- PROHIBIDO romper la armonía visual o revertir a tarjetas y botones planos sin elevación neumórfica.
+
+---
+
 # Mia CLAUDE.md · Lexia Intelligence · v1 · 2026-06-11

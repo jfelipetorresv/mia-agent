@@ -23,3 +23,10 @@
 5. El archivo .env NUNCA se commitea. Está en .gitignore y debe seguir
    ahí; no lo incluyas en commits ni copies su contenido a otros
    archivos.
+
+6. ESTÁNDAR DE DISEÑO FRONTEND OBLIGATORIO:
+   El estilo visual canónico de referencia es "MIA Onboarding Unificado" 
+   (Neumorfismo Pro en Tema Claro/Oscuro con paleta Teal/Azul Oxígeno, elevación
+   tridimensional suave shadow-neu-raised, inputs incrustados shadow-neu-sunken,
+   fondo vivo bg-mesh-living, y elementos 3D cristalizados flotantes animate-float).
+   Ver la especificación técnica en frontend_design_spec.md para el detalle.

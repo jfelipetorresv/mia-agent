@@ -32,13 +32,13 @@ import { cn } from "@/lib/utils";
 const cardVariants = cva(
   // `rounded-lg` = 14px = el radio de SUPERFICIE del sistema (--radius). Las
   // tarjetas nunca usan otro radio: es el ancla del SHAPE CONSISTENCY LOCK.
-  "rounded-lg bg-card text-card-foreground",
+  "rounded-lg bg-card text-card-foreground transition-all duration-300",
   {
     variants: {
       variant: {
-        flat: "border border-border shadow-flat",
-        raised: "border border-border shadow-raised",
-        dashed: "border border-dashed border-border bg-card/50 shadow-flat",
+        flat: "border border-border/10 shadow-neu-raised",
+        raised: "border border-border/10 shadow-neu-raised hover:-translate-y-1 hover:shadow-[var(--neu-raised),_0_12px_24px_-8px_hsl(var(--primary)/0.15)]",
+        dashed: "border border-dashed border-border bg-card/40 backdrop-blur-md shadow-neu-raised",
       },
       padding: {
         none: "",
