@@ -48,36 +48,33 @@ export default function BrandMark({
   const s = SIZE[size];
 
   const word = (
-    <span className="relative inline-flex items-center justify-center">
-      {breathing && (
-        <motion.span
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute inset-0 -z-10 rounded-full bg-primary/30",
-            s.halo
-          )}
-          initial={false}
-          animate={
-            reduce
-              ? { opacity: 0.4, scale: 1 }
-              : { opacity: [0.35, 0.7, 0.35], scale: [1, 1.12, 1] }
-          }
-          transition={
-            reduce
-              ? { duration: 0 }
-              : { duration: 2.4, ease: "easeInOut", repeat: Infinity }
-          }
-        />
-      )}
-      <span
-        className={cn(
-          "relative select-none font-light uppercase leading-none text-foreground",
-          s.text,
-          s.tracking,
-          glow && "[text-shadow:0_0_34px_rgba(0,128,128,0.45)]"
-        )}
-      >
-        M<span className="font-semibold text-[#2EA9A9]">I</span>A
+    <span className="inline-flex items-center gap-3 group">
+      <span className="relative h-10 w-10 rounded-2xl bg-gradient-to-br from-white via-slate-50 to-slate-100 border border-amber-300/40 shadow-[0_6px_16px_rgba(13,122,130,0.15),_inset_0_1px_2px_rgba(255,255,255,1)] flex items-center justify-center p-2 overflow-hidden transition-transform duration-300 group-hover:scale-105 shrink-0">
+        <span className="absolute inset-0 bg-gradient-to-tr from-teal-500/15 via-amber-400/10 to-transparent"></span>
+        <svg viewBox="0 0 100 100" className="w-full h-full filter drop-shadow-[0_2px_4px_rgba(13,122,130,0.3)]">
+          <defs>
+            <linearGradient id="logoGoldBM" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#c5a059" />
+              <stop offset="50%" stopColor="#e5c887" />
+              <stop offset="100%" stopColor="#9a7632" />
+            </linearGradient>
+            <linearGradient id="logoTealBM" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#0d7a82" />
+              <stop offset="100%" stopColor="#00e5ff" />
+            </linearGradient>
+          </defs>
+          <path d="M 20 75 L 20 25 L 50 55 L 80 25 L 80 75" fill="none" stroke="url(#logoTealBM)" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M 20 25 L 50 55 L 80 25" fill="none" stroke="url(#logoGoldBM)" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="50" cy="55" r="4" fill="#00e5ff" />
+        </svg>
+      </span>
+      <span className="flex flex-col">
+        <span className="font-serif font-extrabold text-xl tracking-widest leading-none bg-gradient-to-r from-amber-700 via-amber-600 to-slate-900 bg-clip-text text-transparent">
+          MIA
+        </span>
+        <span className="text-[9px] uppercase tracking-widest font-extrabold text-teal-800 leading-tight mt-0.5">
+          Legal Intelligence
+        </span>
       </span>
     </span>
   );
