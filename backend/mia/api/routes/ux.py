@@ -79,6 +79,9 @@ _PROPOSAL_LABEL = {
     "weekly_report": "Resumen semanal",
     # La identidad del despacho (SOUL.md): Mia la PROPONE, nunca la escribe sola.
     "soul_rule": "Ajuste a la descripción de tu despacho",
+    # F1.1: la cosecha del borrador aprobado (qué corrigió el abogado) llega como
+    # propuesta — nada se aplica solo.
+    "harvest_lessons": "Lecciones del borrador aprobado",
 }
 _JOB_LABEL = {
     "sync_obsidian_all_tenants": "Sincronización del conocimiento",

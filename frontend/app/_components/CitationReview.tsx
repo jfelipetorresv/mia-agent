@@ -47,6 +47,13 @@ export type Verification = {
     n_partes_ajenas: number;
     partes?: { parte: string; ocurrencias: number }[];
   };
+  // Hallazgos del auditor de citas (segunda revisión, con modelo) SOBRE el veredicto del
+  // guardián determinista: cita de segunda mano, materia ajena al caso o doble filo contra
+  // la propia tesis. Presente solo cuando encontró algo que el guardián no marcó.
+  gate_llm?: {
+    veredicto: string;
+    detalle: string;
+  };
   // Qué parte del expediente alcanzó a leer el turno. Presente solo cuando leyó una
   // fracción: en un expediente que cabe entero, no hay nada que advertir.
   alcance_lectura?: {
@@ -194,10 +201,12 @@ function AvisosDeRevision({ verification }: { verification: Verification }) {
   const neg = verification.afirmaciones_negativas;
   const cruce = verification.contaminacion_expediente;
   const alcance = verification.alcance_lectura;
+  const gate = verification.gate_llm;
   const hayNeg = Boolean(neg && neg.n_a_revisar > 0);
   const hayCruce = Boolean(cruce && cruce.n_partes_ajenas > 0);
   const hayAlcance = Boolean(alcance && alcance.total > 0);
-  if (!hayNeg && !hayCruce && !hayAlcance) return null;
+  const hayGate = Boolean(gate && gate.detalle);
+  if (!hayNeg && !hayCruce && !hayAlcance && !hayGate) return null;
 
   return (
     <div className="mt-2 space-y-2">
@@ -239,6 +248,18 @@ function AvisosDeRevision({ verification }: { verification: Verification }) {
           </p>
           <p className="mt-1.5 text-muted-foreground/80">
             Puede ser legítimo, o puede ser material de otro caso. Revísalo antes de radicar.
+          </p>
+        </div>
+      ) : null}
+      {hayGate && gate ? (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
+          <p className="flex items-start gap-2 font-medium text-warning">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            La segunda revisión de citas encontró algo que merece tu mirada
+          </p>
+          <p className="mt-1 whitespace-pre-wrap font-serif text-muted-foreground">{gate.detalle}</p>
+          <p className="mt-1.5 text-muted-foreground/80">
+            Es un aviso, no un veredicto: la decisión sobre cada cita es tuya.
           </p>
         </div>
       ) : null}

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import logging
 import math
 import re
@@ -1933,51 +1934,59 @@ class MatterGraphBuilder:
     # (`_check_negative_claims` vive como función del módulo, más abajo: no necesita `self` y
     # así el nodo sigue probándose con un `self` simulado — ver test_sentence_report.w_cableado.)
 
-    # ── 6 · verificador_citas (Gate de Calidad con LLM) ──────────────────────
+    # ── 6 · verificador_citas (gate LLM de UNA pasada — F1.5 del plan de eficiencia) ──
     async def verificador_citas_node(self, state: MatterState) -> dict:
-        """Gate de calidad LLM determinista para auditar citas contra el expediente.
-        Si falla, anota [Fallo de Gate] y lo devuelve a redacción."""
+        """Auditoría LLM de citas en UNA pasada, sobre el veredicto del muro determinista.
+
+        Orden y contrato (decisión de Pipe 2026-08-07, «capa el bucle del gate»):
+        1. El MURO determinista corre PRIMERO sobre el borrador tal cual salió de
+           redacción (citas quemadas, [VERIFICAR], afirmaciones negativas, contaminación
+           entre expedientes, alcance) y escribe md["verification"].
+        2. El gate LLM hace UNA pasada de auditoría con prompt MAGRO
+           (prompt_builder.build_gate_system): recibe el borrador ya anotado + el resumen
+           del muro y responde SOLO un veredicto (APTO / HALLAZGOS: …). NUNCA reescribe el
+           borrador — el baseline F0 midió que re-emitirlo costaba ~12.600 tokens de
+           salida por llamada, y el bucle de 3 reintentos ponía a draft+gate en el 66 %
+           del gasto del turno (validation/baseline-f0-por-nodo.md).
+        3. Su hallazgo va al informe del abogado (report["gate_llm"]) como AVISO: la
+           decisión sigue siendo humana en el HITL, nunca del gate.
+        Si el gate LLM falla (timeout, cuota), el turno sigue con el muro solo: el gate
+        es complemento, jamás bloqueo del camino al abogado."""
         md = dict(state.get("metadata") or {})
         draft = state.get("draft") or ""
-        
-        annotated, usage = await self._llm([
-            {"role": "system", "content": prompt_builder.build_graph_system(
-                state, "verificador_citas", matter_context=_matter_context_for(state),
-                persona_voice=_persona_voice(state))},
-            {"role": "user", "content": f"Borrador:\n{draft}"},
-        ], task="main", state=state, md=md, node="verificador_citas", model=_persona_alias(state))
-        
-        _accum_usage(md, usage)
+
+        annotated = await self._verify_draft(state, md, draft)
+        report = md.get("verification") if isinstance(md.get("verification"), dict) else {}
+        resumen_muro = json.dumps(
+            {k: report.get(k) for k in ("citas", "respaldadas", "marcadas", "omitidas",
+                                        "quemadas", "afirmaciones_negativas",
+                                        "contaminacion_expediente", "alcance_lectura")
+             if report.get(k) not in (None, 0, [], {})},
+            ensure_ascii=False, default=str)[:4000]
+
+        try:
+            veredicto, usage = await self._llm([
+                {"role": "system", "content": prompt_builder.build_lean_system(
+                    state, "verificador_citas")},
+                {"role": "user", "content": (
+                    f"Borrador (ya anotado por el guardián determinista):\n{annotated}\n\n"
+                    f"Informe del guardián determinista (JSON):\n{resumen_muro}")},
+            ], task="main", state=state, md=md, node="verificador_citas",
+                model=_persona_alias(state))
+            _accum_usage(md, usage)
+            primera = (veredicto or "").strip().splitlines()[0].strip().upper() if veredicto else ""
+            if isinstance(report, dict) and veredicto and not primera.startswith("APTO"):
+                report["gate_llm"] = {
+                    "veredicto": "hallazgos",
+                    "detalle": (veredicto or "").strip()[:2000],
+                }
+                md["verification"] = report
+        except Exception:  # noqa: BLE001 — el gate LLM nunca corta el camino al abogado
+            logger.exception("verificador_citas: el gate LLM falló; el turno sigue con el "
+                             "muro determinista solo")
+
         md["stage"] = "verificador_citas"
-        
-        if "[Fallo de Gate]" in annotated:
-            md["gate_feedback"] = annotated
-            attempts = md.get("gate_attempts", 0) + 1
-            md["gate_attempts"] = attempts
-            if attempts >= 3:
-                # Si supera 3 intentos, lo deja pasar para revisión humana con un aviso
-                annotated = annotated.replace("[Fallo de Gate]", "[Aviso de Gate - Máximos intentos superados]")
-                md.pop("gate_feedback", None)
-                md.pop("gate_attempts", None)
-                # El MURO determinista corre SIEMPRE sobre el borrador que sigue a
-                # revisión humana: citas quemadas, [VERIFICAR], afirmaciones negativas,
-                # contaminación entre expedientes y alcance de lectura. El gate LLM lo
-                # complementa, no lo sustituye — y es quien escribe md["verification"],
-                # el informe que hitl_checkpoint expone a la pantalla de revisión.
-                annotated = await self._verify_draft(state, md, annotated)
-                return {"draft": annotated, "metadata": md}
-            return {"metadata": md}
-
-        md.pop("gate_feedback", None)
-        md.pop("gate_attempts", None)
-        annotated = await self._verify_draft(state, md, annotated)
         return {"draft": annotated, "metadata": md}
-
-    def route_verificador_citas(self, state: MatterState) -> str:
-        md = state.get("metadata") or {}
-        if md.get("gate_feedback") and md.get("gate_attempts", 0) < 3:
-            return "draft"
-        return "hitl_checkpoint"
 
     # ── work (Bloque A · PROYECTO: espacio de trabajo libre, sin HITL) ───────
     async def work_node(self, state: MatterState) -> dict:
@@ -2229,6 +2238,26 @@ class MatterGraphBuilder:
             task.add_done_callback(_BG_TASKS.discard)
         except Exception:  # noqa: BLE001 — lanzar la task es best-effort
             logger.debug("no se pudo lanzar skill_improver (best-effort)", exc_info=True)
+        # F1.1 (plan de eficiencia): la COSECHA corre en segundo plano y SOLO cuando el
+        # abogado APROBÓ (cosechar un rechazo gastaba una llamada `main` para nada). Antes
+        # era un nodo del grafo DESPUÉS de finalize: el abogado esperaba su llamada dentro
+        # del clic de Aprobar y el reporte ni se persistía. Ahora se guarda como PROPUESTA
+        # pendiente (feedback_proposals, tipo harvest_lessons) — cosecha sin escritura en
+        # caliente: Mia propone, el abogado decide en Memoria.
+        if status == "approved":
+            try:
+                task = asyncio.create_task(self._harvest_background(
+                    tenant_id=state["tenant_id"],
+                    soul_snapshot=state.get("soul_snapshot"),
+                    jurisdictions=list(state.get("jurisdictions") or []) or None,
+                    draft_original=md.get("original_draft", "") or draft,
+                    draft_final=final,
+                    trace_id=trace_id,
+                    alias=_persona_alias(state)))
+                _BG_TASKS.add(task)
+                task.add_done_callback(_BG_TASKS.discard)
+            except Exception:  # noqa: BLE001 — lanzar la cosecha es best-effort
+                logger.debug("no se pudo lanzar la cosecha (best-effort)", exc_info=True)
         md.update(stage="finalize", final_status=status)
         return {
             "draft": final,
@@ -2237,23 +2266,43 @@ class MatterGraphBuilder:
             "metadata": md,
         }
 
-    # ── 9 · harvest ──────────────────────────────────────────────────────────
-    async def harvest_node(self, state: MatterState) -> dict:
-        md = dict(state.get("metadata") or {})
-        draft_original = md.get("original_draft", "")
-        draft_final = state.get("draft", "")
-        
-        report, usage = await self._llm([
-            {"role": "system", "content": prompt_builder.build_graph_system(
-                state, "harvest", matter_context=_matter_context_for(state),
-                persona_voice=_persona_voice(state))},
-            {"role": "user", "content": f"Borrador original de Mia:\n{draft_original}\n\nVersión final aprobada por el abogado:\n{draft_final}"},
-        ], task="main", state=state, md=md, node="harvest", model=_persona_alias(state))
-        
-        _accum_usage(md, usage)
-        md["harvest_report"] = report
-        
-        return {"metadata": md}
+    # ── 9 · cosecha en segundo plano (F1.1 — ya no es nodo del grafo) ─────────
+    async def _harvest_background(self, *, tenant_id: str, soul_snapshot: Any,
+                                  jurisdictions: list[str] | None,
+                                  draft_original: str, draft_final: str,
+                                  trace_id: str, alias: Optional[str]) -> None:
+        """Cosecha de aprendizaje tras una APROBACIÓN, fuera del camino del abogado.
+
+        Prompt magro (build_lean_system: la cosecha compara dos borradores, no redacta
+        litigio) y una sola llamada. El reporte queda como propuesta pendiente en
+        feedback_proposals; si la llamada o el INSERT fallan, se pierde ESTA cosecha y
+        nada más — jamás afecta al turno ya cerrado."""
+        try:
+            estado_minimo = {"soul_snapshot": soul_snapshot,
+                             "jurisdictions": jurisdictions or []}
+            report, _usage = await self._llm([
+                {"role": "system", "content": prompt_builder.build_lean_system(
+                    estado_minimo, "harvest", jurisdictions=jurisdictions)},
+                {"role": "user", "content": (
+                    f"Borrador original de Mia:\n{draft_original}\n\n"
+                    f"Versión final aprobada por el abogado:\n{draft_final}")},
+            ], task="main", node="harvest", model=alias)
+            report = (report or "").strip()
+            if not report:
+                return
+            async with db_pool.tenant_connection(tenant_id) as conn:
+                await conn.execute(
+                    "INSERT INTO feedback_proposals "
+                    "  (tenant_id, proposal_type, target_playbook_id, suggested_content, "
+                    "   rationale, signal_count, trace_ids) "
+                    "VALUES (%s::uuid, 'harvest_lessons', NULL, %s, %s, 1, %s)",
+                    (tenant_id, report[:20000],
+                     "Lecciones del borrador aprobado: qué corrigió el abogado y qué "
+                     "conviene incorporar. Propuesta de la cosecha — nada se aplica solo.",
+                     [trace_id]))
+        except Exception:  # noqa: BLE001 — la cosecha nunca rompe nada
+            logger.warning("la cosecha en segundo plano falló; se pierde solo este reporte",
+                           exc_info=True)
 
     # ── ensamblaje ───────────────────────────────────────────────────────────
     def build(self, checkpointer: Any):
@@ -2268,7 +2317,6 @@ class MatterGraphBuilder:
         g.add_node("verificador_citas", self.verificador_citas_node)
         g.add_node("hitl_checkpoint", self.hitl_checkpoint_node)
         g.add_node("finalize", self.finalize_node)
-        g.add_node("harvest", self.harvest_node)
 
         g.add_edge(START, "intake")
         # CP-HUB2: la delegación va JUSTO después de intake y ANTES del equipo de
@@ -2283,13 +2331,14 @@ class MatterGraphBuilder:
         g.add_edge("research", "analysis")
         g.add_edge("analysis", "draft")
         g.add_edge("draft", "verificador_citas")
-        g.add_conditional_edges("verificador_citas", self.route_verificador_citas, {
-            "draft": "draft",
-            "hitl_checkpoint": "hitl_checkpoint"
-        })
+        # F1.5: el gate es de UNA pasada — sin ruta de vuelta a draft. El bucle
+        # draft↔gate costaba el 66 % del turno (baseline F0) y la decisión sobre un
+        # hallazgo es del abogado en el HITL, no del gate.
+        g.add_edge("verificador_citas", "hitl_checkpoint")
         g.add_edge("hitl_checkpoint", "finalize")
-        g.add_edge("finalize", "harvest")
-        g.add_edge("harvest", END)
+        # F1.1: la cosecha ya NO es un nodo — finalize la dispara en segundo plano solo
+        # tras una aprobación. El clic de Aprobar deja de pagar su llamada al modelo.
+        g.add_edge("finalize", END)
 
         return g.compile(checkpointer=checkpointer)
 
@@ -2392,6 +2441,10 @@ async def _check_negative_claims(state: MatterState, draft: str,
         if not claims:
             return None
         revisar: list[dict] = []
+        # F1.3 (plan de eficiencia): el texto COMPLETO de cada documento se lee UNA vez
+        # por pasada — antes se releía por cada par (afirmación × doc), en serie, dentro
+        # del camino crítico del borrador (baseline F0, punto de latencia #6).
+        textos_completos: dict[Any, Optional[str]] = {}
         # Solo las afirmaciones ANCLADAS a un [doc n] son confrontables: sin ancla no hay
         # una pieza concreta contra la que buscar. Las genéricas se cuentan y se dicen, pero
         # no se pueden confrontar — decirlo es parte del aviso, no un vacío escondido.
@@ -2403,8 +2456,10 @@ async def _check_negative_claims(state: MatterState, draft: str,
                 if not isinstance(d, dict):
                     continue
                 doc_id = d.get("document_id") or d.get("id")
-                completo = await retrieval.document_full_text(
-                    state["tenant_id"], state.get("matter_id") or "", doc_id)
+                if doc_id not in textos_completos:
+                    textos_completos[doc_id] = await retrieval.document_full_text(
+                        state["tenant_id"], state.get("matter_id") or "", doc_id)
+                completo = textos_completos[doc_id]
                 if not completo:
                     continue
                 veredicto = verification.confront_negative_claim(

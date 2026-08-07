@@ -620,12 +620,16 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
     ),
     "verificador_citas": (
         "## Tarea de este turno — GATE DE CALIDAD DE CITAS\n"
-        "Eres el Gate de Calidad de Citas, un auditor determinista. Aplica el protocolo "
-        "endurecido del 2026-07-08. Tu única función es auditar el 100% de las citas "
-        "legales y fácticas del borrador contra los documentos fuente originales ([doc n]). "
-        "No corriges estilo, no redactas. Si una cita carece de respaldo literal exacto, "
-        "marcas el borrador con [Fallo de Gate] y lo devuelves al nodo de redacción "
-        "detallando el error. No hay muestreo."
+        "Eres el auditor de citas del equipo. Auditas; NUNCA redactas ni reescribes el "
+        "borrador — tu salida es solo un informe. Recibes el borrador (ya anotado por el "
+        "guardián determinista) y el informe de ese guardián. Revisa el 100% de las citas "
+        "legales y fácticas, sin muestreo, en tres preguntas por cita: (1) ¿es de segunda "
+        "mano y debería atribuirse al original?, (2) ¿su materia y supuesto coinciden con "
+        "el caso?, (3) ¿su contenido es compatible con la tesis del borrador, o le sirve a "
+        "la contraparte? Responde EXACTAMENTE en este formato: primera línea 'APTO' si no "
+        "encuentras nada que el guardián no haya marcado, o 'HALLAZGOS:' seguida de una "
+        "línea por hallazgo (cita → problema → qué haría un abogado). Nada más: ni saludo, "
+        "ni el borrador repetido, ni correcciones redactadas."
     ),
     "harvest": (
         "## Tarea de este turno — COSECHA DE APRENDIZAJE\n"
@@ -876,6 +880,31 @@ def build_graph_system(
         jurisdiction_codes=codes,                         # L3 (ordenamiento aplicable)
     )
     return build_system_prompt(agent)
+
+
+def build_lean_system(state: Any, node: str,
+                      jurisdictions: list[str] | None = None) -> str:
+    """System prompt MAGRO para nodos que NO redactan litigio (F1.2/F1.5 del plan).
+
+    El gate de citas y la cosecha no necesitan la metodología completa (L2, ~1.700
+    tokens), ni el SOUL entero, ni la ficha del asunto — con las 10 capas, su prefijo
+    pesaba lo mismo que el del redactor, en cada llamada. Se quedan con lo que SÍ usan:
+    identidad de agente en una línea, la disciplina de citación con el ordenamiento del
+    turno (L3 — la materia del gate; a la cosecha le recuerda no inventar fuentes) y la
+    instrucción del nodo. Medido en el baseline F0 (validation/baseline-f0-por-nodo.md):
+    el gate era el 30% del gasto atribuido del turno. Los nodos que REDACTAN (facts,
+    research, analysis, draft, edit, work) conservan las 10 capas."""
+    from types import SimpleNamespace
+
+    if node not in GRAPH_NODE_INSTRUCTIONS:
+        raise ValueError(f"nodo desconocido para build_lean_system: {node!r}")
+    codes = jurisdictions if jurisdictions is not None else _state_jurisdictions(state)
+    partes = [
+        GRAPH_FALLBACK_IDENTITY,
+        _citation_layer(SimpleNamespace(jurisdiction_codes=codes)),
+        GRAPH_NODE_INSTRUCTIONS[node],
+    ]
+    return "\n\n".join(p.strip() for p in partes if p and p.strip())
 
 
 def parse_diagnosis_closing(diagnosis: str) -> dict | None:

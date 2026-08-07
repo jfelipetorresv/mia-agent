@@ -68,6 +68,27 @@ def _lotes(texts: list[str]) -> list[list[str]]:
     return lotes
 
 
+# F1.4 (plan de eficiencia): caché de embeddings de CONSULTA. La misma pregunta del
+# abogado se re-embebe 2-3 veces por turno (intake + relectura dirigida) y otra vez si la
+# repite en el turno siguiente — cada una es una llamada pagada a Voyage. El embedding es
+# determinista por (modelo, texto), así que cachear es seguro. Solo aplica a llamadas
+# PEQUEÑAS (consultas): los lotes de ingesta no pasan por aquí y no contaminan la caché.
+_QUERY_CACHE_MAX_ITEMS = 4      # una llamada con más textos es ingesta, no consulta
+_QUERY_CACHE_MAX_CHARS = 4_000  # una consulta más larga que esto no es una consulta
+_QUERY_CACHE_SIZE = 512
+
+from collections import OrderedDict as _OrderedDict  # noqa: E402
+
+_query_cache: "_OrderedDict[tuple[str, str], list[list[float]]]" = _OrderedDict()
+
+
+def _cache_key(text: str) -> tuple[str, str]:
+    import hashlib
+
+    return (config.litellm_embed_model(),
+            hashlib.sha256((text or "").encode("utf-8")).hexdigest())
+
+
 def embed_texts(texts: list[str]) -> list[list[float]]:
     if not config.VOYAGE_API_KEY:
         raise RuntimeError(
@@ -75,6 +96,14 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         )
     if not texts:
         return []
+    cacheable = (len(texts) <= _QUERY_CACHE_MAX_ITEMS
+                 and all(len(t or "") <= _QUERY_CACHE_MAX_CHARS for t in texts))
+    if cacheable:
+        claves = [_cache_key(t) for t in texts]
+        if all(k in _query_cache for k in claves):
+            for k in claves:
+                _query_cache.move_to_end(k)
+            return [list(_query_cache[k]) for k in claves]
     import litellm  # import diferido: solo se necesita al ingerir
 
     lotes = _lotes(list(texts))
@@ -112,4 +141,10 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
             f"Se pidieron {len(texts)} embeddings y volvieron {len(vectors)}: el emparejamiento "
             "fragmento→vector no es fiable, así que no se guarda nada."
         )
+    if cacheable:
+        for k, v in zip(claves, vectors):
+            _query_cache[k] = list(v)
+            _query_cache.move_to_end(k)
+        while len(_query_cache) > _QUERY_CACHE_SIZE:
+            _query_cache.popitem(last=False)
     return vectors
