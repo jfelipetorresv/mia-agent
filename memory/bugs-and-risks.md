@@ -1,7 +1,32 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-07-21 (sincronización de documentación — #75 y #79 cerrados con evidencia
-# reejecutada; #76 y #78 verificados que SIGUEN abiertos, no se tocan)
+# Última actualización: 2026-08-07 (sesión 55)
+
+## Actualización 2026-08-07 — Sesión 55 (UI-A · revisión commits de Pipe · honestidad-UX · migración 047)
+
+**Cerrados y VERIFICADOS hoy:** DEFECTO UI-A (`585f332`, con mutación) · muro determinista desconectado
+por `f264b1e` (`2e899bf`: el gate LLM se queda y el muro corre sobre su salida; test_seed 12/17→17/17,
+test_e2e 57/58→58/58) · FALLA del checklist de honestidad (botones Conectar sin app OAuth, `c6173e5`,
+verificado en vivo) · migración 047 fuera del ledger (aplicada con `init_citas_quemadas.py` + registro
+con el MISMO sha que calcula `db_bootstrap.migration_sha256`; /health 45/45).
+
+### 🟡 Watch-out — Decisión de arquitectura del gate de citas (para conocimiento de Pipe)
+`f264b1e` (Codex, entre s53 y s54) reemplazó el nodo determinista `verification` por un gate LLM
+(`verificador_citas`) con reintentos a redacción. La sesión 55 NO lo revirtió: reconectó el muro
+determinista DESPUÉS del gate. Queda la pregunta de producto: el gate LLM consume un turno de modelo
+extra por borrador y su prompt se declara "auditor determinista" sin serlo. Si Pipe quiere solo el
+muro, se quita el nodo; si quiere ambos, ya están ambos.
+
+### 🟡 Watch-out — menores de la revisión de los commits de diseño (sin arreglar, deliberadamente)
+- `BrandMark.tsx`: props `breathing`/`glow` quedaron no-op tras el logotipo octaedro (`1be4af5`) y
+  `WelcomeShell.tsx:93` las sigue pasando; el halo/pulso de la bienvenida se perdió sin aviso. Es
+  diseño de Pipe: decidir él si se reimplementa o se retiran las props.
+- `button.tsx` (`6b97a97`): se borró el comentario con la medición de contraste WCAG del variant `cta`
+  al cambiar el hover; el contraste no se re-midió.
+- El nodo `harvest` nuevo (f264b1e) corre tras aprobar sin frase de progreso propia en el SSE.
+
+# (histórico) Última actualización previa: 2026-07-21 (sincronización de documentación — #75 y #79
+# cerrados con evidencia reejecutada; #76 y #78 verificados que SIGUEN abiertos, no se tocan)
 
 ## Actualización 2026-07-20 — Sesión 50 (lectura del expediente · guardián de citas · jurisdicción · perfil · selector)
 

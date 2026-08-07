@@ -174,15 +174,10 @@ async function main() {
   });
 
   await paso("revisar-borrador", async () => {
-    // DEFECTO UI CONOCIDO (corrida 1, 2026-08-04): a 1440 px el aside derecho se
-    // monta sobre «Revisar borrador» e intercepta el clic. Se intenta el clic real
-    // y, si el panel lo tapa, se navega directo (workaround anotado en la bitácora).
-    try {
-      await page.getByRole("button", { name: "Revisar borrador" }).click({ timeout: 15_000 });
-    } catch {
-      console.log("  AVISO: aside tapa «Revisar borrador» — navegación directa a /revisar");
-      await page.goto(`${asuntoUrl.split("?")[0]}/revisar`);
-    }
+    // DEFECTO UI-A corregido (585f332, 2026-08-07): la fila de acciones envuelve y el
+    // aside ya no intercepta el clic. El clic real ES la aserción — sin rodeo: si el
+    // botón vuelve a quedar tapado, este paso debe FALLAR, no esquivarlo.
+    await page.getByRole("button", { name: "Revisar borrador" }).click({ timeout: 15_000 });
     await page.waitForURL("**/revisar", { timeout: 30_000 });
     await page.getByRole("button", { name: "Aprobar" }).waitFor();
   });
