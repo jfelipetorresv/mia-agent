@@ -59,6 +59,7 @@ from ..memory.tokens import estimate_tokens
 from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
 from ..memory.skill_improver import SkillImprover
+from ..metrics import usage as usage_metrics
 from ..onboarding.ficha_loader import load_ficha_context
 from ..policy import budget as policy_budget
 from ..jurisdiction.pack import GENERIC_CODE
@@ -1111,7 +1112,12 @@ class MatterGraphBuilder:
 
         CP9 (revisión capa 2, M1): el cupo de compresión es POR NODO (`node`), no global —
         con 4 nodos LLM en el turno, cada especialista conserva su propio rescate. Dentro
-        del MISMO nodo sigue siendo una sola compresión (anti-bucle intacto)."""
+        del MISMO nodo sigue siendo una sola compresión (anti-bucle intacto).
+
+        F0.1 (plan de eficiencia): el nodo se fija en metrics.usage para que turn_usage
+        atribuya la llamada a su etapa del grafo. El ContextVar viaja al thread de
+        asyncio.to_thread (copia de contexto), igual que el scope del middleware."""
+        node_token = usage_metrics.set_node(node)
         try:
             resp = await asyncio.to_thread(llm.call_llm, messages, task=task, model=model)
         except Exception as exc:  # noqa: BLE001 — solo rescatamos CONTEXT_TOO_LONG; el resto re-lanza
@@ -1147,6 +1153,8 @@ class MatterGraphBuilder:
                            "desde el 1er proveedor de la cadena", task,
                            "recortado por el nodo" if shrink is not None else "comprimido")
             resp = await asyncio.to_thread(llm.call_llm, reduced, task=task, model=model)
+        finally:
+            usage_metrics.reset_node(node_token)
         content = resp.choices[0].message.content or ""
         # Filtro del "razonamiento en voz alta" (agents/reasoning_filter): los modelos de
         # razonamiento LOCALES (Ollama / mia-local) anteponen su cadena de pensamiento en

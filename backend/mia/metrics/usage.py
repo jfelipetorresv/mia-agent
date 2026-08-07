@@ -51,6 +51,21 @@ _scope: ContextVar[tuple[str, str | None, str] | None] = ContextVar(
     "mia_usage_scope", default=None
 )
 
+# F0.1 del plan de eficiencia: NODO del grafo al que se atribuye la llamada
+# (facts/research/analysis/draft/verificador_citas/harvest/edit/work…). Mismo
+# mecanismo que el scope: graph._llm lo fija alrededor de call_llm y el
+# ContextVar viaja al thread de asyncio.to_thread. None = fuera del grafo.
+_node: ContextVar[str | None] = ContextVar("mia_usage_node", default=None)
+
+
+def set_node(node: str | None) -> Token:
+    """Fija el nodo del grafo para las llamadas siguientes de ESTE contexto."""
+    return _node.set(node or None)
+
+
+def reset_node(token: Token) -> None:
+    _node.reset(token)
+
 _buffer: list[dict] = []
 _lock = threading.Lock()
 # Cota del buffer: si el flusher muere o la DB está caída, no crecer sin límite.
@@ -195,6 +210,8 @@ def record(alias: str, task: str | None, usage: Any,
             "cache_read_tokens": cache_read,
             "cache_creation_tokens": cache_creation,
             "stop_reason": (str(stop_reason)[:32] if stop_reason else None),
+            # F0.1: atribución por nodo del grafo (None = llamada fuera del grafo).
+            "node": ((_node.get() or "")[:64] or None),
         }
         with _lock:
             if len(_buffer) >= MAX_BUFFER:
@@ -223,10 +240,10 @@ def pending_count() -> int:
 _INSERT_SQL = (
     "INSERT INTO turn_usage (tenant_id, matter_id, task, model, prompt_tokens, "
     "completion_tokens, total_tokens, cost_usd, source, cache_read_tokens, "
-    "cache_creation_tokens, stop_reason) VALUES "
+    "cache_creation_tokens, stop_reason, node) VALUES "
     "(%(tenant_id)s::uuid, %(matter_id)s::uuid, %(task)s, %(model)s, %(prompt_tokens)s, "
     "%(completion_tokens)s, %(total_tokens)s, %(cost_usd)s, %(source)s, "
-    "%(cache_read_tokens)s, %(cache_creation_tokens)s, %(stop_reason)s)"
+    "%(cache_read_tokens)s, %(cache_creation_tokens)s, %(stop_reason)s, %(node)s)"
 )
 
 
