@@ -800,9 +800,9 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
         </div>
         <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
           <AvisoDeCosto aviso={avisoCosto} onDismiss={() => setAvisoCosto(null)} />
-          <div className="mb-2 flex min-h-5 items-center justify-between text-sm">
-            <span className="text-muted-foreground">{status}</span>
-            <div className="flex items-center gap-2">
+          <div className="mb-2 flex min-h-5 min-w-0 items-center justify-between gap-3 text-sm">
+            <span className="shrink-0 text-muted-foreground">{status}</span>
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
               {pendingCount > 0 ? (
                 <Button
                   variant="outline"
