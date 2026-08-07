@@ -665,6 +665,32 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
     return result
 
 
+# ── uso por nodo del grafo (F0 del plan de eficiencia) ────────────────────────
+async def usage_by_node(tenant_id: str) -> list[dict]:
+    """Desglose del gasto de un tenant por NODO del grafo, desde turn_usage.
+
+    F0.2 del plan de eficiencia (specs/todo/PLAN-principios-harness-llos-eficiencia.md):
+    el tenant de eval se BORRA al final de la corrida y el borrado se lleva sus filas de
+    turn_usage — este agregado debe capturarse ANTES y persistirse dentro del reporte,
+    o el baseline por nodo no existe. Requiere flush_pending() previo (run_case_n ya lo
+    hace en su finally)."""
+    from ..db import pool as _pool
+
+    async with _pool.tenant_connection(tenant_id) as conn:
+        rows = await (await conn.execute(
+            "SELECT coalesce(node, '(sin nodo)') AS node, task, model, count(*) AS llamadas, "
+            "sum(prompt_tokens) AS prompt_tokens, sum(completion_tokens) AS completion_tokens, "
+            "sum(total_tokens) AS total_tokens "
+            "FROM turn_usage GROUP BY 1, 2, 3 ORDER BY sum(total_tokens) DESC"
+        )).fetchall()
+    return [
+        {"node": r[0], "task": r[1], "model": r[2], "llamadas": int(r[3]),
+         "prompt_tokens": int(r[4] or 0), "completion_tokens": int(r[5] or 0),
+         "total_tokens": int(r[6] or 0)}
+        for r in rows
+    ]
+
+
 # ── correr el MISMO caso N veces (riesgos INTERMITENTES) ──────────────────────
 async def run_case_n(tenant_id: str, case: GoldenCase, n: int, *,
                      tenant_allow_real: Optional[bool] = None,

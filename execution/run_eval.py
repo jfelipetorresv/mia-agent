@@ -372,6 +372,13 @@ async def _run_repeat(run_id: str, case_id: str, n: int,
     try:
         results = await harness.run_case_n(tenant_id, case, n, guard=guard)
         matter_ids = [r.get("matter_id") for r in results if r.get("matter_id")]
+        # F0.2 (plan de eficiencia): el desglose por nodo se captura ANTES de que
+        # _drop_eval_tenant borre las filas de turn_usage del tenant de eval.
+        try:
+            uso_por_nodo = await harness.usage_by_node(tenant_id)
+        except Exception as exc:  # noqa: BLE001 — el desglose jamás tumba la corrida
+            print(f"  AVISO: no se pudo capturar el uso por nodo del baseline: {exc}")
+            uso_por_nodo = []
         leak = harness.jurisdiction_leak_rate(results)
         # F1 — con N repeticiones del MISMO caso, la variabilidad (coste, latencia,
         # falsos bloqueos...) ES parte del resultado, no ruido a esconder: mismo panel
@@ -379,6 +386,7 @@ async def _run_repeat(run_id: str, case_id: str, n: int,
         panel = harness.build_quality_panel(results)
         report = {"run_id": run_id, "case_id": case_id, "n": n, "results": results,
                   "cases": results, "leak": leak, "panel": panel,
+                  "uso_por_nodo": uso_por_nodo,
                   "spend": guard.snapshot(),
                   "version": {
                       "prompt_hash": harness.prompt_version_hash(),
@@ -403,6 +411,13 @@ def _print_repeat_summary(result: dict) -> None:
               "(el tope de gasto cortó). La tasa de abajo es sobre esas, no sobre las pedidas.")
     _print_spend(result.get("spend", {}))
     _print_panel(result.get("panel", {}))
+    uso = result.get("uso_por_nodo") or []
+    if uso:
+        print("\n  --- Uso por nodo del grafo (F0, suma de las corridas) ---")
+        for fila in uso:
+            print(f"  · {fila['node']:<20} {fila['model']:<18} llamadas={fila['llamadas']:<3} "
+                  f"prompt={fila['prompt_tokens']:>8} completion={fila['completion_tokens']:>8} "
+                  f"total={fila['total_tokens']:>8}")
     print(f"  Fuga de jurisdicción detectada en {leak['n_con_fuga']}/{leak['n']} corridas "
           f"(tasa {leak['tasa']:.0%}). INTERMITENTE por diseño: una sola pasada limpia NO "
           "certifica que no vuelva a pasar.")
