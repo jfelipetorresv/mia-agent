@@ -130,6 +130,10 @@ async def status(request: Request):
             # ¿Esta conexión ya otorgó permiso de archivos de OneDrive? Lo consume la UI para
             # ofrecer "Añadir permiso de archivos" en una cuenta Microsoft YA conectada (M3).
             "archivos": ("Files.Read" in by_provider[p]["scopes"]) if p in by_provider else False,
+            # Honestidad de UI (F3): la app OAuth de la instalación puede no estar registrada
+            # todavía. La UI solo ofrece "Conectar" cuando de verdad se puede — el mismo
+            # criterio con el que POST /connect responde 503.
+            "disponible": all(config.mailbox_oauth_client(p)),
         }
         for p in PROVIDERS
     ]
