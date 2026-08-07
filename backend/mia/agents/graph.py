@@ -1951,11 +1951,18 @@ class MatterGraphBuilder:
                 annotated = annotated.replace("[Fallo de Gate]", "[Aviso de Gate - Máximos intentos superados]")
                 md.pop("gate_feedback", None)
                 md.pop("gate_attempts", None)
+                # El MURO determinista corre SIEMPRE sobre el borrador que sigue a
+                # revisión humana: citas quemadas, [VERIFICAR], afirmaciones negativas,
+                # contaminación entre expedientes y alcance de lectura. El gate LLM lo
+                # complementa, no lo sustituye — y es quien escribe md["verification"],
+                # el informe que hitl_checkpoint expone a la pantalla de revisión.
+                annotated = await self._verify_draft(state, md, annotated)
                 return {"draft": annotated, "metadata": md}
             return {"metadata": md}
-            
+
         md.pop("gate_feedback", None)
         md.pop("gate_attempts", None)
+        annotated = await self._verify_draft(state, md, annotated)
         return {"draft": annotated, "metadata": md}
 
     def route_verificador_citas(self, state: MatterState) -> str:

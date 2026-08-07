@@ -129,6 +129,11 @@ def _fake_call_llm(messages, *, task=None, model=None, **kw):
         return _resp("BORRADOR: contestación de la demanda. [VERIFICAR fecha del hecho]")
     if "Incorpora al borrador" in sysmsg:
         return _resp("BORRADOR CORREGIDO con las indicaciones.")
+    if "GATE DE CALIDAD DE CITAS" in sysmsg:
+        # El gate LLM (f264b1e) devuelve el borrador auditado: el mock lo deja pasar
+        # TAL CUAL para que el flujo conserve el borrador de prueba.
+        user = messages[-1]["content"] if isinstance(messages[-1], dict) else ""
+        return _resp(user.split("Borrador:\n", 1)[-1] if "Borrador:\n" in user else user)
     return _resp("DIAGNÓSTICO: el eje del asunto es la caducidad de la acción.")
 
 

@@ -119,11 +119,17 @@ async def _stream_turn_events(
                 verification=v.get("verification"),
             )
             continue
-        for node in chunk:
+        for node, update in chunk.items():
             if node in _NODE_PROGRESS:
                 yield sse("thinking", _NODE_PROGRESS[node])
-            elif node == "verification":
-                yield sse("draft_ready", "Borrador listo.")
+            elif node == "verificador_citas":
+                # El gate de citas (f264b1e) puede devolver el turno a redacción: solo
+                # cuando su update trae el borrador (pasó, o agotó reintentos) el
+                # borrador está de verdad listo; si no, es una pasada de corrección.
+                if isinstance(update, dict) and update.get("draft"):
+                    yield sse("draft_ready", "Borrador listo.")
+                else:
+                    yield sse("thinking", "Mia está corrigiendo las citas del borrador…")
 
 
 # ── Bloque A (Proyectos) · turno SIN HITL ─────────────────────────────────────

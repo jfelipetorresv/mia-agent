@@ -157,6 +157,12 @@ def _fake_call_llm(messages, *, task=None, model=None, **kw):
         content = BORRADOR_DEMO
     elif "Incorpora al borrador" in sysmsg:
         content = BORRADOR_DEMO + "\n(Versión con las indicaciones del abogado.)"
+    elif "GATE DE CALIDAD DE CITAS" in sysmsg:
+        # El gate LLM (f264b1e) devuelve el borrador auditado: este doble lo deja pasar
+        # TAL CUAL (sin [Fallo de Gate]) para que las piezas plantadas del borrador de
+        # prueba lleguen intactas al muro determinista y a las pantallas de aviso.
+        user = messages[-1]["content"] if isinstance(messages[-1], dict) else ""
+        content = user.split("Borrador:\n", 1)[-1] if "Borrador:\n" in user else user
     else:
         content = DIAGNOSTICO_DEMO
     return SimpleNamespace(
