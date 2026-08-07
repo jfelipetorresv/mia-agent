@@ -86,3 +86,26 @@ Screenshots and validation events are logged here.
   Purga opcional por tenant: `execution/purgar_piloto.py --purgar --tenant <uuid>`.
 - **Veredicto**: PASA la salida medible de F3-recorrido (3/3 verdes, evidencia visual archivada,
   `## aprendido` poblado), con el DEFECTO UI-A abierto y los dos hallazgos de lentitud anotados.
+
+## 2026-08-07 — Sesión 55 · Corrida 4 (regresión tras los arreglos) — VERDE
+
+- **Qué cambió antes de esta corrida**: DEFECTO UI-A corregido (`585f332`); muro determinista
+  reconectado tras el gate LLM de `f264b1e` (`2e899bf`); honestidad de conexiones (`c6173e5`);
+  migración 047 aplicada y en el ledger (health 45/45); el E2E ya NO rodea el defecto — el clic
+  real en «Revisar borrador» ES la aserción (`f7316ad`).
+- **Resultado: CORRIDA 4 VERDE, sin intervención manual.**
+  | corrida | total | turno (pregunta→borrador) | aprobar (POST sincrónico) | ## aprendido |
+  |---|---|---|---|---|
+  | 4 | 1369,1 s (22,8 min) | 1239,7 s | 91,5 s | poblado |
+  El paso «revisar-borrador» tomó 1,0 s con el CLIC REAL en el botón (sin `AVISO: aside tapa…`):
+  el DEFECTO UI-A queda verificado como corregido en el recorrido completo, no solo en unidad.
+- **Gates del cierre (re-corridos hoy)**: test_rls 19/19 · test_gates_no_ciegos 9/9 ·
+  check_env_pins 12/12 · test_e2e 58/58 · test_seed_despacho_demo 17/17 ·
+  test_sentence_report 47/47 · test_citas_quemadas 20/20 · `tsc` frontend 0 errores.
+- **Los dos hallazgos de lentitud de la s54 siguen abiertos** (timeout del motor de suscripción
+  ~13 min con salto a claude-sonnet; approve sincrónico de ~90 s). Sin cambios de esta sesión.
+- **Veredicto**: PASA — el recorrido de primera vez queda verde CON el clic real y con el muro
+  determinista de vuelta en el flujo del asunto.
+- **Nota de evidencia**: las capturas (`validation/screenshots/corrida-{1..4}/`) se conservan en
+  disco fuera de git (PNGs pesados; misma práctica de la s54); esta bitácora y `tiempos.json`
+  son el registro citable.

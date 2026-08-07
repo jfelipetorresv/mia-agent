@@ -18,112 +18,7 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 
 ---
 
-# CIERRE — 2026-07-30 (sesión 53) · Los cuatro pendientes de la 52, cerrados · EMPEZAR AQUÍ
-
-## Arranque en una terminal nueva (prompt sugerido)
-
-> Lee `HANDOFF.md` y `APRENDIZAJES.md` de `D:\Inteligencia Artificial\Mia-Super Agent\mia` y el
-> plan maestro (`C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`).
-> Corre `scripts\sonda_salud.ps1` ANTES de nada; la DB portable (55432) vive en
-> `..\tools\pgdata-portable` (FUERA del repo, en la raíz del proyecto, **no** en `mia\tools`).
-> Para correr en vivo hace falta **LiteLLM con UTF-8**: `PYTHONUTF8=1` delante, o revienta al
-> pintar su banner en una consola cp1252. Para MIRAR cualquier pantalla, siembra el despacho de
-> prueba: `execution\seed_despacho_demo.py` (y `--borrar` al terminar). Lo pendiente está en
-> «Qué sigue».
-
-Rama `feat/fase1-inc1-cleanup-scaffolding`. Cuatro commits, repo limpio (`c644c91` → `28819ac`).
-
-## Qué pasó en esta sesión (2026-07-30, 53ª)
-
-Los cuatro puntos que la sesión 52 dejó en «qué sigue», cerrados en orden.
-
-### 1 · El aviso de crédito LLEGA A LA PANTALLA (`c644c91`)
-
-En la 52 el texto quedaba calculado y probado, pero nadie lo emitía: un aviso que no sale de la
-memoria del proceso no avisa a nadie. `turno_sse` envuelve ahora el turno —asunto, proyecto y
-cierre del borrador— y emite `aviso_de_costo` al final. **También cuando el turno FALLA**: si ya
-se gastó crédito, el abogado tiene que enterarse aunque la respuesta no llegara. El componente
-`AvisoDeCosto` no redacta nada (una sola redacción que auditar), y la pantalla de revisión deja
-el aviso en depósito porque navega al asunto a los 900 ms. Gate 41/41 (era 26/26): ahora ejerce
-el cuerpo real del SSE con un grafo de mentira, sin DB ni modelo.
-
-### 2 · El ALCANCE en expedientes voluminosos (`d481a85`) — lo de más valor, y lo más matizado
-
-Tres piezas, todas de CÓDIGO (funcionan bajo suscripción, donde no hay herramientas) y ninguna
-gasta un token de más:
-
-- **Barrido de cobertura**: posiciones equiespaciadas de cada pieza que el ranking no trajo,
-  leídas por POSICIÓN (por parecido traería más de lo mismo). Se paga con la cola de la lista.
-- **Relectura dirigida**: al analizar se busca otra vez con los HECHOS y la investigación del
-  propio turno, que ya nombran los ejes que la pregunta no nombraba.
-- **El alcance se DICE**: bajo el 95% leído, el informe declara «leí 86 de 252 fragmentos (34%)»
-  y que un dato puntual puede faltar. Es la disciplina del muro de citas aplicada a la lectura.
-
-**MEDICIÓN HONESTA** (caso de oro voluminoso, 4 corridas en vivo): 44 de los 98 fragmentos
-leídos vienen ahora de sitios que el ranking no habría traído, pero **el recall de datos
-enterrados NO subió: sigue 1/3**. El límite es estructural — leer 98 de 252 ve el 39% del
-expediente se reparta como se reparta, y ninguna recuperación garantiza ver un fragmento
-concreto. Por eso la tercera pieza. Dos hallazgos del camino: cubrir solo las piezas HUÉRFANAS
-no movió la aguja (el sesgo también está DENTRO de cada pieza), y la primera versión del barrido
-ENCOGÍA la lectura de 98 a 86 (deduplicaba después de ceder la cola).
-
-**PARA PIPE**: se probó doblar el techo de lectura (128 → 256). El turno dejó de caber en la
-suscripción, saltó a crédito (**USD 1,01 de tarjeta en una sola consulta**) y acabó agotando la
-cadena. Leer más no es la salida; si quiere otra vía, es decisión suya.
-
-### 3 · Despacho de prueba: por fin se puede MIRAR (`f226bbd`)
-
-`execution/seed_despacho_demo.py` deja, sin red y sin cuota: despacho con perfil y SOUL.md (la
-app abre en el escritorio, no en la entrevista), un asunto con documentos y un borrador
-esperando revisión **generado por el grafo real**, con una cita sin respaldo, dos afirmaciones
-negativas y una parte de otro expediente. `--borrar` limpia base Y archivos.
-
-Se usó de inmediato y **encontró dos defectos que ningún test veía**:
-
-- con una única cita OMITIDA, el resumen decía «todas con respaldo en sus fuentes» — lo
-  contrario de lo ocurrido, en la primera línea que se lee;
-- en un PROYECTO, `normalizarInforme` descartaba los avisos nuevos: el componente sabía
-  pintarlos y nunca los recibía.
-
-El gate del seed salía intermitente (el aviso de afirmaciones negativas dependía de un empate
-entre vectores). Ahora el doble de embeddings entierra esos términos a propósito: 3 corridas
-seguidas, 17/17.
-
-### 4 · Bienvenida F3: verificada entera y arreglado su punto flojo (`28819ac`)
-
-El rediseño cinematográfico ya estaba (aurora, wordmark, una pregunta a la vez, progreso de
-cuatro etapas). Lo que no encajaba era la única pregunta de contexto: 21 países en filas con
-casilla y scroll, en medio de un wizard de una pregunta a la vez. Ahora son fichas en flujo con
-buscador; la pregunta pasa de 1290 a 1010 px y se marca un país con un clic (comprobado en el
-recorrido real, no de vista).
-
-## Qué sigue (en orden, sin necesitar a Pipe)
-
-1. **E2E automatizado de la primera vez** (salida medible de F3 en el plan maestro): el
-   recorrido `/register → /activar → /onboarding (7 preguntas) → expediente → borrador →
-   aprobar`, cronometrado y con captura por paso. Esta sesión lo recorrió a mano hasta la
-   pregunta 4 y verificó cada pantalla; falta automatizarlo entero y correrlo 3 veces.
-   Aviso del camino: el alta tiene freno anti fuerza-bruta (10 registros por hora y por IP) —
-   un E2E que registre en bucle se topa con un 429 legítimo.
-2. **El alcance, si se quiere otra vía**: hoy está medido, repartido y declarado. Subir el techo
-   está probado y descartado (punto 2 de arriba).
-3. Producto (plan maestro): lo que quede de F3 tras el E2E.
-
-## Pendientes de Pipe
-
-- **Prueba del instalador en máquina limpia** (doble clic en frío), checklist de 7 puntos,
-  riesgo #59. Nada lo sustituye. **El instalador NO se ha re-ensamblado con los cambios de esta
-  sesión.**
-- **Lectura de calidad** de las 6 salidas de `docs/f1-paquete-decision-pipe.md`.
-- **Los dos trámites de terceros**: Azure Trusted Signing y registro de apps OAuth
-  (`docs/tramites-terceros-pipe.md`).
-- **Decidir sobre el alcance** con el dato nuevo: leer más cuesta crédito de tarjeta.
-
----
-
----
-
-# CIERRE — 2026-08-04 (sesión 54) · El recorrido de primera vez, automatizado: 3 corridas verdes · EMPEZAR AQUÍ
+# CIERRE — 2026-08-04 (sesión 54) · El recorrido de primera vez, automatizado: 3 corridas verdes
 
 ## Arranque en una terminal nueva (prompt sugerido)
 
@@ -185,3 +80,77 @@ corrió 3 veces consecutivas en verde sin intervención manual, y quedó medido 
 - Lectura de las 6 salidas de `docs/f1-paquete-decision-pipe.md`.
 - Azure Trusted Signing y registro de apps OAuth (`docs/tramites-terceros-pipe.md`).
 - Decidir sobre el alcance (leer más cuesta crédito de tarjeta).
+
+---
+
+# CIERRE — 2026-08-07 (sesión 55) · Los 4 puntos de la 54 cerrados: UI-A, revisión de commits, honestidad, corrida 4 verde · EMPEZAR AQUÍ
+
+## Arranque en una terminal nueva (prompt sugerido)
+
+> Lee `HANDOFF.md` y `APRENDIZAJES.md` de `D:\Inteligencia Artificial\Mia-Super Agent\mia` y el
+> plan maestro (`C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`).
+> Corre `scripts\sonda_salud.ps1` ANTES de nada; la DB portable (55432) vive en
+> `..\tools\pgdata-portable`. Para MIRAR pantallas: `execution\seed_despacho_demo.py`
+> (`--borrar` al terminar; OJO: `test_seed_despacho_demo.py` BORRA el despacho demo al
+> limpiar — re-sembrar después). Para el E2E: 4 servicios arriba y
+> `node e2e\recorrido_primera_vez.mjs --corrida N` (~23-30 min).
+
+Rama `feat/fase1-inc1-cleanup-scaffolding`. Repo limpio tras este cierre
+(`585f332` → este commit). Entre la 54 y esta sesión, Pipe hizo además 8 commits de diseño
+(`d297b2a` → `1be4af5`: sistema neumórfico, logotipo octaedro 3D) — SON DE PIPE y se quedan;
+entraron a la revisión técnica de abajo.
+
+## Qué pasó en esta sesión (2026-08-07, 55ª) — los 4 puntos de «Qué sigue» de la 54
+
+1. **DEFECTO UI-A CERRADO (`585f332`)**: la fila de acciones del asunto no envolvía
+   (`flex` sin wrap) y con 5 botones desbordaba bajo el aside de 300px, que interceptaba el
+   clic. `flex-wrap + min-w-0`: los botones pasan a segunda línea. Verificado por mutación
+   (con el código viejo la fila invade el aside: 1183px > 1140px) y EN VIVO a 1440×900 y
+   1280×800. En la corrida 4 el clic real tomó 1,0 s sin aviso.
+2. **Revisión técnica de los commits de Pipe — encontró 2 BLOQUEANTES en `f264b1e` y los
+   cerró (`2e899bf`)**: el commit de principios Lexia renombró el nodo de verificación a un
+   gate LLM (`verificador_citas`) y con ello DESCONECTÓ el muro determinista (`_verify_draft`:
+   citas quemadas, [VERIFICAR], afirmaciones negativas, contaminación, alcance) — el borrador
+   llegaba a revisión sin `md["verification"]` — y dejó el SSE `draft_ready` buscando el nodo
+   viejo. El gate LLM SE QUEDA (decisión de Pipe); el muro corre ahora sobre su salida.
+   Evidencia: test_seed 12/17→17/17, test_e2e 57/58→58/58. Los menores quedaron anotados en
+   `memory/bugs-and-risks.md` (BrandMark con props muertas, contraste WCAG sin re-medir,
+   harvest sin frase de progreso) + un watch-out de producto: el gate LLM gasta un turno de
+   modelo extra por borrador — decisión de Pipe si lo quiere además del muro.
+3. **Checklist de honestidad de UI FIRMADO (`f7316ad`)**: auditor independiente, por paso del
+   recorrido — `validation/checklist-honestidad-ui.md`. 11 PASA / 1 FALLA / 3 AVISO. La FALLA
+   (botones «Conectar» correo visibles sin app OAuth registrada) se corrigió en `c6173e5`
+   (`/api/mailbox/status` expone `disponible`; la UI muestra el aviso honesto) y se verificó
+   EN VIVO en /configurar → Conexiones.
+4. **Corrida 4 del E2E: VERDE en 22,8 min** (turno 20,7 min; approve 91,5 s; `## aprendido`
+   poblado). El E2E ya NO rodea el UI-A: el clic real es la aserción. Bitácora en
+   `validation/validation-log.md`.
+
+**Además**: migración `047_citas_quemadas.sql` estaba aplicable pero fuera de la DB dev
+(health decía 44/45) — aplicada con `init_citas_quemadas.py` y registrada en el ledger con el
+MISMO sha que calcula `db_bootstrap.migration_sha256`; health 45/45.
+
+**Gates re-corridos hoy, todos verdes**: rls 19/19 · gates_no_ciegos 9/9 · env_pins 12/12 ·
+e2e 58/58 · seed 17/17 · sentence_report 47/47 · citas_quemadas 20/20 · migration_ledger PASS
+· tsc 0 errores.
+
+## Qué sigue (en orden, sin necesitar a Pipe)
+
+1. **Lentitud señalable (abierta desde la 54)**: el motor de suscripción agota su timeout
+   (~13 min) con el caso voluminoso y salta a claude-sonnet (turnos 20-28 min); y
+   `POST /draft/approve` corre el cierre del grafo SINCRÓNICO (~90 s con la pantalla en
+   «aprobando»). Atacar el approve asíncrono primero: es la espera que el abogado SIENTE.
+2. Producto (plan maestro): lo que quede de F4 (seguridad pre-cliente) — F3 queda con su
+   salida medible completa (3+1 corridas verdes, checklist firmado, `## aprendido`).
+3. Los AVISO del checklist de honestidad (auditoría fina del onboarding paso a paso).
+
+## Pendientes de Pipe (sin cambios desde la 53, + 1 nuevo)
+
+- Prueba del instalador en máquina limpia (el instalador NO se ha re-ensamblado desde la 52;
+  los arreglos de esta sesión tampoco están dentro).
+- Lectura de las 6 salidas de `docs/f1-paquete-decision-pipe.md`.
+- Azure Trusted Signing y registro de apps OAuth (`docs/tramites-terceros-pipe.md`).
+- Decidir sobre el alcance (leer más cuesta crédito de tarjeta).
+- **NUEVO**: decidir sobre el gate LLM de citas de `f264b1e` (ver watch-out en
+  `memory/bugs-and-risks.md`): ¿solo el muro determinista, o muro + gate LLM como hoy?
+

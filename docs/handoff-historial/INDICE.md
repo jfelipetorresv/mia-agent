@@ -3,6 +3,7 @@
 > Entradas archivadas del HANDOFF.md, de la más reciente a la más antigua.
 > En HANDOFF.md viven solo la entrada vigente y la anterior.
 
+- [CIERRE — 2026-07-30 (sesión 53) · Los cuatro pendientes de la 52, cerrados](061-cierre-2026-07-30-sesion-53-cuatro-pendientes-cerrados.md)
 - [CIERRE — 2026-07-29 (sesión 52) · Instalador re-ensamblado + caso de oro GRANDE + PRIMER PILOTO CON EXPEDIENTE REAL](060-cierre-2026-07-29-sesion-52-instalador-piloto-real.md)
 - [CIERRE — 2026-07-27/28 (4ª sesión) · SESIÓN PIPE A EJECUTADA: F2 cerrada + 4 barreras del harness](059-cierre-2026-07-27-28-sesion-pipe-a-f2-cerrada.md)
 - [CIERRE — 2026-07-24/25 (3ª sesión) · Sondas 30/30 + referencia en nube: el modo de venta empata](058-cierre-2026-07-24-25-3a-sesion-sondas-30-30-referencia-nube.md)
