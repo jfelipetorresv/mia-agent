@@ -52,3 +52,33 @@ pueden caer. La tabla se regenera con:
     .venv\Scripts\python.exe execution\run_eval.py --case expediente-voluminoso-cruce-disperso --repeat 3 --run-id <id>
 
 y el desglose queda impreso y persistido en el JSON del run (`uso_por_nodo`).
+
+---
+
+# DESPUÉS — Fase 1 aplicada (2026-08-07, corrida `f1-despues-nodo`)
+
+Palancas medidas (commit `ad5a6fc`): gate de citas en UNA pasada sin reescritura y con
+prompt magro · cosecha fuera del clic de Aprobar (background, solo aprobaciones, persistida
+como propuesta) · texto completo de documento leído una vez por pasada · caché de embeddings
+de consulta. Mismo caso, mismas condiciones, ×3.
+
+| Nodo | Llamadas | Total F0 | Total F1 | Δ |
+|---|---|---|---|---|
+| draft | 3 (era 9) | 302.513 | 75.737 | **−75 %** |
+| verificador_citas | 3 (era 9) | 257.190 | 54.826 | **−79 %** |
+| analysis | 3 | 132.162 | 120.217 | −9 % |
+| facts | 3 | 93.281 | 109.612 | +18 % (varianza de completions) |
+| research | 3 | 65.886 | 70.501 | +7 % (varianza) |
+| **Total corrida** | **30** (era 42) | **1.006.506** | **586.368** | **−42 %** |
+
+Latencia: p50 **569,7 s** (era 1.179,5) · p95 573,8 s (era 1.526,5) → **−52 % — el turno del
+caso voluminoso baja de ~20 min a ~9,5 min.**
+
+Calidad (el contrapeso): 0 afirmaciones sin respaldo (3/3) · fuga 0/3 · turnos completados
+3/3 · precisión [VERIFICAR] 100 %. **Un matiz a vigilar**: «abstención honesta» dio 2/3
+(baseline: 3/3) — una corrida no formuló la declaración de abstención con la señal que el
+panel busca. No es el gate absoluto (que es el respaldo, y quedó 3/3 limpio), pero queda
+anotado: si se repite en la próxima tanda, se investiga antes de seguir con F2.
+
+**Veredicto: F1 PASA** — −42 % de tokens y −52 % de latencia con el muro intacto, contra la
+misma tabla y con derecho a reversa por commit.
