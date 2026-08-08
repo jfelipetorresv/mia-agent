@@ -83,7 +83,20 @@ corrió 3 veces consecutivas en verde sin intervención manual, y quedó medido 
 
 ---
 
-# CIERRE — 2026-08-07 (sesión 55) · Los 4 puntos de la 54 cerrados: UI-A, revisión de commits, honestidad, corrida 4 verde · EMPEZAR AQUÍ
+# CIERRE — 2026-08-07 (sesión 55) · Los 4 puntos de la 54 + plan de eficiencia F0-F2 ejecutado · EMPEZAR AQUÍ
+
+> **CONTINUACIÓN MISMA SESIÓN (tarde/noche)**: Pipe aprobó el plan de eficiencia
+> (`specs/todo/PLAN-principios-harness-llos-eficiencia.md`, principios destilados de su
+> harness LLOS — solo principios, nada de código/marca) y se ejecutaron F0+F1+F2:
+> medición por nodo (migración 048, gate test_uso_por_nodo), gate de citas en UNA pasada
+> sin reescritura + cosecha en background como propuesta (migración 049) + caches
+> (test_embed_cache), y el SELLO de verificación incremental (migración 050,
+> test_citation_seals 14/14; quemada gana, quemar revoca). **Medido contra baseline:
+> −47 % tokens y −55 % latencia (20 → 8,9 min) con 0-sin-respaldo intacto** —
+> `validation/baseline-f0-por-nodo.md` tiene las 4 tablas y los residuos anotados
+> (KPI de sellos en panel, F1.2b extractos por rol, caché de ficha, F3-F4 del plan).
+> Commits `74067ec` → `9d077e7`+cierre, pusheados. El backend corriendo en la máquina
+> quedó ANTERIOR a estos cambios: reiniciarlo antes de mirar pantallas.
 
 ## Arranque en una terminal nueva (prompt sugerido)
 

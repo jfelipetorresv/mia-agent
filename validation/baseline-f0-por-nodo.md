@@ -82,3 +82,36 @@ anotado: si se repite en la próxima tanda, se investiga antes de seguir con F2.
 
 **Veredicto: F1 PASA** — −42 % de tokens y −52 % de latencia con el muro intacto, contra la
 misma tabla y con derecho a reversa por commit.
+
+---
+
+# DESPUÉS — Fase 2 aplicada: el sello (2026-08-07, corrida `f2-despues-nodo`)
+
+Palanca medida (commit `9d077e7`): el gate LLM de citas se SALTA entero cuando el borrador
+no trae nada nuevo que auditar (cero citas, o todas selladas sin avisos). Mecánica del sello
+completa probada en `test_citation_seals` (14/14): sellar al aprobar, resolver por sello,
+quemada gana, revocación.
+
+| Métrica | F0 | F1 | F2 | Δ vs F0 |
+|---|---|---|---|---|
+| Tokens/tanda | 1.006.506 | 586.368 | **530.009** | **−47 %** |
+| Llamadas | 42 | 30 | **27** | −36 % |
+| verificador_citas | 9 llamadas / 257.190 | 3 / 54.826 | **0 / 0 (salto por sello)** | −100 % |
+| Latencia p50 | 1.179,5 s | 569,7 s | **533,3 s** | **−55 %** |
+
+Calidad: 0 sin respaldo 3/3 · fuga 0/3 · turnos 3/3 · **abstención honesta 3/3** (el 2/3 de
+la tanda F1 fue varianza — con la misma configuración volvió a 3/3; se sigue observando).
+
+Nota de alcance: este caso no trae citas, así que mide el SALTO del gate. La amortización
+del sello con citas reales (primera aprobación sella → siguiente turno resuelve sin gate)
+queda probada en mecánica (14/14) y se verá en el uso vivo — KPI pendiente en el panel.
+
+**Veredicto: F2 PASA.** Acumulado del plan a hoy: **−47 % de tokens y −55 % de latencia
+(20 min → 8,9 min) con los gates absolutos intactos**, y el sistema queda con la propiedad
+del harness: cada expediente recurrente será más barato que el anterior.
+
+## Residuos anotados (no bloquean)
+- KPI «% de citas resueltas por sello» en el panel del despacho (hoy vive en el informe).
+- F1.2b: extractos de metodología por rol para los nodos que SÍ redactan (medir con cuidado).
+- Caché de la ficha del expediente por turno (hoy se relee por nodo; es I/O, no tokens).
+- F3 (función→nivel con piso) y F4 (memoria progresiva) del plan, pendientes de arrancar.
