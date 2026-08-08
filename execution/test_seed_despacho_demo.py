@@ -119,9 +119,15 @@ def main() -> int:  # noqa: C901
     rev = (ROOT / "frontend" / "app" / "_components" / "CitationReview.tsx").read_text(
         encoding="utf-8")
     i = rev.find("todas con respaldo en sus fuentes")
-    contexto = rev[max(0, i - 300):i] if i > 0 else ""
+    contexto = rev[max(0, i - 600):i] if i > 0 else ""
+    # F2 (sello): «con respaldo» ahora suma las respaldadas del turno Y las selladas
+    # (respaldadas + aprobadas por el abogado en un borrador previo). El concepto del
+    # check no cambia: la frase solo puede salir si TODAS las citas tienen respaldo, y
+    # las retiradas (omitidas/quemadas) siguen sin contar — se exige que la suma sea
+    # exactamente respaldadas + selladas, nada más.
     check("«todas con respaldo» exige que todas lo estén",
-          "v.respaldadas === v.citas" in contexto, contexto[-120:])
+          "conRespaldo === v.citas" in contexto
+          and "conRespaldo = v.respaldadas + selladas" in rev, contexto[-120:])
     check("el resumen contempla las citas retiradas del texto",
           "retirada del texto" in rev and "v.omitidas" in rev)
     proy = (ROOT / "frontend" / "app" / "proyectos" / "[id]" / "page.tsx").read_text(

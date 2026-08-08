@@ -55,6 +55,7 @@ from ..gateway import hub_config, hub_gate, hub_memory
 from ..gateway.agent_hub import CONNECTORS, AgentHub
 from ..db import pool as db_pool
 from ..memory import burned_citations
+from ..memory import citation_seals
 from ..memory.playbook_manager import Playbook, PlaybookManager
 from ..memory.tokens import estimate_tokens
 from ..memory.trace_capture import TraceCapture
@@ -1887,6 +1888,11 @@ class MatterGraphBuilder:
         # falsas no se emiten, ni aunque el corpus parezca respaldarlas. Se lee una vez por turno
         # (cacheado por tenant) y fail-soft: sin banco, el comportamiento queda idéntico.
         quemadas = await burned_citations.list_burned(state["tenant_id"])
+        # SELLOS (F2 del plan de eficiencia): citas ya respaldadas Y aprobadas por el abogado
+        # en un borrador previo — se resuelven por sello, sin marca ni re-auditoría LLM.
+        # Quemada gana siempre (se coteja antes en annotate_draft). Fail-soft: sin sellos,
+        # idéntico a antes.
+        sellos = await citation_seals.list_seals(state["tenant_id"])
 
         def _scan() -> tuple[str, dict]:
             sources = md.get("research_sources")
@@ -1909,7 +1915,9 @@ class MatterGraphBuilder:
                 # (`verification`/`verification_diagnosis`) y en AMBOS modos (omisión y clásico).
                 sentence_report=True,
                 # MURO: las citas quemadas del despacho se retiran del texto emitido.
-                burned=quemadas)
+                burned=quemadas,
+                # SELLOS (F2): lo aprobado antes por el abogado se resuelve sin re-marcar.
+                sealed=sellos)
 
         annotated, report = await asyncio.to_thread(_scan)
         md[report_key] = report
@@ -1957,6 +1965,30 @@ class MatterGraphBuilder:
 
         annotated = await self._verify_draft(state, md, draft)
         report = md.get("verification") if isinstance(md.get("verification"), dict) else {}
+
+        # F2 · SELLO como caché de verificación: si el borrador no trae NADA nuevo que
+        # auditar — cero citas, o todas resueltas por sello (ya respaldadas Y aprobadas por
+        # el abogado antes) sin marcas ni avisos pendientes — el gate LLM se SALTA entero.
+        # Es la palanca que abarata el sistema al madurar sin bajar el estándar: lo nuevo
+        # se audita siempre; lo sellado, nunca dos veces.
+        citas = int(report.get("citas") or 0)
+        pendientes = citas - int(report.get("selladas") or 0)
+        sin_avisos = not any((report.get("marcadas"), report.get("anotadas"),
+                              report.get("omitidas"), report.get("quemadas"),
+                              report.get("afirmaciones_negativas"),
+                              report.get("contaminacion_expediente")))
+        if citas == 0 or (pendientes <= 0 and sin_avisos):
+            if citas > 0 and isinstance(report, dict):
+                report["gate_llm"] = {
+                    "veredicto": "sello",
+                    "detalle": ("Todas las citas de este borrador ya estaban verificadas y "
+                                "aprobadas por ti en borradores anteriores (sello del "
+                                "despacho). No se repitió la auditoría."),
+                }
+                md["verification"] = report
+            md["stage"] = "verificador_citas"
+            return {"draft": annotated, "metadata": md}
+
         resumen_muro = json.dumps(
             {k: report.get(k) for k in ("citas", "respaldadas", "marcadas", "omitidas",
                                         "quemadas", "afirmaciones_negativas",
@@ -2245,6 +2277,19 @@ class MatterGraphBuilder:
         # pendiente (feedback_proposals, tipo harvest_lessons) — cosecha sin escritura en
         # caliente: Mia propone, el abogado decide en Memoria.
         if status == "approved":
+            # F2 · SELLAR: las citas que el muro dio por RESPALDADAS dentro de un borrador
+            # que el abogado APROBÓ quedan selladas — no se re-auditan con modelo en los
+            # turnos siguientes. Es la mitad "escritura" del sello; la lectura vive en
+            # _verify_draft (estado "sellada") y en el salto del gate. Fail-soft y rápido
+            # (un INSERT idempotente por cita respaldada).
+            try:
+                n_selladas = await citation_seals.seal_from_approved_report(
+                    state["tenant_id"], md.get("verification") or {}, trace_id=trace_id)
+                if n_selladas:
+                    logger.info("sello: %d citas selladas por la aprobación del abogado "
+                                "(tenant=%s)", n_selladas, state["tenant_id"])
+            except Exception:  # noqa: BLE001 — sellar es best-effort
+                logger.debug("no se pudieron sellar las citas aprobadas", exc_info=True)
             try:
                 task = asyncio.create_task(self._harvest_background(
                     tenant_id=state["tenant_id"],

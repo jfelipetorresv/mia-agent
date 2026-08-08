@@ -758,6 +758,8 @@ _SENT_STATUS_SEVERITY = {
 _CITE_LABEL_IN_SENTENCE = {
     "respaldada": "cita_localizada", "marcada": "marcada",
     "anotada": "anotada", "omitida": "omitida",
+    # F2: sellada = respaldada por el muro Y aprobada por el abogado en un borrador previo.
+    "sellada": "sellada",
 }
 _SENTENCE_TEXT_CAP = 240
 _SENTENCE_DETALLE_CAP = 80
@@ -991,6 +993,33 @@ def _burned_index(burned: Optional[list]) -> frozenset[str]:
     return frozenset(out)
 
 
+def _sealed_index(sealed: Optional[list]) -> dict[str, dict]:
+    """Sellos del despacho → {forma_normalizada: entrada} listo para cotejar. Pura.
+
+    F2 (sello de verificación): acepta dicts como vienen de la tabla citation_seals.
+    Devuelve dict (no frozenset) porque el informe necesita la FUENTE con que se selló."""
+    out: dict[str, dict] = {}
+    for s in sealed or []:
+        if not isinstance(s, dict):
+            continue
+        n = str(s.get("citation_norm") or "") or _normalize(str(s.get("citation") or ""))
+        if n:
+            out[n] = s
+    return out
+
+
+def _sealed_entry(citation: str, sealed_norm: dict[str, dict]) -> Optional[dict]:
+    """¿Esta cita está sellada? Mismo cotejo bidireccional que _is_burned — quemar y
+    sellar tienen que ver la MISMA cita, o el orden quemada-gana no significa nada."""
+    n = _normalize(citation or "")
+    if not n:
+        return None
+    for k, entry in sealed_norm.items():
+        if n == k or k in n or n in k:
+            return entry
+    return None
+
+
 def _is_burned(citation: str, burned_norm: frozenset[str]) -> bool:
     """¿Esta cita está quemada? Coincidencia por forma normalizada, en los dos sentidos.
 
@@ -1122,6 +1151,7 @@ def annotate_draft(
     lawyer_text: Optional[str] = None,
     sentence_report: bool = False,
     burned: Optional[list] = None,
+    sealed: Optional[list] = None,
 ) -> tuple[str, dict]:
     """Anota el borrador y produce el informe del especialista de verificación.
 
@@ -1187,9 +1217,12 @@ def annotate_draft(
     # modo sentence_report; el cap de 50 de `detalle` (abajo) dejaría a las citas 51+ sin
     # estado y rotularía mal sus oraciones en silencio.
     clasificadas: list = []
-    marcadas = respaldadas = anotadas = omitidas = quemadas = 0
+    marcadas = respaldadas = anotadas = omitidas = quemadas = selladas = 0
     # MURO de citas quemadas: la lista del despacho, normalizada UNA vez por turno.
     quemada_norm = _burned_index(burned)
+    # SELLOS (F2): citas ya respaldadas Y aprobadas por el abogado en un borrador previo.
+    # Se cotejan DESPUÉS de las quemadas (quemada gana siempre) y antes de las demás vías.
+    sealed_norm = _sealed_index(sealed)
     # ediciones (start, end, reemplazo); una inserción es (pos, pos, " [VERIFICAR]").
     # scan_citations garantiza spans disjuntos, así que aplicarlas de atrás hacia
     # adelante nunca desplaza offsets pendientes ni pisa otra edición.
@@ -1213,7 +1246,18 @@ def annotate_draft(
             if len(detalle) < 50:
                 detalle.append({"cita": c["citation"], "estado": estado})
             continue
-        if c["marked"] and not omit_unbacked:
+        # ── SELLO (F2) · después de quemadas, antes de cualquier otra vía ──
+        # Una cita sellada ya pasó el muro Y la aprobación del abogado en un borrador
+        # previo: se resuelve sin marca [VERIFICAR] y con la fuente con que se selló.
+        # La marca [VERIFICAR] que el propio modelo haya puesto tampoco la degrada —
+        # el sello registra una decisión humana y gana sobre la duda del modelo.
+        if sealed_norm and (s_entry := _sealed_entry(c["citation"], sealed_norm)) is not None:
+            selladas += 1
+            estado = "sellada"
+            fuente = {"tipo": str(s_entry.get("fuente_tipo") or "sello"),
+                      "referencia": str(s_entry.get("fuente_ref") or ""),
+                      "titulo": str(s_entry.get("fuente_titulo") or "")}
+        elif c["marked"] and not omit_unbacked:
             marcadas += 1
             estado = "marcada"
         elif (fuente := _backing_source_tokenized(c["citation"], index)) is not None:
@@ -1275,6 +1319,11 @@ def annotate_draft(
         "anotadas": anotadas,
         "detalle": detalle,
     }
+    if sealed_norm:
+        # F2 · SELLOS. La clave solo aparece cuando el despacho tiene sellos: sin ellos,
+        # el informe queda byte a byte como antes de existir esta palanca.
+        report["selladas"] = selladas
+        report["banco_sellos"] = len(sealed_norm)
     if omit_unbacked:
         # La clave solo existe en el modo nuevo: el informe clásico queda idéntico.
         report["omitidas"] = omitidas

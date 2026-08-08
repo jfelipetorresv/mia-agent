@@ -125,6 +125,16 @@ async def burn(tenant_id: str, citation: str, *, reason: str = "",
             (cita, norm, str(reason or ""), str(burned_by or "abogado"), str(pasaje or "")),
         )).fetchone()
     invalidate(tenant_id)
+    # F2 · QUEMADA GANA AL SELLO: si esta cita tenía sello (verificada y aprobada en un
+    # borrador previo), quemarla lo revoca — el juicio del abogado sobre la falsedad manda
+    # sobre cualquier caché de verificación. Import diferido para no crear ciclo de módulos.
+    try:
+        from . import citation_seals
+        revocados = await citation_seals.revoke(tenant_id, cita)
+        if revocados:
+            logger.info("quemar '%s' revocó %d sello(s) (tenant=%s)", cita, revocados, tenant_id)
+    except Exception:  # noqa: BLE001 — revocar es parte del muro pero no puede tumbar el quemado
+        logger.warning("no se pudo revocar el sello de la cita quemada", exc_info=True)
     if isinstance(row, dict):
         ya = bool(row.get("ya_estaba"))
     else:

@@ -21,7 +21,7 @@ export type CitaDetalle = {
   cita: string;
   // "quemada": el despacho marcó antes esta cita como falsa, así que Mia la retiró del texto
   // en vez de emitirla (el muro del banco de citas falsas).
-  estado: "marcada" | "respaldada" | "anotada" | "quemada" | "omitida";
+  estado: "marcada" | "respaldada" | "anotada" | "quemada" | "omitida" | "sellada";
   fuente?: Fuente;
 };
 export type Verification = {
@@ -29,6 +29,9 @@ export type Verification = {
   marcadas: number;
   respaldadas: number;
   anotadas: number;
+  // Citas resueltas por SELLO: ya verificadas y aprobadas por el abogado en un borrador
+  // anterior de este despacho. Presente solo cuando el despacho tiene sellos.
+  selladas?: number;
   detalle: CitaDetalle[];
   // Presentes solo cuando el despacho tiene citas marcadas como falsas.
   quemadas?: number;
@@ -85,6 +88,7 @@ const ESTADO_INFO: Record<
   anotada: { label: "Sin respaldo — verifícala tú", icon: AlertTriangle, className: "text-warning" },
   quemada: { label: "Retirada: la marcaste como falsa", icon: Ban, className: "text-destructive" },
   omitida: { label: "Omitida: falta declarar el ordenamiento", icon: AlertTriangle, className: "text-warning" },
+  sellada: { label: "Verificada y aprobada por ti antes", icon: CheckCircle2, className: "text-success" },
 };
 
 function plural(n: number, singular: string, pluralForm: string): string {
@@ -103,9 +107,16 @@ function resumenTexto(v: Verification): string {
   if (v.citas === 0) return "Mia no encontró citas de normas o sentencias en este borrador.";
   const porVerificar = v.marcadas + v.anotadas;
   const retiradas = (v.omitidas || 0) + (v.quemadas || 0);
+  const selladas = v.selladas || 0;
+  const conRespaldo = v.respaldadas + selladas;
   const citasTxt = plural(v.citas, "1 cita", `${v.citas} citas`);
-  if (v.respaldadas === v.citas) {
-    return `Mia revisó ${citasTxt}: todas con respaldo en sus fuentes.`;
+  if (conRespaldo === v.citas) {
+    return selladas > 0
+      ? `Mia revisó ${citasTxt}: todas con respaldo en sus fuentes` +
+        (selladas === v.citas
+          ? " — todas las habías verificado y aprobado antes."
+          : ` (${selladas} ya las habías aprobado antes).`)
+      : `Mia revisó ${citasTxt}: todas con respaldo en sus fuentes.`;
   }
   if (porVerificar === v.citas) {
     return `Mia revisó ${citasTxt}: todas para tu verificación.`;
@@ -119,6 +130,10 @@ function resumenTexto(v: Verification): string {
   if (v.respaldadas > 0) {
     partes.push(plural(v.respaldadas,
       "1 con respaldo en sus fuentes", `${v.respaldadas} con respaldo en sus fuentes`));
+  }
+  if (selladas > 0) {
+    partes.push(plural(selladas,
+      "1 verificada y aprobada por ti antes", `${selladas} verificadas y aprobadas por ti antes`));
   }
   if (porVerificar > 0) {
     partes.push(plural(porVerificar,
