@@ -109,3 +109,36 @@ Screenshots and validation events are logged here.
 - **Nota de evidencia**: las capturas (`validation/screenshots/corrida-{1..4}/`) se conservan en
   disco fuera de git (PNGs pesados; misma práctica de la s54); esta bitácora y `tiempos.json`
   son el registro citable.
+
+## 2026-08-08 — Sesión 56 · Corrida 5 (circuit-breaker + medición del approve) — VERDE
+
+- **Qué cambió antes de esta corrida**: circuit-breaker por TURNO del motor de suscripción
+  (el primer timeout de un alias `cli-*` lo marca agotado por el resto del turno; los nodos
+  siguientes saltan directo al respaldo sin pagar 300 s cada uno — atacaba el hallazgo de
+  «~13 min de timeouts encadenados»), e instrumentación permanente de tiempos por etapa en
+  `hitl._resume` (abrir/estado/grafo) y `finalize_node` (capture/index/sellos).
+- **Resultado: CORRIDA 5 VERDE, sin intervención manual.**
+  | corrida | total | turno (pregunta→borrador) | aprobar (POST sincrónico) | ## aprendido |
+  |---|---|---|---|---|
+  | 5 | 521,5 s (8,7 min) | 484,3 s | 1,8 s | poblado |
+- **Los dos hallazgos de lentitud de la s54, CERRADOS con matiz**:
+  1. *Timeout del motor de suscripción*: en esta corrida NO hubo ni un timeout ni un salto de
+     motor (el turno entero corrió en la suscripción). El breaker queda como defensa verificada
+     por gate (test_cambio_de_motor_aviso §3-bis, 46/46): si el timeout vuelve, el turno paga
+     UNO, no uno por nodo.
+  2. *Approve sincrónico de ~90 s*: NO se reprodujo — 1,8 s de punta a punta (servidor: abrir
+     0,0 + estado 0,0 + grafo 0,2 s; capture 0,1 + index 0,1 + sellos 0,0). Los 91,5 s de la
+     corrida 4 fueron circunstancia del entorno, no del código: NO se movió nada a background
+     (habría sido un fix a ciegas). La instrumentación queda como barrera: la próxima
+     regresión se lee en el log del backend (`resume(...)` / `finalize(...)`), no se investiga.
+- **Gates del cierre**: test_rls 19/19 · test_gates_no_ciegos 9/9 · check_env_pins 12/12 ·
+  test_cambio_de_motor_aviso 46/46 · test_llm_fallback 25/25 · test_model_policy 43/43 ·
+  test_citation_seals 14/14 · test_aprendido 34/34 · test_seed_despacho_demo 17/17 ·
+  test_e2e 58/58. `test_hitl_flow` 20/21: el FAIL («nodos corren en orden hasta draft») es
+  PREEXISTENTE — falla idéntico con el árbol limpio en f2266ad (verificado con git stash);
+  anotado en bugs-and-risks.
+- **Nota**: 8,7 min vs 22,8 de la corrida 4 con el mismo expediente es UNA corrida, no una
+  serie; el motor de suscripción estuvo notablemente más rápido hoy. No se afirma mejora de
+  p50 con n=1.
+- **Nota de evidencia**: capturas en `validation/screenshots/corrida-5/` (fuera de git);
+  `tiempos.json` es el registro citable.

@@ -46,14 +46,27 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
     await assert_owns_matter(tenant_id, matter_id)  # tenant cruzado -> 401
 
     async def eventos():
+        # Medición por etapa (sesión 56): el paso «aprobar» del E2E costaba ~90s y ninguna
+        # pieza confesaba cuáles eran suyos. Una línea de log con la duración de cada etapa
+        # convierte la próxima regresión en una lectura de log, no en una investigación.
+        import time as _time
+        t0 = _time.perf_counter()
         async with open_checkpointer() as cp:
             graph = build_matter_graph(cp)
             cfg = {"configurable": {"thread_id": thread_id_for(tenant_id, matter_id)}}
+            t_abrir = _time.perf_counter() - t0
+            t1 = _time.perf_counter()
             await require_awaiting_review(graph, cfg)
+            t_estado = _time.perf_counter() - t1
             final_draft = None
+            t2 = _time.perf_counter()
             async for chunk in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
                 if "finalize" in chunk:
                     final_draft = (chunk["finalize"] or {}).get("draft")
+            t_grafo = _time.perf_counter() - t2
+            logger.info("resume(%s): abrir=%.1fs estado=%.1fs grafo=%.1fs (tenant=%s matter=%s)",
+                        command.get("decision"), t_abrir, t_estado, t_grafo,
+                        tenant_id, matter_id)
             # Riesgo #25: la decisión quedó tomada (approve/reject/edit) —
             # el asunto ya no tiene borrador esperando revisión. Se resetea también
             # el debounce del aviso (CP-B3): un borrador NUEVO avisa de inmediato.

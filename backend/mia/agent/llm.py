@@ -311,6 +311,31 @@ _allow_openrouter: ContextVar[bool] = ContextVar("mia_allow_openrouter", default
 # modelo y el tope de gasto) para no tener que pasar un acumulador por toda la pila de llamadas.
 _cambios_de_motor: ContextVar[list[dict] | None] = ContextVar("mia_cambios_de_motor", default=None)
 
+# ── CIRCUIT-BREAKER de la suscripción por TURNO (sesión 56) ───────────────────
+# El salto rápido (sesión 52) evita gastar reintentos dentro de UNA llamada, pero cada nodo
+# del grafo vuelve a resolver la cadena y vuelve a intentar la suscripción desde cero: con un
+# expediente que no cabe, 2-3 nodos × 300s ≈ los ~13 minutos medidos antes de que el turno
+# terminara de caer al respaldo. Un timeout del CLI no es transitorio dentro del mismo turno
+# (el expediente no se achica entre nodos), así que el primer timeout de un alias `cli-*`
+# lo marca AGOTADO por el resto del turno y los nodos siguientes saltan directo al respaldo.
+# Por ALIAS, no global: que `cli-claude` no aguante el expediente no dice nada de
+# `cli-claude-haiku`, cuyas tareas auxiliares mandan prompts pequeños.
+_suscripcion_agotada: ContextVar[set[str] | None] = ContextVar(
+    "mia_suscripcion_agotada", default=None)
+
+
+def _marcar_alias_agotado(alias: str) -> None:
+    """Marca un alias de la suscripción como agotado por el resto del turno. Sin contexto de
+    turno activo (tests/scripts que llaman a call_llm directo) no hace nada."""
+    agotados = _suscripcion_agotada.get()
+    if agotados is not None:
+        agotados.add(alias)
+
+
+def _alias_agotado(alias: str) -> bool:
+    agotados = _suscripcion_agotada.get()
+    return agotados is not None and alias in agotados
+
 # Prefijo de los aliases que corren sobre la suscripción del abogado (subproceso al CLI). Su
 # coste es CUOTA, no dólares. Todo lo demás en la cadena cuesta dinero o es local.
 _PREFIJO_SUSCRIPCION = "cli-"
@@ -334,10 +359,15 @@ def recolectar_cambios_de_motor() -> Iterator[list[dict]]:
     """
     registro: list[dict] = []
     token = _cambios_de_motor.set(registro)
+    # El recolector delimita el TURNO: el circuit-breaker de la suscripción vive y muere con él,
+    # así un timeout en un turno jamás castiga al siguiente (el próximo turno vuelve a intentar
+    # la suscripción primero, que es la promesa del producto).
+    token_agotados = _suscripcion_agotada.set(set())
     try:
         yield registro
     finally:
         _cambios_de_motor.reset(token)
+        _suscripcion_agotada.reset(token_agotados)
 
 
 def aviso_cambio_de_motor(cambios: list[dict] | None) -> dict | None:
@@ -676,6 +706,16 @@ def call_llm(
     last: _FallbackNeeded | None = None
     for i, alias in enumerate(chain):
         next_alias = chain[i + 1] if i + 1 < len(chain) else None
+        # Circuit-breaker del turno: si este alias de la suscripción ya expiró en un nodo
+        # anterior, no se vuelve a pagar el timeout — se salta directo al respaldo (con el
+        # mismo registro que un salto normal, para que el aviso de costo cuente completo).
+        # Si es el ÚLTIMO de la cadena se intenta igual: mejor tarde que sin respuesta.
+        if alias.startswith(_PREFIJO_SUSCRIPCION) and _alias_agotado(alias) and next_alias:
+            logger.warning(
+                "call_llm: la suscripción (%s) ya expiró en este turno; se salta directo a %s "
+                "sin volver a esperar el timeout (task=%s)", alias, next_alias, task)
+            _registrar_cambio_de_motor(task, alias, next_alias, LLMErrorKind.TIMEOUT.value)
+            continue
         try:
             # Prefix caching de Anthropic: marca el prefijo estable del system SOLO para
             # los aliases de la API directa (el resto recibe los messages sin cambios).
@@ -877,6 +917,12 @@ def _call_with_retries(
             # que por construcción van a fallar igual. Los demás errores del CLI (y los timeouts
             # de cualquier otro proveedor, que sí suelen ser transitorios) mantienen su política
             # de reintento intacta.
+            if kind is LLMErrorKind.TIMEOUT and alias.startswith("cli-"):
+                # Sesión 56: todo timeout de la suscripción dispara el circuit-breaker del
+                # TURNO — los nodos siguientes del grafo ya no vuelven a intentar este alias
+                # (el expediente no se achica entre nodos; eran ~300s perdidos por nodo).
+                _marcar_alias_agotado(alias)
+
             if (kind is LLMErrorKind.TIMEOUT and alias.startswith("cli-")
                     and attempt < max_retries and next_alias):
                 logger.warning(

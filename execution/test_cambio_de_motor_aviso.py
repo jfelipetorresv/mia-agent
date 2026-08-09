@@ -107,6 +107,61 @@ def _correr_turno_sse(fallar: bool, registrar: bool) -> list[dict]:
     return asyncio.run(consumir())
 
 
+def _gate_circuit_breaker() -> None:
+    """Ejerce call_llm COMPLETO (cadena real de la política 'suscripcion') con un doble que
+    hace expirar la suscripción y responder la nube. Verifica que dentro del MISMO turno la
+    suscripción solo paga el timeout una vez, y que el turno siguiente vuelve a intentarla."""
+
+    class _Resp:
+        choices: list = []
+        usage = None
+
+    invocaciones: list[str] = []
+
+    def _doble(client, alias, kwargs, task):
+        invocaciones.append(alias)
+        if alias.startswith("cli-"):
+            raise TimeoutError("El CLI 'claude' no respondió en 300s (timeout).")
+        return _Resp()
+
+    original_metered = llm._invoke_metered
+    original_client = llm._get_client
+    llm._invoke_metered = _doble  # type: ignore[assignment]
+    llm._get_client = lambda: None  # type: ignore[assignment]
+    try:
+        with llm.recolectar_cambios_de_motor() as cambios:
+            # Nodo 1 del grafo: la suscripción expira y se salta a la nube.
+            llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+            tras_nodo_1 = list(invocaciones)
+            # Nodos 2 y 3 del mismo turno: la suscripción NO debe volver a intentarse.
+            llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+            llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+        check("el primer nodo intentó la suscripción y saltó a la nube",
+              tras_nodo_1 == ["cli-claude", "claude-sonnet"], str(tras_nodo_1))
+        cli_total = invocaciones.count("cli-claude")
+        check("los nodos siguientes del turno NO volvieron a pagar el timeout",
+              cli_total == 1, f"cli-claude se intentó {cli_total} veces en el turno")
+        check("cada nodo saltado quedó registrado para el aviso de costo",
+              len(cambios) == 3, f"{len(cambios)} cambios")
+
+        # Turno NUEVO: el breaker murió con el anterior y la suscripción va primero otra vez.
+        invocaciones.clear()
+        with llm.recolectar_cambios_de_motor():
+            llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+        check("el turno siguiente vuelve a intentar la suscripción primero",
+              invocaciones and invocaciones[0] == "cli-claude", str(invocaciones))
+
+        # Sin contexto de turno (scripts/tests que llaman directo): comportamiento intacto.
+        invocaciones.clear()
+        llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+        llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+        check("sin turno activo no hay breaker (cada llamada intenta la suscripción)",
+              invocaciones.count("cli-claude") == 2, str(invocaciones))
+    finally:
+        llm._invoke_metered = original_metered  # type: ignore[assignment]
+        llm._get_client = original_client  # type: ignore[assignment]
+
+
 def _gate_enganche_backend() -> None:
     import json
 
@@ -195,6 +250,12 @@ def main() -> int:  # noqa: C901
             intentos_solo, _ = _correr_un_alias("cli-claude", None, max_retries=1)
         check("sin motor siguiente, el salto rápido no se dispara",
               intentos_solo >= 2, f"{intentos_solo} intentos")
+
+        print("\n3-bis · circuit-breaker: el turno no paga el mismo timeout dos veces")
+        # El defecto que esto custodia (sesión 56): el salto rápido evitaba los reintentos
+        # dentro de UNA llamada, pero cada nodo del grafo volvía a intentar la suscripción
+        # y volvía a esperar 300s — 2-3 nodos ≈ 13 minutos antes de caer al respaldo.
+        _gate_circuit_breaker()
     finally:
         llm.time.sleep = original_sleep  # type: ignore[assignment]
 

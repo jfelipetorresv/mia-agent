@@ -18,72 +18,76 @@ El historial completo está en `docs/handoff-historial/INDICE.md`. Nada se borra
 
 ---
 
-# CIERRE — 2026-08-04 (sesión 54) · El recorrido de primera vez, automatizado: 3 corridas verdes
+# CIERRE — 2026-08-08 (sesión 56) · Circuit-breaker de la suscripción + el approve medido de verdad · EMPEZAR AQUÍ
 
 ## Arranque en una terminal nueva (prompt sugerido)
 
 > Lee `HANDOFF.md` y `APRENDIZAJES.md` de `D:\Inteligencia Artificial\Mia-Super Agent\mia` y el
 > plan maestro (`C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`).
 > Corre `scripts\sonda_salud.ps1` ANTES de nada; la DB portable (55432) vive en
-> `..\tools\pgdata-portable`. Para el E2E del recorrido: los 4 servicios arriba, luego
-> `.venv\Scripts\python.exe e2e\generar_expediente.py` (una vez) y
-> `node e2e\recorrido_primera_vez.mjs --corrida N` (~25-30 min por corrida). Detalle en
-> `architecture/e2e_runbook.md` §0-bis y bitácora en `validation/validation-log.md`.
+> `..\tools\pgdata-portable`. Para el E2E: los 4 servicios arriba y
+> `node e2e\recorrido_primera_vez.mjs --corrida N`. Detalle en `architecture/e2e_runbook.md`
+> §0-bis y bitácora en `validation/validation-log.md`.
 
-Rama `feat/fase1-inc1-cleanup-scaffolding`. Repo limpio tras `af49c19` + este cierre.
+Rama `feat/fase1-inc1-cleanup-scaffolding`, repo limpio tras este cierre.
 
-## Tres commits de PIPE entre la 53 y esta (confirmado por él, 2026-08-04)
+## Qué pasó en esta sesión (2026-08-08, 56ª)
 
-`f264b1e` (principios Lexia en el grafo), `e7ff81b` (gobierno de vaults) y `f52c945` (rediseño
-«Neumorfismo Pro») los hizo Pipe desde otra herramienta y LOS QUIERE — no revertir. Esta sesión
-trabajó sobre ese estado y el recorrido completo pasó en verde encima del rediseño. Queda solo
-una revisión técnica ligera de lo que tocaron en `graph.py`/`prompt_builder.py` (calidad, no
-permanencia).
+Los dos frentes que dejó la 55, cerrados — uno con código y otro con medición honesta:
 
-## Qué pasó en esta sesión (2026-08-04, 54ª)
+1. **Circuit-breaker por TURNO del motor de suscripción** (`backend/mia/agent/llm.py`). El
+   salto rápido de la s52 evitaba reintentos dentro de UNA llamada, pero cada nodo del grafo
+   volvía a intentar la suscripción y volvía a pagar hasta 300 s — 2-3 nodos ≈ los ~13 min
+   medidos. Ahora el primer timeout de un alias `cli-*` lo marca AGOTADO por el resto del
+   turno (ContextVar atado a `recolectar_cambios_de_motor`, la frontera del turno): los nodos
+   siguientes saltan directo al respaldo. Por ALIAS (que `cli-claude` no aguante el expediente
+   no condena a `cli-claude-haiku`), muere con el turno, y cada salto queda contado en el
+   aviso de costo. Si el alias agotado es el ÚLTIMO de la cadena se intenta igual (mejor tarde
+   que sin respuesta). Gate: `test_cambio_de_motor_aviso.py` §3-bis (46/46) — ejerce `call_llm`
+   completo con la cadena real: 3 nodos, un solo timeout pagado, turno nuevo reintenta.
 
-**El punto 1 de «Qué sigue» de la 53, cerrado**: el E2E automatizado de la primera vez existe,
-corrió 3 veces consecutivas en verde sin intervención manual, y quedó medido y archivado.
+2. **El approve de ~90 s NO era lo que el plan creía — y no se movió código a ciegas.** El plan
+   decía «mover sellos + index_trace a background». Medido: con el despacho demo el approve
+   entero tarda 0,7 s; en la corrida 5 REAL, 1,8 s de punta a punta (servidor: grafo 0,2 s;
+   capture 0,1 + index 0,1 + sellos 0,0). Los 91,5 s de la corrida 4 fueron circunstancia del
+   entorno (ese día TODO estuvo lento: turno 20,7 min vs 8 min hoy con el mismo expediente).
+   Lo que queda es la BARRERA: instrumentación permanente de tiempos por etapa en
+   `hitl._resume` (`resume(...): abrir/estado/grafo`) y `finalize_node`
+   (`finalize(...): capture/index/sellos`) — la próxima regresión se LEE en el log del
+   backend, no se investiga. Descartados en el camino: nodo HITL re-ejecutando trabajo al
+   reanudar (interrupt es la primera línea), tareas de fondo bloqueando el loop (usan
+   to_thread), y el path de edición disfrazado (el E2E aprueba sin editar).
 
-- **`e2e/recorrido_primera_vez.mjs`** (Playwright) recorre register → activar (auto-salto en
-  dev) → onboarding (7 pasos, ficha de país incluida) → asunto → expediente → pregunta →
-  borrador → gate de citas → aprobar → sonda del `## aprendido`. Screenshot por paso +
-  `tiempos.json` en `validation/screenshots/corrida-N/`.
-- **`e2e/generar_expediente.py`**: el expediente sintético FIJO que exige la spec, derivado del
-  caso de oro voluminoso (3 .txt, 252 fragmentos) — versionado como código, no como binarios.
-- **Medición (política suscripción)**: 30,1 / 28,6 / 23,3 min → **p50 28,6 · p95 ≈ 30,0**. El
-  95 % es el turno del grafo. `tsc` 0 errores; test_rls, test_gates_no_ciegos y check_env_pins
-  PASAN. El `## aprendido` se pobló en las 3 corridas. El muro se vio funcionar de punta a
-  punta (el borrador declara sus citas pendientes y el gate exige la decisión del abogado).
+## Corrida 5 del E2E — VERDE (la más rápida de la serie)
 
-## Defectos y hallazgos destapados (los tests no los veían; la pantalla sí)
+| corrida | total | turno | aprobar | ## aprendido |
+|---|---|---|---|---|
+| 4 (s55) | 22,8 min | 20,7 min | 91,5 s | poblado |
+| **5 (s56)** | **8,7 min** | **8,1 min** | **1,8 s** | poblado |
 
-1. **DEFECTO UI-A (abierto, reproducible 5/5)**: a 1440×900 el aside derecho del asunto tapa el
-   botón «Revisar borrador» y le intercepta el clic. Un abogado con esa pantalla no puede
-   pulsarlo. El E2E lo rodea (navega directo a `/revisar`) y lo avisa en su salida. **Es el
-   candidato #1 a primera tarea de la próxima sesión.**
-2. **Lentitud señalable**: el motor de la suscripción agota su timeout (~13 min) con el caso
-   voluminoso y salta a claude-sonnet — turnos de 20-28 min. Y `POST /draft/approve` corre el
-   cierre del grafo sincrónico: 81-100 s de espera tras el clic en Aprobar.
+El turno entero corrió EN LA SUSCRIPCIÓN sin un timeout ni un salto de motor. Ojo: n=1, el
+motor estuvo notablemente más rápido hoy — no se afirma mejora de p50 con una corrida.
 
-## Qué sigue (en orden, sin necesitar a Pipe)
+## Gates del cierre
 
-1. **Arreglar el DEFECTO UI-A** (el aside sobre «Revisar borrador») y re-correr el E2E.
-2. **Revisión técnica ligera de los 3 commits de Pipe** (`f264b1e`, `e7ff81b`, `f52c945`):
-   son deseados y se quedan; solo verificar calidad de lo que tocaron en grafo y prompt.
-3. Checklist de honestidad de UI por paso (la otra mitad de la salida medible de F3).
-4. Producto (plan maestro): lo que quede de F3.
+test_rls 19/19 · test_gates_no_ciegos 9/9 · check_env_pins 12/12 · test_cambio_de_motor_aviso
+46/46 · test_llm_fallback 25/25 · test_model_policy 43/43 · test_citation_seals 14/14 ·
+test_aprendido 34/34 · test_seed_despacho_demo 17/17 (despacho demo RE-SEMBRADO después) ·
+test_e2e 58/58. `test_hitl_flow` 20/21: FAIL PREEXISTENTE (idéntico en `f2266ad` limpio,
+verificado con stash) — riesgo #86 en bugs-and-risks, parece check desactualizado frente al
+grafo post-F0-F2.
 
-## Pendientes de Pipe (sin cambios desde la 53)
+## Pendientes que siguen
 
-- Prueba del instalador en máquina limpia (el instalador NO se ha re-ensamblado desde la 52).
-- Lectura de las 6 salidas de `docs/f1-paquete-decision-pipe.md`.
-- Azure Trusted Signing y registro de apps OAuth (`docs/tramites-terceros-pipe.md`).
-- Decidir sobre el alcance (leer más cuesta crédito de tarjeta).
+- **De Pipe (de la s55, sigue abierto)**: ¿muro + gate LLM (como está) o solo muro? El gate
+  gasta un turno de modelo por borrador.
+- **Sesión 57**: riesgo #86 (check desactualizado de test_hitl_flow, barato); F3 del plan de
+  eficiencia (función→nivel) y F4 (memoria progresiva); residuos F0-F2 (KPI sellos en panel,
+  extractos por rol, caché ficha).
 
 ---
 
-# CIERRE — 2026-08-07 (sesión 55) · Los 4 puntos de la 54 + plan de eficiencia F0-F2 ejecutado · EMPEZAR AQUÍ
+# CIERRE — 2026-08-07 (sesión 55) · Los 4 puntos de la 54 + plan de eficiencia F0-F2 ejecutado
 
 > **CONTINUACIÓN MISMA SESIÓN (tarde/noche)**: Pipe aprobó el plan de eficiencia
 > (`specs/todo/PLAN-principios-harness-llos-eficiencia.md`, principios destilados de su

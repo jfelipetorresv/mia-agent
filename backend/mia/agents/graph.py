@@ -2217,6 +2217,7 @@ class MatterGraphBuilder:
         if started is not None:
             md["latency_ms"] = (time.perf_counter() - float(started)) * 1000
         activated = md.get("activated_playbooks") or []
+        _t_capture = time.perf_counter()
         trace = self.trace_capture.capture(
             tenant_id=state["tenant_id"],
             matter_id=state["matter_id"],
@@ -2233,6 +2234,7 @@ class MatterGraphBuilder:
             rejection_reason=rejection_reason or None,
         )
         trace_id = f"{state['tenant_id']}:{state['matter_id']}:{trace.timestamp}"
+        _t_index = time.perf_counter()
         # Dual-write H.3: además del JSONL (SFT), indexa la traza en Postgres para session_search
         # (FTS sin LLM). Best-effort: un fallo aquí (tabla ausente, DB) NO debe tumbar el turno.
         try:
@@ -2259,6 +2261,7 @@ class MatterGraphBuilder:
             # abogado sigue en pie (la traza JSONL sí se escribió).
             logger.warning("index_trace falló tras reintentos; la traza JSONL sí se escribió "
                            "pero el turno no quedó en el índice consultable", exc_info=True)
+        _t_sellos = time.perf_counter()
 
         # H.4 skill self-improving: tras registrar la traza, extrae un patrón reutilizable y (si
         # aplica) propone una mejora de playbook con status=pending (HITL). FIRE-AND-FORGET: no
@@ -2304,6 +2307,10 @@ class MatterGraphBuilder:
             except Exception:  # noqa: BLE001 — lanzar la cosecha es best-effort
                 logger.debug("no se pudo lanzar la cosecha (best-effort)", exc_info=True)
         md.update(stage="finalize", final_status=status)
+        # Medición por etapa (sesión 56): ver el comentario gemelo en hitl._resume.
+        _fin = time.perf_counter()
+        logger.info("finalize(%s): capture=%.1fs index=%.1fs sellos=%.1fs",
+                    status, _t_index - _t_capture, _t_sellos - _t_index, _fin - _t_sellos)
         return {
             "draft": final,
             "trace_id": trace_id,

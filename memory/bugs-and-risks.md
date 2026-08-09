@@ -1789,3 +1789,20 @@ corrió (DB dev apagada, puerto 55432) — correr con la DB encendida; patrón i
 - **#81 · CERRADO en s51, pero su FAMILIA reapareció dos veces en s52**: el comparador agéntico dio
   veredicto sin haber ejecutado el brazo B, y la señal de recuperación se llamaba «no leyó» cuando
   solo prueba «no apareció». Las métricas propias necesitan la regla del muro igual que el producto.
+
+## Riesgos y notas de la sesión 56 (2026-08-08)
+
+- **#86 · test_hitl_flow 20/21: «nodos corren en orden hasta draft» FALLA y es PREEXISTENTE.**
+  Falla idéntico con el árbol limpio en `f2266ad` (verificado con git stash). Los otros 20 checks
+  (interrupt, borrador antes del checkpoint, pausa en hitl_checkpoint, sin traza antes de aprobar)
+  PASAN — probablemente el check quedó desactualizado frente al grafo (la lista de nodos cambió con
+  F0-F2), no una regresión del flujo. Diagnóstico pendiente; barato de arreglar.
+- **#87 · flush de uso con FK a tenants borrado (benigno, observado en s56).** Con suites corriendo
+  contra la misma DB del backend vivo, `metrics.usage.flush_pending` reintentó y luego descartó 2
+  filas de un tenant ya inexistente (`turn_usage_tenant_id_fkey`). Fail-soft se comportó como está
+  diseñado y quedó en el log. Solo señal de que los tests que crean/borran tenants conviven con el
+  backend vivo; si se repite fuera de sesiones de test, investigar.
+- **#83 (act. s56) · mitigación reforzada:** circuit-breaker por TURNO — el primer timeout de un
+  alias `cli-*` lo marca agotado por el resto del turno (por alias: `cli-claude-haiku` no se
+  condena por `cli-claude`); muere con el turno y cada salto queda contado en el aviso de costo.
+  Gate: test_cambio_de_motor_aviso §3-bis. El fondo (#82/#83, expedientes que no caben) sigue igual.
