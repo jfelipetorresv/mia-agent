@@ -107,22 +107,19 @@ async def main() -> None:
         # El router central degrada a local si el candado rechaza el motor pagado.
         from mia.agent import llm
         real_chains = dict(llm._TASK_FALLBACK_CHAINS)
-        real_call = llm._call_with_retries
-        real_reserve = budget.reserve_call_sync
+        real_metered = llm._invoke_metered
         called: list[str] = []
 
-        def reject_paid(*_args, **_kwargs):
-            raise budget.BudgetExceeded("tope")
-
-        def fake_call(_client, kwargs, _retries, **_kwargs):
+        def fake_metered(_client, alias, kwargs, _task=None):
+            if alias != "mia-local":
+                raise budget.BudgetExceeded("tope")
             called.append(kwargs["model"])
             return SimpleNamespace(usage=SimpleNamespace(
                 prompt_tokens=10, completion_tokens=10, total_tokens=20))
 
         token = usage.set_usage_scope(tenant_a)
         try:
-            budget.reserve_call_sync = reject_paid
-            llm._call_with_retries = fake_call
+            llm._invoke_metered = fake_metered
             llm._TASK_FALLBACK_CHAINS["atomic-test"] = ["claude-sonnet", "mia-local"]
             llm.call_llm([{"role": "user", "content": "hola"}], task="atomic-test")
             check("a-09 · tope alcanzado degrada a local sin frenar el trabajo",
@@ -138,8 +135,7 @@ async def main() -> None:
                   paid_only_blocked)
         finally:
             usage.reset_usage_scope(token)
-            budget.reserve_call_sync = real_reserve
-            llm._call_with_retries = real_call
+            llm._invoke_metered = real_metered
             llm._TASK_FALLBACK_CHAINS.clear()
             llm._TASK_FALLBACK_CHAINS.update(real_chains)
 

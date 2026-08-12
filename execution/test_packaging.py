@@ -177,9 +177,9 @@ def main() -> int:
         "mia-backend.spec" in build,
     )
     check(
-        "build_backend.ps1 limpia dist/ y build/ previos antes de compilar",
-        "Remove-Item -Recurse -Force $DistPath" in build
-        and "Remove-Item -Recurse -Force $WorkPath" in build,
+        "build_backend.ps1 limpia solo sus subárboles dist/build antes de compilar",
+        "Remove-TreeRobusto (Join-Path $DistPath 'mia-backend')" in build
+        and "Remove-TreeRobusto (Join-Path $WorkPath 'mia-backend')" in build,
     )
     check(
         "build_backend.ps1 valida $LASTEXITCODE de PyInstaller (no asume éxito ciego)",

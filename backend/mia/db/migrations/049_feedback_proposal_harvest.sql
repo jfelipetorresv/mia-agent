@@ -10,5 +10,6 @@ ALTER TABLE feedback_proposals ADD CONSTRAINT feedback_proposals_proposal_type_c
     'flag_gap',
     'wiki_correction',
     'weekly_report',
-    'harvest_lessons'
+    'harvest_lessons',
+    'soul_rule'
   ));

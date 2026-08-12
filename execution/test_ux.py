@@ -238,7 +238,8 @@ def run_checks(client, auth, tid) -> list[str]:
     # 15 · sugerencias de Mia
     r = client.get("/api/proposals", headers=auth)
     check("GET /api/proposals -> 200",
-          r.status_code == 200 and len(r.json()) >= 1 and r.json()[0]["type"] == "Brecha de conocimiento")
+          r.status_code == 200 and any(
+              p.get("type") == "Brecha de conocimiento" for p in r.json()))
     visible_payloads.append(r.text)
 
     # 16 · dashboard

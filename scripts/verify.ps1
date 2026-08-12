@@ -9,6 +9,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $catalog = Get-Content -Raw -LiteralPath (Join-Path $root 'config\verification.json') | ConvertFrom-Json
 $python = Join-Path $root '.venv\Scripts\python.exe'
 $env:PYTHONPATH = Join-Path $root 'backend'
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
 
 if (-not (Test-Path -LiteralPath $python)) {
     Write-Error "PRECHECK: Python de Mia no existe: $python"
