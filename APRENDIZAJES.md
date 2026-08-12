@@ -357,3 +357,13 @@
     conseguía marcar un país y parecía un bloqueo del onboarding; era el selector del script (la
     casilla es `sr-only` bajo la ficha). Un clic real la marcó a la primera. Una herramienta de
     verificación también falla, y su fallo se disfraza de defecto del producto.
+# 2026-08-12: Un gate queda obsoleto cuando cambia el contrato del grafo
+
+**Error:** el runtime cambió de `verification` a `verificador_citas`, pero el gate HITL
+conservó la secuencia anterior y quedó rojo; además dependía de infraestructura sin emitir
+diagnóstico temprano.
+
+**Fix:** actualizar contrato, documentación y gate en el mismo cambio, y confrontar en CI los
+enlaces críticos del grafo con la secuencia esperada.
+
+**Aplica en:** toda modificación de nodos, rutas o nombres que formen parte de un E2E.

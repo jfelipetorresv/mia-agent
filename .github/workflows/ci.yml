@@ -1,0 +1,43 @@
+name: Mia CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  static-and-frontend:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Python sources
+        shell: pwsh
+        run: python -m compileall -q backend/mia execution scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  legal-graph-contract:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard the declared legal graph contract
+        shell: pwsh
+        run: |
+          $graph = Get-Content -Raw backend/mia/agents/graph.py
+          $test = Get-Content -Raw execution/test_hitl_flow.py
+          if ($graph -notmatch 'g\.add_edge\("draft", "verificador_citas"\)') { throw 'Falta draft -> verificador_citas' }
+          if ($graph -notmatch 'g\.add_edge\("verificador_citas", "hitl_checkpoint"\)') { throw 'Falta verificador_citas -> HITL' }
+          if ($test -notmatch '"draft", "verificador_citas"') { throw 'El gate HITL no refleja el grafo real' }

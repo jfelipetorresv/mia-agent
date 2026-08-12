@@ -1,6 +1,6 @@
 """Mia · agents.graph — el StateGraph de un asunto: equipo de especialistas + HITL (CP9).
 
-Flujo:   intake → facts → research → analysis → draft → verification
+Flujo:   intake → facts → research → analysis → draft → verificador_citas
                                                              → hitl_checkpoint → finalize → END
                                                                 │
                                                                 └─ interrupt() es la PRIMERA
@@ -23,9 +23,9 @@ despacho) y cada uno se limita a su oficio:
                      los playbooks (2b) y —si el asunto ya convocó la Sala de
                      estrategia— su dictamen, para que el escrito nazca sabiendo por
                      dónde le van a atacar (sin correr la Sala: 0 llamadas LLM extra).
-  6. verification_node — especialista de VERIFICACIÓN (determinista, sin LLM):
-                     citas sin marca ni respaldo en corpus → se anotan [VERIFICAR];
-                     informe a la pantalla.
+  6. verificador_citas_node — revisión LLM independiente de una sola pasada, seguida
+                     por el muro determinista de citas, afirmaciones y alcance; el
+                     informe combinado llega a la pantalla.
   7. hitl_checkpoint_node — interrupt(): espera la decisión del abogado.
   8. finalize_node — incorpora el feedback, finaliza y guarda la traza JSONL (2d).
 

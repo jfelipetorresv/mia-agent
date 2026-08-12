@@ -228,7 +228,7 @@ def main() -> int:
         # consulta, ni cambio en el turno — solo aparece en la secuencia de nodos.
         check("nodos corren en orden hasta draft",
               obs["nodes1"] == ["intake", "delegation", "facts", "research", "analysis",
-                                "draft", "verification"])
+                                "draft", "verificador_citas"])
         check("borrador generado antes del checkpoint", (obs["draft1"] or "").startswith("BORRADOR"))
         check("grafo pausado EN hitl_checkpoint (antes de finalize)", "hitl_checkpoint" in obs["next1"])
         check("sin traza antes de aprobar (no llegó a finalize)", obs["trace1"] == 0)
