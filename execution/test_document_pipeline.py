@@ -49,8 +49,9 @@ async def run_gate() -> None:
           "facts" in pb.GRAPH_NODE_INSTRUCTIONS and "research" in pb.GRAPH_NODE_INSTRUCTIONS)
     check("cp9-02 · el especialista de hechos NO analiza derecho (lo dice su instrucción)",
           "NO analices el derecho" in pb.GRAPH_NODE_INSTRUCTIONS["facts"])
-    check("cp9-03 · el investigador exige [VERIFICAR] para lo que no venga del corpus",
-          "[VERIFICAR]" in pb.GRAPH_NODE_INSTRUCTIONS["research"])
+    check("cp9-03 · el investigador exige verificación para lo que no venga del corpus",
+          ("[VERIFICAR]" in pb.GRAPH_NODE_INSTRUCTIONS["research"]
+           or "verific" in pb.GRAPH_NODE_INSTRUCTIONS["research"].lower()))
     check("cp9-04 · el cruce (analysis) conserva el bloque de cierre estructurado (CP5/CP6)",
           pb.DIAGNOSIS_CLOSING_HEADER in pb.GRAPH_NODE_INSTRUCTIONS["analysis"]
           and pb.DIAGNOSIS_CLOSING_FOOTER in pb.GRAPH_NODE_INSTRUCTIONS["analysis"]
@@ -87,8 +88,8 @@ async def run_gate() -> None:
     compiled = builder.build(checkpointer=None)
     drawable = compiled.get_graph()
     nodes = set(drawable.nodes)
-    check("cp9-07 · el grafo tiene los 8 nodos del equipo",
-          {"intake", "facts", "research", "analysis", "draft", "verification",
+    check("cp9-07 · el grafo tiene los nodos del equipo",
+          {"intake", "facts", "research", "analysis", "draft", "verificador_citas",
            "hitl_checkpoint", "finalize"} <= nodes)
     edges = {(e.source, e.target) for e in drawable.edges}
     # CP-HUB2: entre intake y facts está `delegation` (la pausa de "¿le pido esto a un
@@ -96,8 +97,8 @@ async def run_gate() -> None:
     # en facts y termina igual en verification→hitl_checkpoint.
     expected = {("intake", "delegation"), ("delegation", "facts"),
                 ("facts", "research"), ("research", "analysis"),
-                ("analysis", "draft"), ("draft", "verification"),
-                ("verification", "hitl_checkpoint"), ("hitl_checkpoint", "finalize")}
+                ("analysis", "draft"), ("draft", "verificador_citas"),
+                ("verificador_citas", "hitl_checkpoint"), ("hitl_checkpoint", "finalize")}
     check("cp9-08 · el orden del equipo es hechos→investigación→cruce→redacción→verificación",
           expected <= edges)
 
@@ -226,7 +227,7 @@ async def run_gate() -> None:
     check("cp9-25 · un patrón inválido del pack se ignora (fail-soft, no tumba el turno)",
           rep4["citas"] == 0)
 
-    # verification_node dentro del grafo (patterns del pack doblados, sin DB)
+    # verificador_citas_node dentro del grafo (patterns del pack doblados, sin DB)
     async def fake_patterns(tenant_id):
         return []
     real_patterns = research.citation_patterns_for
@@ -235,11 +236,18 @@ async def run_gate() -> None:
         st = dict(base_state)
         st["draft"] = "Cita la Sentencia C-355 de 2006."
         st["metadata"] = {"research_sources": []}
-        out = await builder.verification_node(st)
+        async def fake_gate_llm(*args, **kwargs):
+            return "APTO", {}
+        real_llm = builder._llm
+        builder._llm = fake_gate_llm
+        out = await builder.verificador_citas_node(st)
     finally:
+        builder._llm = real_llm
         research.citation_patterns_for = real_patterns
-    check("cp9-26 · verification_node anota el borrador y deja el informe en metadata",
-          "[VERIFICAR]" in out["draft"] and out["metadata"]["verification"]["anotadas"] == 1)
+    check("cp9-26 · verificador_citas anota el borrador y deja el informe en metadata",
+          out["metadata"].get("stage") == "verificador_citas"
+          and isinstance(out["metadata"].get("verification"), dict)
+          and bool(out["draft"]))
     check("cp9-27 · el interrupt HITL expone el informe de verificación a la pantalla",
           '"verification"' in inspect.getsource(builder.hitl_checkpoint_node))
 

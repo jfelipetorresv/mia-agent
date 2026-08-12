@@ -153,11 +153,11 @@ def run_checks(client) -> None:
         api_ts = (ROOT / "frontend" / "lib" / "api.ts").read_text(encoding="utf-8")
         sidebar = (ROOT / "frontend" / "app" / "_components" / "Sidebar.tsx").read_text(encoding="utf-8")
         env_local = (ROOT / "frontend" / ".env.local").read_text(encoding="utf-8")
-        check("register redirect a /onboarding", 'router.replace("/onboarding")' in register_page)
+        check("register inicia el viaje de activación", 'router.replace("/activar")' in register_page)
         check("logout limpia token", "clearToken()" in sidebar and 'router.replace("/login")' in sidebar)
         check("frontend lee token desde localStorage", "localStorage.getItem(\"mia_token\")" in api_ts)
         check("login y register tienen formularios reales",
-              "Ingresar" in login_page and "Crear cuenta" in register_page)
+              'as="form"' in login_page and 'as="form"' in register_page)
         check("NEXT_PUBLIC_DEV_TOKEN eliminado", "NEXT_PUBLIC_DEV_TOKEN" not in env_local)
     finally:
         cleanup([email_a, email_b])
