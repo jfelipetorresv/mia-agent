@@ -1343,7 +1343,7 @@ class MatterGraphBuilder:
             return _messages(context_recovery.shrink_documents(docs, budget))
 
         facts, usage = await self._llm(
-            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="facts",
+            _messages(docs), task="legal_facts", state=state, md=md, shrink=_shrink, node="facts",
             model=_persona_alias(state))
         md.update(stage="facts", facts=facts)
         _accum_usage(md, usage)
@@ -1466,7 +1466,7 @@ class MatterGraphBuilder:
             return _messages(context_recovery.shrink_text(facts, budget, protect_tail=True))
 
         memo, usage = await self._llm(
-            _messages(facts), task="main", state=state, md=md, shrink=_shrink, node="research",
+            _messages(facts), task="legal_research", state=state, md=md, shrink=_shrink, node="research",
             model=_persona_alias(state))
         md.update(stage="research", research=memo)
         # Fuentes compactas: las consume el especialista de verificación (respaldo de
@@ -1533,7 +1533,7 @@ class MatterGraphBuilder:
             # paralelos. `md={}` aísla además el cupo de compresión ("llm_turn"). El uso
             # (usage) se acumula DESPUÉS, en serie, sobre el md real.
             memo, usage = await self._llm(
-                _msgs(facts), task="main", state=state, md={}, shrink=_shrink,
+                _msgs(facts), task="legal_research", state=state, md={}, shrink=_shrink,
                 node="research", model=_persona_alias(state))
             annotated, _ = await asyncio.to_thread(
                 verification.annotate_draft, memo, sources=sources,
@@ -1564,7 +1564,7 @@ class MatterGraphBuilder:
             # SINTETIZADOR: consolida las memorias verificadas por jurisdicción en UNA.
             memo, usage = await self._llm(
                 self._research_synth_messages(state, msg, good),
-                task="main", state=state, md=md, node="research_synth",
+                task="legal_research", state=state, md=md, node="research_synth",
                 model=_persona_alias(state))
             _accum_usage(md, usage)
 
@@ -1662,7 +1662,7 @@ class MatterGraphBuilder:
             return _messages(context_recovery.shrink_documents(docs, budget), know_small)
 
         diagnosis, usage = await self._llm(
-            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="analysis",
+            _messages(docs), task="legal_analysis", state=state, md=md, shrink=_shrink, node="analysis",
             model=_persona_alias(state))
         # F2 · jurisdicción desconocida: el diagnóstico TAMBIÉN se emite al abogado
         # (payload del hitl_checkpoint) y quedaba fuera del guardián — F1 midió fugas en
@@ -1815,7 +1815,7 @@ class MatterGraphBuilder:
             return _messages(parts, index=index_small)
 
         draft, usage = await self._llm(
-            _messages(user_parts), task="main", state=state, md=md, shrink=_shrink, node="draft",
+            _messages(user_parts), task="legal_draft", state=state, md=md, shrink=_shrink, node="draft",
             model=_persona_alias(state))
         md["stage"] = "draft"
         md["activated_playbooks"] = activated
@@ -2003,7 +2003,7 @@ class MatterGraphBuilder:
                 {"role": "user", "content": (
                     f"Borrador (ya anotado por el guardián determinista):\n{annotated}\n\n"
                     f"Informe del guardián determinista (JSON):\n{resumen_muro}")},
-            ], task="main", state=state, md=md, node="verificador_citas",
+            ], task="legal_verification", state=state, md=md, node="verificador_citas",
                 model=_persona_alias(state))
             _accum_usage(md, usage)
             primera = (veredicto or "").strip().splitlines()[0].strip().upper() if veredicto else ""
@@ -2099,7 +2099,7 @@ class MatterGraphBuilder:
             return _messages(context_recovery.shrink_documents(docs, budget), know_small)
 
         reply, usage = await self._llm(
-            _messages(docs), task="main", state=state, md=md, shrink=_shrink, node="work",
+            _messages(docs), task="legal_work", state=state, md=md, shrink=_shrink, node="work",
             model=_persona_alias(state))
         md.update(stage="work", final_status="done")
         _accum_usage(md, usage)
@@ -2194,7 +2194,7 @@ class MatterGraphBuilder:
                     persona_voice=_persona_voice(state))},
                 {"role": "user", "content": f"Borrador:\n{draft}\n\nIndicaciones del abogado:\n"
                                             f"{decision.get('edits', '')}\n\nDevuelve el borrador corregido."},
-            ], task="main", state=state, md=md, node="edit", model=_persona_alias(state))
+            ], task="legal_edit", state=state, md=md, node="edit", model=_persona_alias(state))
             _accum_usage(md, usage)
             # CP9: la edición pudo introducir citas nuevas — el especialista de
             # verificación pasa de nuevo (determinista, solo añade marcas).

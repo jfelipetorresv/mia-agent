@@ -135,11 +135,14 @@ def run() -> None:
               all(llm.resolve_fallback_chain(t) == ["cli-claude-haiku", "mia-local"] for t in _AUX))
         check("1e · [suscripcion] compression → cli-claude-haiku→claude-haiku (red barata si el CLI falla)",
               llm.resolve_fallback_chain("compression") == ["cli-claude-haiku", "claude-haiku"])
+        check("1f · [suscripcion] funciones jurídicas conservan el piso de main",
+              all(llm.resolve_fallback_chain(t) == ["cli-claude", "claude-sonnet", "mia-local"]
+                  for t in llm.LEGAL_TASKS))
     with_policy("suscripcion", _sus)
 
     # === 2 · política 'soberano' → todo mia-local ===
     def _sob():
-        tasks = ("main", "curator", "compression", *_AUX)
+        tasks = ("main", *llm.LEGAL_TASKS, "curator", "compression", *_AUX)
         check("2a · [soberano] TODAS las tareas → mia-local",
               all(llm.resolve_fallback_chain(t) == ["mia-local"] for t in tasks))
     with_policy("soberano", _sob)
@@ -152,6 +155,9 @@ def run() -> None:
               llm.resolve_fallback_chain("compression") == ["claude-haiku"])
         check("3c · [nube] auxiliares → claude-haiku→mia-local",
               all(llm.resolve_fallback_chain(t) == ["claude-haiku", "mia-local"] for t in _AUX))
+        check("3d · [nube] funciones jurídicas conservan el piso de main",
+              all(llm.resolve_fallback_chain(t) == ["claude-sonnet", "mia-local"]
+                  for t in llm.LEGAL_TASKS))
     with_policy("nube", _nub)
 
     # === 4 · compression BLOQUEADA ante model explícito en las 3 políticas ===

@@ -45,7 +45,8 @@ trazabilidad hacia el sistema reservado de Lexia vive en un anexo privado separa
 
 1. Base confiable: contratos actualizados, CI y entrada única de verificación.
 2. Poda demostrada: retirar scaffolding y artefactos sin consumidores reales.
-3. EF-3: política función→nivel, pisos fail-closed y telemetría por etapa.
+3. EF-3: funciones jurídicas separadas en el router y la telemetría, conservando el piso de
+   razonamiento principal; después se calibran niveles distintos sin mezclar métricas.
 4. EF-4: índice ligero, fichas progresivas, estados y presupuestos duros para guías.
 5. Contratos de corrida: manifiesto durable, huellas y reconciliación de huérfanos.
 6. Prueba del núcleo con caso ficticio o anonimizado; luego capacidades integrales por capas.

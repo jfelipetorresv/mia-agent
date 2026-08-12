@@ -367,3 +367,14 @@ diagnóstico temprano.
 enlaces críticos del grafo con la secuencia esperada.
 
 **Aplica en:** toda modificación de nodos, rutas o nombres que formen parte de un E2E.
+# 2026-08-12: El nombre de tarea debe identificar la función, aunque comparta modelo
+
+**Error:** hechos, investigación, análisis, redacción y verificación llamaban todos
+`task="main"`; la medición por nodo existía, pero la política de modelos no podía auditar ni
+calibrar el piso de cada función.
+
+**Fix:** crear tareas jurídicas explícitas que hoy conservan la cadena fuerte de `main`, con
+gates para todas las políticas. La separación habilita calibración posterior sin bajar calidad.
+
+**Aplica en:** cualquier pipeline donde varias etapas usen el mismo proveedor pero tengan
+responsabilidades, riesgos o presupuestos diferentes.

@@ -65,6 +65,13 @@ MAX_RETRIES = 3
 # NO salta; usar model="mia-local" o ajustar la cadena si se quiere forzar local).
 _TASK_FALLBACK_CHAINS: dict[str, list[str]] = {
     "main": ["claude-sonnet", "mia-local"],      # razonamiento principal: sonnet → local
+    "legal_facts": ["claude-sonnet", "mia-local"],
+    "legal_research": ["claude-sonnet", "mia-local"],
+    "legal_analysis": ["claude-sonnet", "mia-local"],
+    "legal_draft": ["claude-sonnet", "mia-local"],
+    "legal_verification": ["claude-sonnet", "mia-local"],
+    "legal_work": ["claude-sonnet", "mia-local"],
+    "legal_edit": ["claude-sonnet", "mia-local"],
     "curator": ["claude-sonnet", "mia-local"],   # consolidación semántica: sonnet → local
     # ¿estos dos playbooks dicen lo mismo o lo contrario? Es una CLASIFICACIÓN de tres
     # salidas, no razonamiento jurídico: entra como AUXILIAR (barata). Ver _AUX_TASKS.
@@ -97,6 +104,14 @@ _LOCKED_TASKS = frozenset({"compression"})
 _ANTHROPIC_CACHE_ALIASES = frozenset({"claude-haiku", "claude-sonnet"})
 
 _DEFAULT_TASK = "main"
+
+# EF-3: funciones jurídicas separadas como contrato observable. Por ahora comparten el
+# mismo piso/cadena de razonamiento que `main`; separarlas evita que telemetría, presupuestos
+# y futuras calibraciones confundan investigación, análisis, redacción y verificación.
+LEGAL_TASKS = (
+    "legal_facts", "legal_research", "legal_analysis", "legal_draft",
+    "legal_verification", "legal_work", "legal_edit",
+)
 
 # ── CP2 · política de modelo por tenant (decisión #27) ──────────────────────────
 # CP-OR (2026-07-13): se añade "openrouter" como MOTOR PRINCIPAL propio del abogado
@@ -148,6 +163,7 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     # nube y local como red de seguridad. Auxiliares → hint haiku por el CLI.
     "suscripcion": {
         "main": ["cli-claude", "claude-sonnet", "mia-local"],
+        **{t: ["cli-claude", "claude-sonnet", "mia-local"] for t in LEGAL_TASKS},
         "curator": ["cli-claude", "claude-sonnet", "mia-local"],
         # Sigue BLOQUEADA (model explícito no la cambia), pero con red: si el CLI
         # falla, cae a la API haiku barata (ajuste de la revisión CP2, decisión #27).
@@ -158,12 +174,13 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     # (la clave de Anthropic volvió a funcionar, verificado 2026-07-01).
     "nube": {
         "main": ["claude-sonnet", "mia-local"],
+        **{t: ["claude-sonnet", "mia-local"] for t in LEGAL_TASKS},
         "curator": ["claude-sonnet", "mia-local"],
         "compression": ["claude-haiku"],
         **{t: ["claude-haiku", "mia-local"] for t in _AUX_TASKS},
     },
     # Soberano: TODO local (Ollama), para despachos que exigen cero salida de datos.
-    "soberano": {t: ["mia-local"] for t in ("main", "curator", "compression", *_AUX_TASKS)},
+    "soberano": {t: ["mia-local"] for t in ("main", *LEGAL_TASKS, "curator", "compression", *_AUX_TASKS)},
     # OpenRouter como MOTOR PRINCIPAL (CP-OR): el abogado conecta su propia cuenta de
     # OpenRouter (una clave da acceso a decenas de modelos, con su crédito). El
     # razonamiento principal (main/curator) sale por openrouter-sonnet; las tareas
@@ -175,6 +192,7 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     # otras políticas). Requiere OPENROUTER_API_KEY en el .env (lo exige la UI de activación).
     "openrouter": {
         "main": [OPENROUTER_ALIAS, "mia-local"],
+        **{t: [OPENROUTER_ALIAS, "mia-local"] for t in LEGAL_TASKS},
         "curator": [OPENROUTER_ALIAS, "mia-local"],
         "compression": [OPENROUTER_HAIKU_ALIAS, "mia-local"],
         **{t: [OPENROUTER_HAIKU_ALIAS, "mia-local"] for t in _AUX_TASKS},
@@ -187,7 +205,7 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
 # litellm_config.yaml. Se inserta SOLO si hay OPENROUTER_API_KEY configurada — sin clave,
 # incluirlo rompería la cadena con un error de auth (que no salta de proveedor); con la
 # ausencia, el alias simplemente no aparece.
-_OPENROUTER_TASKS = ("main", "curator")
+_OPENROUTER_TASKS = ("main", *LEGAL_TASKS, "curator")
 
 
 def _with_openrouter_fallback(chains: dict[str, list[str]]) -> dict[str, list[str]]:
