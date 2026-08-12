@@ -397,3 +397,23 @@ el análisis igual que una nota verificada.
 cuerpo de borradores; reservar un porcentaje duro e independiente para playbooks activos.
 
 **Aplica en:** memoria, guías, corpus auxiliares y cualquier contexto recuperado bajo demanda.
+# 2026-08-12: Una migración idempotente también debe ser monótona
+
+**Error:** migraciones antiguas podían reejecutarse sin error solo mientras no existieran
+valores nuevos; al reponer un `CHECK` histórico eliminaban del vocabulario tipos añadidos por
+migraciones posteriores y fallaban contra datos válidos actuales.
+
+**Fix:** toda migración reejecutable conserva el vocabulario acumulado del esquema vigente;
+los gates se prueban también sobre una base ya migrada, no solo sobre una base vacía.
+
+**Aplica en:** restricciones enumeradas, roles, estados, orígenes y tipos extensibles.
+
+# 2026-08-12: Un timeout debe matar el árbol, no solo el padre
+
+**Error:** una suite que lanzaba npm/Next podía agotar su plazo; matar únicamente Python dejaba
+descendientes con los logs abiertos y el verificador completo quedaba colgado.
+
+**Fix:** el runner identifica y termina exclusivamente los descendientes del proceso de la
+suite antes de registrar el timeout.
+
+**Aplica en:** gates que invocan builds, navegadores, servidores o procesos auxiliares.

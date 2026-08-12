@@ -55,6 +55,14 @@ trazabilidad hacia el sistema reservado de Lexia vive en un anexo privado separa
 Estado al 12 de agosto: los puntos 1 a 4 ya tienen implementación inicial. EF-4 muestra el
 inventario recuperado, limita a cinco notas completas, deja los borradores solo como referencia
 pendiente y reserva como máximo 8% de la ventana para el cuerpo de playbooks activos.
+La matriz verificable de cierre está en `validation/cierre-auditoria-harness-2026-08.md`.
+
+La regresión integral encontró 18 suites rojas. Dieciséis quedaron reparadas y repetidas en
+verde: se corrigieron migraciones que reducían vocabularios al reejecutarse, contratos viejos
+del grafo y onboarding, orden no determinista en una prueba, medición del presupuesto por
+intento y codificación de Windows. Queda un rojo sustantivo: la metodología fija y el system
+del borrador exceden ampliamente sus presupuestos. Condensarlos altera instrucciones jurídicas
+de fondo y requiere decisión explícita de producto; no se elevaron los topes para ocultarlo.
 
 ## Criterio de eliminación
 

@@ -21,6 +21,8 @@ jobs:
         run: |
           $catalog = Get-Content -Raw config/verification.json | ConvertFrom-Json
           foreach ($path in $catalog.quick) { if (-not (Test-Path $path)) { throw "Prueba catalogada ausente: $path" } }
+          foreach ($path in $catalog.critical_contracts) { if (-not (Test-Path $path)) { throw "Contrato crítico ausente: $path" } }
+          if (-not $catalog.full_glob) { throw 'Falta full_glob en el catálogo' }
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
