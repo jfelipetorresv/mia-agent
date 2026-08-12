@@ -389,6 +389,14 @@ def run_budget_checks() -> None:
           and cr.TEXT_CUT_MARKER in section)
     check("d3 · sin notas → sección vacía (prompt intacto)",
           graph_mod._render_knowledge([], window) == "")
+    progressive = graph_mod._render_knowledge([
+        {"content": "NO DEBE ENTRAR", "source_path": "pendiente.md", "doc_status": "borrador"},
+        {"content": "método confirmado", "source_path": "ok.md", "doc_status": "verificado"},
+    ], window)
+    check("d3b · índice visible, pero borradores no entran como contexto completo",
+          "pendiente.md [pendiente]" in progressive
+          and "NO DEBE ENTRAR" not in progressive
+          and "método confirmado" in progressive)
 
     # También a través del nodo: el prompt del analysis respeta el presupuesto.
     saved = config.MIA_CONTEXT_WINDOW
@@ -411,20 +419,20 @@ def run_budget_checks() -> None:
 # ── e · shrink: knowledge se recorta ANTES que documents (offline) ───────────
 def run_shrink_checks() -> None:
     print("\n-- e · shrink: CONTEXT_TOO_LONG → knowledge fuera ANTES que documents --")
-    # VENTANA SINTÉTICA — recalibrada de 2000 a 2400 al entrar la capa L3 de "ordenamiento
-    # aplicable" al system. Lo que este bloque prueba es el ORDEN del recorte (primero el
+    # VENTANA SINTÉTICA — recalibrada a 4000 al incorporar el índice progresivo de notas.
+    # Lo que este bloque prueba es el ORDEN del recorte (primero el
     # conocimiento, después los documentos), no un tamaño absoluto: 2000 nunca fue una
     # medida del producto (la ventana real es 200.000) sino el número que ponía al
     # escenario e-1 en su sitio — documentos que SÍ caben una vez fuera el knowledge.
     # Al crecer el system, e-1 dejó de ser ese escenario: con 2000 el prompt ya no bajaba
     # del umbral de early-exit (85% = 1700) ni quitando todo el conocimiento, así que se
     # recortaban también los documentos y e5 fallaba por la premisa, no por la propiedad.
-    # Con 2400 el umbral queda en 2040 contra los ~1857 del escenario: e-1 vuelve a ser
+    # Con 4000 el umbral deja margen para el índice, sin cambiar la propiedad probada:
     # "cabe sin knowledge" y la propiedad se verifica INTACTA (e5 sigue exigiendo docs sin
     # tocar, y e7/e9 siguen exigiendo que SÍ se recorten cuando de verdad no caben).
     # El margen (~180 tokens) es deliberado: sin él, cualquier retoque del prompt vuelve a
     # convertir un gate verde en rojo por motivos ajenos a lo que mide.
-    window = 2400
+    window = 4000
     saved = config.MIA_CONTEXT_WINDOW
     config.MIA_CONTEXT_WINDOW = window
     try:
@@ -433,7 +441,7 @@ def run_shrink_checks() -> None:
                        "source_path": "notas/metodo.md"}]
 
         # e-1: docs moderados (caben sin knowledge) → SOLO se elimina knowledge.
-        docs = [{"id": f"d{i}", "content": f"[doc original {i}] " + ("hecho jurídico relevante " * 20)}
+        docs = [{"id": f"d{i}", "content": f"[doc original {i}] " + ("hecho jurídico relevante " * 10)}
                 for i in range(2)]
         st = make_state("t-cp3-off", "m-cp3-off", documents=docs, knowledge=giant_know)
         fc = install({"claude-sonnet": [context_exc(), ok_response("DIAGNÓSTICO rescatado.")]})

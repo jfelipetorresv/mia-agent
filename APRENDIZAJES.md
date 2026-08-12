@@ -387,3 +387,13 @@ producto los invocaba. Las pruebas demostraban el scaffolding, no su integració
 el runtime paralelo y probar `prompt_builder` con el contrato mínimo que sí consume LangGraph.
 
 **Aplica en:** agentes, plugins, hooks, conectores y scripts heredados de prototipos.
+# 2026-08-12: Recuperar más conocimiento no significa inyectarlo todo
+
+**Error:** el RAG ordenaba notas y tenía un techo global, pero enviaba cuerpos completos en
+secuencia y los playbooks carecían de un presupuesto propio; un borrador interno podía orientar
+el análisis igual que una nota verificada.
+
+**Fix:** separar índice de detalle, limitar el despliegue, hacer visible el estado y excluir el
+cuerpo de borradores; reservar un porcentaje duro e independiente para playbooks activos.
+
+**Aplica en:** memoria, guías, corpus auxiliares y cualquier contexto recuperado bajo demanda.

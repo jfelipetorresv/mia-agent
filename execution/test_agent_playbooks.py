@@ -204,6 +204,11 @@ async def async_checks(a: str, b: str, seeded: dict) -> None:
 
 async def _async_checks(a: str, b: str, seeded: dict) -> None:
     print("\n-- async: set/get vínculos, resolve_for_turn, _prepare_playbooks, asistente --")
+    huge = "guía estratégica " * 10000
+    limited = graph._budget_active_playbooks(huge, 2000)
+    check("playbooks activos: presupuesto duro ≤8% de la ventana",
+          graph.estimate_tokens(limited)
+          <= int(2000 * graph.PLAYBOOK_ACTIVE_BUDGET_FRACTION))
     svc = PersonaService()
     pA = seeded["persona_a"]
     pl1, pl2, pl3 = seeded["pl1"], seeded["pl2"], seeded["pl3"]

@@ -86,6 +86,16 @@ async def drain_bg_tasks() -> None:
 
 _WORD = re.compile(r"\w+", re.UNICODE)
 _MAX_ACTIVE_PLAYBOOKS = 3
+# El contenido completo de las guías es material auxiliar del turno. Este techo evita
+# que tres playbooks extensos desplacen el diagnóstico y el expediente del borrador.
+PLAYBOOK_ACTIVE_BUDGET_FRACTION = 0.08
+_MAX_FULL_KNOWLEDGE_NOTES = 5
+
+
+def _budget_active_playbooks(text: str, window: int) -> str:
+    """Aplica el techo duro del material completo de playbooks del turno."""
+    budget = max(1, int(window * PLAYBOOK_ACTIVE_BUDGET_FRACTION))
+    return context_recovery.shrink_text(text, budget) if estimate_tokens(text) > budget else text
 
 # CP-E5: la investigación se DELEGA en paralelo (un investigador por jurisdicción) SOLO
 # cuando el despacho tiene ≥ este número de jurisdicciones. Con una sola (el caso de un
@@ -558,14 +568,17 @@ async def _prepare_playbooks(state: MatterState, diagnosis: str) -> tuple[str, s
         mgr.activate(pid)
         await mgr.mark_used(pid, tenant_id)
 
-    return index, mgr.render_active(), activated
+    active = _budget_active_playbooks(mgr.render_active(), config.MIA_CONTEXT_WINDOW)
+    return index, active, activated
 
 
 def _render_knowledge(notes: list, window: int) -> str:
     """Sección 'Conocimiento del despacho' del user prompt de analysis (CP3, Riesgo #16).
 
     Presupuesto duro: ≤ KNOWLEDGE_BUDGET_FRACTION de la ventana (estimate_tokens,
-    offline y determinista). Cada nota va DELIMITADA con fencing explícito
+    offline y determinista). Primero incluye un índice liviano; solo despliega hasta
+    cinco notas y nunca inyecta el cuerpo de una nota con estado `borrador`.
+    Cada nota desplegada va DELIMITADA con fencing explícito
     `<<<NOTA n · ruta>>> ... <<<FIN NOTA n>>>` (revisión CP3: las notas son texto de
     terceros — el fencing impide que su contenido se confunda con instrucciones del
     prompt). La nota que exceda el presupuesto restante se TRUNCA (shrink_text) y
@@ -576,10 +589,26 @@ def _render_knowledge(notes: list, window: int) -> str:
         return ""
     budget = max(1, int(window * KNOWLEDGE_BUDGET_FRACTION))
     remaining = budget - estimate_tokens(KNOWLEDGE_HEADER) - 1  # -1: el '\n' del header
-    parts: list[str] = []
-    for i, n in enumerate(notes):
+    eligible: list[dict] = []
+    index_lines: list[str] = []
+    for n in notes:
         if not isinstance(n, dict):
             continue
+        src = str(n.get("source_path") or n.get("source") or "sin-ruta").strip()
+        status = str(n.get("doc_status") or "sin_estado").strip().lower()
+        label = "pendiente" if status == "borrador" else status
+        index_lines.append(f"- {src} [{label}]")
+        # Los borradores se hacen visibles en el índice, pero su texto no orienta el
+        # razonamiento hasta que un humano los marque como verificados.
+        if status != "borrador" and len(eligible) < _MAX_FULL_KNOWLEDGE_NOTES:
+            eligible.append(n)
+
+    index_text = "Índice de notas recuperadas:\n" + "\n".join(index_lines)
+    if estimate_tokens(index_text) > remaining:
+        index_text = context_recovery.shrink_text(index_text, remaining)
+    remaining -= estimate_tokens(index_text) + 2
+    parts: list[str] = [index_text]
+    for i, n in enumerate(eligible):
         src = str(n.get("source_path") or n.get("source") or "").strip()
         # CP-S1: sello vía el módulo de cuarentena (mismo formato byte a byte;
         # gana el saneo del rótulo — una ruta hostil no rompe la apertura).
@@ -598,7 +627,7 @@ def _render_knowledge(notes: list, window: int) -> str:
         piece = f"{fence_open}\n{untrusted.neutralize(content)}\n{fence_close}"
         remaining -= estimate_tokens(piece) + 2
         parts.append(piece)
-    if not parts:
+    if len(parts) == 1 and not index_lines:
         return ""
     return KNOWLEDGE_HEADER + "\n" + "\n\n".join(parts)
 

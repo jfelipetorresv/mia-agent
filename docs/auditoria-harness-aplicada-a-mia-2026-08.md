@@ -52,6 +52,10 @@ trazabilidad hacia el sistema reservado de Lexia vive en un anexo privado separa
 5. Contratos de corrida: manifiesto durable, huellas y reconciliación de huérfanos.
 6. Prueba del núcleo con caso ficticio o anonimizado; luego capacidades integrales por capas.
 
+Estado al 12 de agosto: los puntos 1 a 4 ya tienen implementación inicial. EF-4 muestra el
+inventario recuperado, limita a cinco notas completas, deja los borradores solo como referencia
+pendiente y reserva como máximo 8% de la ventana para el cuerpo de playbooks activos.
+
 ## Criterio de eliminación
 
 No se elimina por tamaño ni por pocas referencias. Se exige ausencia de consumidores reales,

@@ -702,7 +702,7 @@ fused AS (
   FROM (SELECT id, rnk FROM vec UNION ALL SELECT id, rnk FROM fts) u
   GROUP BY id
 )
-SELECT k.id, k.content, k.source, k.source_path, f.score
+SELECT k.id, k.content, k.source, k.source_path, f.score, k.doc_status
 FROM fused f
 JOIN knowledge_chunks k ON k.id = f.id
 ORDER BY f.score DESC
@@ -722,7 +722,7 @@ async def retrieve_knowledge_rrf(
 
     Opera sobre `knowledge_chunks` (conocimiento transversal del despacho — CP3,
     Riesgo #16): NO se filtra por asunto. Devuelve
-    [{id, content, source, source_path, score}] ya filtrado por tenant (RLS
+    [{id, content, source, source_path, score, doc_status}] ya filtrado por tenant (RLS
     fail-closed bajo tenant_connection). Lista vacía si no hay nada indexado.
 
     Lectura adaptativa: cuando el llamador sube `top_k`, los candidatos suben con él
@@ -743,7 +743,7 @@ async def retrieve_knowledge_rrf(
         rows = await (await conn.execute(_KNOWLEDGE_RRF_SQL, args)).fetchall()
     notes = [
         {"id": str(r[0]), "content": r[1], "source": r[2],
-         "source_path": r[3], "score": float(r[4])}
+         "source_path": r[3], "score": float(r[4]), "doc_status": r[5]}
         for r in rows
     ]
     # CP-W1 · el wiki DEJA de ser de solo escritura. Va DESPUÉS de las notas del
