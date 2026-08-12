@@ -63,13 +63,11 @@ desde cero, ACTUALIZA el resumen previo (lo incorpora al prompt como "RESUMEN PR
 
 ---
 
-## 3 · Integración con el turno (`agent/core.py`, PASO 2)
+## 3 · Integración con el turno real
 
-`MiaAgent.run_turn` llama al compresor **antes** de cada turno sobre `self.messages`.
-Si actuó, loguea el ahorro (`tokens_before → tokens_after`). Es **transparente al
-abogado**: no aparece en el stream SSE (§G). El `MiaAgent` lleva `context_window`
-(`config.MIA_CONTEXT_WINDOW`, default 200k), `matter_id` y un `trace_capture` opcional;
-el `compressor` se arma en `__post_init__`.
+La recuperación vive en `agents/context_recovery.py` y se invoca desde los nodos LangGraph
+cuando el proveedor devuelve `CONTEXT_TOO_LONG`. El presupuesto depende del nodo, se permite
+un solo rescate por turno y el resultado queda atribuido en la telemetría.
 
 > El system prompt (10 capas) se arma aparte y su prefijo estable se **marca** para el
 > prefix caching de Anthropic; la compresión solo toca el historial, así que NO invalida

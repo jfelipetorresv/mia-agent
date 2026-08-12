@@ -16,6 +16,11 @@ jobs:
       - name: Compile Python sources
         shell: pwsh
         run: python -m compileall -q backend/mia execution scripts
+      - name: Validate verification catalog
+        shell: pwsh
+        run: |
+          $catalog = Get-Content -Raw config/verification.json | ConvertFrom-Json
+          foreach ($path in $catalog.quick) { if (-not (Test-Path $path)) { throw "Prueba catalogada ausente: $path" } }
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

@@ -19,8 +19,9 @@ trazabilidad hacia el sistema reservado de Lexia vive en un anexo privado separa
    `task="main"`; falta una política función→nivel con pisos verificables.
 3. **Contexto progresivo incompleto.** El conocimiento usa un presupuesto global, pero no un
    índice ligero seguido de fichas justificadas; las guías limitan cantidad, no peso.
-4. **Hooks aparentes fuera del runtime.** `MiaAgent` y sus seis hooks solo tienen consumidores
-   de prueba; el API productivo entra directamente a los grafos LangGraph.
+4. **Hooks aparentes fuera del runtime — retirados.** `MiaAgent` y sus seis hooks solo tenían
+   consumidores de prueba; se eliminó ese runtime paralelo y el constructor de prompts quedó
+   probado mediante su contrato mínimo real.
 5. **Complejidad concentrada.** El grafo y algunas rutas mezclan demasiadas responsabilidades.
    La separación debe seguir a contratos y gates, no precederlos.
 6. **Fases ambiguas.** F3/F4 significan cosas distintas en dos planes. En adelante la

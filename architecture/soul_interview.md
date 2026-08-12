@@ -115,7 +115,7 @@ que se guarde y no se vea; quitarlo de aquí encierra fuera de su perfil a quien
 - `GET  /api/onboarding/status`    → `{completed, last_updated, responses}`
   (derivado de la existencia/mtime del archivo — **sin tabla en DB**).
 
-## Wiring al prompt (las DOS rutas)
+## Wiring al prompt
 1. **Grafo (turno real del producto):** `agents/state.py::initial_state` carga
    `soul_snapshot` con `load_soul_snapshot(tenant_id)` si el archivo existe;
    `agents/graph.py::_system_with_soul` antepone la identidad al system de
@@ -123,12 +123,9 @@ que se guarde y no se vea; quitarlo de aquí encierra fuera de su perfil a quien
    `soul_snapshot=None` → system base sin cambios (gate 1d intacto). **Resuelve el
    problema que tenía el Riesgo #11**: la costura `soul_snapshot` existía pero nadie
    la llenaba.
-2. **MiaAgent.run_turn (path de prueba/futuro):** `agent/core.py::__post_init__`
-   carga el SOUL.md en `self.identity` (Capa 1 del prompt_builder) si existe y el
-   caller no pasó identidad propia. Sin archivo → `DEFAULT_IDENTITY` (placeholder).
 
-`prompt_builder.py` NO se tocó: la Capa 1 ya leía `agent.identity`; ahora esa
-identidad se nutre del SOUL.md.
+El runtime alterno `MiaAgent.run_turn` fue retirado en agosto de 2026 por no tener consumidor.
+La única ruta vigente es el grafo productivo descrito arriba.
 
 ## Revisión trimestral
 `SoulInterview.update_soul(tenant_id, updates)` fusiona las respuestas guardadas con los

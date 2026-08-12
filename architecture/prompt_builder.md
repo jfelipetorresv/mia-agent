@@ -1,19 +1,23 @@
 # architecture/prompt_builder.md
-# Núcleo del agente (MiaAgent) + router call_llm · 10 capas · AuxiliaryClient
+# Router LLM + constructor de prompt de 10 capas + AuxiliaryClient
+
+> Actualización 2026-08-12: el `MiaAgent` experimental y su sistema de plugins fueron
+> retirados porque no participaban en el API ni en los grafos productivos. Este documento
+> conserva antecedentes históricos más abajo; la arquitectura viva entra por LangGraph y
+> consume `prompt_builder` directamente.
 # Última actualización: 2026-06-12 · Módulo 1b
 
 > Estado: 1a (núcleo + router) y 1b (10 capas + AuxiliaryClient) entregados.
-> Gates offline: `test_agent_core.py` 15/15 · `test_prompt_builder.py` 32/32.
+> Gate offline vigente: `test_prompt_builder.py`.
 
 ---
 
 ## 1 · Qué se construyó en 1a (núcleo mínimo)
 
 - `backend/mia/agent/llm.py` — router `call_llm(task=...)` por el gateway LiteLLM.
-- `backend/mia/agent/core.py` — clase `MiaAgent` (identidad + un turno de conversación).
-- `backend/mia/agent/__init__.py` — exporta `MiaAgent`, `call_llm`, `resolve_model`.
+- `backend/mia/agent/prompt_builder.py` — fuente canónica del prompt y de la identidad fallback.
+- `backend/mia/agent/__init__.py` — exporta router y cliente auxiliar del runtime.
 - `backend/mia/config.py` — `LITELLM_BASE_URL`, `LITELLM_API_KEY`, `MIA_MODEL`.
-- `execution/test_agent_core.py` — **15/15 PASS** (offline, sin red).
 
 El núcleo es deliberadamente pequeño (CLAUDE.md §"Simplicity First"): fija las
 costuras sin adelantar trabajo de 1b–1e.
@@ -148,11 +152,10 @@ LLM (inspección/tests).
 
 ---
 
-## 4 · Multi-tenant en el núcleo
+## 4 · Multi-tenant en el runtime
 
-`MiaAgent` se ata a un `tenant_id` desde su construcción (aislamiento RLS, §G).
-El núcleo 1a aún no toca la DB, pero lleva el tenant en la firma para que 1b+ no
-la reescriban.
+El `tenant_id` viaja en `MatterState` y todas las lecturas/escrituras productivas pasan por
+conexiones con RLS. `prompt_builder` es puro: recibe un contrato de datos y no abre la DB.
 
 ---
 
@@ -163,9 +166,8 @@ la reescriban.
   `task -> alias único` de 1b ya se **reemplazó** por cadenas de fallback
   (`_TASK_FALLBACK_CHAINS`, H.5) superpuestas por la política del tenant
   (`_POLICY_CHAINS`, CP2 · §2.2). Streaming en `call_llm` sigue pendiente opcional.
-- **1c** — plugins (6 hooks) alrededor del turno.
-- **1d** — LangGraph StateGraph + SSE + HITL (`interrupt()`); el turno único de
-  `run_turn` se convierte en nodo del grafo.
+- **1c** — retirado: el sistema experimental de hooks no alcanzaba el runtime.
+- **1d** — LangGraph StateGraph + SSE + HITL (`interrupt()`), runtime único.
 - **1e** — Agent Hub.
 
 ---
@@ -183,36 +185,15 @@ No bloquea 1a.
 ## 7 · Cómo verificar
 
 ```
-.venv\Scripts\python.exe execution\test_agent_core.py       # 15/15 PASS (offline)
-.venv\Scripts\python.exe execution\test_prompt_builder.py   # 32/32 PASS (offline)
-.venv\Scripts\python.exe execution\test_plugins.py          # 16/16 PASS (offline)
+.venv\Scripts\python.exe execution\test_prompt_builder.py
+powershell -File scripts\verify.ps1 -Mode quick
 ```
 
-Smoke real contra el proxy (requiere los 3 terminales de Modo B levantados):
-construir un `MiaAgent(tenant_id=...)` y llamar `run_turn("hola")` con el proxy
-LiteLLM en `localhost:4000`.
+El smoke real se ejecuta por el endpoint SSE del asunto y el grafo productivo.
 
 ---
 
-## 8 · Plugins (`agent/plugins.py`, 1c)
+## 8 · Extensiones
 
-Sistema de plugins con **exactamente 6 hooks** de ciclo de vida (patrón Hermes
-`hermes_cli/plugins.py`, recortado a 6). `HOOKS` es el contrato, en orden:
-
-```
-on_session_start · pre_llm_call · pre_tool_call · post_tool_call · post_llm_call · on_session_end
-```
-
-- **`PluginManager`** — `register(plugin)` (orden de registro) + `dispatch(hook,
-  ctx)`. Un hook desconocido lanza `ValueError` (fail-fast, a diferencia de Hermes
-  que solo avisa). `dispatch` recorre los plugins en orden y pasa un `ctx` (dict
-  mutable); un plugin **intercepta** mutando el ctx in-place o devolviendo uno nuevo.
-- **`Plugin`** — base con los 6 métodos no-op; heredar es opcional (duck-typing:
-  basta exponer métodos con el nombre del hook, así un plugin cubre un subconjunto).
-- **Bloqueo de herramientas** — `pre_tool_call` marca `ctx["blocked"] = True`; lo
-  honra el executor de tools (1d).
-- **Wiring en `MiaAgent`** — `pre_llm_call`/`post_llm_call` se disparan en
-  `run_turn` (con `ctx["messages"]`/`ctx["content"]`; sin plugins es no-op y el
-  turno no cambia). `on_session_start`/`on_session_end` en `start_session`/
-  `end_session`. `pre_tool_call`/`post_tool_call` se cablearán en el executor de
-  herramientas (1d). Gate: `execution/test_plugins.py` (16/16).
+Las extensiones productivas se implementan como nodos, conectores o middleware registrados en
+entrypoints reales. No se acepta un catálogo de hooks separado sin consumidor verificable.

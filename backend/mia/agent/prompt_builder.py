@@ -44,6 +44,16 @@ TIER_STABLE = "stable"
 TIER_CONTEXT = "context"
 TIER_VOLATILE = "volatile"
 
+# Identidad fallback del producto. Antes vivía en el `MiaAgent` experimental; el runtime
+# real consume este builder desde los grafos, así que la fuente canónica pertenece aquí.
+DEFAULT_IDENTITY = (
+    "Eres Mia, una agente juridica cognitiva para despachos de abogados del "
+    "Civil Law hispanoamericano. Razonas sobre expedientes, citas fuentes "
+    "primarias verificables y entregas diagnosticos y borradores para que un "
+    "abogado los apruebe. Eres precisa y prudente: nunca inventas citas legales "
+    "— si no puedes verificar una norma o sentencia, lo dices explicitamente."
+)
+
 # ── Capas STABLE de texto fijo ─────────────────────────────────────────────
 
 # L2 · Metodología jurídica

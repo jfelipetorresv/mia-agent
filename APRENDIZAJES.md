@@ -378,3 +378,12 @@ gates para todas las políticas. La separación habilita calibración posterior 
 
 **Aplica en:** cualquier pipeline donde varias etapas usen el mismo proveedor pero tengan
 responsabilidades, riesgos o presupuestos diferentes.
+# 2026-08-12: Una capacidad probada puede seguir siendo código muerto
+
+**Error:** `MiaAgent` y seis hooks tenían suites verdes, pero ningún endpoint ni grafo del
+producto los invocaba. Las pruebas demostraban el scaffolding, no su integración.
+
+**Fix:** comprobar alcanzabilidad desde entrypoints antes de conservar una capacidad; retirar
+el runtime paralelo y probar `prompt_builder` con el contrato mínimo que sí consume LangGraph.
+
+**Aplica en:** agentes, plugins, hooks, conectores y scripts heredados de prototipos.

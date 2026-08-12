@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "default_timeout_seconds": 180,
+  "quick": [
+    "execution/check_env_pins.py",
+    "execution/test_gates_no_ciegos.py",
+    "execution/test_model_policy.py",
+    "execution/test_llm_fallback.py",
+    "execution/test_context_recovery.py"
+  ],
+  "full_glob": "execution/test_*.py",
+  "full_requires_database": true,
+  "critical_contracts": [
+    "execution/test_rls.py",
+    "execution/test_gates_no_ciegos.py",
+    "execution/test_hitl_flow.py",
+    "execution/test_model_policy.py"
+  ]
+}
