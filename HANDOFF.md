@@ -30,6 +30,14 @@ borrar `mia-cory-audit-worktree`, `tools`, `Lexia-Vault` ni los prototipos exter
 
 Commits de esta sesión: ver `git log` inmediatamente bajo este cierre.
 
+**Continuación 2026-08-12 · instalador y onboarding listos para prueba interna:** se generó
+`desktop/src-tauri/target/release/bundle/nsis/Mia_0.1.0_x64-setup.exe` (447 MB,
+SHA-256 `80748B644C7828577093EE2BF15E09AA5E22F2699760474556F2A33BD5BFF89E`).
+Pasaron 30/30 checks de ensamblaje y 78/78 del onboarding y configuración. La guía para
+Pipe está en `docs/guia-primera-instalacion-y-onboarding.md`. El ejecutable **no está
+firmado**: apto solo para prueba interna; falta aceptación visual de una instalación limpia
+antes de distribuirlo, y firma de código antes de entregarlo a terceros.
+
 ---
 
 ## Cómo usar este archivo (regla de mantenimiento)

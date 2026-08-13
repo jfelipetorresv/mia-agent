@@ -31,11 +31,9 @@ complementa con el LLM real y la UI real.
 - PostgreSQL (clúster portable, puerto **55432** — ver `.env:PG_PORT`) + pgvector corriendo.
 - `.env` con `VOYAGE_API_KEY`, `JWT_SECRET`, `PG_PASSWORD`, claves del proxy.
 - `.venv` con todas las deps; `frontend/` con `node_modules` instalados.
-- `frontend/.env.local` con `NEXT_PUBLIC_API_URL=http://localhost:8000` y
-  `NEXT_PUBLIC_DEV_TOKEN` (JWT del tenant `DEV_FRONTEND`; ver `api_surface.md` §auth).
-- El tenant `DEV_FRONTEND` debe existir en la tabla `tenants` (para que matters,
-  documentos, etc. tengan a quién pertenecer). El SOUL.md NO necesita fila en DB
-  (vive como archivo en `$MIA_HOME/soul_{tenant_id}.md`).
+- `frontend/.env.local` con `NEXT_PUBLIC_API_URL=http://localhost:8000`.
+- Una cuenta de prueba se crea desde la pantalla de registro. No se usa un token
+  de desarrollo ni un tenant precargado para el recorrido actual.
 
 ## 1 · Arrancar los 3 procesos de Modo B (3 terminales PowerShell)
 La ruta tiene un espacio → SIEMPRE entre comillas.
