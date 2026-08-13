@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, use, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -87,7 +87,8 @@ function fmtDate(s?: string): string {
 // useSearchParams() exige un límite <Suspense> en App Router (si no, rompe el
 // prerender). El contenido real vive en WorkspacePageContent; este export solo
 // monta el límite.
-export default function WorkspacePage({ params }: { params: { id: string } }) {
+export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
+  const resolved = use(params);
   return (
     <Suspense
       fallback={
@@ -96,7 +97,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         </div>
       }
     >
-      <WorkspacePageContent params={params} />
+      <WorkspacePageContent params={resolved} />
     </Suspense>
   );
 }

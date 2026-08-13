@@ -8,7 +8,7 @@
 // pero el contrato de eventos del proyecto es más simple: "thinking" (avance),
 // "reply" (respuesta final de Mia) y "error" — sin awaiting_review ni draft_ready.
 
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -118,8 +118,8 @@ function primerasPalabras(text: string, maxChars = 60): string {
   return (ultimoEspacio > 20 ? corte.slice(0, ultimoEspacio) : corte).trim();
 }
 
-export default function ProyectoWorkspacePage({ params }: { params: { id: string } }) {
-  const matterId = params.id;
+export default function ProyectoWorkspacePage({ params }: { params: Promise<{ id: string }> }) {
+  const matterId = use(params).id;
   const router = useRouter();
   const [matter, setMatter] = useState<Matter | null>(null);
   const [notFound, setNotFound] = useState(false);

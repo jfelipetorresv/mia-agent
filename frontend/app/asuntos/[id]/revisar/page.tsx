@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Download, Pencil, X } from "lucide-react";
 import { apiDownload, apiGet, streamPost } from "@/lib/api";
@@ -150,8 +150,8 @@ async function resumeDraft(path: string, body: unknown): Promise<void> {
   if (!ok) throw new Error(errMsg || "La operación no terminó bien.");
 }
 
-export default function RevisarPage({ params }: { params: { id: string } }) {
-  const matterId = params.id;
+export default function RevisarPage({ params }: { params: Promise<{ id: string }> }) {
+  const matterId = use(params).id;
   const router = useRouter();
   const [draft, setDraft] = useState<string | null>(null);
   const [verification, setVerification] = useState<Verification | null>(null);
