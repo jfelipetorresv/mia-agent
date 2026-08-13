@@ -417,3 +417,12 @@ descendientes con los logs abiertos y el verificador completo quedaba colgado.
 suite antes de registrar el timeout.
 
 **Aplica en:** gates que invocan builds, navegadores, servidores o procesos auxiliares.
+# 2026-08-12 — Un principio solo cuenta cuando queda ejecutable
+
+- Destilar metodología no es debilitarla: primero se fijan invariantes con gates y luego se
+  eliminan explicación y repetición. Resultado medido: 1.744 → 363 tokens sin perder checks.
+- Una actualización mayor no termina al compilar: exige auditoría de dependencias, rutas
+  dinámicas, lint, empaquetado y navegación real. En Windows, el fallback WASM de SWC puede
+  requerir Webpack explícito aunque el build sea correcto.
+- Los tests no deben exigir palabras ornamentales del modelo (`BORRADOR...`); deben verificar
+  el contrato observable: contenido no vacío, estado HITL y barreras aplicadas.

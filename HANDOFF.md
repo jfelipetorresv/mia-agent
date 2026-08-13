@@ -9,6 +9,27 @@
 
 ---
 
+# CIERRE — 2026-08-12 (sesión 57) · Auditoría integral del harness aplicada a Mia · EMPEZAR AQUÍ
+
+Se ejecutó el plan integral sin copiar la implementación reservada: informe público,
+trazabilidad privada, catálogo y comando único de verificación, CI, enrutamiento por función,
+contexto progresivo, migraciones reejecutables y poda del runtime aparente sin consumidores.
+
+La metodología jurídica fija bajó de ~1.744 a 363 tokens y el system del borrador de ~3.255
+a 1.171, conservando 66/66 invariantes. Next pasó de 14 a 16.3.0 y React a 19.2.8: build de
+14 rutas, auditoría 0 vulnerabilidades, empaquetado 24/24, UX 41/41, memoria 27/27 y auth
+21/21. Playwright confirmó navegación hidratada Login→Registro; el HMR del entorno dev dejó
+avisos WebSocket, pero producción compila y empaqueta.
+
+La pasada completa recorrió 142 suites en 629 s y expuso seis contratos de prueba obsoletos;
+se corrigieron y las seis suites quedaron verdes. `scripts\verify.ps1 -Mode quick` está verde.
+Pendiente evolutivo: reducir los 11 avisos de lint y el tiempo de la pasada completa. No borrar
+`mia-cory-audit-worktree`, `tools`, `Lexia-Vault` ni los prototipos externos sin respaldo.
+
+Commits de esta sesión: ver `git log` inmediatamente bajo este cierre.
+
+---
+
 ## Cómo usar este archivo (regla de mantenimiento)
 
 Aquí viven SOLO la entrada vigente («EMPEZAR AQUÍ») y la inmediatamente anterior.
@@ -170,4 +191,3 @@ e2e 58/58 · seed 17/17 · sentence_report 47/47 · citas_quemadas 20/20 · migr
 - Decidir sobre el alcance (leer más cuesta crédito de tarjeta).
 - **NUEVO**: decidir sobre el gate LLM de citas de `f264b1e` (ver watch-out en
   `memory/bugs-and-risks.md`): ¿solo el muro determinista, o muro + gate LLM como hoy?
-

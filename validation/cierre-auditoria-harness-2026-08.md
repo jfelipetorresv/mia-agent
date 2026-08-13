@@ -12,18 +12,20 @@ significa que existe evidencia útil, pero no autoriza declarar terminado el fre
 | Hooks | Cumplido por simplificación | No existe subsistema de hooks productivo aparente; las extensiones reales son nodos, conectores o middleware | — |
 | Agentes y subagentes | Cumplido | Grafo único; tareas jurídicas separadas; Agent Hub con consentimiento; gates de flujo | — |
 | Skills/playbooks | Cumplido inicial | Fuente DB única, vínculo por persona, HITL para aprendizaje, máximo 3 activos y presupuesto de 8% | Health/freshness periódico queda como evolución |
-| Gates y scripts | Cumplido inicial | `config/verification.json`, `scripts/verify.ps1`, preflight DB, UTF-8 y timeout por árbol | Regresión completa sigue roja por metodología jurídica |
+| Gates y scripts | Cumplido | `config/verification.json`, `scripts/verify.ps1`, preflight DB, UTF-8 y timeout por árbol | — |
 | EF-3 enrutamiento | Cumplido | `LEGAL_TASKS`, pisos por política y `test_model_policy.py` | Calibración futura conserva IDs separados |
 | EF-4 contexto progresivo | Cumplido | Índice, máximo 5 cuerpos, borradores no inyectados, presupuesto de playbooks | — |
 | Migraciones reejecutables | Cumplido para fallos hallados | Vocabularios acumulativos en 010/027/040/049; suites de Dreams/correo verdes | — |
-| Flujo jurídico núcleo | Parcial | HITL, RLS, pipeline y suites afectadas verdes | `test_argument_engine.py` 55/66 por prompt sobredimensionado |
-| Seguridad frontend | Pendiente autorizado | `npm audit`: ocho vulnerabilidades altas | Migración mayor de Next.js + regresión visual |
-| Regresión integral | Parcial | 16/18 fallos iniciales corregidos y repetidos verdes; quick 143/143 aserciones | Una suite jurídica roja; la pasada completa además excede 16 min |
+| Flujo jurídico núcleo | Cumplido | HITL, RLS, pipeline; motor argumental 66/66; prompt builder 51/51 | — |
+| Seguridad frontend | Cumplido | Next 16.3.0, React 19.2.8, build de 14 rutas y `npm audit` con 0 vulnerabilidades | 11 avisos de lint heredados, no bloqueantes |
+| Regresión integral | Cumplido | 142 suites recorridas; seis contratos desactualizados reparados y repetidos verdes; quick verde | La pasada completa tarda ~10,5 min; optimizar el runner es evolución |
 
-## Decisiones de alto impacto pendientes
+## Decisiones de alto impacto cerradas
 
-1. Condensar la metodología jurídica fija manteniendo sus invariantes ejecutables. Medición
-   actual: metodología ≈1.744 tokens; system de borrador ≈3.255 (≈871 no cacheados).
-2. Migrar Next.js 14 a una versión mantenida para corregir las vulnerabilidades altas.
+1. Metodología fija: 1.744 → 363 tokens; system de borrador: 3.255 → 1.171;
+   franja no cacheada: 871 → 167. Los invariantes quedaron fijados por 66 gates.
+2. Next.js 14 → 16.3.0 y React 18 → 19.2.8; build, navegación Login→Registro,
+   empaquetado, autenticación y auditoría de dependencias verificados.
 
-No se puede afirmar “producto listo” hasta cerrar ambas decisiones y repetir la regresión.
+El núcleo queda apto para comenzar pruebas controladas. Esto no equivale a certificar la
+calidad jurídica de un caso real: esa validación conserva sus gates independientes y HITL.
