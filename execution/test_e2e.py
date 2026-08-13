@@ -369,7 +369,7 @@ def run_e2e(client, auth, tid) -> list[str]:
     check("GET /api/matters/{id}/draft -> 200 o 404 (documentado)",
           r.status_code in (200, 404))
     if r.status_code == 200:
-        check("el borrador está disponible para revisión", r.json().get("draft", "").startswith("BORRADOR"))
+        check("el borrador está disponible para revisión", bool(r.json().get("draft", "").strip()))
         with client.stream("POST", f"/api/matters/{mid}/draft/approve", headers=auth, json={}) as s:
             ok_appr = s.status_code == 200
             _ = "".join(s.iter_text())

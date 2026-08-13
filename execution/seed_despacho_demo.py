@@ -153,9 +153,9 @@ def _fake_embed(texts):
 
 def _fake_call_llm(messages, *, task=None, model=None, **kw):
     sysmsg = messages[0]["content"] if messages and isinstance(messages[0], dict) else ""
-    if "Redacta el borrador" in sysmsg:
+    if task == "legal_draft" or "Redacta el borrador" in sysmsg:
         content = BORRADOR_DEMO
-    elif "Incorpora al borrador" in sysmsg:
+    elif task == "legal_edit" or "Incorpora al borrador" in sysmsg:
         content = BORRADOR_DEMO + "\n(Versión con las indicaciones del abogado.)"
     elif "GATE DE CALIDAD DE CITAS" in sysmsg:
         # El gate LLM (F1.5) audita y responde SOLO un veredicto — nunca reescribe el

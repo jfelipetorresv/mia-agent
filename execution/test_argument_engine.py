@@ -206,7 +206,7 @@ def test_b_anatomy() -> None:
           and "(3) fundamentos" in m and "(4) conclusión y recomendación" in m)
     check("b2 · un argumento ya NO puede ser un título: se exige desarrollo",
           "Anatomía del argumento" in m
-          and "no es un título ni un enunciado" in m and "cinco capas" in m)
+          and "no es un título ni un enunciado" in m and "seis capas" in m)
 
     # Las cinco capas por su ROL FUNCIONAL (nunca por su nombre en un país concreto).
     for capa, aguja in (("hecho del expediente", "hecho concreto del expediente"),

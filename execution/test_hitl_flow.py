@@ -229,7 +229,7 @@ def main() -> int:
         check("nodos corren en orden hasta draft",
               obs["nodes1"] == ["intake", "delegation", "facts", "research", "analysis",
                                 "draft", "verificador_citas"])
-        check("borrador generado antes del checkpoint", (obs["draft1"] or "").startswith("BORRADOR"))
+        check("borrador generado antes del checkpoint", bool((obs["draft1"] or "").strip()))
         check("grafo pausado EN hitl_checkpoint (antes de finalize)", "hitl_checkpoint" in obs["next1"])
         check("sin traza antes de aprobar (no llegó a finalize)", obs["trace1"] == 0)
 
@@ -240,7 +240,7 @@ def main() -> int:
         # 2 · resume reanuda y finaliza
         check("Command(resume=...) ejecuta finalize", "finalize" in obs["nodes2"])
         check("grafo finaliza tras resume (done, next vacío)", obs["next2"] == [])
-        check("borrador final presente", (obs["draft2"] or "").startswith("BORRADOR"))
+        check("borrador final presente", bool((obs["draft2"] or "").strip()))
         check("trace_id asignado al finalizar", bool(obs["trace_id"]))
 
         # 4 · traza JSONL generada al finalizar

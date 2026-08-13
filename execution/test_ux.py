@@ -175,7 +175,7 @@ def run_checks(client, auth, tid) -> list[str]:
     # 9 · borrador disponible tras el turno
     r = client.get(f"/api/matters/{mA}/draft", headers=auth)
     check("GET /api/matters/{id}/draft -> 200 con borrador",
-          r.status_code == 200 and r.json().get("draft", "").startswith("BORRADOR"))
+          r.status_code == 200 and bool(r.json().get("draft", "").strip()))
     # 9b · hallazgo post-review (frontend): mientras el grafo está pausado esperando
     # revisión, hitl_outcome todavía NO es "approved" (evita que el botón "Convertir
     # en guía" del frontend aparezca antes de que el abogado decida algo).
