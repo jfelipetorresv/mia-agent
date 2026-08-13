@@ -161,9 +161,8 @@ export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
         });
         return null;
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     },
-    [matterId],
+    [kindWord, matterId, onChanged],
   );
 
   useEffect(() => {

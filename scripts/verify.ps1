@@ -50,6 +50,11 @@ $failed = @()
 $timedOut = @()
 $started = Get-Date
 
+# SAT-Graph abre/cierra su propio pool para validar aislamiento. En Windows, tras una
+# regresión larga puede quedar un cierre de conexión transitorio entre procesos. Un único
+# reintento nuevo distingue esa condición de un fallo funcional persistente.
+$retryableFullTests = @('test_sat_graph_jurisdiction.py')
+
 function Stop-ProcessTree([int]$ProcessId) {
     # Stop-Process solo mata al Python padre; npm/Next puede conservar abiertos los
     # archivos redirigidos y colgar el verificador para siempre. Recorremos únicamente
@@ -97,6 +102,20 @@ foreach ($test in $tests) {
         }
     } finally {
         Remove-Item -Force -LiteralPath $stdout,$stderr -ErrorAction SilentlyContinue
+    }
+}
+
+if ($Mode -eq 'full') {
+    foreach ($name in @($failed | Where-Object { $_ -in $retryableFullTests })) {
+        $test = $tests | Where-Object { (Split-Path -Leaf $_) -eq $name } | Select-Object -First 1
+        Write-Host "`nRETRY: $name en proceso limpio tras fallo transitorio" -ForegroundColor Yellow
+        & $python -u $test
+        if ($LASTEXITCODE -eq 0) {
+            $failed = @($failed | Where-Object { $_ -ne $name })
+            Write-Host "RETRY PASS: $name" -ForegroundColor Green
+        } else {
+            Write-Host "RETRY FAIL: $name (se conserva bloqueo)" -ForegroundColor Red
+        }
     }
 }
 

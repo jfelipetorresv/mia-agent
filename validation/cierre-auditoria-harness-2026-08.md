@@ -17,8 +17,8 @@ significa que existe evidencia útil, pero no autoriza declarar terminado el fre
 | EF-4 contexto progresivo | Cumplido | Índice, máximo 5 cuerpos, borradores no inyectados, presupuesto de playbooks | — |
 | Migraciones reejecutables | Cumplido para fallos hallados | Vocabularios acumulativos en 010/027/040/049; suites de Dreams/correo verdes | — |
 | Flujo jurídico núcleo | Cumplido | HITL, RLS, pipeline; motor argumental 66/66; prompt builder 51/51 | — |
-| Seguridad frontend | Cumplido | Next 16.3.0, React 19.2.8, build de 14 rutas y `npm audit` con 0 vulnerabilidades | 11 avisos de lint heredados, no bloqueantes |
-| Regresión integral | Cumplido | 142 suites recorridas; seis contratos desactualizados reparados y repetidos verdes; quick verde | La pasada completa tarda ~10,5 min; optimizar el runner es evolución |
+| Seguridad frontend | Cumplido | Next 16.3.0, React 19.2.8, lint limpio, build de 14 rutas y `npm audit` con 0 vulnerabilidades | — |
+| Regresión integral | Cumplido | 142 suites verdes en 623 s; reintento único y acotado para el pool transitorio de SAT-Graph | La pasada completa tarda ~10,5 min; optimizar el runner es evolución |
 
 ## Decisiones de alto impacto cerradas
 

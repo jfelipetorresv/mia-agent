@@ -2,8 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { useReducedMotion } from "./motion";
 import { cn } from "@/lib/utils";
 
 type BrandSize = "sm" | "md" | "lg" | "xl";
@@ -23,10 +21,6 @@ const ICON_SIZE: Record<BrandSize, { box: string; text: string; subtitle: string
 export interface BrandMarkProps {
   /** Tamaño del logotipo. Default `md`. */
   size?: BrandSize;
-  /** Halo que respira suavemente. */
-  breathing?: boolean;
-  /** Resplandor plateado. */
-  glow?: boolean;
   /** Enlace a ruta. */
   href?: string;
   className?: string;
@@ -34,8 +28,6 @@ export interface BrandMarkProps {
 
 export default function BrandMark({
   size = "md",
-  breathing = false,
-  glow = false,
   href,
   className,
 }: BrandMarkProps) {

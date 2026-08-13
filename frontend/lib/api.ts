@@ -43,7 +43,10 @@ export function clearToken(): void {
 function handleUnauthorized(): void {
   clearToken();
   if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-    window.location.href = "/login";
+    // Este módulo no puede usar el hook de Next Router; el cierre de sesión debe
+    // reiniciar el estado de toda la aplicación antes de cargar la ruta pública.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/login");
   }
 }
 

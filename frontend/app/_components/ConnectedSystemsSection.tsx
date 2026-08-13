@@ -66,7 +66,7 @@ function SystemCard({
   useEffect(() => {
     setForm(emptyForm(system.fields));
     setMsg("");
-  }, [system.slug, system.enabled, system.configured]);
+  }, [system.slug, system.enabled, system.configured, system.fields]);
 
   function buildEnableBody(): { env: Record<string, string>; secrets: Record<string, string> } {
     const env: Record<string, string> = {};

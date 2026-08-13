@@ -7,6 +7,10 @@
 
 ## Verificación y gates
 
+0. **Un fallo de infraestructura transitorio no se silencia: se reproduce, se acota y, si
+   persiste, se reintenta una sola vez en un proceso limpio.** La segunda falla debe seguir
+   bloqueando. SAT-Graph dejó esta regla al cerrar/reabrir su pool en Windows.
+
 1. **Un gate en verde que no prueba nada es peor que no tenerlo.** Afirma una seguridad que no
    existe y toda la línea base se apoya en él. Tres gates de este repo estuvieron verdes sin probar
    nada en una sola semana (sesión 50); uno llevaba tres días roto sin que constara. Antes de confiar

@@ -95,7 +95,6 @@ export default function ConexionesSection({
     apiGet<ObsidianStatus>("/api/obsidian/status").then(setObsidian).catch(() => setObsidian(null));
     apiGet<SpeechStatus>("/api/speech/status").then(setSpeech).catch(() => setSpeech(null));
     refreshNbStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // CP-NLM: mientras NotebookLM instala o conecta, refresca solo cada 2.5 s.
@@ -103,7 +102,6 @@ export default function ConexionesSection({
     if (nbStatus?.estado !== "instalando" && nbStatus?.estado !== "conectando") return;
     const t = setInterval(refreshNbStatus, 2500);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nbStatus?.estado]);
 
   // Mientras el componente de voz descarga, la tarjeta se refresca sola cada 2 s

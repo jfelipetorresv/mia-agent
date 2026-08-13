@@ -90,7 +90,7 @@ export default function WelcomeShell({
       <div className={cn("relative z-10 flex min-h-screen flex-col items-center px-6 py-10 sm:py-12", className)}>
         {!hideBrand && (
           <header className="shrink-0">
-            <BrandMark size="md" breathing glow />
+            <BrandMark size="md" />
           </header>
         )}
 
