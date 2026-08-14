@@ -74,6 +74,9 @@ LITELLM_SPEC = PACKAGING / "mia-litellm.spec"
 BUILD_INSTALLER = PACKAGING / "build_installer.ps1"
 ORCH_INSTALLER = PACKAGING / "orchestration.installer.json"
 TAURI_CONF = ROOT / "desktop" / "src-tauri" / "tauri.conf.json"
+CARGO_TOML = ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+FRONTEND_PACKAGE = ROOT / "frontend" / "package.json"
+DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 
 _results: list[tuple[str, bool]] = []
 
@@ -221,6 +224,28 @@ def main() -> int:
         "build_installer.ps1 recompila los 3 payloads (backend/litellm/frontend)",
         all(s in bi for s in ("build_backend.ps1", "build_litellm.ps1", "build_frontend.ps1")),
     )
+
+    # --- 6 · identidad reproducible del release ----------------------------
+    print("\n6 · versión única, checkout limpio y manifiesto verificable")
+    versions = [str(conf.get("version", ""))]
+    for package_path in (FRONTEND_PACKAGE, DESKTOP_PACKAGE):
+        try:
+            versions.append(str(json.loads(package_path.read_text(encoding="utf-8"))["version"]))
+        except Exception:
+            versions.append("")
+    cargo_raw = CARGO_TOML.read_text(encoding="utf-8") if CARGO_TOML.is_file() else ""
+    cargo_match = re.search(r'^version\s*=\s*"([^"]+)"', cargo_raw, re.MULTILINE)
+    versions.append(cargo_match.group(1) if cargo_match else "")
+    check("tauri/frontend/desktop/cargo declaran la misma versión no vacía",
+          bool(versions[0]) and len(set(versions)) == 1)
+    check("el release rechaza un checkout Git sucio", "status --porcelain" in bi)
+    check("el instalador esperado se resuelve por la versión exacta", "ExpectedSetupName" in bi)
+    check("un instalador viejo no puede pasar como producto de la corrida actual",
+          "BuildStartedUtc" in bi and "LastWriteTimeUtc" in bi)
+    check("el manifiesto registra commit, SHA-256, tamaño y payloads",
+          all(token in bi for token in ("SourceCommit", "setupSha", "payloads", "mia-release-manifest.json")))
+    check("reutilizar payloads queda marcado como no autorizable para release final",
+          "reused_payloads" in bi and "NO es autorizable" in bi)
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

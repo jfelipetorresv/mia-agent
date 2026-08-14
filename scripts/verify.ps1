@@ -1,13 +1,16 @@
 param(
     [ValidateSet('quick', 'full')]
     [string]$Mode = 'quick',
-    [int]$TimeoutSeconds = 0
+    [int]$TimeoutSeconds = 0,
+    [string]$ResultPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $catalog = Get-Content -Raw -LiteralPath (Join-Path $root 'config\verification.json') | ConvertFrom-Json
-$python = Join-Path $root '.venv\Scripts\python.exe'
+$python = if ($env:MIA_VERIFY_PYTHON) { $env:MIA_VERIFY_PYTHON } else {
+    Join-Path $root '.venv\Scripts\python.exe'
+}
 $env:PYTHONPATH = Join-Path $root 'backend'
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
@@ -48,6 +51,7 @@ if ($missing.Count -gt 0) {
 
 $failed = @()
 $timedOut = @()
+$results = @()
 $started = Get-Date
 
 # SAT-Graph abre/cierra su propio pool para validar aislamiento. En Windows, tras una
@@ -67,6 +71,8 @@ function Stop-ProcessTree([int]$ProcessId) {
 
 foreach ($test in $tests) {
     $name = Split-Path -Leaf $test
+    $testStarted = Get-Date
+    $status = 'passed'
     Write-Host "`n=== $name (timeout $timeout s) ===" -ForegroundColor Cyan
     $stdout = Join-Path ([System.IO.Path]::GetTempPath()) ("mia-verify-" + [guid]::NewGuid() + '.out.log')
     $stderr = Join-Path ([System.IO.Path]::GetTempPath()) ("mia-verify-" + [guid]::NewGuid() + '.err.log')
@@ -88,6 +94,7 @@ foreach ($test in $tests) {
             Stop-ProcessTree -ProcessId $proc.Id
             $proc.WaitForExit()
             $timedOut += $name
+            $status = 'timeout'
             Write-Host "TIMEOUT: $name" -ForegroundColor Red
         } else {
             $proc.WaitForExit()
@@ -97,10 +104,16 @@ foreach ($test in $tests) {
             if ($exitCode -ne 0) {
                 Get-Content -Encoding UTF8 -LiteralPath $stderr -ErrorAction SilentlyContinue | Write-Host
                 $failed += $name
+                $status = 'failed'
                 Write-Host "EXIT $exitCode`: $name" -ForegroundColor Red
             }
         }
     } finally {
+        $results += [pscustomobject]@{
+            name = $name
+            status = $status
+            duration_seconds = [Math]::Round(((Get-Date) - $testStarted).TotalSeconds, 3)
+        }
         Remove-Item -Force -LiteralPath $stdout,$stderr -ErrorAction SilentlyContinue
     }
 }
@@ -112,6 +125,11 @@ if ($Mode -eq 'full') {
         & $python -u $test
         if ($LASTEXITCODE -eq 0) {
             $failed = @($failed | Where-Object { $_ -ne $name })
+            $results = @($results | ForEach-Object {
+                if ($_.name -eq $name) {
+                    [pscustomobject]@{ name = $_.name; status = 'passed_after_retry'; duration_seconds = $_.duration_seconds }
+                } else { $_ }
+            })
             Write-Host "RETRY PASS: $name" -ForegroundColor Green
         } else {
             Write-Host "RETRY FAIL: $name (se conserva bloqueo)" -ForegroundColor Red
@@ -120,6 +138,27 @@ if ($Mode -eq 'full') {
 }
 
 $elapsed = [Math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+$verificationStatus = if ($failed.Count -gt 0 -or $timedOut.Count -gt 0) { 'failed' } else { 'passed' }
+if ($ResultPath) {
+    $resolvedResult = if ([System.IO.Path]::IsPathRooted($ResultPath)) {
+        $ResultPath
+    } else {
+        Join-Path $root $ResultPath
+    }
+    $resultDir = Split-Path -Parent $resolvedResult
+    if ($resultDir) { New-Item -ItemType Directory -Force -Path $resultDir | Out-Null }
+    [pscustomobject]@{
+        schema_version = 1
+        mode = $Mode
+        status = $verificationStatus
+        started_at = $started.ToUniversalTime().ToString('o')
+        duration_seconds = $elapsed
+        suite_count = $tests.Count
+        failed = @($failed)
+        timed_out = @($timedOut)
+        suites = @($results)
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resolvedResult -Encoding utf8
+}
 if ($failed.Count -gt 0 -or $timedOut.Count -gt 0) {
     Write-Host "`nVERIFICACION ROJA | modo=$Mode | $elapsed s" -ForegroundColor Red
     if ($failed.Count -gt 0) { Write-Host "Fallaron: $($failed -join ', ')" }

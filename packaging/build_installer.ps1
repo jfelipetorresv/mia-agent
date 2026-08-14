@@ -42,8 +42,31 @@ $PackagingDir = $PSScriptRoot
 $RepoRoot     = Split-Path -Parent $PackagingDir
 $DistDir      = Join-Path $PackagingDir 'dist'
 $DesktopDir   = Join-Path $RepoRoot 'desktop'
+$BuildStartedUtc = [DateTime]::UtcNow
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
+
+# Un release no puede mezclar versiones ni salir de fuentes modificadas. Los
+# artefactos de build están ignorados; cualquier entrada de status restante es
+# código/documentación que todavía no pertenece a un commit reproducible.
+$TauriConfig = Get-Content -Raw -LiteralPath (Join-Path $DesktopDir 'src-tauri\tauri.conf.json') | ConvertFrom-Json
+$FrontendPackage = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'frontend\package.json') | ConvertFrom-Json
+$DesktopPackage = Get-Content -Raw -LiteralPath (Join-Path $DesktopDir 'package.json') | ConvertFrom-Json
+$CargoVersionLine = Select-String -LiteralPath (Join-Path $DesktopDir 'src-tauri\Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+if (-not $CargoVersionLine) { throw 'Cargo.toml no declara version del paquete.' }
+$CargoVersion = $CargoVersionLine.Matches[0].Groups[1].Value
+$Versions = @([string]$TauriConfig.version, [string]$FrontendPackage.version, [string]$DesktopPackage.version, [string]$CargoVersion)
+if (@($Versions | Select-Object -Unique).Count -ne 1) {
+    throw "Versiones incoherentes (tauri/frontend/desktop/cargo): $($Versions -join ' / ')"
+}
+$AppVersion = $Versions[0]
+$SourceStatus = @(& git -C $RepoRoot status --porcelain --untracked-files=all)
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo determinar el estado Git del release.' }
+if ($SourceStatus.Count -gt 0) {
+    throw "Release rechazado: el checkout no esta limpio.`n$($SourceStatus -join "`n")"
+}
+$SourceCommit = (& git -C $RepoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $SourceCommit) { throw 'No se pudo determinar el commit del release.' }
 
 # --------------------------------------------------------------------------
 # 0. Autodeteccion del Postgres portable (con pgvector) si no se paso -PgSource.
@@ -170,13 +193,43 @@ try {
 # 5. Reportar el instalador producido.
 # --------------------------------------------------------------------------
 $NsisDir = Join-Path $DesktopDir 'src-tauri\target\release\bundle\nsis'
-$setup = Get-ChildItem -Path $NsisDir -Filter '*-setup.exe' -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$ExpectedSetupName = "Mia_${AppVersion}_x64-setup.exe"
+$setup = Get-Item -LiteralPath (Join-Path $NsisDir $ExpectedSetupName) -ErrorAction SilentlyContinue
 if ($setup) {
+    if ($setup.LastWriteTimeUtc -lt $BuildStartedUtc.AddSeconds(-5)) {
+        throw "El instalador esperado existe pero es anterior a esta corrida: $($setup.FullName)"
+    }
     $sizeMB = [math]::Round($setup.Length / 1MB, 1)
+    $setupSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $setup.FullName).Hash.ToLowerInvariant()
+    $payloads = [ordered]@{}
+    foreach ($payloadName in @('mia-backend', 'mia-litellm', 'mia-frontend', 'pgsql')) {
+        $payloadPath = Join-Path $DistDir $payloadName
+        $payloadFiles = @(Get-ChildItem -LiteralPath $payloadPath -Recurse -File)
+        $payloads[$payloadName] = [ordered]@{
+            files = $payloadFiles.Count
+            bytes = [long](($payloadFiles | Measure-Object -Property Length -Sum).Sum)
+        }
+    }
+    $manifest = [ordered]@{
+        schema_version = 1
+        product = 'Mia'
+        version = $AppVersion
+        commit = $SourceCommit
+        created_at_utc = [DateTime]::UtcNow.ToString('o')
+        reused_payloads = [bool]$SkipPayloads
+        installer = [ordered]@{ file = $setup.Name; bytes = $setup.Length; sha256 = $setupSha }
+        payloads = $payloads
+    }
+    $manifestPath = Join-Path $NsisDir 'mia-release-manifest.json'
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
     Write-Step "INSTALADOR LISTO"
     Write-Host "  $($setup.FullName)" -ForegroundColor Green
     Write-Host "  $sizeMB MB" -ForegroundColor Green
+    Write-Host "  SHA-256 $setupSha" -ForegroundColor Green
+    Write-Host "  Manifiesto $manifestPath" -ForegroundColor Green
+    if ($SkipPayloads) {
+        Write-Host '  ADVERTENCIA: reutilizo payloads; este artefacto NO es autorizable como release final.' -ForegroundColor Yellow
+    }
 } else {
-    throw "El bundler termino sin error pero no se encontro *-setup.exe en $NsisDir"
+    throw "El bundler termino sin error pero no produjo el nombre/version esperados: $ExpectedSetupName"
 }

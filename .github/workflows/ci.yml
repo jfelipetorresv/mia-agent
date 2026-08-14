@@ -26,6 +26,20 @@ jobs:
           foreach ($path in $catalog.quick) { if (-not (Test-Path $path)) { throw "Prueba catalogada ausente: $path" } }
           foreach ($path in $catalog.critical_contracts) { if (-not (Test-Path $path)) { throw "Contrato crítico ausente: $path" } }
           if (-not $catalog.full_glob) { throw 'Falta full_glob en el catálogo' }
+      - name: Install backend runtime for executable gates
+        shell: pwsh
+        run: python -m pip install ./backend
+      - name: Execute quick verification catalog
+        shell: pwsh
+        env:
+          MIA_VERIFY_PYTHON: python
+        run: ./scripts/verify.ps1 -Mode quick -ResultPath validation/ci-quick.json
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mia-ci-quick-verification
+          path: validation/ci-quick.json
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -37,17 +51,68 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: npx tsc --noEmit
 
-  legal-graph-contract:
+  desktop-contract:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Guard the declared legal graph contract
-        shell: pwsh
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check desktop shell
+        working-directory: desktop/src-tauri
+        run: cargo check --locked
+
+  critical-legal-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: mia
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: mia_ci_super
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mia"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PYTHONPATH: backend
+      PG_HOST: 127.0.0.1
+      PG_PORT: "55432"
+      PG_DB: mia
+      PG_PASSWORD: mia_ci_super
+      PG_APP_PASSWORD: mia_ci_app
+      DATABASE_URL: postgresql://mia_app:mia_ci_app@127.0.0.1:55432/mia
+      JWT_SECRET: mia-ci-not-a-production-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend runtime
+        run: python -m pip install ./backend
+      - name: Bootstrap schema and migration ledger
+        shell: bash
         run: |
-          $graph = Get-Content -Raw backend/mia/agents/graph.py
-          $test = Get-Content -Raw execution/test_hitl_flow.py
-          if ($graph -notmatch 'g\.add_edge\("draft", "verificador_citas"\)') { throw 'Falta draft -> verificador_citas' }
-          if ($graph -notmatch 'g\.add_edge\("verificador_citas", "hitl_checkpoint"\)') { throw 'Falta verificador_citas -> HITL' }
-          if ($test -notmatch '"draft", "verificador_citas"') { throw 'El gate HITL no refleja el grafo real' }
+          python execution/init_db.py
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from mia.setup.db_bootstrap import apply_migrations
+          migrations = sorted(Path('backend/mia/db/migrations').glob('*.sql'))
+          apply_migrations(os.environ['PG_HOST'], os.environ['PG_PORT'], os.environ['PG_DB'], os.environ['PG_PASSWORD'], migrations)
+          PY
+      - name: Execute critical RLS and HITL contracts
+        run: |
+          python execution/test_rls.py
+          python execution/test_hitl_flow.py
