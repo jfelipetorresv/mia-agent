@@ -14,7 +14,10 @@
     "execution/test_document_derivation.py",
     "execution/test_matter_jurisdictions.py",
     "execution/test_p0_legal_ledger.py",
-    "execution/test_durable_learning.py"
+    "execution/test_durable_learning.py",
+    "execution/test_document_derivation.py",
+    "execution/test_cors_contract.py",
+    "execution/test_optional_capabilities.py"
   ],
   "full_glob": "execution/test_*.py",
   "full_requires_database": true,

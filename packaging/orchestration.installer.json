@@ -52,7 +52,8 @@
     "cmd": ["${exe_dir}/mia-backend/mia-backend.exe"],
     "cwd": "${exe_dir}/mia-backend",
     "env": {
-      "MIA_PG_BIN": "${exe_dir}/pgsql/bin"
+      "MIA_PG_BIN": "${exe_dir}/pgsql/bin",
+      "MIA_BUNDLE_MANIFEST": "${exe_dir}/mia-backend/mia-component-manifest.json"
     },
     "health_url": "http://127.0.0.1:8000/health",
     "port": 8000

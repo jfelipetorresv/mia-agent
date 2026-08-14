@@ -1076,7 +1076,8 @@ def _capped_kwargs(kwargs: dict) -> dict:
     return {**kwargs, "max_tokens": EVAL_MAX_OUTPUT_TOKENS}
 
 
-def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None) -> Any:
+def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None,
+                    quality_escalation: Any = None) -> Any:
     """UN intento cobrable de `agent.llm`, gobernado por el guardián ACTIVO (si lo hay).
 
     Este es el punto donde se gasta el dinero de verdad: `_call_with_retries` lo llama una vez
@@ -1088,7 +1089,9 @@ def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None) -> 
     guard = _active_guard.get()
     if guard is None:
         # Sin guardián en el contexto: producción intacta. El parche es global, el efecto no.
-        return _original_invoke(client, alias, kwargs, task)
+        if quality_escalation is None:
+            return _original_invoke(client, alias, kwargs, task)
+        return _original_invoke(client, alias, kwargs, task, quality_escalation)
 
     # R1 — la llamada se ACOTA y se reserva con la cota superior de lo que puede costar ya
     # acotada. Estimar (lo de antes) dejaba hasta 64 000 tokens de salida sin reservar.
@@ -1102,7 +1105,10 @@ def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None) -> 
 
     started = time.perf_counter()
     try:
-        resp = _original_invoke(client, alias, kwargs, task)
+        if quality_escalation is None:
+            resp = _original_invoke(client, alias, kwargs, task)
+        else:
+            resp = _original_invoke(client, alias, kwargs, task, quality_escalation)
     except BaseException as exc:
         # A2 — INCIERTO se cobra (invariante D), pero NO-ENVIADO se devuelve.
         # Una corrida cuyas 10 llamadas murieron ANTES de conectar cobró USD 0.5785 sin gastar

@@ -5,11 +5,9 @@ bundle onedir (mia-backend.spec): no requiere -m ni PYTHONPATH externo, porque
 `pathex=[backend/]` en el .spec hace que el paquete `mia` se recolecte dentro
 del bundle igual que en desarrollo.
 
-Este entry es prácticamente idéntico al usado en el spike de Fase 4
-(spike-fase4/entry.py, probado y viable: onedir de 459 MB, /health responde sin
-Python instalado). Los tres imports "innecesarios" de abajo NO son adorno:
-son la única razón por la que el bundle resultante funciona. Ver cada
-comentario para el porqué exacto.
+Este entry conserva los imports imprescindibles para descubrir la app y
+LiteLLM. OCR y voz se cargan solo cuando se usan: el perfil base no debe pagar
+su tamaño ni fallar porque esos componentes opcionales no estén instalados.
 """
 from __future__ import annotations
 
@@ -54,21 +52,6 @@ import mia.api.main  # noqa: F401  (fuerza el bundling; el import real ocurre v�
 # .spec — ver mia-backend.spec.
 import litellm  # noqa: F401
 
-# Ídem para el OCR local: rapidocr_onnxruntime degrada a None EN SILENCIO si
-# faltan sus modelos .onnx empaquetados (no lanza excepción, solo deshabilita
-# el OCR sin avisar). Los modelos se recolectan con collect_all('rapidocr_onnxruntime')
-# en el .spec.
-# LÍMITE HONESTO de este import (fix Fase 1 · capa 2 · m4): este import SOLO
-# verifica que el paquete Python y sus binarios onnxruntime están presentes en
-# el bundle. NO instancia el motor de OCR, así que NO valida que los archivos
-# .onnx concretos (los modelos de detección/reconocimiento) se hayan copiado
-# bien, estén completos, o carguen sin error — eso solo se sabe al INSTANCIAR
-# el motor (primer uso real). Ese smoke real de instanciación vive, cuando es
-# viable, en build_backend.ps1 (paso opcional post-build); si no es viable
-# ahí, queda como TODO explícito para el E2E de Fase 4 — no lo prometemos
-# cubierto aquí.
-import rapidocr_onnxruntime  # noqa: F401
-
 from mia.api.run import main
 
 
@@ -98,13 +81,25 @@ def _ocr_smoke_test() -> int:
     return 0
 
 
+def _voice_smoke_test() -> int:
+    """Verifica que los binarios opcionales de voz cargan desde el bundle."""
+    try:
+        import av  # noqa: F401
+        import sherpa_onnx  # noqa: F401
+    except Exception as exc:  # noqa: BLE001 - smoke debe reportar cualquier falla nativa
+        print(f"VOICE_SMOKE_TEST: FAIL ({exc!r})")
+        return 1
+    print("VOICE_SMOKE_TEST: OK")
+    return 0
+
+
 if __name__ == "__main__":
     import sys
 
     # --first-run (bootstrap de primer arranque, F2 · sesión 43): la cáscara lo
     # invoca ANTES de arrancar uvicorn normalmente, en una máquina limpia, para
     # dejar Postgres/.env/migraciones/checkpointer listos. Los imports pesados de
-    # arriba (mia.api.main, litellm, rapidocr) ya ocurrieron para cuando llegamos
+    # arriba (mia.api.main y litellm) ya ocurrieron para cuando llegamos
     # aquí — no dependen de que la base de datos exista, así que no hay que
     # reordenarlos ni duplicar el entry point. Sin esta bandera, el arranque es
     # IDÉNTICO al de siempre.
@@ -122,4 +117,6 @@ if __name__ == "__main__":
 
     if "--ocr-smoke-test" in sys.argv:
         sys.exit(_ocr_smoke_test())
+    if "--voice-smoke-test" in sys.argv:
+        sys.exit(_voice_smoke_test())
     main()

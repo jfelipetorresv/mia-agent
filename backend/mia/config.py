@@ -1,5 +1,8 @@
 """Mia · config — carga .env y expone la configuración del backend."""
 from __future__ import annotations
+
+import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -29,6 +32,50 @@ elif getattr(sys, "frozen", False):
 else:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
+
+
+def optional_capabilities() -> dict[str, dict[str, object]]:
+    """Capacidades pesadas presentes en ESTA distribución, sin importarlas.
+
+    El manifiesto del bundle es declarativo, pero nunca manda sobre la realidad:
+    si falta el módulo, ``available`` queda False. En desarrollo, donde no hay
+    manifiesto, la detección por ``find_spec`` sigue siendo honesta.
+    """
+    manifest_path = os.getenv("MIA_BUNDLE_MANIFEST", "").strip()
+    manifest: dict = {}
+    manifest_valid = False
+    if manifest_path:
+        try:
+            raw = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+            manifest = raw if isinstance(raw, dict) else {}
+            manifest_valid = isinstance(raw, dict)
+        except (OSError, ValueError, TypeError):
+            manifest = {}
+    declared = manifest.get("capabilities") if isinstance(manifest.get("capabilities"), dict) else {}
+
+    def capability(name: str, modules: tuple[str, ...], absent: str) -> dict[str, object]:
+        installed = all(importlib.util.find_spec(module) is not None for module in modules)
+        # En desarrollo (sin manifiesto) detectamos el entorno. En un bundle,
+        # un manifiesto ausente/corrupto nunca habilita por accidente algo que
+        # simplemente quedo arrastrado por el empaquetador.
+        expected = bool(declared.get(name, installed)) if not manifest_path or manifest_valid else False
+        available = installed and expected
+        return {
+            "available": available,
+            "included": expected,
+            "reason": "" if available else absent,
+        }
+
+    return {
+        "ocr": capability(
+            "ocr", ("rapidocr_onnxruntime",),
+            "La lectura óptica no está incluida; los PDF con texto siguen funcionando.",
+        ),
+        "voice": capability(
+            "voice", ("sherpa_onnx", "av"),
+            "El componente de voz no está incluido en esta instalación.",
+        ),
+    }
 
 PG_DB = os.getenv("PG_DB", "mia")
 

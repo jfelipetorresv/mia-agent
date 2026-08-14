@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .. import config, embeddings
+from ..agent import llm as llm_mod
 from ..agent import prompt_builder
 from ..agents import verification
 from ..agents.verification import ABSTENTION_PHRASES  # M1: mudado a verification (regla 6)
@@ -567,12 +568,16 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         # `turn_usage`.
         scope_token = usage_metrics.set_usage_scope(tenant_id, matter_id, source="eval")
         try:
-            async with open_checkpointer() as cp:
-                graph = build_matter_graph(cp)
-                # astream hasta el interrupt de HITL: el borrador y la verificación ya están.
-                async for _ in graph.astream(inp, cfg, stream_mode="updates"):
-                    pass
-                st = await graph.aget_state(cfg)
+            # El runtime HTTP abre este recolector alrededor de cada turno. El banco debe
+            # reproducir la misma frontera: además de evitar pagar otra vez un CLI ya agotado
+            # en el nodo siguiente, conserva la evidencia exacta de cada salto de motor.
+            with llm_mod.recolectar_cambios_de_motor() as model_fallbacks:
+                async with open_checkpointer() as cp:
+                    graph = build_matter_graph(cp)
+                    # astream hasta el interrupt de HITL: borrador y verificación ya existen.
+                    async for _ in graph.astream(inp, cfg, stream_mode="updates"):
+                        pass
+                    st = await graph.aget_state(cfg)
         finally:
             usage_metrics.reset_usage_scope(scope_token)
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -618,6 +623,9 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         # COSTE del caso (Frente A): llamadas, tokens, USD y segundos dentro del modelo. Con
         # políticas gratis (cli-*, motor local) el coste es 0 pero los tokens SÍ se cuentan.
         "usage": case_usage.as_dict() if case_usage is not None else None,
+        # Ruta de fallback observable del turno. Una lista vacía significa que no hubo
+        # salto; nunca se infiere "sin fallback" a partir del alias final solamente.
+        "model_fallbacks": list(model_fallbacks),
     }
     # TEXTO COMPLETO opt-in (F1 · paquete de decisión): el preview de 1200 sirve para
     # depurar, no para que un abogado JUZGUE la calidad jurídica de un borrador de ~15k.
@@ -695,7 +703,8 @@ async def usage_by_node(tenant_id: str) -> list[dict]:
 async def run_case_n(tenant_id: str, case: GoldenCase, n: int, *,
                      tenant_allow_real: Optional[bool] = None,
                      substantive_judge: Optional[callable] = None,
-                     guard: Optional[spend_guard.EvalSpendGuard] = None) -> list[dict]:
+                     guard: Optional[spend_guard.EvalSpendGuard] = None,
+                     eval_provider: str | None = None) -> list[dict]:
     """Corre el MISMO caso de oro `n` veces SEGUIDAS y devuelve la lista de resultados.
 
     Existe para los riesgos que solo se ven a veces (p. ej. la fuga de jurisdicción
@@ -725,7 +734,8 @@ async def run_case_n(tenant_id: str, case: GoldenCase, n: int, *,
     policy_token = llm_mod.set_model_policy(await llm_mod.model_policy_for(tenant_id))
     suite_scope = usage_metrics.set_usage_scope(tenant_id, source="eval")
     try:
-        with spend_guard.install(), guard.activate():
+        with (llm_mod.eval_provider_override(eval_provider),
+              spend_guard.install(), guard.activate()):
             for _ in range(n):
                 try:
                     results.append(await run_case(tenant_id, case, tenant_allow_real=allow,
@@ -840,7 +850,8 @@ def jurisdiction_leak_rate(results: list[dict]) -> dict:
 # ── correr una SUITE + reporte ────────────────────────────────────────────────
 async def run_suite(tenant_id: str, cases: Optional[list[GoldenCase]] = None,
                     *, run_id: str, substantive_judge: Optional[callable] = None,
-                    guard: Optional[spend_guard.EvalSpendGuard] = None) -> dict:
+                    guard: Optional[spend_guard.EvalSpendGuard] = None,
+                    eval_provider: str | None = None) -> dict:
     """Corre una lista de casos (por defecto los canónicos sintéticos) y arma el reporte.
     Resuelve la política de datos reales UNA vez. `run_id` lo fija el llamador (con fecha).
     `substantive_judge` (opcional) se pasa a los casos con rúbrica (juez advisory anonimizado).
@@ -872,7 +883,8 @@ async def run_suite(tenant_id: str, cases: Optional[list[GoldenCase]] = None,
     # además el suyo, con el matter_id del caso.
     suite_scope = usage_metrics.set_usage_scope(tenant_id, source="eval")
     try:
-        with spend_guard.install(), guard.activate():
+        with (llm_mod.eval_provider_override(eval_provider),
+              spend_guard.install(), guard.activate()):
             for case in cases:
                 try:
                     results.append(await run_case(tenant_id, case, tenant_allow_real=allow_real,

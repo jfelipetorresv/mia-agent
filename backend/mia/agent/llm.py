@@ -357,6 +357,32 @@ def _default_policy() -> str:
 
 _model_policy: ContextVar[str | None] = ContextVar("mia_model_policy", default=None)
 
+# Ruta lateral del banco: jamás se configura por tenant ni aparece en VALID_POLICIES.
+# Solo el harness puede abrir este ContextVar explícitamente y siempre se restaura por token.
+_EVAL_CODEX_ALIAS = "cli-codex-eval"
+_eval_provider_override: ContextVar[str | None] = ContextVar(
+    "mia_eval_provider_override", default=None)
+_eval_provider_call_budget: ContextVar[dict[str, int] | None] = ContextVar(
+    "mia_eval_provider_call_budget", default=None)
+
+
+@contextmanager
+def eval_provider_override(provider: str | None, *, max_calls: int = 64) -> Iterator[None]:
+    """Fuerza un proveedor durante un eval; fail-closed y fuera de rutas productivas."""
+    normalized = (provider or "").strip().lower()
+    if normalized not in ("", "codex"):
+        raise ValueError("El único override eval soportado es 'codex'.")
+    if max_calls < 1:
+        raise ValueError("max_calls debe ser positivo.")
+    token = _eval_provider_override.set(normalized or None)
+    budget_token = _eval_provider_call_budget.set(
+        {"used": 0, "max": int(max_calls)} if normalized else None)
+    try:
+        yield
+    finally:
+        _eval_provider_call_budget.reset(budget_token)
+        _eval_provider_override.reset(token)
+
 
 def set_model_policy(policy: str | None) -> Token:
     """Fija la política en el contexto actual (middleware por request / cron por job).
@@ -674,6 +700,10 @@ def resolve_fallback_chain(task: str | None, model: str | None = None,
     - `quality_escalation` no altera por sí sola la cadena; habilita el esfuerzo Max solo
       durante una invocación explícitamente excepcional de la política adaptativa.
     """
+    # El override del banco gana incluso sobre `model=` y tareas bloqueadas: mezclar un
+    # segundo motor invalidaría el brazo. Cadena de un alias = sin fallback silencioso.
+    if _eval_provider_override.get() == "codex":
+        return [_EVAL_CODEX_ALIAS]
     chains = _active_chains()
     if task in _LOCKED_TASKS:
         locked = chains[task]
@@ -827,9 +857,10 @@ def call_llm(
             # atravesar la pila de invocación.
             if escalation == QUALITY_ESCALATION_EXCEPTIONAL:
                 retry_kwargs["quality_escalation"] = escalation
+            max_retries = 0 if _eval_provider_override.get() else MAX_RETRIES
             resp = _call_with_retries(
                 client, {**base_kwargs, "messages": alias_messages, "model": alias},
-                MAX_RETRIES, task=task, alias=alias, next_alias=next_alias, **retry_kwargs,
+                max_retries, task=task, alias=alias, next_alias=next_alias, **retry_kwargs,
             )
             # Metadatos de decisión para la telemetría. No alteran la respuesta pública
             # OpenAI-compatible; sí impiden que el panel confunda un alias de ruta con el
@@ -907,6 +938,22 @@ def _invoke(client: Any, alias: str, kwargs: dict[str, Any], task: str | None = 
     """Despacha UNA llamada según el alias: los "cli-*" van al CLI de la suscripción
     (agent/subscription_llm); el resto, al proxy LiteLLM (cliente OpenAI). Los errores de
     ambos caminos pasan por el MISMO error_classifier/should_fallback aguas arriba."""
+    if alias == _EVAL_CODEX_ALIAS:
+        if _eval_provider_override.get() != "codex":
+            raise RuntimeError("cli-codex-eval solo puede ejecutarse dentro del harness eval.")
+        from ..eval.codex_cli_adapter import call_graph_cli
+
+        budget = _eval_provider_call_budget.get()
+        if budget is None or budget["used"] >= budget["max"]:
+            raise RuntimeError("tope_de_llamadas_codex_eval_alcanzado")
+        budget["used"] += 1
+
+        if kwargs.get("tools"):
+            logger.warning("el brazo Codex eval no admite tools; se ignoran en esta llamada")
+        return call_graph_cli(
+            kwargs["messages"], timeout=int(_cli_timeout(task)),
+            reasoning_effort="max",
+        )
     if alias.startswith("cli-"):
         from . import subscription_llm  # import diferido (mismo criterio que _get_client)
 

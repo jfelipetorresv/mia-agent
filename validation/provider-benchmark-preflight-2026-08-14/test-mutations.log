@@ -1,0 +1,102 @@
+=== test_eval_scoring_mutacion — el banco PUEDE FALLAR (Frente B) ===
+
+-- FAMILIA 1 · cita SIN ancla al expediente --
+  [OK]   F1: la cita suelta se caza como SIN RESPALDO (sin_respaldo=1, respaldadas=0)
+  [OK]   F1: el turno NO pasa (`ok` en False, bandera citas_sin_respaldo)
+  [OK]   F1 control: con ancla al documento CORRECTO la cita queda respaldada (respaldadas=1, sin_respaldo=0)
+  [OK]   F1 MUTADO: apagada la exigencia de ancla, la violación deja de verse (sin_respaldo=0, ok=True) → el check ROJO
+
+-- FAMILIA 2 · cita CON ancla al documento EQUIVOCADO --
+  [OK]   F2: el ancla apunta al doc 2 y la cita vive en el 3 → SIN RESPALDO (sin_respaldo=1, respaldadas=0)
+  [OK]   F2: el turno NO pasa
+  [OK]   F2 MUTADO: cotejo GLOBAL en vez de local → la cita mal anclada pasa como respaldada (respaldadas=1, ok=True) → ROJO
+
+-- FAMILIA 3 · forma ABREVIADA con sigla ('arts. N y ss. SIGLA') --
+  [OK]   F3: CON pack de jurisdicción, la forma abreviada se caza como SIN RESPALDO (citas=1, sin_respaldo=1)
+  [OK]   F3 MUTADO: sin el compositor de siglas la cita desaparece del radar (citas=0, ok=True) → el check ROJO
+  [OK]   F3 HALLAZGO documentado: SIN pack, la sigla CON PUNTOS no se detecta (citas=0) — ver el bloque HALLAZGO al final del archivo
+  [OK]   F3: la MISMA forma con sigla SIN puntos ('del CHT') sí la cazan los patrones base (citas=1, sin_respaldo=1)
+
+-- FAMILIA 4 · FUGA DE JURISDICCIÓN --
+  [OK]   F4: nombrar un ordenamiento concreto se caza como fuga (detalle=['artículo 1502 del Código Civil'])
+  [OK]   F4 control: razonar por INSTITUCIÓN no dispara la fuga (si disparara, la señal sería inútil: marcaría todo)
+  [OK]   F4 MUTADO: apagado el escáner, la fuga deja de verse (leak=False) → ROJO
+
+-- FAMILIA 5 · PROCEDENCIA FALSA (despacho vacío) --
+  [OK]   F5: con 0 documentos, la atribución al despacho se caza (frases=['conforme a la experiencia del despacho', 'en casos anteriores del despacho'])
+  [OK]   F5 control: con 3 documentos recuperados las mismas frases NO se marcan
+  [OK]   F5 MUTADO: sin léxico de procedencia, la atribución pasa (indebida=False) → el check ROJO
+
+-- FAMILIA 6 · borrador ausente/minúsculo · diagnóstico sin cierre --
+  [OK]   F6: borrador AUSENTE se caza (flags=['sin_borrador'])
+  [OK]   F6: borrador MINÚSCULO se caza (chars=21, flags=['borrador_minusculo'])
+  [OK]   F6: diagnóstico SIN bloque de cierre se caza (flags=['sin_cierre_diagnostico'])
+  [OK]   F6 control: borrador válido con cierre pasa (ok=True)
+  [OK]   F6 MUTADO: piso de borrador en 0 → el minúsculo pasa (flags=[]) → ROJO
+  [OK]   F6 MUTADO: parser de cierre siempre positivo → la ausencia deja de verse (flags=['citas_sin_respaldo']) → el check ROJO
+
+-- G · separación en TRES grupos + punto de extensión del verificador --
+  [OK]   G: los tres grupos están nombrados
+  [OK]   G: el grupo (a) son los canónicos (3) MÁS los de riesgo (6) = 9
+  [OK]   G: CANDADO — `load_golden_cases()` (el cargador del bucle de arreglo) NO devuelve ni un solo caso del holdout
+  [OK]   G: los ids del holdout tampoco colisionan con los de riesgo
+  [OK]   G: el holdout aporta material PROPIO (3 casos, ninguno copiado)
+  [OK]   G: sin módulo del verificador, `load_validation_cases()` devuelve [] (no rompe)
+  [OK]   G: con el módulo del verificador plantado, sus casos se cargan (['mutacion-del-verificador'])
+  [OK]   G: lo que no es un GoldenCase se descarta en vez de colarse a medias
+
+-- H · el HOLDOUT demuestra su propia integridad --
+  [OK]   H: el holdout coincide con su manifiesto registrado (motivos=[])
+  [OK]   H: hay hash registrado para cada caso (3 casos)
+  [OK]   H MUTADO: editar un caso rompe el sello (ok=False)
+  [OK]   H MUTADO: el sello nombra el caso alterado → "Caso ALTERADO: 'holdout-anclaje-norma-sellada' — registrado eb49a3592f7d…, ahora ed5b7c4a5117…"
+  [OK]   H MUTADO: `load_holdout_cases` se niega a entregar material alterado
+  [OK]   H MUTADO: añadir un caso sin registrar rompe el sello
+  [OK]   H: CANDADO — pedir el holdout para 'arreglo' levanta HoldoutMisuse
+  [OK]   H: para medición final sí se entrega, íntegro (3 casos)
+  [OK]   H: los casos del holdout son SINTÉTICOS (candado de datos reales)
+
+-- I · atribución de marcas: modelo obediente vs guardián determinista --
+  [OK]   I: marca del MODELO → marcadas=1, anotadas_guardian=0
+  [OK]   I: marca del GUARDIÁN → marcadas=0, anotadas_guardian=1
+  [OK]   I: el harness SÍ distingue las dos (son números distintos para el mismo texto)
+  [OK]   I HALLAZGO: sobre el borrador ANOTADO, el re-escaneo invierte la atribución (con informe: marcadas=0/guardian=1 · sin informe: marcadas=1/guardian=0)
+  [OK]   I HALLAZGO: y el re-escaneo APAGA el rojo (ok pasa de False a True) — por eso el origen del dato no puede quedar implícito (ok con informe=False, sin informe=True)
+  [OK]   I arreglo: con informe del grafo el origen es fiable (informe_guardian)
+  [OK]   I arreglo: con re-escaneo el origen se declara NO fiable (reescaneo_borrador)
+  [OK]   I afinado: re-escaneo de un borrador CRUDO sin marcas → sigue siendo fiable (marcadas=0, fiable=True)
+  [OK]   I afinado: el aviso NO contamina `flags_informativos` (esa lista es de INDICIOS DE SUSTANCIA y tiene su propio contrato) — ['poco_anclaje_al_expediente']
+  [OK]   I MUTADO: si el re-escaneo se declara igual que el informe del grafo, la atribución dudosa se presenta como fiable (origen=informe_guardian, fiable=True) → ROJO
+
+HALLAZGO 1 · la forma abreviada con SIGLA PUNTUADA es invisible sin pack de jurisdicción
+    "arts. 1516 y ss. C.C." (y también "arts. 1516 y ss. del C.C.") NO la detecta ningún patrón
+    BASE de `agents/verification.py`: la sigla puntuada no casa con `_NORM_BODY`, que exige 3-10
+    letras CONTIGUAS. Solo la caza `code_abbreviation_patterns`, que se alimenta de las siglas
+    del pack (`citation_style.json → code_abbreviations`), y hoy la única lista de siglas del
+    repo está en el pack `co`. Un despacho SIN ordenamiento configurado —el escenario por
+    defecto y el que la regla dura de agnosticismo protege— corre con `extra_patterns=[]` y esa
+    familia entera de citas pasa sin marca y sin contarse. El caso de riesgo
+    `disciplina-citas-formas-abreviadas` no lo destapa porque su expediente usa "del CCO", sigla
+    SIN puntos, que sí entra por los patrones base.
+    Impacto en F1: el banco reportará `citas=0` en borradores que sí citan, y eso se lee como
+    disciplina perfecta. No es un fallo del scorer sino del escáner (`agents/verification.py`),
+    que NO es archivo de este frente — se reporta, no se parchea aquí.
+
+HALLAZGO 2 · el re-escaneo invierte QUIÉN marcó, y apaga el rojo
+    `scoring._citation_signal` tiene dos vías: el informe del grafo (fiable) y, si no llega,
+    re-escanear el borrador. Para cuando el turno llega al HITL el borrador YA está anotado, así
+    que el re-escaneo lee las marcas del GUARDIÁN como marcas del MODELO: medido aquí, el mismo
+    borrador pasa de (marcadas=0, sin_respaldo=1, ok=False) a (marcadas=1, sin_respaldo=0,
+    ok=True). Un turno indisciplinado se reporta impecable.
+    ARREGLADO en este frente, hasta donde permite el archivo: la información de quién marcó se
+    DESTRUYE al anotar el texto (las dos marcas son el mismo literal), así que el re-escaneo no
+    se puede arreglar — lo que sí se puede es que nunca se presente como fiable. La señal ahora
+    declara `origen_marcas` y `atribucion_marcas_fiable` (afinado: el re-escaneo solo es dudoso
+    cuando el borrador YA trae marcas; sin marcas no hay nada que atribuir mal).
+    PENDIENTE DEL FRENTE C: `run_eval.py` imprime `marcadas_modelo` / `anotadas_guardian` sin
+    mirar `atribucion_marcas_fiable`. Debe imprimir el aviso `AVISO_ATRIBUCION_MARCAS` cuando
+    esa clave sea False — el dato ya está en `score`, solo falta mostrarlo.
+
+
+=== 50/50 OK ===
+PASS — cada familia se caza, y cada familia se pone ROJA al apagar su detector.

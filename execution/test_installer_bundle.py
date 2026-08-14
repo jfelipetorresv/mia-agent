@@ -246,6 +246,18 @@ def main() -> int:
           all(token in bi for token in ("SourceCommit", "setupSha", "payloads", "mia-release-manifest.json")))
     check("reutilizar payloads queda marcado como no autorizable para release final",
           "reused_payloads" in bi and "NO es autorizable" in bi)
+    check("el instalador exige el manifiesto verificable de componentes",
+          "mia-component-manifest.json" in bi and "source_dirty" in bi and "source_commit" in bi)
+    check("el perfil backend se pasa al build y se coteja al reutilizar payloads",
+          "BackendProfile" in bi and "-Profile $BackendProfile" in bi and "ComponentManifest.profile" in bi)
+    check("el primer arranque se mide sobre datos temporales y exige marcador completo",
+          all(token in bi for token in ("FirstRunWatch", "--first-run", ".mia-setup-complete", "first_run_ms")))
+    check("tamaño instalado y meta decimal de 335 MB quedan medidos, no prometidos",
+          all(token in bi for token in ("installed_payload_bytes", "target_installer_bytes", "target_met", "335 * 1000 * 1000", "NO cumplida")))
+    check("el ensamblado rechaza caches/tests/docs/harness privados",
+          "Assert-NoPrivateBuildContent" in bi and all(token in bi for token in ("__pycache__", "tests", "docs", "harness")))
+    check("orquestación expone el manifiesto de capacidades al backend",
+          "MIA_BUNDLE_MANIFEST" in ORCH_INSTALLER.read_text(encoding="utf-8"))
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

@@ -33,7 +33,9 @@
 param(
     [switch]$SkipPayloads,   # no recompila backend/litellm/frontend; reusa packaging/dist/
     [switch]$PayloadsOnly,   # deja los payloads listos pero no corre cargo tauri build
-    [string]$PgSource = ''   # ruta al pgsql portable; por defecto se autodetecta
+    [string]$PgSource = '',  # ruta al pgsql portable; por defecto se autodetecta
+    [ValidateSet('core', 'ocr', 'voice', 'full')]
+    [string]$BackendProfile = 'core'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -99,7 +101,7 @@ if ($SkipPayloads) {
     Write-Step 'Payloads: -SkipPayloads (reusando packaging/dist/ existente)'
 } else {
     Write-Step 'Recompilando backend (PyInstaller)'
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PackagingDir 'build_backend.ps1')
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PackagingDir 'build_backend.ps1') -Profile $BackendProfile
     if ($LASTEXITCODE -ne 0) { throw "build_backend.ps1 fallo (exit $LASTEXITCODE)" }
 
     Write-Step 'Recompilando LiteLLM (PyInstaller)'
@@ -109,6 +111,21 @@ if ($SkipPayloads) {
     Write-Step 'Recompilando frontend (Next.js standalone)'
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PackagingDir 'build_frontend.ps1')
     if ($LASTEXITCODE -ne 0) { throw "build_frontend.ps1 fallo (exit $LASTEXITCODE)" }
+}
+
+$ComponentManifestPath = Join-Path $DistDir 'mia-backend\mia-component-manifest.json'
+if (-not (Test-Path $ComponentManifestPath)) {
+    throw 'El backend no tiene mia-component-manifest.json; no se puede afirmar que OCR/voz esten incluidos o ausentes.'
+}
+$ComponentManifest = Get-Content -Raw -LiteralPath $ComponentManifestPath | ConvertFrom-Json
+if ([string]$ComponentManifest.profile -ne $BackendProfile) {
+    throw "Perfil backend incoherente: se pidio '$BackendProfile' pero el payload declara '$($ComponentManifest.profile)'."
+}
+if ([bool]$ComponentManifest.source_dirty) {
+    throw 'El payload backend fue construido desde fuentes sucias y no es autorizable para un release.'
+}
+if ([string]$ComponentManifest.source_commit -ne $SourceCommit) {
+    throw 'El payload backend no corresponde al commit actual; recompila sin -SkipPayloads.'
 }
 
 # --------------------------------------------------------------------------
@@ -149,6 +166,7 @@ foreach ($tool in @('pg_dump.exe', 'pg_restore.exe', 'pg_ctl.exe', 'pg_isready.e
     if (-not (Test-Path $toolPath)) { throw "pgsql copiado sin bin\$tool" }
     $PgToolHashes[$tool] = (Get-FileHash -Algorithm SHA256 -LiteralPath $toolPath).Hash.ToLowerInvariant()
 }
+
 $PgManifest = [ordered]@{ version = 1; sha256 = $PgToolHashes } | ConvertTo-Json -Depth 3
 Set-Content -LiteralPath (Join-Path $PgDest 'mia-pg-tools.sha256.json') -Value $PgManifest -Encoding UTF8
 
@@ -159,6 +177,7 @@ Set-Content -LiteralPath (Join-Path $PgDest 'mia-pg-tools.sha256.json') -Value $
 Write-Step 'Verificando payloads antes del bundler'
 $required = @(
     (Join-Path $DistDir 'mia-backend\mia-backend.exe'),
+    $ComponentManifestPath,
     (Join-Path $DistDir 'mia-litellm\mia-litellm.exe'),
     (Join-Path $DistDir 'mia-frontend\server.js'),
     (Join-Path $DistDir 'mia-frontend\node.exe'),
@@ -169,6 +188,67 @@ $required = @(
 $missing = $required | Where-Object { -not (Test-Path $_) }
 if ($missing) { throw "Faltan payloads requeridos:`n  $($missing -join "`n  ")" }
 Write-Host "Todos los payloads presentes." -ForegroundColor Green
+
+function Assert-NoPrivateBuildContent([string]$Root) {
+    $forbidden = @('__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'tests', 'test', 'docs', 'harness', '.git')
+    $bad = @(Get-ChildItem -LiteralPath $Root -Recurse -Directory | Where-Object { $forbidden -contains $_.Name.ToLowerInvariant() })
+    if ($bad.Count -gt 0) { throw "Payload con caches/tests/docs/harness privados:`n  $($bad.FullName -join "`n  ")" }
+}
+foreach ($payloadName in @('mia-backend', 'mia-litellm', 'mia-frontend', 'pgsql')) {
+    Assert-NoPrivateBuildContent (Join-Path $DistDir $payloadName)
+}
+
+# Medicion real de primer arranque sobre un directorio nuevo. No reutiliza el
+# perfil del usuario ni su base local; el temporal se elimina al terminar.
+function Get-FreeTcpPort {
+    $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    try { return $listener.LocalEndpoint.Port } finally { $listener.Stop() }
+}
+
+Write-Step 'Midiendo primer arranque sobre datos temporales limpios'
+$FirstRunDir = Join-Path ([System.IO.Path]::GetTempPath()) ('mia-first-run-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $FirstRunDir | Out-Null
+$FirstRunStdout = Join-Path $FirstRunDir 'stdout.log'
+$FirstRunStderr = Join-Path $FirstRunDir 'stderr.log'
+$FirstRunPort = Get-FreeTcpPort
+$FirstRunWatch = [System.Diagnostics.Stopwatch]::StartNew()
+$FirstRunProcess = $null
+try {
+    $backendExe = Join-Path $DistDir 'mia-backend\mia-backend.exe'
+    $pgBin = Join-Path $PgDest 'bin'
+    $pgData = Join-Path $FirstRunDir 'pgdata'
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "$env:SystemRoot\System32\cmd.exe"
+    $psi.Arguments = "/S /C `"`"$backendExe`" --first-run --pg-bin `"$pgBin`" --pg-data `"$pgData`" --pg-port $FirstRunPort > `"$FirstRunStdout`" 2> `"$FirstRunStderr`"`""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = $FirstRunDir
+    $psi.EnvironmentVariables['MIA_APP_DIR'] = $FirstRunDir
+    $psi.EnvironmentVariables['MIA_BUNDLE_MANIFEST'] = $ComponentManifestPath
+    $FirstRunProcess = New-Object System.Diagnostics.Process
+    $FirstRunProcess.StartInfo = $psi
+    [void]$FirstRunProcess.Start()
+    if (-not $FirstRunProcess.WaitForExit(900000)) {
+        & taskkill /T /F /PID $FirstRunProcess.Id | Out-Null
+        throw 'El primer arranque excedio 15 minutos.'
+    }
+    if ($FirstRunProcess.ExitCode -ne 0 -or -not (Test-Path (Join-Path $FirstRunDir '.mia-setup-complete'))) {
+        $tail = @()
+        foreach ($log in @($FirstRunStderr, $FirstRunStdout)) {
+            if (Test-Path $log) { $tail += Get-Content -LiteralPath $log -Tail 30 }
+        }
+        throw "Primer arranque fallido (exit $($FirstRunProcess.ExitCode)):`n$($tail -join "`n")"
+    }
+    $FirstRunWatch.Stop()
+    $FirstRunMs = [long]$FirstRunWatch.ElapsedMilliseconds
+    Write-Host "Primer arranque: $FirstRunMs ms" -ForegroundColor Green
+} finally {
+    if ($FirstRunProcess -and -not $FirstRunProcess.HasExited) {
+        & taskkill /T /F /PID $FirstRunProcess.Id | Out-Null
+    }
+    if (Test-Path $FirstRunDir) { Remove-Item -LiteralPath $FirstRunDir -Recurse -Force -ErrorAction SilentlyContinue }
+}
 
 if ($PayloadsOnly) {
     Write-Step 'PayloadsOnly: payloads listos; NO se corre el bundler'
@@ -210,6 +290,9 @@ if ($setup) {
             bytes = [long](($payloadFiles | Measure-Object -Property Length -Sum).Sum)
         }
     }
+    $installedPayloadBytes = [long](($payloads.Values | ForEach-Object { $_.bytes } | Measure-Object -Sum).Sum)
+    # La meta comercial se expresa en MB decimales, no en MiB de PowerShell.
+    $targetInstallerBytes = [long](335 * 1000 * 1000)
     $manifest = [ordered]@{
         schema_version = 1
         product = 'Mia'
@@ -217,6 +300,12 @@ if ($setup) {
         commit = $SourceCommit
         created_at_utc = [DateTime]::UtcNow.ToString('o')
         reused_payloads = [bool]$SkipPayloads
+        backend_profile = $BackendProfile
+        capabilities = $ComponentManifest.capabilities
+        first_run_ms = $FirstRunMs
+        installed_payload_bytes = $installedPayloadBytes
+        target_installer_bytes = $targetInstallerBytes
+        target_met = [bool]($setup.Length -le $targetInstallerBytes)
         installer = [ordered]@{ file = $setup.Name; bytes = $setup.Length; sha256 = $setupSha }
         payloads = $payloads
     }
@@ -227,6 +316,11 @@ if ($setup) {
     Write-Host "  $sizeMB MB" -ForegroundColor Green
     Write-Host "  SHA-256 $setupSha" -ForegroundColor Green
     Write-Host "  Manifiesto $manifestPath" -ForegroundColor Green
+    if ($setup.Length -le $targetInstallerBytes) {
+        Write-Host '  Meta de instalador <=335 MB: CUMPLIDA y medida.' -ForegroundColor Green
+    } else {
+        Write-Host '  Meta de instalador <=335 MB: NO cumplida; no se declara ahorro sin evidencia.' -ForegroundColor Yellow
+    }
     if ($SkipPayloads) {
         Write-Host '  ADVERTENCIA: reutilizo payloads; este artefacto NO es autorizable como release final.' -ForegroundColor Yellow
     }

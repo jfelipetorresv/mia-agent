@@ -28,7 +28,7 @@ jobs:
           if (-not $catalog.full_glob) { throw 'Falta full_glob en el catálogo' }
       - name: Install backend runtime for executable gates
         shell: pwsh
-        run: python -m pip install ./backend
+        run: python -m pip install './backend[full]'
       - name: Execute quick verification catalog
         shell: pwsh
         env:
@@ -100,7 +100,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install backend runtime
-        run: python -m pip install ./backend
+        run: python -m pip install './backend[full]'
       - name: Bootstrap schema and migration ledger
         shell: bash
         run: |
@@ -119,3 +119,5 @@ jobs:
           python execution/test_matter_jurisdictions.py
           python execution/test_p0_legal_ledger.py
           python execution/test_durable_learning.py
+          python execution/test_document_derivation.py
+          python execution/test_cors_contract.py
