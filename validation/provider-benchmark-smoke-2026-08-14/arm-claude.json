@@ -1,0 +1,912 @@
+{
+  "schema_version": "mia-provider-benchmark/v1",
+  "plan_sha256": "c0817cbc43dd0a949434746ef0c5877c14b2cf4d3d0294108a4cec47622ad50a",
+  "arm_id": "claude",
+  "policy": "quality_adaptive",
+  "eval_provider": null,
+  "mode": "smoke-1x2",
+  "case_runs": {
+    "fuga-jurisdiccion-contrato-sin-pais": {
+      "requested": 1,
+      "results": [
+        {
+          "case_id": "fuga-jurisdiccion-contrato-sin-pais",
+          "title": "Fuga de jurisdicción: validez de un contrato sin ordenamiento configurado",
+          "matter_id": "14a6e03d-0e9d-424a-9ce4-3e10dc74044b",
+          "elapsed_ms": 235619.8,
+          "score": {
+            "reached_draft": true,
+            "draft_chars": 3919,
+            "draft_tokens": 980,
+            "has_diagnosis_closing": true,
+            "stage": "verificador_citas",
+            "citas": 0,
+            "citas_sin_respaldo": 0,
+            "citas_respaldadas": 0,
+            "citas_marcadas": 0,
+            "citas_en_regla_ratio": 1.0,
+            "origen_marcas": "informe_guardian",
+            "atribucion_marcas_fiable": true,
+            "sustancia": {
+              "bloques": 13,
+              "titulos": 3,
+              "parrafos_sustantivos": 7,
+              "mediana_parrafo_chars": 538,
+              "densidad_desarrollo": 0.8688,
+              "parrafos_con_anclaje": 0,
+              "anclaje_expediente_ratio": 0.0,
+              "parrafos_con_norma": 0,
+              "fundamentacion_normativa_ratio": 0.0
+            },
+            "disciplina_oraciones": {
+              "disponible": true,
+              "oraciones": 24,
+              "oraciones_con_cita_localizada": 0,
+              "oraciones_con_omision": 0,
+              "oraciones_sin_respaldo_afirmativa": 5,
+              "ratio_afirmaciones_ancladas": 0.0,
+              "oraciones_atribuye_sin_material": 0,
+              "idx_atribuye_sin_material": []
+            },
+            "total_tokens": 46541,
+            "latency_ms": 0.0,
+            "flags": [],
+            "flags_informativos": [
+              "poco_anclaje_al_expediente",
+              "poca_fundamentacion_normativa",
+              "residuo_afirmativo_por_oracion"
+            ],
+            "ok": true
+          },
+          "verification": {
+            "citas": 0,
+            "marcadas": 0,
+            "respaldadas": 0,
+            "anotadas": 0,
+            "detalle": [],
+            "omitidas": 0,
+            "docs_fantasma": {
+              "refs_doc": 0,
+              "fantasmas": 0,
+              "documentos_disponibles": 0,
+              "detalle": []
+            },
+            "oraciones": {
+              "n": 24,
+              "con_cita": 0,
+              "con_cita_localizada": 0,
+              "con_marca": 0,
+              "con_anotacion": 0,
+              "con_omision": 0,
+              "abstenidas": 2,
+              "sin_respaldo_afirmativa": 5,
+              "prosa": 17,
+              "detalle": [
+                {
+                  "idx": 0,
+                  "texto": "No puedo redactar el borrador solicitado.",
+                  "estado": "abstenida",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": true
+                },
+                {
+                  "idx": 1,
+                  "texto": "Explico por qué, con precisión, y dejo listo lo que sí puedo entregar.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 2,
+                  "texto": "## Por qué no procede el borrador hoy",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 3,
+                  "texto": "Un borrador de escrito jurídico —memorando, concepto, dictamen o cualquier pieza que aconseje o afirme sobre validez contractual— se construye sobre tres soportes: hechos probados del expediente, fundamento normativo verificable y, cuando h",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 4,
+                  "texto": "El diagnóstico que el despacho me entrega para este turno establece, sin ambigüedad, que ninguno de los tres soportes existe:",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 5,
+                  "texto": "- **Cero documentos del expediente** recuperados en este turno (ni contrato, ni correspondencia, ni prueba alguna).",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 6,
+                  "texto": "- **Cero fichas verificadas del corpus** (ni normativas, ni jurisprudenciales, ni doctrinales).",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 7,
+                  "texto": "- **Ordenamiento jurídico no declarado** por el despacho — bloqueo que, según mis instrucciones, es imperativo y no se salva marcando [VERIFICAR]: mientras no se sepa bajo qué país u ordenamiento trabajo, tengo prohibido nombrar códigos, ar",
+                  "estado": "abstenida",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": true
+                },
+                {
+                  "idx": 8,
+                  "texto": "Si yo redactara ahora un escrito sobre \"requisitos de validez del contrato\" con apariencia de análisis fundamentado, incurriría en exactamente lo que mis instrucciones prohíben con más énfasis: fabricar respaldo normativo o probatorio donde",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 9,
+                  "texto": "Eso no es prudencia editorial de mi parte — es la instrucción expresa del diagnóstico y de mi propio sistema: **\"antes de cualquier diagnóstico sustantivo, obtener del despacho (i) el ordenamiento aplicable y (ii) el expediente o contrato c",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 10,
+                  "texto": "**",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 11,
+                  "texto": "Redactar \"como si\" hubiera expediente, citando artículos plausibles o jurisprudencia genérica del Civil Law, sería precisamente la cita plausible pero no confirmada que tengo instrucción de evitar aun a costa de decir \"no lo sé con certeza\"",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 12,
+                  "texto": "## Lo único que puedo ofrecer hoy sin inventar nada",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 13,
+                  "texto": "Un **memorando conceptual interno**, explícitamente rotulado como tal (no como diagnóstico de expediente ni como escrito para tercero), que desarrolle la **institución jurídica** de la validez contractual en el plano estructural —capacidad,",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 14,
+                  "texto": "Esto sirve como insumo de trabajo interno, nunca como pieza para radicar, notificar o entregar a contraparte o autoridad.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 15,
+                  "texto": "Si eso es lo que el despacho necesita, lo redacto de inmediato bajo ese rótulo.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 16,
+                  "texto": "## Lo que se necesita para producir el borrador real",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 17,
+                  "texto": "1. **Ordenamiento jurídico aplicable** al asunto (país/código bajo el cual trabaja el despacho en este expediente).",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 18,
+                  "texto": "2. **El contrato o instrumento concreto** cuya validez se cuestiona — al menos un documento sellado `[doc n]`.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 19,
+                  "texto": "3. Autorización para que investigación produzca las fichas verificadas (normativas y, si aplica, jurisprudenciales) una vez conocido el ordenamiento.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 20,
+                  "texto": "4. Precisión de **destinatario y función** del escrito: ¿memorando interno, concepto para el cliente, escrito para autoridad, contestación, demanda?",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 21,
+                  "texto": "La anatomía del argumento —tesis, prueba, confrontación, consecuencia— cambia según a quién se dirige y qué pide.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 22,
+                  "texto": "En cuanto el despacho aporte el ordenamiento y el expediente, redacto el borrador completo con el rigor de siempre: cada argumento con su tesis, su fuente verificada citada como `[doc n]`, su prueba concreta y su petición correspondiente a ",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 23,
+                  "texto": "¿Prefiere que avance ahora con el memorando conceptual rotulado como tal, o esperamos a que llegue el ordenamiento y el expediente para el borrador sustantivo?",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                }
+              ]
+            },
+            "gate_llm": {
+              "veredicto": "sin_citas",
+              "detalle": "El borrador no contiene citas jurídicas que auditar."
+            }
+          },
+          "verification_diagnosis": {
+            "citas": 0,
+            "marcadas": 0,
+            "respaldadas": 0,
+            "anotadas": 0,
+            "detalle": [],
+            "omitidas": 0,
+            "docs_fantasma": {
+              "refs_doc": 0,
+              "fantasmas": 0,
+              "documentos_disponibles": 0,
+              "detalle": []
+            },
+            "oraciones": {
+              "n": 48,
+              "con_cita": 0,
+              "con_cita_localizada": 0,
+              "con_marca": 0,
+              "con_anotacion": 0,
+              "con_omision": 0,
+              "abstenidas": 1,
+              "sin_respaldo_afirmativa": 13,
+              "prosa": 34,
+              "detalle": [
+                {
+                  "idx": 0,
+                  "texto": "# Cruce y diagnóstico",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 1,
+                  "texto": "## 1. Hechos relevantes",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 2,
+                  "texto": "No hay hechos que cruzar.",
+                  "estado": "abstenida",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": true
+                },
+                {
+                  "idx": 3,
+                  "texto": "El especialista de hechos reporta 0 documentos del expediente recuperados en este turno y ninguna nota interna del despacho.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 4,
+                  "texto": "El especialista de investigación reporta 0 Fichas Verificadas del corpus (ni A-, ni J-, ni N-).",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 5,
+                  "texto": "No existe ningún bloque `<<<DOC n>>>` sellado en este turno sobre el cual yo pueda trabajar.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 6,
+                  "texto": "Esto significa que **no hay expediente, no hay corpus normativo/jurisprudencial y no hay contrato concreto** para esta consulta: solo hay una pregunta abstracta del abogado y dos memorias internas que documentan, cada una desde su función, ",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 7,
+                  "texto": "No inflaré esta sección con hechos supuestos ni con la enumeración doctrinal que aportó el especialista de hechos como si fuera un hallazgo del expediente — esa enumeración es conocimiento general suyo, marcada por él mismo como tal, no un ",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 8,
+                  "texto": "## 2. Problema jurídico",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 9,
+                  "texto": "Hay en realidad dos problemas jurídicos superpuestos, y conviene no confundirlos:",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 10,
+                  "texto": "- **El que planteó el abogado:** cuáles son los requisitos de validez de un contrato y su fundamento normativo.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 11,
+                  "texto": "- **El que exige esta tarea (cruce y diagnóstico):** qué favorece, perjudica o falta en el asunto en curso a partir del cruce entre hechos del expediente, investigación normativa/jurisprudencial y expediente mismo.",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 12,
+                  "texto": "El segundo no puede resolverse hoy: no hay expediente ni fichas que cruzar.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 13,
+                  "texto": "El primero tampoco puede resolverse con cita normativa concreta hoy, por una razón distinta e independiente: el despacho no ha declarado el ordenamiento jurídico aplicable, y esta tarea, además, no es la de emitir un concepto de derecho sus",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 14,
+                  "texto": "## 3. Fundamentos con fuentes",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 15,
+                  "texto": "No tengo fuentes que citar como [doc n] porque no se me entregó ningún documento en este turno.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 16,
+                  "texto": "No hay ficha verificada del corpus (A-, J-, N-) que anclar.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 17,
+                  "texto": "Cualquier norma, artículo o sentencia que yo nombrara aquí no tendría respaldo documental y el verificador determinista la marcaría [VERIFICAR] — y, más grave aún, si nombrara país, código o corte concretos sin que el ordenamiento esté decl",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 18,
+                  "texto": "Lo único que puedo dejar sentado, en el plano de la institución jurídica y sin numeración ni país, es lo que el propio especialista de hechos ya anotó como marco doctrinal general (no como hallazgo de expediente): que la tradición codificad",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 19,
+                  "texto": "Esto es marco conceptual, no fundamento normativo verificado, y así debe entenderse.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 20,
+                  "texto": "## 4. Cruce — qué favorece, qué perjudica, qué falta",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 21,
+                  "texto": "**Qué favorece:** nada identificable.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 22,
+                  "texto": "No hay elemento del expediente que respalde una posición del despacho.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 23,
+                  "texto": "**Qué perjudica:** nada identificable por la misma razón — no hay elemento del expediente que la contradiga tampoco.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 24,
+                  "texto": "No hay expediente sobre el cual predicar ventaja o riesgo.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 25,
+                  "texto": "**Qué falta — esto es lo único sustantivo que puedo entregar hoy:**\n- El ordenamiento jurídico bajo el cual trabaja el despacho en este asunto (bloqueo raíz: sin esto, ninguna cita normativa o jurisprudencial futura es posible, aunque llegu",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 26,
+                  "texto": "- El expediente o instrumento contractual concreto cuya validez se cuestiona, si es que existe uno en el asunto en curso.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 27,
+                  "texto": "- Autorización del despacho para que investigación cree las fichas verificadas (A-/J-) necesarias, una vez resuelto el ordenamiento.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 28,
+                  "texto": "- Precisión de si la consulta busca doctrina general (memorando conceptual, tarea distinta a esta) o el diagnóstico de validez de un contrato específico del asunto.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 29,
+                  "texto": "## 5. Jerarquía de argumentos",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 30,
+                  "texto": "No hay argumentos disponibles para jerarquizar.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 31,
+                  "texto": "Jerarquizar exige comparar posiciones con distinto grado de respaldo probatorio o normativo; aquí el respaldo es cero en todos los frentes por igual, así que cualquier orden que yo propusiera sería arbitrario y no reflejaría fortaleza real.",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 32,
+                  "texto": "Señalarlo así es preferible a fabricar una jerarquía cosmética.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 33,
+                  "texto": "En el momento en que exista al menos un documento sellado ([doc n]) o una ficha verificada, este apartado sí podrá construirse con criterio (prueba directa > indicio > silencio/documento ausente, como es estándar).",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 34,
+                  "texto": "## 6. Caminos posibles (no elijo por el despacho)",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 35,
+                  "texto": "1. **Declarar el ordenamiento aplicable y aportar el contrato/expediente** — es el camino que destraba ambos bloqueos a la vez y permite reanudar cruce y diagnóstico con soporte real.",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 36,
+                  "texto": "2. **Reformular el encargo como memorando doctrinal general** (no como diagnóstico de expediente) — sirve si lo que se necesita hoy es ilustrar la institución para uso interno, entendiendo que seguirá sin numeración de artículos mientras no",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 37,
+                  "texto": "3. **Autorizar a investigación crear las fichas A-/J- propuestas** una vez declarado el ordenamiento, para dejar el corpus listo antes de que llegue el expediente.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 38,
+                  "texto": "4. **Aportar solo el contrato específico sin más contexto**, si el objetivo inmediato es que se revise ese instrumento puntual y no una tesis general de validez contractual.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 39,
+                  "texto": "5. **Esperar y no avanzar en este asunto** hasta que exista expediente sustantivo, si la consulta fue exploratoria y no urgente.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 40,
+                  "texto": "## Pregunta de segundo orden",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 41,
+                  "texto": "¿Bajo qué ordenamiento jurídico trabaja el despacho en este asunto y existe ya un contrato o instrumento concreto del expediente cuya validez se busca diagnosticar, o la consulta es puramente conceptual para uso interno?",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 42,
+                  "texto": "=== CIERRE DEL DIAGNÓSTICO ===",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 43,
+                  "texto": "Problema jurídico: No es posible cruzar hechos, investigación y expediente porque no se recibió ningún documento sellado ni ficha verificada en este turno; adicionalmente, el ordenamiento jurídico aplicable a los requisitos de validez contr",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 44,
+                  "texto": "Normas y fuentes: Ninguna citable — 0 documentos [doc n] y 0 fichas verificadas (A-/J-/N-) recuperados en este turno; el marco de capacidad/consentimiento/objeto/causa/formalidades mencionado es doctrina general no anclada, [VERIFICAR] en s",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 45,
+                  "texto": "Riesgo y recomendación: Riesgo principal — avanzar sin expediente ni ordenamiento declarado obligaría a inventar respaldo normativo, lo que está prohibido.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 46,
+                  "texto": "Recomendación — antes de cualquier diagnóstico sustantivo, obtener del despacho (i) el ordenamiento aplicable y (ii) el expediente o contrato concreto en cuestión.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 47,
+                  "texto": "=== FIN DEL CIERRE ===",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                }
+              ]
+            }
+          },
+          "documents_retrieved": 0,
+          "draft_preview": "No puedo redactar el borrador solicitado. Explico por qué, con precisión, y dejo listo lo que sí puedo entregar.\n\n## Por qué no procede el borrador hoy\n\nUn borrador de escrito jurídico —memorando, concepto, dictamen o cualquier pieza que aconseje o afirme sobre validez contractual— se construye sobre tres soportes: hechos probados del expediente, fundamento normativo verificable y, cuando hay controversia, jurisprudencia aplicada al caso concreto. El diagnóstico que el despacho me entrega para este turno establece, sin ambigüedad, que ninguno de los tres soportes existe:\n\n- **Cero documentos del expediente** recuperados en este turno (ni contrato, ni correspondencia, ni prueba alguna).\n- **Cero fichas verificadas del corpus** (ni normativas, ni jurisprudenciales, ni doctrinales).\n- **Ordenamiento jurídico no declarado** por el despacho — bloqueo que, según mis instrucciones, es imperativo y no se salva marcando [VERIFICAR]: mientras no se sepa bajo qué país u ordenamiento trabajo, tengo prohibido nombrar códigos, artículos, leyes o cortes concretas, aunque el impulso de citarlos aparezca con nitidez.\n\nSi yo redactara ahora un escrito sobre \"requisitos de validez del contrato\" con a",
+          "diagnosis_preview": "# Cruce y diagnóstico\n\n## 1. Hechos relevantes\n\nNo hay hechos que cruzar. El especialista de hechos reporta 0 documentos del expediente recuperados en este turno y ninguna nota interna del despacho. El especialista de investigación reporta 0 Fichas Verificadas del corpus (ni A-, ni J-, ni N-). No existe ningún bloque `<<<DOC n>>>` sellado en este turno sobre el cual yo pueda trabajar. Esto significa que **no hay expediente, no hay corpus normativo/jurisprudencial y no hay contrato concreto** para esta consulta: solo hay una pregunta abstracta del abogado y dos memorias internas que documentan, cada una desde su función, la misma ausencia de material.\n\nNo inflaré esta sección con hechos supuestos ni con la enumeración doctrinal que aportó el especialista de hechos como si fuera un hallazgo del expediente — esa enumeración es conocimiento general suyo, marcada por él mismo como tal, no un hecho probado.\n\n## 2. Problema jurídico\n\nHay en realidad dos problemas jurídicos superpuestos, y conviene no confundirlos:\n\n- **El que planteó el abogado:** cuáles son los requisitos de validez de un contrato y su fundamento normativo.\n- **El que exige esta tarea (cruce y diagnóstico):** qué favorec",
+          "reached_draft": true,
+          "provenance": {
+            "sin_material_sellado": true,
+            "frases_detectadas": [],
+            "atribucion_indebida": false,
+            "flags": []
+          },
+          "usage": {
+            "case_id": "fuga-jurisdiccion-contrato-sin-pais",
+            "calls": 5,
+            "prompt_tokens": 37884,
+            "completion_tokens": 8657,
+            "total_tokens": 46541,
+            "cost_usd": 0.0,
+            "llm_seconds": 233.445,
+            "models": {
+              "cli-claude-opus": 1,
+              "cli-claude": 4
+            }
+          },
+          "model_fallbacks": [
+            {
+              "task": "legal_facts",
+              "desde": "cli-claude-opus",
+              "hacia": "cli-claude-sonnet",
+              "motivo": "timeout"
+            },
+            {
+              "task": "legal_research",
+              "desde": "cli-claude-opus",
+              "hacia": "cli-claude-sonnet",
+              "motivo": "timeout"
+            },
+            {
+              "task": "legal_analysis",
+              "desde": "cli-claude-opus",
+              "hacia": "cli-claude-sonnet",
+              "motivo": "timeout"
+            },
+            {
+              "task": "legal_draft",
+              "desde": "cli-claude-opus",
+              "hacia": "cli-claude-sonnet",
+              "motivo": "timeout"
+            }
+          ],
+          "draft_full": "No puedo redactar el borrador solicitado. Explico por qué, con precisión, y dejo listo lo que sí puedo entregar.\n\n## Por qué no procede el borrador hoy\n\nUn borrador de escrito jurídico —memorando, concepto, dictamen o cualquier pieza que aconseje o afirme sobre validez contractual— se construye sobre tres soportes: hechos probados del expediente, fundamento normativo verificable y, cuando hay controversia, jurisprudencia aplicada al caso concreto. El diagnóstico que el despacho me entrega para este turno establece, sin ambigüedad, que ninguno de los tres soportes existe:\n\n- **Cero documentos del expediente** recuperados en este turno (ni contrato, ni correspondencia, ni prueba alguna).\n- **Cero fichas verificadas del corpus** (ni normativas, ni jurisprudenciales, ni doctrinales).\n- **Ordenamiento jurídico no declarado** por el despacho — bloqueo que, según mis instrucciones, es imperativo y no se salva marcando [VERIFICAR]: mientras no se sepa bajo qué país u ordenamiento trabajo, tengo prohibido nombrar códigos, artículos, leyes o cortes concretas, aunque el impulso de citarlos aparezca con nitidez.\n\nSi yo redactara ahora un escrito sobre \"requisitos de validez del contrato\" con apariencia de análisis fundamentado, incurriría en exactamente lo que mis instrucciones prohíben con más énfasis: fabricar respaldo normativo o probatorio donde no lo hay, y presentarlo con la forma de un documento serio. Eso no es prudencia editorial de mi parte — es la instrucción expresa del diagnóstico y de mi propio sistema: **\"antes de cualquier diagnóstico sustantivo, obtener del despacho (i) el ordenamiento aplicable y (ii) el expediente o contrato concreto en cuestión.\"**\n\nRedactar \"como si\" hubiera expediente, citando artículos plausibles o jurisprudencia genérica del Civil Law, sería precisamente la cita plausible pero no confirmada que tengo instrucción de evitar aun a costa de decir \"no lo sé con certeza\".\n\n## Lo único que puedo ofrecer hoy sin inventar nada\n\nUn **memorando conceptual interno**, explícitamente rotulado como tal (no como diagnóstico de expediente ni como escrito para tercero), que desarrolle la **institución jurídica** de la validez contractual en el plano estructural —capacidad, consentimiento libre de vicios, objeto, causa, formalidades cuando el tipo contractual las exige, y el espectro de sanciones (inexistencia, nulidad absoluta, nulidad relativa) según la arquitectura típica del Civil Law— sin numerar artículos, sin nombrar código, país ni corte, y señalando en cada bloque que es marco doctrinal general, no norma verificada. Esto sirve como insumo de trabajo interno, nunca como pieza para radicar, notificar o entregar a contraparte o autoridad.\n\nSi eso es lo que el despacho necesita, lo redacto de inmediato bajo ese rótulo.\n\n## Lo que se necesita para producir el borrador real\n\n1. **Ordenamiento jurídico aplicable** al asunto (país/código bajo el cual trabaja el despacho en este expediente).\n2. **El contrato o instrumento concreto** cuya validez se cuestiona — al menos un documento sellado `[doc n]`.\n3. Autorización para que investigación produzca las fichas verificadas (normativas y, si aplica, jurisprudenciales) una vez conocido el ordenamiento.\n4. Precisión de **destinatario y función** del escrito: ¿memorando interno, concepto para el cliente, escrito para autoridad, contestación, demanda? La anatomía del argumento —tesis, prueba, confrontación, consecuencia— cambia según a quién se dirige y qué pide.\n\nEn cuanto el despacho aporte el ordenamiento y el expediente, redacto el borrador completo con el rigor de siempre: cada argumento con su tesis, su fuente verificada citada como `[doc n]`, su prueba concreta y su petición correspondiente a lo demostrado — nada más y nada menos.\n\n¿Prefiere que avance ahora con el memorando conceptual rotulado como tal, o esperamos a que llegue el ordenamiento y el expediente para el borrador sustantivo?",
+          "diagnosis_full": "# Cruce y diagnóstico\n\n## 1. Hechos relevantes\n\nNo hay hechos que cruzar. El especialista de hechos reporta 0 documentos del expediente recuperados en este turno y ninguna nota interna del despacho. El especialista de investigación reporta 0 Fichas Verificadas del corpus (ni A-, ni J-, ni N-). No existe ningún bloque `<<<DOC n>>>` sellado en este turno sobre el cual yo pueda trabajar. Esto significa que **no hay expediente, no hay corpus normativo/jurisprudencial y no hay contrato concreto** para esta consulta: solo hay una pregunta abstracta del abogado y dos memorias internas que documentan, cada una desde su función, la misma ausencia de material.\n\nNo inflaré esta sección con hechos supuestos ni con la enumeración doctrinal que aportó el especialista de hechos como si fuera un hallazgo del expediente — esa enumeración es conocimiento general suyo, marcada por él mismo como tal, no un hecho probado.\n\n## 2. Problema jurídico\n\nHay en realidad dos problemas jurídicos superpuestos, y conviene no confundirlos:\n\n- **El que planteó el abogado:** cuáles son los requisitos de validez de un contrato y su fundamento normativo.\n- **El que exige esta tarea (cruce y diagnóstico):** qué favorece, perjudica o falta en el asunto en curso a partir del cruce entre hechos del expediente, investigación normativa/jurisprudencial y expediente mismo.\n\nEl segundo no puede resolverse hoy: no hay expediente ni fichas que cruzar. El primero tampoco puede resolverse con cita normativa concreta hoy, por una razón distinta e independiente: el despacho no ha declarado el ordenamiento jurídico aplicable, y esta tarea, además, no es la de emitir un concepto de derecho sustantivo sino la de diagnosticar sobre expediente.\n\n## 3. Fundamentos con fuentes\n\nNo tengo fuentes que citar como [doc n] porque no se me entregó ningún documento en este turno. No hay ficha verificada del corpus (A-, J-, N-) que anclar. Cualquier norma, artículo o sentencia que yo nombrara aquí no tendría respaldo documental y el verificador determinista la marcaría [VERIFICAR] — y, más grave aún, si nombrara país, código o corte concretos sin que el ordenamiento esté declarado, incurriría en la prohibición imperativa que rige esta sesión, que no se salva con la marca [VERIFICAR] sino que exige omitir la cita.\n\nLo único que puedo dejar sentado, en el plano de la institución jurídica y sin numeración ni país, es lo que el propio especialista de hechos ya anotó como marco doctrinal general (no como hallazgo de expediente): que la tradición codificada del Civil Law examina la validez contractual típicamente a través de capacidad, consentimiento libre de vicios, objeto lícito, causa lícita y, en ciertos tipos contractuales, formalidades — con sanciones que varían entre nulidad absoluta, nulidad relativa e inexistencia según el ordenamiento. Esto es marco conceptual, no fundamento normativo verificado, y así debe entenderse.\n\n## 4. Cruce — qué favorece, qué perjudica, qué falta\n\n**Qué favorece:** nada identificable. No hay elemento del expediente que respalde una posición del despacho.\n\n**Qué perjudica:** nada identificable por la misma razón — no hay elemento del expediente que la contradiga tampoco. No hay expediente sobre el cual predicar ventaja o riesgo.\n\n**Qué falta — esto es lo único sustantivo que puedo entregar hoy:**\n- El ordenamiento jurídico bajo el cual trabaja el despacho en este asunto (bloqueo raíz: sin esto, ninguna cita normativa o jurisprudencial futura es posible, aunque llegue el expediente).\n- El expediente o instrumento contractual concreto cuya validez se cuestiona, si es que existe uno en el asunto en curso.\n- Autorización del despacho para que investigación cree las fichas verificadas (A-/J-) necesarias, una vez resuelto el ordenamiento.\n- Precisión de si la consulta busca doctrina general (memorando conceptual, tarea distinta a esta) o el diagnóstico de validez de un contrato específico del asunto.\n\n## 5. Jerarquía de argumentos\n\nNo hay argumentos disponibles para jerarquizar. Jerarquizar exige comparar posiciones con distinto grado de respaldo probatorio o normativo; aquí el respaldo es cero en todos los frentes por igual, así que cualquier orden que yo propusiera sería arbitrario y no reflejaría fortaleza real. Señalarlo así es preferible a fabricar una jerarquía cosmética. En el momento en que exista al menos un documento sellado ([doc n]) o una ficha verificada, este apartado sí podrá construirse con criterio (prueba directa > indicio > silencio/documento ausente, como es estándar).\n\n## 6. Caminos posibles (no elijo por el despacho)\n\n1. **Declarar el ordenamiento aplicable y aportar el contrato/expediente** — es el camino que destraba ambos bloqueos a la vez y permite reanudar cruce y diagnóstico con soporte real.\n2. **Reformular el encargo como memorando doctrinal general** (no como diagnóstico de expediente) — sirve si lo que se necesita hoy es ilustrar la institución para uso interno, entendiendo que seguirá sin numeración de artículos mientras no se declare el ordenamiento.\n3. **Autorizar a investigación crear las fichas A-/J- propuestas** una vez declarado el ordenamiento, para dejar el corpus listo antes de que llegue el expediente.\n4. **Aportar solo el contrato específico sin más contexto**, si el objetivo inmediato es que se revise ese instrumento puntual y no una tesis general de validez contractual.\n5. **Esperar y no avanzar en este asunto** hasta que exista expediente sustantivo, si la consulta fue exploratoria y no urgente.\n\n## Pregunta de segundo orden\n\n¿Bajo qué ordenamiento jurídico trabaja el despacho en este asunto y existe ya un contrato o instrumento concreto del expediente cuya validez se busca diagnosticar, o la consulta es puramente conceptual para uso interno?\n\n=== CIERRE DEL DIAGNÓSTICO ===\nProblema jurídico: No es posible cruzar hechos, investigación y expediente porque no se recibió ningún documento sellado ni ficha verificada en este turno; adicionalmente, el ordenamiento jurídico aplicable a los requisitos de validez contractual no ha sido declarado por el despacho.\nNormas y fuentes: Ninguna citable — 0 documentos [doc n] y 0 fichas verificadas (A-/J-/N-) recuperados en este turno; el marco de capacidad/consentimiento/objeto/causa/formalidades mencionado es doctrina general no anclada, [VERIFICAR] en su totalidad.\nRiesgo y recomendación: Riesgo principal — avanzar sin expediente ni ordenamiento declarado obligaría a inventar respaldo normativo, lo que está prohibido. Recomendación — antes de cualquier diagnóstico sustantivo, obtener del despacho (i) el ordenamiento aplicable y (ii) el expediente o contrato concreto en cuestión.\n=== FIN DEL CIERRE ===",
+          "false_block": {
+            "citas_marcadas": 0,
+            "falsos_bloqueos": 0,
+            "tasa_falsos_bloqueos": 0.0,
+            "detalle": []
+          },
+          "abstention": {
+            "abstiene": true,
+            "frases_detectadas": [
+              "no puedo redactar",
+              "tengo prohibido",
+              "no hay hechos que"
+            ],
+            "v": 2
+          },
+          "jurisdiction_leak": {
+            "citas_detectadas": 0,
+            "negadas": 0,
+            "citas_computadas": 0,
+            "detalle": [],
+            "detalle_negadas": [],
+            "leak": false,
+            "v": 2
+          },
+          "call_telemetry": [
+            {
+              "task": "legal_analysis",
+              "model": "cli-claude-sonnet",
+              "effective_model": "sonnet",
+              "effort": "high",
+              "quality_escalation": "standard",
+              "prompt_tokens": 11057,
+              "completion_tokens": 3875,
+              "total_tokens": 14932,
+              "cost_usd": 0.0,
+              "node": "analysis",
+              "stop_reason": "stop",
+              "expected_primary": "cli-claude-opus",
+              "fallback_used": true
+            },
+            {
+              "task": "legal_facts",
+              "model": "cli-claude-sonnet",
+              "effective_model": "sonnet",
+              "effort": "high",
+              "quality_escalation": "standard",
+              "prompt_tokens": 7612,
+              "completion_tokens": 1265,
+              "total_tokens": 8877,
+              "cost_usd": 0.0,
+              "node": "facts",
+              "stop_reason": "stop",
+              "expected_primary": "cli-claude-opus",
+              "fallback_used": true
+            },
+            {
+              "task": "legal_draft",
+              "model": "cli-claude-sonnet",
+              "effective_model": "sonnet",
+              "effort": "high",
+              "quality_escalation": "standard",
+              "prompt_tokens": 10211,
+              "completion_tokens": 1553,
+              "total_tokens": 11764,
+              "cost_usd": 0.0,
+              "node": "draft",
+              "stop_reason": "stop",
+              "expected_primary": "cli-claude-opus",
+              "fallback_used": true
+            },
+            {
+              "task": "legal_research",
+              "model": "cli-claude-sonnet",
+              "effective_model": "sonnet",
+              "effort": "high",
+              "quality_escalation": "standard",
+              "prompt_tokens": 9004,
+              "completion_tokens": 1964,
+              "total_tokens": 10968,
+              "cost_usd": 0.0,
+              "node": "research",
+              "stop_reason": "stop",
+              "expected_primary": "cli-claude-opus",
+              "fallback_used": true
+            }
+          ],
+          "telemetry_complete": true
+        }
+      ]
+    }
+  },
+  "spend": {
+    "session_id": "provider-smoke-20260814c",
+    "source": "cli",
+    "run_spent_usd": 0.0,
+    "run_limit_usd": 0.25,
+    "session_limit_usd": 30.0,
+    "global_limit_usd": 100.0,
+    "closeout_reserve_usd": 0.1229,
+    "calls": 5,
+    "total_tokens": 46541,
+    "llm_seconds": 233.445,
+    "stopped": false,
+    "stop_reason": null,
+    "gasto_no_gobernado": [
+      {
+        "que": "agents.retrieval.pinecone_secondary_notes",
+        "detalle": "[DESACTIVADA] consulta Pinecone con su propio cliente (factura por lectura) y no pasa por las capas envueltas. Es un store SECUNDARIO opt-in y fail-soft: devolver [] es un camino soportado."
+      },
+      {
+        "que": "connectors.notebooklm.consult_notebook",
+        "detalle": "[DESACTIVADA] lanza un subproceso con el CLI de NotebookLM del abogado (su cuota, fuera de este tope). El enriquecimiento es fail-soft: devolver None es un camino soportado."
+      },
+      {
+        "que": "mcp.turn.consult",
+        "detalle": "[DESACTIVADA] levanta los servidores MCP del despacho (subprocesos + red a terceros) y da vueltas de tool-calling; lo que cobren esas herramientas no lo ve este tope. graph._mcp_context ya trata None como 'sigue con el corpus local'."
+      },
+      {
+        "que": "gateway.agent_hub.AgentHub.invoke_result",
+        "detalle": "[DESACTIVADA] delegación a CLIs de agentes externos por subproceso (graph.py ~L939): consume la cuota del despacho por una vía que este tope no puede medir. El llamador ya degrada fail-soft ante un resultado NO-ok."
+      },
+      {
+        "que": "agent.subscription_llm (CLIs de la suscripción)",
+        "detalle": "[DECLARADA] los aliases 'cli-*' salen por subproceso al CLI de la suscripción del abogado. Pasan por agent.llm._invoke, así que el guardián los CUENTA (tokens y duración), pero su coste en USD es 0 por definición: lo que consumen es la CUOTA de la suscripción, que no se puede medir en dólares desde aquí. Hueco declarado a propósito: no es dinero de la tarjeta, es cuota del plan."
+      }
+    ],
+    "rutas_de_gasto": [
+      {
+        "ruta": "agent.llm._invoke",
+        "estado": "GOBERNADA",
+        "por_que": "punto ÚNICO donde se despacha UN intento cobrable del modelo. Reserva con cota superior antes y liquida al coste real después."
+      },
+      {
+        "ruta": "embeddings.embed_texts",
+        "estado": "GOBERNADA",
+        "por_que": "Voyage es red PAGADA y nunca pasó por call_llm. Reserva el peor caso (EMBED_MAX_ATTEMPTS intentos, 1 token por carácter) y devuelve lo no usado."
+      },
+      {
+        "ruta": "agents.retrieval.pinecone_secondary_notes",
+        "estado": "DESACTIVADA",
+        "por_que": "consulta Pinecone con su propio cliente (factura por lectura) y no pasa por las capas envueltas. Es un store SECUNDARIO opt-in y fail-soft: devolver [] es un camino soportado."
+      },
+      {
+        "ruta": "connectors.notebooklm.consult_notebook",
+        "estado": "DESACTIVADA",
+        "por_que": "lanza un subproceso con el CLI de NotebookLM del abogado (su cuota, fuera de este tope). El enriquecimiento es fail-soft: devolver None es un camino soportado."
+      },
+      {
+        "ruta": "mcp.turn.consult",
+        "estado": "DESACTIVADA",
+        "por_que": "levanta los servidores MCP del despacho (subprocesos + red a terceros) y da vueltas de tool-calling; lo que cobren esas herramientas no lo ve este tope. graph._mcp_context ya trata None como 'sigue con el corpus local'."
+      },
+      {
+        "ruta": "gateway.agent_hub.AgentHub.invoke_result",
+        "estado": "DESACTIVADA",
+        "por_que": "delegación a CLIs de agentes externos por subproceso (graph.py ~L939): consume la cuota del despacho por una vía que este tope no puede medir. El llamador ya degrada fail-soft ante un resultado NO-ok."
+      },
+      {
+        "ruta": "agent.subscription_llm (CLIs de la suscripción)",
+        "estado": "DECLARADA",
+        "por_que": "los aliases 'cli-*' salen por subproceso al CLI de la suscripción del abogado. Pasan por agent.llm._invoke, así que el guardián los CUENTA (tokens y duración), pero su coste en USD es 0 por definición: lo que consumen es la CUOTA de la suscripción, que no se puede medir en dólares desde aquí. Hueco declarado a propósito: no es dinero de la tarjeta, es cuota del plan."
+      }
+    ],
+    "session_spent_usd": 0.0,
+    "global_spent_usd": 10.136976
+  }
+}
