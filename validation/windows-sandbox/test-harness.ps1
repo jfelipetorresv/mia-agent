@@ -36,6 +36,9 @@ $validForward = Get-MiaUpgradeDecision `
     -CurrentBuiltAt ([datetime]'2026-08-12') -CandidateBuiltAt ([datetime]'2026-08-14')
 Check 'upgrade semántico y cronológico válido se permite' ($validForward.allowed -and $validForward.operation -eq 'upgrade')
 
+$valid030 = Get-MiaUpgradeDecision -CurrentVersion ([version]'0.2.0') -CandidateVersion ([version]'0.3.0') -CurrentBuiltAt ([datetime]'2026-08-12') -CandidateBuiltAt ([datetime]'2026-08-14')
+Check 'upgrade 0.2.0 a 0.3.0 válido se permite' ($valid030.allowed -and $valid030.operation -eq 'upgrade')
+
 $reinstall = Get-MiaUpgradeDecision -CurrentVersion ([version]'0.1.0') -CandidateVersion ([version]'0.1.0')
 Check 'reinstalación de versión idéntica se distingue de upgrade' ($reinstall.allowed -and $reinstall.operation -eq 'reinstall')
 
@@ -68,8 +71,10 @@ Check 'setup vigente viene del release manifest, no de mtime' (
     $hostScript -match 'rev-parse HEAD' -and
     $hostScript -notmatch 'Sort-Object LastWriteTime')
 Check 'instalación y desinstalación usan modo silencioso' ($guest -match "ArgumentList @\('/S'\)" -and $guest -match "arguments \+= '/S'")
-Check 'restore ausente se declara bloqueado, no aprobado' ($guest -match 'maintenance_cli_has_no_restore_action' -and $guest -match 'restore_executed = \$false')
-Check 'upgrade no se ejecuta si la semántica falla' ($guest -match "Add-Step 'upgrade' 'blocked'" -and $guest -match 'upgrade_executed = \$false')
+Check 'restore usa source y confirmación exacta de base' ($guest.Contains("'--source',`$latestBackup.FullName,'--confirm-database','mia'") -and $guest.Contains("'--confirm-database','wrong-name'"))
+Check 'restore prueba centinela y safety backup antes de aprobar' ($guest -match 'restore_sentinel_mismatch' -and $guest -match 'restore_safety_backup_missing' -and $guest -match "Add-Step 'restore' 'pass'")
+Check 'upgrade 0.2 a 0.3 instala ambas versiones y preserva centinela' ($guest -match 'Invoke-ProcessChecked \$LegacySetupPath' -and $guest -match 'upgrade_sentinel_mismatch' -and $guest -match "Add-Step 'upgrade' 'pass'")
+Check 'resultados ejecutados dependen de gates reales' ($guest -match 'upgrade_executed = \$upgradeExecuted' -and $guest -match 'restore_executed = \$restoreExecuted')
 Check 'gate exige health en primer arranque y reinicio' ($guest -match "Add-Step 'first_health' 'pass'" -and $guest -match "Add-Step 'restart_health' 'pass'")
 $allLifecycleSteps = $true
 foreach ($name in @('backup_verify','same_version_reinstall','uninstall','residue_audit')) {

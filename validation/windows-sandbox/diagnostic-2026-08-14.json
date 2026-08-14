@@ -1,6 +1,6 @@
 {
   "schema_version": "mia-windows-sandbox-diagnostic/v1",
-  "observed_at": "2026-08-14T19:33:49Z",
+  "observed_at": "2026-08-14T20:41:51.5764807Z",
   "outcome": "blocked",
   "certified": false,
   "blocker": "sandbox_closed_without_result",
@@ -16,17 +16,14 @@
   },
   "release_selection": {
     "source": "mia-release-manifest.json",
-    "current_setup": "Mia_0.1.0_x64-setup.exe",
-    "current_version": "0.1.0",
-    "current_sha256": "fe5fde7032728e5fc5c85ff38a784d664f1d7c633094d2af9a5881890cbcf28f",
-    "commit": "bcf8aa5d55b721e811a4634b1350f4b073dfd51a",
+    "current_setup": "Mia_0.3.0_x64-setup.exe",
+    "current_version": "0.3.0",
+    "current_sha256": "cd8a9a22653df1f341f94d3ce3b1224af3419edbf9254ceffcb91c93805df867",
+    "commit": "bafbb638a932afd9012f14880089a89645211c8c",
     "legacy_setup": "Mia_0.2.0_x64-setup.exe",
     "legacy_version": "0.2.0",
-    "upgrade_decision": "downgrade_blocked"
+    "upgrade_decision": "upgrade_allowed"
   },
-  "product_blockers": [
-    "maintenance_cli_has_no_restore_action",
-    "release_version_chronology_inconsistent_0.2.0_to_0.1.0"
-  ],
-  "note": "No se certificó instalación, health, reinicio, backup/restore, reinstalación ni uninstall dentro de VM. El harness queda listo y fail-closed para una máquina donde Windows Sandbox sí complete el arranque."
+  "product_blockers": [],
+  "note": "El setup 0.3.0 y el contrato de restore/upgrade superaron el preflight y 23 pruebas offline. WindowsSandbox.exe cerró con código 0 sin crear result.json; por ello no se certificó ningún paso ejecutado dentro de la VM."
 }

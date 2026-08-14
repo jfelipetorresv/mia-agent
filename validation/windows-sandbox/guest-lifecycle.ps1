@@ -18,6 +18,8 @@ $blockers = New-Object System.Collections.Generic.List[string]
 $installedVersion = $null
 $installDirectory = $null
 $appExe = $null
+$restoreExecuted = $false
+$upgradeExecuted = $false
 
 function Add-Step {
     param([string]$Name, [string]$Outcome, [string]$Detail, [datetime]$Started)
@@ -111,6 +113,41 @@ function Stop-MiaTree {
     Start-Sleep -Seconds 3
 }
 
+function Stop-MiaServicesKeepDatabase {
+    param([string]$Root)
+    if (-not $Root) { return }
+    $normalized = ([System.IO.Path]::GetFullPath($Root)).TrimEnd('\') + '\'
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ExecutablePath -and $_.ExecutablePath.StartsWith($normalized, [System.StringComparison]::OrdinalIgnoreCase) -and
+        ([System.IO.Path]::GetFileName($_.ExecutablePath) -notin @('postgres.exe','pg_ctl.exe'))
+    } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 3
+}
+
+function Get-AppEnvValue {
+    param([string]$AppData, [string]$Name, [string]$Default = '')
+    $line = Get-Content -LiteralPath (Join-Path $AppData '.env') | Where-Object { $_ -match "^$([regex]::Escape($Name))=" } | Select-Object -Last 1
+    if (-not $line) { return $Default }
+    return ($line -split '=', 2)[1].Trim().Trim('"').Trim("'")
+}
+
+function Invoke-PsqlScalar {
+    param([string]$PgBin, [string]$AppData, [string]$Sql)
+    $oldPassword = $env:PGPASSWORD
+    try {
+        $env:PGPASSWORD = Get-AppEnvValue $AppData 'PG_PASSWORD'
+        $hostName = Get-AppEnvValue $AppData 'PG_HOST' '127.0.0.1'
+        $port = Get-AppEnvValue $AppData 'PG_PORT' '55432'
+        $database = Get-AppEnvValue $AppData 'PG_DB' 'mia'
+        $output = & (Join-Path $PgBin 'psql.exe') --no-psqlrc --set ON_ERROR_STOP=1 --host $hostName --port $port --username postgres --dbname $database --tuples-only --no-align --command $Sql 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "psql_exit_$LASTEXITCODE" }
+        return (($output | Out-String).Trim())
+    }
+    finally {
+        if ($null -eq $oldPassword) { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue } else { $env:PGPASSWORD = $oldPassword }
+    }
+}
+
 function Split-UninstallCommand {
     param([Parameter(Mandatory)][string]$Command)
     $trimmed = $Command.Trim()
@@ -167,6 +204,9 @@ try {
     $pgBinTool = Find-BundledTool $installDirectory 'pg_dump.exe'
     if (-not $backendExe -or -not $pgBinTool) { throw 'maintenance_tools_missing' }
     $pgBin = Split-Path $pgBinTool -Parent
+    $restoreMarker = 'sandbox-before-' + [guid]::NewGuid().ToString('N')
+    $mutatedMarker = 'sandbox-after-' + [guid]::NewGuid().ToString('N')
+    Invoke-PsqlScalar $pgBin $appData "CREATE TABLE IF NOT EXISTS mia_sandbox_restore_sentinel(value text NOT NULL); TRUNCATE mia_sandbox_restore_sentinel; INSERT INTO mia_sandbox_restore_sentinel(value) VALUES ('$restoreMarker');" | Out-Null
     $privateRecovery = Join-Path $env:TEMP 'mia-recovery-key.txt'
     Invoke-ProcessChecked $backendExe @('--maintenance','export-key','--pg-bin',$pgBin,'--pg-port','55432','--app-dir',$appData,'--destination',$privateRecovery) 300 | Out-Null
     Invoke-ProcessChecked $backendExe @('--maintenance','confirm-key','--pg-bin',$pgBin,'--pg-port','55432','--app-dir',$appData) 120 | Out-Null
@@ -179,30 +219,21 @@ try {
     Add-Step 'backup_verify' 'pass' "backup=$($latestBackup.Name);bytes=$($latestBackup.Length)" $started
 
     $started = [datetime]::UtcNow
-    $maintenanceHelp = & $backendExe --maintenance --help 2>&1 | Out-String
-    if ($maintenanceHelp -notmatch '(?m)\brestore\b') {
-        Add-Step 'restore' 'blocked' 'maintenance_cli_has_no_restore_action' $started
-    }
-    else {
-        Add-Step 'restore' 'blocked' 'restore_action_present_but_no_non_destructive_target_contract' $started
-    }
-
-    $started = [datetime]::UtcNow
-    if ($LegacySetupPath -and (Test-Path -LiteralPath $LegacySetupPath -PathType Leaf)) {
-        $legacyVersion = Get-MiaInstallerVersion $LegacySetupPath
-        $legacyBuiltAt = (Get-Item $LegacySetupPath).LastWriteTimeUtc
-        $currentBuiltAt = (Get-Item $SetupPath).LastWriteTimeUtc
-        $decision = Get-MiaUpgradeDecision -CurrentVersion $legacyVersion -CandidateVersion ([version]$expectedVersion) -CurrentBuiltAt $legacyBuiltAt -CandidateBuiltAt $currentBuiltAt
-        if (-not $decision.allowed) {
-            Add-Step 'upgrade' 'blocked' "$($decision.reason):legacy=$legacyVersion;current=$expectedVersion" $started
-        }
-        else {
-            Add-Step 'upgrade' 'blocked' 'unexpected_upgrade_candidate_requires_separate_vm_baseline' $started
-        }
-    }
-    else {
-        Add-Step 'upgrade' 'blocked' 'legacy_setup_missing' $started
-    }
+    Invoke-PsqlScalar $pgBin $appData "UPDATE mia_sandbox_restore_sentinel SET value='$mutatedMarker';" | Out-Null
+    $badConfirm = Start-Process -FilePath $backendExe -ArgumentList @('--maintenance','restore','--pg-bin',$pgBin,'--pg-port','55432','--app-dir',$appData,'--source',$latestBackup.FullName,'--confirm-database','wrong-name') -PassThru
+    if (-not $badConfirm.WaitForExit(120000)) { $badConfirm.Kill(); throw 'restore_bad_confirmation_timeout' }
+    if ($badConfirm.ExitCode -eq 0) { throw 'restore_accepted_wrong_database_confirmation' }
+    if ((Invoke-PsqlScalar $pgBin $appData 'SELECT value FROM mia_sandbox_restore_sentinel LIMIT 1;') -ne $mutatedMarker) { throw 'restore_bad_confirmation_changed_database' }
+    $backupCountBeforeRestore = @(Get-ChildItem -LiteralPath $backupDirectory -Filter '*.mia-backup' -File).Count
+    Stop-MiaServicesKeepDatabase $installDirectory
+    Invoke-ProcessChecked $backendExe @('--maintenance','restore','--pg-bin',$pgBin,'--pg-port','55432','--app-dir',$appData,'--source',$latestBackup.FullName,'--confirm-database','mia') 900 | Out-Null
+    if ((Invoke-PsqlScalar $pgBin $appData 'SELECT value FROM mia_sandbox_restore_sentinel LIMIT 1;') -ne $restoreMarker) { throw 'restore_sentinel_mismatch' }
+    $backupCountAfterRestore = @(Get-ChildItem -LiteralPath $backupDirectory -Filter '*.mia-backup' -File).Count
+    if ($backupCountAfterRestore -le $backupCountBeforeRestore) { throw 'restore_safety_backup_missing' }
+    Start-Process -FilePath $appExe | Out-Null
+    $health = Wait-Health -TimeoutSeconds 300
+    $restoreExecuted = $true
+    Add-Step 'restore' 'pass' "sentinel_restored=true;safety_backup=true;backend=$($health.backend)" $started
 
     $started = [datetime]::UtcNow
     Stop-MiaTree $installDirectory
@@ -241,6 +272,44 @@ try {
     if ($installResidue.Count -gt 0) { throw "unexpected_install_residue:$($installResidue.Count)" }
     if ($listening.Count -gt 0) { throw "listening_ports_after_uninstall:$($listening.LocalPort -join ',')" }
     Add-Step 'residue_audit' 'pass' "user_data_preserved=$($dataResidue.Count);install_residue=0;listeners=0" $started
+
+    $started = [datetime]::UtcNow
+    if (-not $LegacySetupPath -or -not (Test-Path -LiteralPath $LegacySetupPath -PathType Leaf)) {
+        Add-Step 'upgrade' 'blocked' 'legacy_setup_missing' $started
+    }
+    else {
+        $legacyVersion = Get-MiaInstallerVersion $LegacySetupPath
+        $decision = Get-MiaUpgradeDecision -CurrentVersion $legacyVersion -CandidateVersion ([version]$expectedVersion) -CurrentBuiltAt (Get-Item $LegacySetupPath).LastWriteTimeUtc -CandidateBuiltAt (Get-Item $SetupPath).LastWriteTimeUtc
+        if (-not $decision.allowed -or $decision.operation -ne 'upgrade') {
+            Add-Step 'upgrade' 'blocked' "$($decision.reason):legacy=$legacyVersion;current=$expectedVersion" $started
+        }
+        else {
+            if (Test-Path -LiteralPath $appData) { Remove-Item -LiteralPath $appData -Recurse -Force }
+            Invoke-ProcessChecked $LegacySetupPath @('/S') 900 | Out-Null
+            $legacyRegistration = Get-MiaRegistration
+            if (-not $legacyRegistration -or [string]$legacyRegistration.DisplayVersion -ne $legacyVersion.ToString()) { throw 'legacy_install_version_mismatch' }
+            $legacyExe = Resolve-AppExe $legacyRegistration
+            $legacyRoot = Split-Path $legacyExe -Parent
+            Start-Process $legacyExe | Out-Null
+            Wait-Health 900 | Out-Null
+            $legacyPgBin = Split-Path (Find-BundledTool $legacyRoot 'pg_dump.exe') -Parent
+            $upgradeMarker = 'sandbox-upgrade-' + [guid]::NewGuid().ToString('N')
+            Invoke-PsqlScalar $legacyPgBin $appData "CREATE TABLE IF NOT EXISTS mia_sandbox_upgrade_sentinel(value text NOT NULL); TRUNCATE mia_sandbox_upgrade_sentinel; INSERT INTO mia_sandbox_upgrade_sentinel(value) VALUES ('$upgradeMarker');" | Out-Null
+            Stop-MiaTree $legacyRoot
+            Invoke-ProcessChecked $SetupPath @('/S') 900 | Out-Null
+            $upgradedRegistration = Get-MiaRegistration
+            if (-not $upgradedRegistration -or [string]$upgradedRegistration.DisplayVersion -ne $expectedVersion) { throw 'upgrade_version_mismatch' }
+            $upgradedExe = Resolve-AppExe $upgradedRegistration
+            $upgradedRoot = Split-Path $upgradedExe -Parent
+            Start-Process $upgradedExe | Out-Null
+            Wait-Health 900 | Out-Null
+            $upgradedPgBin = Split-Path (Find-BundledTool $upgradedRoot 'pg_dump.exe') -Parent
+            if ((Invoke-PsqlScalar $upgradedPgBin $appData 'SELECT value FROM mia_sandbox_upgrade_sentinel LIMIT 1;') -ne $upgradeMarker) { throw 'upgrade_sentinel_mismatch' }
+            $upgradeExecuted = $true
+            Add-Step 'upgrade' 'pass' "legacy=$legacyVersion;current=$expectedVersion;sentinel_preserved=true" $started
+            Stop-MiaTree $upgradedRoot
+        }
+    }
 }
 catch {
     $failures.Add($_.Exception.Message)
@@ -257,8 +326,8 @@ finally {
         failures = @($failures)
         blockers = @($blockers)
         secrets_exported_to_host = $false
-        upgrade_executed = $false
-        restore_executed = $false
+        upgrade_executed = $upgradeExecuted
+        restore_executed = $restoreExecuted
     }
     Write-JsonAtomic -Path (Join-Path $OutputDirectory 'result.json') -Value $result
     Stop-Transcript | Out-Null
