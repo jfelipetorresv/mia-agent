@@ -34,12 +34,15 @@ corporación o vocabulario jurídico de país concreto — solo términos genér
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
 from datetime import date
+from pathlib import Path
 from typing import Optional
 
+from .. import config
 from ..agent.llm import call_llm
 
 logger = logging.getLogger("mia.memory.aprendido")
@@ -68,6 +71,10 @@ INFERIDO_MARK = "[inferido]"
 # elige cuál según de dónde salió el aprendizaje.
 SOURCE_APROBADO = "un borrador que aprobaste"
 SOURCE_CORREGIDO = "una corrección tuya sobre un borrador"
+
+
+class RetryableLearningError(RuntimeError):
+    """Fallo técnico o salida inválida: el worker durable debe reintentar."""
 
 
 # ── El modelo: infiere SOLO metodología, en JSON estricto ────────────────────
@@ -122,20 +129,22 @@ def _strip_code_fence(s: str) -> str:
     return s.strip()
 
 
-def _parse_insights(raw: Optional[str]) -> list[str]:
-    """Convierte la respuesta cruda del modelo en una lista de frases de método validadas.
-
-    ESTRICTO: si no es un arreglo JSON de cadenas, se devuelve []. Filtra vacíos, recorta
-    espacios, descarta lo demasiado largo (probable volcado del caso), dedup dentro del
-    lote y tope de MAX_PER_INFERENCE. Nunca lanza."""
+def _parse_insights_checked(raw: Optional[str]) -> tuple[list[str], bool]:
+    """Devuelve (insights, salida_válida); ``[]`` válido significa "sin novedades"."""
     if not isinstance(raw, str):
-        return []
+        return [], False
     try:
         data = json.loads(_strip_code_fence(raw))
     except (ValueError, TypeError):
-        return []
+        return [], False
     if not isinstance(data, list):
-        return []
+        return [], False
+    # Una frase fuera del techo contradice el contrato y puede ser una fuga de caso.
+    valid = all(isinstance(item, str) for item in data)
+    if any(isinstance(item, str)
+           and len(re.sub(r"\s+", " ", item).strip()) > MAX_INSIGHT_CHARS
+           for item in data):
+        valid = False
     out: list[str] = []
     seen: set[str] = set()
     for item in data:
@@ -151,10 +160,19 @@ def _parse_insights(raw: Optional[str]) -> list[str]:
         out.append(v)
         if len(out) >= MAX_PER_INFERENCE:
             break
-    return out
+    return out, valid
 
 
-def infer_learnings(work_text: str) -> list[str]:
+def _parse_insights(raw: Optional[str]) -> list[str]:
+    """Convierte la respuesta cruda del modelo en una lista de frases de método validadas.
+
+    ESTRICTO: si no es un arreglo JSON de cadenas, se devuelve []. Filtra vacíos, recorta
+    espacios, descarta lo demasiado largo (probable volcado del caso), dedup dentro del
+    lote y tope de MAX_PER_INFERENCE. Nunca lanza."""
+    return _parse_insights_checked(raw)[0]
+
+
+def infer_learnings(work_text: str, *, strict: bool = False) -> list[str]:
     """Pide al modelo 0..N frases de METODOLOGÍA a partir del texto del trabajo aprobado.
 
     SÍNCRONA (call_llm lo es): el llamador la saca a un hilo. Devuelve las frases YA
@@ -169,10 +187,15 @@ def infer_learnings(work_text: str) -> list[str]:
              {"role": "user", "content": _user_prompt(text)}],
             task="soul", temperature=0, max_tokens=400,
         )
-    except Exception:  # noqa: BLE001 — la inferencia NUNCA puede tumbar la aprobación
+    except Exception as exc:  # noqa: BLE001 — solo el worker durable pide propagación
         logger.exception("aprendido: la inferencia del modelo falló (fail-soft)")
+        if strict:
+            raise RetryableLearningError("Falló la inferencia de aprendizaje.") from exc
         return []
-    return _parse_insights(_content_of(resp))
+    insights, valid = _parse_insights_checked(_content_of(resp))
+    if strict and not valid:
+        raise RetryableLearningError("El modelo devolvió un aprendizaje con formato inválido.")
+    return insights
 
 
 # ── Construcción y dedup de las líneas de la sección ─────────────────────────
@@ -255,6 +278,21 @@ def _load_existing_aprendido(tenant_id: str) -> list[str]:
     return []
 
 
+def _learning_manifest_path(tenant_id: str, idempotency_key: str) -> Path:
+    """Ruta opaca y contenida; ni tenant ni clave se usan como componentes crudos."""
+    tenant_key = hashlib.sha256(str(tenant_id).encode("utf-8")).hexdigest()[:32]
+    operation_key = hashlib.sha256(str(idempotency_key).encode("utf-8")).hexdigest()
+    root = Path(config.MIA_HOME) / "learning-jobs" / tenant_key
+    root.mkdir(parents=True, exist_ok=True)
+    return root / f"{operation_key}.json"
+
+
+def _write_manifest(path: Path, data: dict) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
 # ── El enganche: se llama al APROBAR (o corregir) un borrador ─────────────────
 
 async def learn_from_approved_draft(
@@ -264,25 +302,50 @@ async def learn_from_approved_draft(
     source: str = SOURCE_APROBADO,
     interview=None,
     today: Optional[date] = None,
+    strict: bool = False,
+    idempotency_key: str | None = None,
 ) -> dict:
     """Infiere metodología del borrador aprobado y la deposita en `## aprendido` vía
     `update_soul`. Pensada para correr EN SEGUNDO PLANO, jamás en el camino de la respuesta.
 
-    FAIL-SOFT ABSOLUTO: nunca lanza. Devuelve {"added": int, "dropped": int} — added=0 si
-    no había nada que aprender, el modelo falló, todo era duplicado, o el tope estaba lleno.
-    `dropped` cuenta los aprendizajes nuevos que NO cupieron por el tope."""
+    Por defecto conserva el contrato fail-soft del camino interactivo. El worker durable
+    usa ``strict=True`` para que un fallo técnico se reintente y ``idempotency_key`` para
+    reanudar exactamente las mismas líneas tras una caída. Un arreglo válido ``[]`` sí es
+    éxito: significa que no había una regla reutilizable que aprender."""
     try:
         text = (draft or "").strip()
         if not text:
             return {"added": 0, "dropped": 0}
 
-        insights = await asyncio.to_thread(infer_learnings, text)
-        if not insights:
-            return {"added": 0, "dropped": 0}
+        manifest_path = (_learning_manifest_path(tenant_id, idempotency_key)
+                         if idempotency_key else None)
+        manifest: dict = {}
+        if manifest_path and manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("status") == "completed":
+                return dict(manifest.get("result") or {"added": 0, "dropped": 0})
+        lines = [str(x) for x in (manifest.get("lines") or []) if str(x).strip()]
+        if not lines and not manifest.get("inference_completed"):
+            insights = await asyncio.to_thread(infer_learnings, text, strict=strict)
+            lines = [build_line(i, source=source, today=today) for i in insights]
+            if manifest_path:
+                manifest.update(status="pending", inference_completed=True, lines=lines)
+                _write_manifest(manifest_path, manifest)
+        if not lines:
+            result = {"added": 0, "dropped": 0}
+            if manifest_path:
+                manifest.update(status="completed", result=result)
+                _write_manifest(manifest_path, manifest)
+            return result
 
-        lines = [build_line(i, source=source, today=today) for i in insights]
         existing = _load_existing_aprendido(tenant_id)
         merged, added, dropped = merge_aprendido(existing, lines)
+        result = dict(manifest.get("result") or {"added": added, "dropped": dropped})
+        if manifest_path and "result" not in manifest:
+            # Se persiste el plan ANTES de escribir el SOUL. Si hay caída justo
+            # después del update, la reentrega conserva el mismo resultado y líneas.
+            manifest.update(status="pending", result=result)
+            _write_manifest(manifest_path, manifest)
 
         if dropped:
             logger.info(
@@ -291,7 +354,10 @@ async def learn_from_approved_draft(
                 tenant_id, APRENDIDO_MAX, dropped,
             )
         if added == 0:
-            return {"added": 0, "dropped": dropped}
+            if manifest_path:
+                manifest.update(status="completed", result=result)
+                _write_manifest(manifest_path, manifest)
+            return result
 
         if interview is None:
             from ..onboarding.soul_interview import SoulInterview
@@ -299,8 +365,13 @@ async def learn_from_approved_draft(
         await interview.update_soul(tenant_id, {"aprendido": merged})
         logger.info("aprendido: %d aprendizaje(s) añadido(s) al perfil del despacho %s",
                     added, tenant_id)
-        return {"added": added, "dropped": dropped}
-    except Exception:  # noqa: BLE001 — regla dura: esta pieza NUNCA rompe la aprobación
+        if manifest_path:
+            manifest.update(status="completed", result=result)
+            _write_manifest(manifest_path, manifest)
+        return result
+    except Exception:  # noqa: BLE001 — el camino interactivo sigue siendo fail-soft
         logger.exception("aprendido: fallo al aprender del borrador aprobado (fail-soft, "
                          "despacho=%s)", tenant_id)
+        if strict:
+            raise
         return {"added": 0, "dropped": 0}

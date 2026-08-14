@@ -430,3 +430,14 @@ suite antes de registrar el timeout.
   requerir Webpack explícito aunque el build sea correcto.
 - Los tests no deben exigir palabras ornamentales del modelo (`BORRADOR...`); deben verificar
   el contrato observable: contenido no vacío, estado HITL y barreras aplicadas.
+
+# 2026-08-14 — Un PASS jurídico no es una propiedad eterna
+
+- Los recibos deben ser eventos inmutables versionados por corrida, verificador y contexto;
+  el veredicto vigente gobierna. Un PASS anterior no puede ocultar un FAIL posterior.
+- La confirmación del abogado y la verificación independiente son gates distintos, ambos
+  ligados a la misma huella. Aprobar la revisión no equivale a autorizar la exportación.
+- Un aprendizaje durable debe propagar fallos reintentables. `sin novedades` es un resultado
+  válido; una excepción absorbida y marcada como éxito es pérdida silenciosa.
+- Una reducción de tokens en fixture solo valida el mecanismo. La meta comercial exige corpus
+  real anonimizado, calidad constante y medición repetible de tokens, latencia y costo.

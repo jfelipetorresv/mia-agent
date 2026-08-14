@@ -25,6 +25,7 @@ en crudo). El campo `provider` es técnico y viaja en la API; los TEXTOS van en 
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -41,7 +42,8 @@ from ...connectors.mailbox.service import MailboxService
 from ...db import pool
 from ...jobs import enqueue_classification
 from ...ingest.extract import extract_text_detailed_async
-from ...ingest.ingest import chunk_text_with_folios
+from ...ingest.document_derivation import SUPPORTED_ANYDOC_EXTENSIONS
+from ...ingest.ingest import chunk_extracted_text
 from ...observability import audit
 from ._common import _is_uuid
 
@@ -51,7 +53,7 @@ logger = logging.getLogger("mia.api.matter_mail")
 MAX_LINK_ITEMS = 20  # máx. correos por llamada de vinculación (evita lotes desmedidos)
 
 # Extensiones que el extractor de texto sabe leer (mismo criterio que la carpeta vinculada).
-_SUPPORTED_SUFFIXES = (".pdf", ".docx", ".txt", ".md")
+_SUPPORTED_SUFFIXES = (".pdf", ".docx", ".txt", ".md") + tuple(SUPPORTED_ANYDOC_EXTENSIONS)
 
 
 def _make_mailbox_service() -> MailboxService:
@@ -270,7 +272,8 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
             continue
         try:
             # M1: la extracción (OCR incluido) corre en un hilo — no congela el event loop.
-            text, meta = await extract_text_detailed_async(name, data)
+            text, meta = await extract_text_detailed_async(
+                name, data, att.get("content_type") or None)
         except Exception:  # noqa: BLE001 — adjunto ilegible: se omite en llano
             skipped.append({"name": name,
                             "reason": "No pude leer ese archivo adjunto; puede estar dañado."})
@@ -288,14 +291,15 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
             tenant_id, matter_id, name, att.get("content_type") or None, data, text,
             source_path=f"{provider}:{message_id}/{name}",
             display_name=name, added=added, already=already, skipped=skipped,
-            offset_map=meta.get("folio_map") or [])
+            offset_map=meta.get("folio_map") or [], extraction_meta=meta)
 
 
 async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: str | None,
                            raw: bytes, text: str, *, source_path: str, display_name: str,
                            added: list, already: list, skipped: list,
                            fecha_documento: date | None = None,
-                           offset_map: list[tuple[int, int, int]] | None = None) -> None:
+                           offset_map: list[tuple[int, int, int]] | None = None,
+                           extraction_meta: dict | None = None) -> None:
     """Ingesta UN documento origin='mail' (dedupe por sha256): extrae→trocea→embebe→inserta.
     Molde de LocalFolderSync._ingest_matter_file, pero la clave de dedupe es la HUELLA del
     contenido (como la subida manual): re-vincular el mismo correo NO duplica nada."""
@@ -310,12 +314,14 @@ async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: 
     # Troceo con folio: cada chunk hereda el folio (página) de su offset de inicio, medido
     # sobre el MISMO `text` que produjo extract (`offset_map`). El CUERPO del correo y las
     # fuentes sin páginas no traen mapa → folio NULL. Nunca se inventa.
-    pairs = chunk_text_with_folios(text, offset_map or [])
+    pairs = chunk_extracted_text(text, extraction_meta or {"folio_map": offset_map or []})
     if not pairs:
         skipped.append({"name": display_name,
                         "reason": "Ese correo o archivo no tenía texto para agregar."})
         return
-    vectors = embeddings.embed_texts([c for c, _ in pairs])
+    # El cliente de embeddings es síncrono (y normalmente hace red): no debe
+    # bloquear el event loop que atiende el resto de la API.
+    vectors = await asyncio.to_thread(embeddings.embed_texts, [c for c, _ in pairs])
     async with pool.tenant_connection(tenant_id) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "

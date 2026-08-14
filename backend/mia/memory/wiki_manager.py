@@ -132,6 +132,13 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
                 meta[key.strip()] = int(value)
             except ValueError:
                 meta[key.strip()] = 0
+        elif key.strip() == "evidence_keys":
+            try:
+                parsed = json.loads(value)
+                meta[key.strip()] = ([str(x) for x in parsed]
+                                     if isinstance(parsed, list) else [])
+            except (TypeError, ValueError):
+                meta[key.strip()] = []
         else:
             meta[key.strip()] = value
     return meta, body
@@ -283,13 +290,23 @@ class WikiManager:
         return total
 
     async def compile_concept(self, tenant_id: str, concept_name: str, evidence: list[str],
-                              *, traces: list[dict] | None = None) -> str:
+                              *, traces: list[dict] | None = None,
+                              evidence_key: str | None = None) -> str:
+        """Compila una ficha; ``evidence_key`` vuelve convergente una reentrega durable.
+
+        La clave es una huella opaca del artefacto final, no datos del expediente. Si
+        ya figura en el frontmatter, se devuelve la ficha sin volver a sumar soporte
+        ni llamar al modelo. Esto permite recuperar un job caído a mitad de la wiki.
+        """
         await self.init_wiki(tenant_id)
         path = self.concept_path(tenant_id, concept_name)
         old_meta: dict[str, Any] = {}
         old_body: str | None = None
         if path.exists():
             old_meta, old_body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+        evidence_keys = [str(x) for x in (old_meta.get("evidence_keys") or [])]
+        if evidence_key and evidence_key in evidence_keys and path.exists():
+            return path.read_text(encoding="utf-8")
 
         previous_cases = int(old_meta.get("case_count") or 0)
         added = max(1, len(evidence))
@@ -302,6 +319,8 @@ class WikiManager:
         if previous_support is None:
             previous_support = float(previous_cases)
         support = float(previous_support) + added
+        if evidence_key:
+            evidence_keys.append(evidence_key)
         contra = self.counter_evidence(tenant_id, concept_name, traces)
         confidence = confidence_score(support, contra)
         body = await self._synthesize(concept_name, evidence, old_body)
@@ -317,6 +336,7 @@ class WikiManager:
             f"support_count: {support:.1f}\n"
             f"contra_count: {contra:.1f}\n"
             f"wiki_schema: {WIKI_SCHEMA_VERSION}\n"
+            f"evidence_keys: {json.dumps(evidence_keys, ensure_ascii=True)}\n"
             "---\n"
             f"{body.strip()}\n"
         )
@@ -426,16 +446,73 @@ class WikiManager:
         self._update_index(tenant_id, concepts)
         return concepts
 
-    def _update_sources(self, tenant_id: str, matter_id: str, concepts: list[str]) -> None:
+    async def update_from_approved_artifact(
+        self, tenant_id: str, matter_id: str, artifact_hash: str, text: str,
+    ) -> list[str]:
+        """Actualiza la wiki desde UN final sellado, con recuperación idempotente.
+
+        Un manifiesto local fija la lista de conceptos antes de modificar fichas. Si
+        el proceso cae, la reentrega usa esa misma lista (no vuelve a pedirle otra al
+        modelo) y cada ficha reconoce ``evidence_key`` para no duplicar conteos.
+        """
+        if (len(artifact_hash) != 64
+                or any(c not in "0123456789abcdef" for c in artifact_hash.lower())):
+            raise ValueError("artifact_hash inválida")
+        await self.init_wiki(tenant_id)
+        work_dir = self.wiki_dir(tenant_id) / ".learning"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        manifest = work_dir / f"{artifact_hash.lower()}.json"
+        data: dict[str, Any] = {}
+        if manifest.exists():
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                data = {}
+        if data.get("status") == "completed":
+            return [str(x) for x in (data.get("concepts") or [])]
+        concepts = [str(x) for x in (data.get("concepts") or []) if str(x).strip()]
+        if not concepts:
+            concepts = await self.extract_concepts(tenant_id, text)
+            data = {"status": "pending", "matter_id": str(matter_id),
+                    "artifact_hash": artifact_hash.lower(), "concepts": concepts}
+            tmp = manifest.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(manifest)
+        traces = self.trace_capture.read(tenant_id)
+        evidence_key = f"artifact:{artifact_hash.lower()}"
+        for concept in concepts:
+            await self.compile_concept(
+                tenant_id, concept, [text], traces=traces, evidence_key=evidence_key)
+        self._update_sources(tenant_id, matter_id, concepts, source_key=evidence_key)
+        self._update_index(tenant_id, concepts, source_key=evidence_key)
+        data["status"] = "completed"
+        tmp = manifest.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(manifest)
+        return concepts
+
+    def _update_sources(self, tenant_id: str, matter_id: str, concepts: list[str],
+                        *, source_key: str | None = None) -> None:
         path = self.wiki_dir(tenant_id) / "sources.md"
-        line = f"- {datetime.now(timezone.utc).isoformat()} matter:{matter_id} concepts: {', '.join(concepts)}\n"
+        if source_key and path.exists() and f"source:{source_key}" in path.read_text(
+                encoding="utf-8"):
+            return
+        marker = f" source:{source_key}" if source_key else ""
+        line = (f"- {datetime.now(timezone.utc).isoformat()} matter:{matter_id}{marker} "
+                f"concepts: {', '.join(concepts)}\n")
         with path.open("a", encoding="utf-8") as f:
             f.write(line)
 
-    def _update_index(self, tenant_id: str, concepts: list[str]) -> None:
+    def _update_index(self, tenant_id: str, concepts: list[str],
+                      *, source_key: str | None = None) -> None:
         path = self.wiki_dir(tenant_id) / "index.md"
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        marker = f"<!-- source:{source_key} -->" if source_key else ""
+        if marker and marker in existing:
+            return
         lines = [existing.rstrip(), "\n## Ultimas conexiones\n"] if existing.strip() else ["# Indice de conceptos\n"]
+        if marker:
+            lines.append(marker + "\n")
         for concept in concepts:
             lines.append(f"- [[{concept}]]\n")
         for left, right in zip(concepts, concepts[1:]):

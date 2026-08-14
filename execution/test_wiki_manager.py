@@ -2,11 +2,12 @@
 Mia · test_wiki_manager.py — gate del Second Brain / WikiManager.
 
 Verifica estructura por tenant, compilación de conceptos, búsqueda, lint,
-archivo y conexión HITL en background.
+    archivo y conexión HITL mediante cola durable.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -97,6 +98,34 @@ async def run_checks() -> None:
             check("update_from_approved_matter actualiza sources", f"matter:{matter}" in (root / "sources.md").read_text(encoding="utf-8"))
             check("update_from_approved_matter actualiza index", "[[Concepto Alfa]] -- [[Concepto Beta]]" in (root / "index.md").read_text(encoding="utf-8"))
 
+            # Una reentrega del mismo artefacto final converge: no vuelve a sumar
+            # soporte, no duplica sources y conserva la misma lista de conceptos.
+            artifact_hash = "a" * 64
+            first = await mgr.update_from_approved_artifact(
+                tenant, matter, artifact_hash, "Borrador final aprobado con Concepto Alfa")
+            alfa_before = mgr.concept_path(tenant, "Concepto Alfa").read_text(encoding="utf-8")
+            sources_before = (root / "sources.md").read_text(encoding="utf-8")
+            index_before = (root / "index.md").read_text(encoding="utf-8")
+            second = await mgr.update_from_approved_artifact(
+                tenant, matter, artifact_hash, "Borrador final aprobado con Concepto Alfa")
+            alfa_after = mgr.concept_path(tenant, "Concepto Alfa").read_text(encoding="utf-8")
+            sources_after = (root / "sources.md").read_text(encoding="utf-8")
+            check("reentrega durable conserva conceptos", first == second)
+            check("reentrega durable no infla soporte", alfa_before == alfa_after)
+            check("reentrega durable no duplica fuentes", sources_before == sources_after)
+            # Simula caída después de todas las escrituras pero antes del último
+            # cambio de estado del manifiesto.
+            manifest = root / ".learning" / f"{artifact_hash}.json"
+            manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+            manifest_data["status"] = "pending"
+            manifest.write_text(json.dumps(manifest_data), encoding="utf-8")
+            await mgr.update_from_approved_artifact(
+                tenant, matter, artifact_hash, "Borrador final aprobado con Concepto Alfa")
+            check("recuperación tras caída no duplica índice",
+                  index_before == (root / "index.md").read_text(encoding="utf-8"))
+            check("recuperación tras caída no duplica sources",
+                  sources_before == (root / "sources.md").read_text(encoding="utf-8"))
+
             listed = await mgr.list_concepts(tenant)
             check("list_concepts devuelve metadata", any(x["name"] == "Concepto Alfa" and x["case_count"] >= 1 for x in listed))
             got = await mgr.get_concept(tenant, "Concepto Alfa")
@@ -129,13 +158,10 @@ async def run_checks() -> None:
 
             hitl_src = (ROOT / "backend" / "mia" / "api" / "routes" / "hitl.py").read_text(encoding="utf-8")
             check(
-                "HITL actualiza wiki al aprobar (tarea de fondo con log de error)",
-                # La decisión del abogado no debe esperar minutos por el aprendizaje
-                # de la wiki: corre como tarea de fondo (con referencia viva) y el
-                # fallo queda en el log (fail-open), nunca bloquea la aprobación.
-                "await WikiManager().update_from_approved_matter" in hitl_src
-                and "asyncio.create_task(_wiki_update())" in hitl_src
-                and "_BACKGROUND_TASKS.add(task)" in hitl_src,
+                "HITL distingue decisión guardada de aprendizaje durable",
+                "decision_saved=True" in hitl_src
+                and "learning=learning" in hitl_src
+                and "asyncio.create_task(_wiki_update())" not in hitl_src,
             )
     finally:
         llm.call_llm = original

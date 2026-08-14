@@ -201,3 +201,19 @@ e2e 58/58 · seed 17/17 · sentence_report 47/47 · citas_quemadas 20/20 · migr
 - Decidir sobre el alcance (leer más cuesta crédito de tarjeta).
 - **NUEVO**: decidir sobre el gate LLM de citas de `f264b1e` (ver watch-out en
   `memory/bugs-and-risks.md`): ¿solo el muro determinista, o muro + gate LLM como hoy?
+
+## 2026-08-14 · MIA robustecida (pendiente validación DB/VM)
+
+- Jurisdicción por asunto con precedencia asunto → firma u organización → general; el
+  asunto expone chips editables y el grafo los usa en investigación y citas.
+- Ledger jurídico hash-bound: recibos históricos, verificador vigente, atestación humana,
+  sellos ligados a pasaje/jurisdicción y exportación final registrada. Migraciones 051–057.
+- Aprendizaje en cuatro jobs durables e idempotentes; las caídas se reintentan sin duplicar
+  memoria ni repetir inferencias ya persistidas.
+- Política `quality_adaptive`: Opus/xhigh para trabajo jurídico complejo y Max solo por gate
+  excepcional; auxiliares ligeros. La UI reporta disponibilidad/fallback con honestidad.
+- AnyDoc conserva estructura con límites de tamaño/ZIP, firma y MIME, timeout aislado. El
+  benchmark sintético prueba el mecanismo (87,5 % menos contexto, recall 100 %), no la meta.
+- `verify.ps1 -Suite quick`: 13 suites verdes; frontend lint/tsc/build verde. Pendientes para
+  afirmar release/meta: PostgreSQL real, E2E completo, benchmark ciego con expedientes reales
+  anonimizados y prueba de instalador en VM Windows limpia.

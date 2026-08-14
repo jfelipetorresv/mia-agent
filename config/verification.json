@@ -7,7 +7,14 @@
     "execution/test_migration_contracts.py",
     "execution/test_model_policy.py",
     "execution/test_llm_fallback.py",
-    "execution/test_context_recovery.py"
+    "execution/test_context_recovery.py",
+    "execution/test_assistant_matter_boundary.py",
+    "execution/test_async_embedding_routes.py",
+    "execution/test_cors_contract.py",
+    "execution/test_document_derivation.py",
+    "execution/test_matter_jurisdictions.py",
+    "execution/test_p0_legal_ledger.py",
+    "execution/test_durable_learning.py"
   ],
   "full_glob": "execution/test_*.py",
   "full_requires_database": true,
@@ -15,6 +22,9 @@
     "execution/test_rls.py",
     "execution/test_gates_no_ciegos.py",
     "execution/test_hitl_flow.py",
-    "execution/test_model_policy.py"
+    "execution/test_model_policy.py",
+    "execution/test_matter_jurisdictions.py",
+    "execution/test_p0_legal_ledger.py",
+    "execution/test_durable_learning.py"
   ]
 }

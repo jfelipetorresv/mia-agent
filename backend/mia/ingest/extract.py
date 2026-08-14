@@ -22,6 +22,7 @@ import io
 import time
 
 from . import ocr
+from .document_derivation import derive_office_document, is_anydoc_candidate
 
 # ── Parámetros del fallback de OCR (constantes de módulo → testeables por override) ──
 # Una página es CANDIDATA a OCR si su texto extraíble tiene menos de este número de
@@ -71,18 +72,34 @@ def _alnum_count(text: str) -> int:
     return sum(1 for c in text if c.isalnum())
 
 
-def extract_text(filename: str, data: bytes) -> str:
+def _anydoc_error(exc: BaseException) -> str:
+    """Expose the binding's typed failure without leaking an opaque traceback."""
+    code = getattr(exc, "code", None) or exc.__class__.__name__.replace("Error", "")
+    detail = str(exc).strip()
+    limit = getattr(exc, "limit", None)
+    part = getattr(exc, "part", None)
+    suffix = ""
+    if limit:
+        suffix += f"; límite={limit}"
+    if part:
+        suffix += f"; parte={part}"
+    return f"AnyDoc no pudo convertir el documento ({code}{suffix})" + (
+        f": {detail}" if detail else "")
+
+
+def extract_text(filename: str, data: bytes, declared_mime: str | None = None) -> str:
     """Devuelve el texto plano de un documento subido. Lanza si el tipo no es soportado.
 
     Contrato retrocompatible: SIEMPRE devuelve `str` (los llamadores viejos no cambian).
     Para PDFs escaneados el texto ya viene con la anotación de honestidad de OCR.
 
     SÍNCRONA y CPU-pesada: dentro de un event loop usar `extract_text_async`."""
-    text, _meta = extract_text_detailed(filename, data)
+    text, _meta = extract_text_detailed(filename, data, declared_mime)
     return text
 
 
-def extract_text_detailed(filename: str, data: bytes) -> tuple[str, dict]:
+def extract_text_detailed(filename: str, data: bytes,
+                          declared_mime: str | None = None) -> tuple[str, dict]:
     """Como `extract_text` pero devuelve además metadata de OCR para quien la quiera.
 
     Retorna `(texto, meta)` con:
@@ -100,6 +117,27 @@ def extract_text_detailed(filename: str, data: bytes) -> tuple[str, dict]:
     name = (filename or "").lower()
     if name.endswith(".pdf"):
         return _extract_pdf(data)
+    # Office formats use the local, pinned AnyDoc binding when available. PDF is
+    # intentionally excluded: this path must retain PyMuPDF/OCR folio offsets.
+    # Si AnyDoc no está instalado, DOCX conserva el fallback histórico. Si está
+    # instalado y rechaza firma, MIME, límites o conversión, se falla cerrado: un
+    # archivo hostil nunca llega al fallback por el solo hecho de llamarse .docx.
+    if is_anydoc_candidate(name):
+        try:
+            derived = derive_office_document(filename, data, declared_mime)
+        except Exception as exc:
+            raise ValueError(_anydoc_error(exc)) from exc
+        if derived is not None:
+            text = derived.markdown
+            return text, {
+                "ocr_pages": 0,
+                "total_pages": 0,
+                "truncated": False,
+                "has_body": _alnum_count(text) >= _MIN_BODY_ALNUM,
+                "ocr_unavailable": False,
+                "folio_map": [],
+                "derivation": derived.metadata(),
+            }
     if name.endswith(".docx"):
         import docx
         d = docx.Document(io.BytesIO(data))
@@ -107,28 +145,37 @@ def extract_text_detailed(filename: str, data: bytes) -> tuple[str, dict]:
         # .docx no tiene paginado estable → sin folios (mapa vacío ⇒ folio NULL). Nunca inventar.
         return text, {"ocr_pages": 0, "total_pages": 0, "truncated": False,
                       "has_body": _alnum_count(text) >= _MIN_BODY_ALNUM,
-                      "ocr_unavailable": False, "folio_map": []}
+                      "ocr_unavailable": False, "folio_map": [],
+                      "derivation": {"parser": "python-docx", "parser_version": "",
+                                     "source_format": "docx", "warnings": [
+                                         "AnyDoc no disponible; se usó el extractor de respaldo"
+                                     ]}}
     if name.endswith((".txt", ".md")):
         text = data.decode("utf-8", errors="replace").strip()
         # texto plano sin páginas → sin folios (mapa vacío ⇒ folio NULL). Nunca inventar.
         return text, {"ocr_pages": 0, "total_pages": 0, "truncated": False,
                       "has_body": _alnum_count(text) >= _MIN_BODY_ALNUM,
                       "ocr_unavailable": False, "folio_map": []}
-    raise ValueError(f"Tipo de documento no soportado: {filename} (usa PDF, Word .docx, .txt o .md)")
+    raise ValueError(
+        f"Tipo de documento no soportado: {filename} "
+        "(usa PDF, documentos de oficina, texto o Markdown)"
+    )
 
 
-async def extract_text_async(filename: str, data: bytes) -> str:
+async def extract_text_async(filename: str, data: bytes,
+                             declared_mime: str | None = None) -> str:
     """Variante async de `extract_text`: corre la extracción (CPU-pesada, hasta minutos con
     OCR) en un hilo para NO bloquear el event loop (M1). Úsala en todo call site async."""
-    text, _meta = await extract_text_detailed_async(filename, data)
+    text, _meta = await extract_text_detailed_async(filename, data, declared_mime)
     return text
 
 
-async def extract_text_detailed_async(filename: str, data: bytes) -> tuple[str, dict]:
+async def extract_text_detailed_async(filename: str, data: bytes,
+                                      declared_mime: str | None = None) -> tuple[str, dict]:
     """Variante async de `extract_text_detailed`: delega en `asyncio.to_thread` para que el
     OCR (que puede tardar minutos) no congele el event loop, SSE, health ni a los demás
     tenants (revisión adversarial M1)."""
-    return await asyncio.to_thread(extract_text_detailed, filename, data)
+    return await asyncio.to_thread(extract_text_detailed, filename, data, declared_mime)
 
 
 def _dpi_for_budget(page, base_dpi: int) -> int:

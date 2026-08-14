@@ -140,6 +140,44 @@ def run() -> None:
                   for t in llm.LEGAL_TASKS))
     with_policy("suscripcion", _sus)
 
+    # === 1g · política adaptativa: escalamiento determinista y telemetría efectiva ===
+    def _adaptive():
+        check("1g · [quality_adaptive] jurídico complejo prefiere Opus y auxiliares Haiku",
+              llm.resolve_fallback_chain("legal_analysis")[:2]
+              == [llm.CLI_OPUS_ALIAS, llm.CLI_SONNET_ALIAS]
+              and llm.resolve_fallback_chain("verification")[0] == llm.CLI_HAIKU_ALIAS)
+        check("1h · Max solo existe para escalamiento excepcional; caso ordinario conserva xhigh",
+              llm._cli_effort(llm.CLI_OPUS_ALIAS, "legal_draft") == "xhigh"
+              and llm._cli_effort(llm.CLI_OPUS_ALIAS, "legal_draft", "exceptional") == "max")
+        normal = [{"role": "user", "content": "análisis puntual"}]
+        huge = [{"role": "user", "content": "x" * llm._EXCEPTIONAL_LEGAL_CONTEXT_CHARS}]
+        check("1i · gate determinista: solo expediente jurídico extenso activa excepción",
+              llm._automatic_quality_escalation("legal_draft", normal) == "standard"
+              and llm._automatic_quality_escalation("legal_draft", huge) == "exceptional"
+              and llm._automatic_quality_escalation("main", huge) == "standard")
+
+        captured: dict[str, object] = {}
+        saved_call = subscription_llm.call_cli
+        try:
+            def _cli(messages, model_hint=None, timeout=0, effort=None):
+                captured.update(model_hint=model_hint, effort=effort, messages=messages)
+                return ok_response("respuesta excepcional")
+            subscription_llm.call_cli = _cli
+            install({})
+            response = llm.call_llm(huge, task="legal_draft")
+            check("1j · el gate sí llega al CLI: Opus + --effort max (no capacidad muerta)",
+                  response.choices[0].message.content == "respuesta excepcional"
+                  and captured.get("model_hint") == "opus" and captured.get("effort") == "max")
+        finally:
+            subscription_llm.call_cli = saved_call
+    with_policy("quality_adaptive", _adaptive)
+
+    from mia.metrics import usage as usage_metrics
+    check("1k · aliases adaptativos de suscripción tienen costo marginal cero (sin tarifa ficticia)",
+          all(usage_metrics.estimated_call_cost(alias, MSG, 1000, task="legal_draft") == 0.0
+              and usage_metrics.cost_usd(alias, 1000, 1000) == 0.0
+              for alias in (llm.CLI_OPUS_ALIAS, llm.CLI_SONNET_ALIAS, llm.CLI_HAIKU_ALIAS)))
+
     # === 2 · política 'soberano' → todo mia-local ===
     def _sob():
         tasks = ("main", *llm.LEGAL_TASKS, "curator", "compression", *_AUX)
@@ -333,7 +371,6 @@ def run() -> None:
     # Todo OFFLINE con el cliente falso (FakeCompletions); reserva/liquidación MOCKEADAS para
     # capturar los importes sin tocar la DB. Mutación (liquidar siempre 0.0, el bug de Codex):
     # al menos un check → ROJO (verificado editando `_invoke_metered` y restaurando).
-    from mia.metrics import usage as usage_metrics
     from mia.policy import budget as policy_budget
 
     MSG53 = [{"role": "user", "content": "x" * 4000}]
@@ -442,6 +479,29 @@ def run() -> None:
               asyncio.run(llm.model_policy_for("t-3")) == default)
     finally:
         pool_mod.tenant_connection = saved_tc
+
+    # === 10 · capacidad honesta: ausencia de Claude/Codex no se oculta a la UI ===
+    from mia.api.routes import settings
+    saved_available = subscription_llm.is_available
+    saved_list_available = settings._hub.list_available
+    try:
+        subscription_llm.is_available = lambda: False
+        settings._hub.list_available = lambda: {"codex": {"installed": False}}
+        capabilities = settings._model_capabilities()
+        check("10a · capabilities expone Claude y Codex ausentes sin prometer disponibilidad",
+              capabilities["claude_code"]["installed"] is False
+              and capabilities["codex"]["installed"] is False
+              and capabilities["claude_code"]["max_is_exceptional"] is True)
+        check("10b · efforts usa la interfaz pública, incluida la capacidad Max excepcional",
+              tuple(capabilities["claude_code"]["available_efforts"])
+              == subscription_llm.supported_efforts())
+        activation = (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8")
+        check("10c · UI declara respaldo autorizado si Claude falta y no exige plan Max",
+              "Si Claude Code no está disponible" in activation
+              and "Requiere un plan Max" not in activation)
+    finally:
+        subscription_llm.is_available = saved_available
+        settings._hub.list_available = saved_list_available
 
 
 def main() -> int:

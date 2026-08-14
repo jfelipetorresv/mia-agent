@@ -53,7 +53,9 @@ def _fake_embed(texts):
 
 def _fake_call_llm(messages, *, task=None, model=None, **kw):
     sysmsg = messages[0]["content"] if messages and isinstance(messages[0], dict) else ""
-    if "Redacta el borrador" in sysmsg:
+    if task == "legal_verification":
+        content = "APTO"
+    elif "Redacta el borrador" in sysmsg:
         content = "BORRADOR: contestación de la demanda. [VERIFICAR fecha del hecho]"
     elif "Incorpora al borrador" in sysmsg:
         content = "BORRADOR CORREGIDO con las indicaciones."
@@ -174,6 +176,7 @@ def run_checks(client, auth, tid) -> list[str]:
 
     # 9 · borrador disponible tras el turno
     r = client.get(f"/api/matters/{mA}/draft", headers=auth)
+    hash_a = r.json().get("draft_hash") if r.status_code == 200 else ""
     check("GET /api/matters/{id}/draft -> 200 con borrador",
           r.status_code == 200 and bool(r.json().get("draft", "").strip()))
     # 9b · hallazgo post-review (frontend): mientras el grafo está pausado esperando
@@ -187,7 +190,8 @@ def run_checks(client, auth, tid) -> list[str]:
     check("GET draft sin borrador -> 404", r.status_code == 404)
 
     # 11 · aprobar borrador
-    with client.stream("POST", f"/api/matters/{mA}/draft/approve", headers=auth, json={}) as s:
+    with client.stream("POST", f"/api/matters/{mA}/draft/approve", headers=auth,
+                       json={"draft_hash": hash_a, "attested": True}) as s:
         ok_approve = s.status_code == 200
         _ = "".join(s.iter_text())
     check("POST /api/matters/{id}/draft/approve -> 200", ok_approve)
@@ -323,11 +327,13 @@ def run_checks(client, auth, tid) -> list[str]:
 
     # 20 · el borrador expone el diagnóstico jurídico
     r = client.get(f"/api/matters/{mD}/draft", headers=auth)
+    hash_d = r.json().get("draft_hash") if r.status_code == 200 else ""
     check("GET draft incluye diagnosis con el diagnóstico (#25)",
           r.status_code == 200 and "DIAGNÓSTICO" in (r.json().get("diagnosis") or ""))
 
     # 21 · pending_review vuelve a false tras approve y tras reject
-    with client.stream("POST", f"/api/matters/{mD}/draft/approve", headers=auth, json={}) as s:
+    with client.stream("POST", f"/api/matters/{mD}/draft/approve", headers=auth,
+                       json={"draft_hash": hash_d, "attested": True}) as s:
         _ = "".join(s.iter_text())
     ok_after_approve = _pending(mD) is False
     with client.stream("GET", f"/api/matters/{mE}/stream", params={"message": "Otra consulta"},
@@ -348,8 +354,10 @@ def run_checks(client, auth, tid) -> list[str]:
     with client.stream("GET", f"/api/matters/{mF}/stream", params={"message": "¿Caducó?"},
                        headers=auth) as s:
         _ = "".join(s.iter_text())
+    hash_f = client.get(f"/api/matters/{mF}/draft", headers=auth).json().get("draft_hash", "")
     with client.stream("POST", f"/api/matters/{mF}/draft/approve", headers=auth,
-                       json={"edited_text": "Borrador editado por el abogado."}) as s:
+                       json={"edited_text": "Borrador editado por el abogado.",
+                             "draft_hash": hash_f, "attested": True}) as s:
         _ = "".join(s.iter_text())
     r = client.get(f"/api/matters/{mF}/draft", headers=auth)
     check("GET draft tras 'aprobar con cambios' -> hitl_outcome == 'edited' (no 'approved')",

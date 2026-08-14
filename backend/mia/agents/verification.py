@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import hashlib
 from typing import Optional
 
 VERIFY_MARK = "[VERIFICAR]"
@@ -1271,7 +1272,10 @@ def annotate_draft(
             estado = "respaldada"
             fuente = {"tipo": "expediente",
                       "referencia": f"[doc {anchor_n}]",
-                      "titulo": _document_titulo(documents, anchor_n)}
+                      "titulo": _document_titulo(documents, anchor_n),
+                      "source_passage_hash": hashlib.sha256(
+                          str((documents or [])[anchor_n - 1].get("content") or "").encode("utf-8")
+                      ).hexdigest()}
         elif lawyer_toks and _contains_contiguous(lawyer_toks, _match_tokens(c["citation"])):
             # La cita está en el MENSAJE del abogado: input fidedigno, no se omite. Solo
             # alcanzable en modo omit_unbacked (lawyer_toks queda vacío en modo clásico).
@@ -1300,6 +1304,9 @@ def annotate_draft(
                 "referencia": str(fuente.get("referencia") or ""),
                 "titulo": str(fuente.get("titulo") or ""),
             }
+            source_hash = str(fuente.get("source_passage_hash") or "")
+            if len(source_hash) == 64:
+                fuente_compact["source_passage_hash"] = source_hash
         if sentence_report:
             clasificadas.append((c["start"], c["end"], c["citation"], estado, fuente_compact))
         if len(detalle) < 50:

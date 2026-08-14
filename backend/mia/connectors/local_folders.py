@@ -51,14 +51,15 @@ from .. import embeddings
 from ..db import pool
 from ..jobs import enqueue_classification
 from ..ingest.extract import extract_text_detailed
-from ..ingest.ingest import chunk_text, chunk_text_with_folios
+from ..ingest.document_derivation import SUPPORTED_ANYDOC_EXTENSIONS
+from ..ingest.ingest import chunk_text, chunk_extracted_text
 from .obsidian_sync import ObsidianSync
 from .pinecone_connector import pinecone_scope_for_tenant
 
 logger = logging.getLogger("mia.connectors.local_folders")
 
 SOURCE_PREFIX = "local:"          # knowledge_chunks.source = 'local:<source_id>' (varchar 50)
-ALLOWED_SUFFIXES = {".md", ".txt", ".pdf", ".docx"}
+ALLOWED_SUFFIXES = {".md", ".txt", ".pdf", ".docx"} | set(SUPPORTED_ANYDOC_EXTENSIONS)
 EXCLUDED_DIR_NAMES = {"node_modules", "__pycache__"}
 MAX_FILE_BYTES = 20 * 1024 * 1024   # > 20 MB → se omite con log
 MAX_FILES_PER_SYNC = 2000           # máx. archivos NUEVOS/CAMBIADOS indexados por corrida
@@ -559,9 +560,10 @@ class LocalFolderSync:
                     if kind == "matters":
                         await self._ingest_matter_file(tenant_id, matter_id, source_id, rel,
                                                        text, new_hashes[rel], f,
-                                                       offset_map=meta.get("folio_map") or [])
+                                                       offset_map=meta.get("folio_map") or [],
+                                                       extraction_meta=meta)
                     else:
-                        chunks = self._chunk_file(text, rel)
+                        chunks = self._chunk_file(text, rel, meta)
                         vectors = await self._embed_chunks([c["text"] for c in chunks])
                         await self._upsert_chunks(tenant_id, db_source, rel, chunks, vectors)
                     stats["indexed"] += 1
@@ -677,16 +679,22 @@ class LocalFolderSync:
     def _read_text(p: Path) -> tuple[str, dict]:
         """Texto plano + metadata de OCR. PDF/Word vía extract_text_detailed (SÍNCRONA y
         CPU-pesada — el llamador la corre en un hilo, M1); .md/.txt lectura directa."""
-        if p.suffix.lower() in (".pdf", ".docx"):
+        if p.suffix.lower() in ({".pdf"} | SUPPORTED_ANYDOC_EXTENSIONS):
             return extract_text_detailed(p.name, p.read_bytes())
         # .md/.txt: texto plano sin páginas → mapa de folios vacío (folio NULL). No inventar.
         return (p.read_text(encoding="utf-8", errors="replace"),
                 {"has_body": True, "ocr_unavailable": False, "folio_map": []})
 
-    def _chunk_file(self, text: str, rel: str) -> list[dict]:
+    def _chunk_file(self, text: str, rel: str, extraction_meta: dict | None = None) -> list[dict]:
         """.md → troceo por encabezados de ObsidianSync; el resto → chunk_text (ingest)."""
         if rel.lower().endswith(".md"):
             return self._md._chunk_document(text, rel)
+        if (extraction_meta or {}).get("derivation", {}).get("parser") == "anydoc":
+            structured = chunk_extracted_text(text, extraction_meta)
+            return [
+                {"text": piece, "heading_path": None, "position": i, "source_file": rel}
+                for i, (piece, _folio) in enumerate(structured)
+            ]
         return [
             {"text": piece, "heading_path": None, "position": i, "source_file": rel}
             for i, piece in enumerate(chunk_text(text))
@@ -800,7 +808,8 @@ class LocalFolderSync:
     # ── persistencia del EXPEDIENTE VINCULADO (documents + chunks · RLS por tenant) ──
     async def _ingest_matter_file(self, tenant_id: str, matter_id, source_id: str, rel: str,
                                   text: str, sha256: str, path: Path,
-                                  offset_map: list[tuple[int, int, int]] | None = None) -> None:
+                                  offset_map: list[tuple[int, int, int]] | None = None,
+                                  extraction_meta: dict | None = None) -> None:
         """Ingesta un archivo de la carpeta vinculada al expediente: extrae texto, trocea,
         embebe e inserta un documento (origin='folder', source_path=ruta relativa, sha256,
         source_id=ESTA fuente) y sus chunks. Reemplaza SIEMPRE el documento previo de esa
@@ -813,7 +822,7 @@ class LocalFolderSync:
         se tocan aquí."""
         # Troceo con folio: cada chunk hereda el folio (página) de su offset de inicio, medido
         # sobre el MISMO `text` que produjo extract (`offset_map`). Sin páginas → folio NULL.
-        pairs = chunk_text_with_folios(text, offset_map or [])
+        pairs = chunk_extracted_text(text, extraction_meta or {"folio_map": offset_map or []})
         async with pool.tenant_connection(tenant_id) as conn:
             # Borrar la versión previa de ESTA ruta traída por ESTA fuente (idempotente) —
             # o el huérfano pre-028 del mismo path, nunca la de una carpeta hermana.

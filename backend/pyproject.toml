@@ -27,6 +27,7 @@ dependencies = [
   "python-multipart==0.0.18",            # Fase 3: subida de documentos (multipart/form-data)
   "pymupdf>=1.24",                       # Fase 3: extracción de texto de PDF (fitz)
   "python-docx>=1.1",                    # Fase 3: extracción de texto de Word (.docx)
+  "firecrawl-anydoc==0.1.7",             # Markdown estructural local; PDF sigue en PyMuPDF/OCR por folios
   "python-telegram-bot~=21.0",           # CP-B2: puente de Telegram (canal opt-in); ~= a propósito, no está en los pins críticos del Riesgo #32
   "sherpa-onnx~=1.13",                   # CP-Z1: dictado local (Silero VAD + Parakeet v3 ONNX). Pesos aparte: scripts/download_speech_models.ps1. Sin él, el endpoint de voz degrada a 503.
   "av~=13.1",                            # CP-Z2: códec OGG/Opus para las notas de voz de Telegram (wheel autocontenido, sin ffmpeg externo). Fuera de los pins críticos del Riesgo #32. Solo lo usa speech/opus.py.

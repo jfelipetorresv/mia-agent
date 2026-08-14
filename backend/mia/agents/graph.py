@@ -41,6 +41,7 @@ import logging
 import math
 import re
 import time
+import uuid
 from typing import Any, Callable, Optional
 
 from langgraph.graph import END, START, StateGraph
@@ -56,11 +57,12 @@ from ..gateway.agent_hub import CONNECTORS, AgentHub
 from ..db import pool as db_pool
 from ..memory import burned_citations
 from ..memory import citation_seals
+from ..memory import legal_ledger
 from ..memory.playbook_manager import Playbook, PlaybookManager
 from ..memory.tokens import estimate_tokens
 from ..memory.trace_capture import TraceCapture
 from ..memory import trace_search
-from ..memory.skill_improver import SkillImprover
+from ..jobs import enqueue_learning_job
 from ..metrics import usage as usage_metrics
 from ..onboarding.ficha_loader import load_ficha_context
 from ..policy import budget as policy_budget
@@ -71,18 +73,9 @@ from .state import HITL_OUTCOME, MatterState
 
 logger = logging.getLogger("mia.agents.graph")
 
-# Retiene las tasks fire-and-forget de skill_improver (H.4) para que no las recoja el GC
-# antes de terminar (lección de la sesión smoke: no usar create_task suelto).
-_BG_TASKS: set = set()
-
-
 async def drain_bg_tasks() -> None:
-    """Espera a las tareas fire-and-forget en vuelo (skill_improver) antes de cerrar el loop.
-
-    C.4: lo llama el shutdown del lifespan (api/main.py) ANTES de cerrar el pool, para que las
-    propuestas a medio escribir terminen y no se pierdan silenciosamente en el apagado."""
-    if _BG_TASKS:
-        await asyncio.gather(*list(_BG_TASKS), return_exceptions=True)
+    """Compatibilidad del lifespan: el aprendizaje vive ahora en la cola durable."""
+    return None
 
 _WORD = re.compile(r"\w+", re.UNICODE)
 _MAX_ACTIVE_PLAYBOOKS = 3
@@ -698,7 +691,8 @@ def _project_material_sources(state: MatterState, patterns: list) -> list[dict]:
                 if key in seen:
                     continue
                 seen.add(key)
-                sources.append({"tipo": tipo, "referencia": ref, "titulo": titulo})
+                sources.append({"tipo": tipo, "referencia": ref, "titulo": titulo,
+                                "source_passage_hash": legal_ledger.content_hash(content)})
                 if len(sources) >= _PROJECT_SOURCES_MAX:
                     return sources
     return sources
@@ -1242,7 +1236,8 @@ class MatterGraphBuilder:
         if existing:
             return [str(c) for c in existing if str(c or "").strip()] or [GENERIC_CODE]
         try:
-            codes = await research.resolve_jurisdictions_for(state["tenant_id"])
+            codes = await research.resolve_jurisdictions_for(
+                state["tenant_id"], state.get("matter_id"))
         except Exception:  # noqa: BLE001 — fail-soft: el turno no depende de esto
             logger.warning("no se pudo resolver el ordenamiento del despacho; se sigue "
                            "en modo genérico (sin citar norma de ningún país)",
@@ -1527,7 +1522,8 @@ class MatterGraphBuilder:
 
         msg, query = self._research_query(state, md)
         facts = str(md.get("facts") or "")
-        extra_patterns = await research.citation_patterns_for(state["tenant_id"])  # fail-soft
+        extra_patterns = await research.citation_patterns_for(
+            state["tenant_id"], state.get("matter_id"))  # fail-soft
 
         async def _worker(juris: str) -> dict:
             # Cada worker: fuentes ACOTADAS a SU jurisdicción → mini-memoria (LLM) →
@@ -1879,7 +1875,8 @@ class MatterGraphBuilder:
         `report_key`: bajo qué clave de metadata queda el informe — "verification"
         (borrador, default) o "verification_diagnosis" (el diagnóstico, que también se
         emite y sin esto quedaba fuera del guardián)."""
-        extra = await research.citation_patterns_for(state["tenant_id"])  # fail-soft
+        extra = await research.citation_patterns_for(
+            state["tenant_id"], state.get("matter_id"))  # fail-soft
         # num_documents = rango válido de referencias [doc n] que vio el modelo. Habilita el
         # guardián de [doc n] fantasma (un [doc k] fuera de rango es un documento inventado):
         # se marca [VERIFICAR] como cualquier cita sin respaldo. El rango es el MAYOR de:
@@ -1921,7 +1918,18 @@ class MatterGraphBuilder:
         # en un borrador previo — se resuelven por sello, sin marca ni re-auditoría LLM.
         # Quemada gana siempre (se coteja antes en annotate_draft). Fail-soft: sin sellos,
         # idéntico a antes.
-        sellos = await citation_seals.list_seals(state["tenant_id"])
+        sources_for_seals = md.get("research_sources") or []
+        if project_material and not sources_for_seals:
+            try:
+                sources_for_seals = _project_material_sources(
+                    state, verification.compile_patterns(extra)) or []
+            except Exception:  # noqa: BLE001 -- sin fuente actual no se reutiliza sello
+                sources_for_seals = []
+        sellos = await citation_seals.list_compatible_seals(
+            state["tenant_id"],
+            source_hashes=citation_seals.active_source_hashes(sources_for_seals, docs),
+            jurisdictions=list(state.get("jurisdictions") or []),
+        )
 
         def _scan() -> tuple[str, dict]:
             sources = md.get("research_sources")
@@ -2007,10 +2015,12 @@ class MatterGraphBuilder:
                               report.get("afirmaciones_negativas"),
                               report.get("contaminacion_expediente")))
         if citas == 0 or (pendientes <= 0 and sin_avisos):
-            if citas > 0 and isinstance(report, dict):
+            if isinstance(report, dict):
                 report["gate_llm"] = {
-                    "veredicto": "sello",
-                    "detalle": ("Todas las citas de este borrador ya estaban verificadas y "
+                    "veredicto": "sin_citas" if citas == 0 else "sello",
+                    "detalle": ("El borrador no contiene citas jurídicas que auditar."
+                                if citas == 0 else
+                                "Todas las citas de este borrador ya estaban verificadas y "
                                 "aprobadas por ti en borradores anteriores (sello del "
                                 "despacho). No se repitió la auditoría."),
                 }
@@ -2036,15 +2046,21 @@ class MatterGraphBuilder:
                 model=_persona_alias(state))
             _accum_usage(md, usage)
             primera = (veredicto or "").strip().splitlines()[0].strip().upper() if veredicto else ""
-            if isinstance(report, dict) and veredicto and not primera.startswith("APTO"):
+            if isinstance(report, dict):
                 report["gate_llm"] = {
-                    "veredicto": "hallazgos",
-                    "detalle": (veredicto or "").strip()[:2000],
+                    "veredicto": "apto" if primera.startswith("APTO") else "hallazgos",
+                    "detalle": (veredicto or "Sin veredicto del revisor independiente.").strip()[:2000],
                 }
                 md["verification"] = report
         except Exception:  # noqa: BLE001 — el gate LLM nunca corta el camino al abogado
             logger.exception("verificador_citas: el gate LLM falló; el turno sigue con el "
                              "muro determinista solo")
+            if isinstance(report, dict):
+                report["gate_llm"] = {
+                    "veredicto": "unavailable",
+                    "detalle": "La revisión independiente no estuvo disponible; el borrador sigue siendo revisable, pero no puede salir como final.",
+                }
+                md["verification"] = report
 
         md["stage"] = "verificador_citas"
         return {"draft": annotated, "metadata": md}
@@ -2198,11 +2214,57 @@ class MatterGraphBuilder:
                 "verification_diagnosis"),
         })
         # --- de aquí en adelante solo corre TRAS reanudar con Command(resume=...) ---
+        md = dict(state.get("metadata") or {})
+        draft = state.get("draft") or ""
+        draft_hash = legal_ledger.content_hash(draft)
         dec = (decision or {}).get("decision")
+        # Un clic de aprobar tiene que referirse al MISMO texto mostrado por la
+        # pantalla. Sin huella o con una huella vieja no hay aprobación válida.
+        # Esto también protege reintentos/carreras y llamadas directas al grafo.
+        if dec in ("approved", "editing") and (decision or {}).get("draft_hash") != draft_hash:
+            decision = {"decision": "rejected", "feedback": "La versión a aprobar ya no coincide con el borrador revisado.",
+                        "rejected_by_gate": "draft_hash"}
+            dec = "rejected"
+        if dec in ("approved", "editing") and (decision or {}).get("attested") is not True:
+            decision = {"decision": "rejected", "feedback": "Falta la constancia de revisión humana.",
+                        "rejected_by_gate": "human_attestation"}
+            dec = "rejected"
+        if dec == "editing" and not isinstance((decision or {}).get("edited_text"), str):
+            decision = {"decision": "rejected", "feedback": "La versión editada no es válida.",
+                        "rejected_by_gate": "edited_text"}
+            dec = "rejected"
         if dec not in ("approved", "rejected", "editing"):
             dec = "rejected"  # fail-closed: sin decisión válida no se aprueba
         status = dec
-        md = dict(state.get("metadata") or {})
+        # El ledger no reemplaza el checkpoint: deja evidencia durable del texto y
+        # de la verificación que el abogado realmente revisó. Si la persistencia no
+        # está disponible, el flujo puede cerrar como rechazo, pero nunca producir un
+        # final descargable sin evidencia.
+        run_id = str(md.get("ledger_run_id") or uuid.uuid4())
+        md["ledger_run_id"] = run_id
+        source_hashes = citation_seals.active_source_hashes(
+            md.get("research_sources") or [], state.get("documents") or [])
+        try:
+            await legal_ledger.append_artifact(
+                state["tenant_id"], state["matter_id"], draft, kind="draft",
+                metadata={"verification": md.get("verification") or {}},
+            )
+            await legal_ledger.record_gate(
+                state["tenant_id"], state["matter_id"], draft_hash,
+                gate="citation_verification",
+                passed=legal_ledger.verification_passes(md.get("verification")),
+                evidence=md.get("verification") or {},
+                run_id=run_id, trace_id=run_id, checker_version="citation-verifier-v2",
+                jurisdictions=list(state.get("jurisdictions") or []),
+                source_hashes=source_hashes,
+            )
+        except Exception:  # noqa: BLE001 -- sin ledger no hay aprobación final
+            logger.exception("ledger jurídico no disponible; se cierra sin final")
+            if status in ("approved", "editing"):
+                status = "rejected"
+                decision = {"decision": "rejected", "feedback": "No se pudo registrar la revisión del documento.",
+                            "rejected_by_gate": "legal_ledger"}
+        md["draft_hash"] = draft_hash
         md["hitl_decision"] = decision
         return {"hitl_status": status, "metadata": md}
 
@@ -2217,17 +2279,37 @@ class MatterGraphBuilder:
             md["original_draft"] = draft
 
         if status == "editing":
-            final, usage = await self._llm([
-                {"role": "system", "content": prompt_builder.build_graph_system(
-                    state, "edit", matter_context=_matter_context_for(state),
-                    persona_voice=_persona_voice(state))},
-                {"role": "user", "content": f"Borrador:\n{draft}\n\nIndicaciones del abogado:\n"
-                                            f"{decision.get('edits', '')}\n\nDevuelve el borrador corregido."},
-            ], task="legal_edit", state=state, md=md, node="edit", model=_persona_alias(state))
-            _accum_usage(md, usage)
-            # CP9: la edición pudo introducir citas nuevas — el especialista de
-            # verificación pasa de nuevo (determinista, solo añade marcas).
-            final = await self._verify_draft(state, md, final)
+            # La versión del abogado es un artefacto, no una instrucción para que
+            # un LLM la reescriba. Se conserva byte a byte; el verificador solo
+            # produce un informe separado y no altera el texto que se almacenará.
+            final = str(decision.get("edited_text") or "")
+            report_md = dict(md)
+            _ = await self._verify_draft(state, report_md, final)
+            md["verification"] = report_md.get("verification") or {}
+            # La edición humana no se reescribe, pero SÍ pasa una nueva revisión
+            # independiente sobre ese texto exacto. Sin respuesta APTO no habrá final.
+            try:
+                summary = json.dumps(md["verification"], ensure_ascii=False, default=str)[:4000]
+                verdict, usage = await self._llm([
+                    {"role": "system", "content": prompt_builder.build_lean_system(
+                        state, "verificador_citas")},
+                    {"role": "user", "content": (
+                        f"Versión exacta editada por el abogado (no la reescribas):\n{final}\n\n"
+                        f"Informe del guardián determinista (JSON):\n{summary}")},
+                ], task="legal_verification", state=state, md=md, node="verificador_citas",
+                    model=_persona_alias(state))
+                _accum_usage(md, usage)
+                first = (verdict or "").strip().splitlines()[0].strip().upper()
+                md["verification"]["gate_llm"] = {
+                    "veredicto": "apto" if first.startswith("APTO") else "hallazgos",
+                    "detalle": (verdict or "Sin veredicto del revisor independiente.").strip()[:2000],
+                }
+            except Exception:  # noqa: BLE001 -- deja revisar, bloquea final
+                logger.exception("verificación independiente de edición no disponible")
+                md["verification"]["gate_llm"] = {
+                    "veredicto": "unavailable",
+                    "detalle": "La versión editada no pudo pasar la revisión independiente; queda como borrador.",
+                }
         else:
             # approved / rejected: se conserva el borrador (el rechazo queda en la traza).
             final = draft
@@ -2292,23 +2374,52 @@ class MatterGraphBuilder:
                            "pero el turno no quedó en el índice consultable", exc_info=True)
         _t_sellos = time.perf_counter()
 
-        # H.4 skill self-improving: tras registrar la traza, extrae un patrón reutilizable y (si
-        # aplica) propone una mejora de playbook con status=pending (HITL). FIRE-AND-FORGET: no
-        # bloquea el turno; la task se retiene en _BG_TASKS y process_trace_safe nunca propaga.
-        try:
-            task = asyncio.create_task(
-                SkillImprover().process_trace_safe(state["tenant_id"], trace.to_dict()))
-            _BG_TASKS.add(task)
-            task.add_done_callback(_BG_TASKS.discard)
-        except Exception:  # noqa: BLE001 — lanzar la task es best-effort
-            logger.debug("no se pudo lanzar skill_improver (best-effort)", exc_info=True)
-        # F1.1 (plan de eficiencia): la COSECHA corre en segundo plano y SOLO cuando el
-        # abogado APROBÓ (cosechar un rechazo gastaba una llamada `main` para nada). Antes
-        # era un nodo del grafo DESPUÉS de finalize: el abogado esperaba su llamada dentro
-        # del clic de Aprobar y el reporte ni se persistía. Ahora se guarda como PROPUESTA
-        # pendiente (feedback_proposals, tipo harvest_lessons) — cosecha sin escritura en
-        # caliente: Mia propone, el abogado decide en Memoria.
-        if status == "approved":
+        # El aprendizaje se encola DESPUÉS de que el ledger haya creado el final. La
+        # decisión del abogado no espera llamadas al modelo, pero una caída tampoco
+        # pierde la señal: payload mínimo (asunto+huella+traza), sin duplicar el escrito.
+        if status in ("approved", "editing"):
+            # Los recibos se registran sobre la huella FINAL. Una edición invalida
+            # automáticamente los recibos del borrador porque su hash cambia.
+            final_hash = legal_ledger.content_hash(final)
+            try:
+                if status == "editing":
+                    await legal_ledger.append_artifact(
+                        state["tenant_id"], state["matter_id"], final, kind="attorney_edited",
+                        parent_hash=md.get("draft_hash") or "", trace_id=trace_id,
+                        metadata={"verification": md.get("verification") or {},
+                                  "human_decision": status},
+                    )
+                await legal_ledger.record_gate(
+                    state["tenant_id"], state["matter_id"], final_hash,
+                    gate="citation_verification",
+                    passed=legal_ledger.verification_passes(md.get("verification")),
+                    evidence=md.get("verification") or {},
+                    run_id=str(md.get("ledger_run_id") or trace_id), trace_id=trace_id,
+                    checker_version="citation-verifier-v2",
+                    jurisdictions=list(state.get("jurisdictions") or []),
+                    source_hashes=citation_seals.active_source_hashes(
+                        md.get("research_sources") or [], state.get("documents") or []),
+                )
+                await legal_ledger.record_gate(
+                    state["tenant_id"], state["matter_id"], final_hash,
+                    gate="human_approval", passed=decision.get("attested") is True,
+                    evidence={"decision": status, "reviewed_draft_hash": md.get("draft_hash") or "",
+                              "attested": decision.get("attested") is True},
+                    run_id=str(md.get("ledger_run_id") or trace_id), trace_id=trace_id,
+                    checker_version="human-attestation-v1",
+                    jurisdictions=list(state.get("jurisdictions") or []),
+                )
+                md["final_ready"] = await legal_ledger.finalise_if_gated(
+                    state["tenant_id"], state["matter_id"], final,
+                    parent_hash=md.get("draft_hash") or "", trace_id=trace_id,
+                    metadata={"human_decision": status},
+                )
+            except Exception:  # noqa: BLE001 -- no se habilita un final sin ledger
+                logger.exception("no se pudo registrar el final jurídico; queda solo borrador")
+                md["final_ready"] = False
+
+        if (status in ("approved", "editing") and md.get("final_ready")
+                and legal_ledger.verification_passes(md.get("verification"))):
             # F2 · SELLAR: las citas que el muro dio por RESPALDADAS dentro de un borrador
             # que el abogado APROBÓ quedan selladas — no se re-auditan con modelo en los
             # turnos siguientes. Es la mitad "escritura" del sello; la lectura vive en
@@ -2316,26 +2427,65 @@ class MatterGraphBuilder:
             # (un INSERT idempotente por cita respaldada).
             try:
                 n_selladas = await citation_seals.seal_from_approved_report(
-                    state["tenant_id"], md.get("verification") or {}, trace_id=trace_id)
+                    state["tenant_id"], md.get("verification") or {}, trace_id=trace_id,
+                    artifact_hash=legal_ledger.content_hash(final),
+                    jurisdictions=list(state.get("jurisdictions") or []))
                 if n_selladas:
                     logger.info("sello: %d citas selladas por la aprobación del abogado "
                                 "(tenant=%s)", n_selladas, state["tenant_id"])
             except Exception:  # noqa: BLE001 — sellar es best-effort
                 logger.debug("no se pudieron sellar las citas aprobadas", exc_info=True)
-            try:
-                task = asyncio.create_task(self._harvest_background(
-                    tenant_id=state["tenant_id"],
-                    soul_snapshot=state.get("soul_snapshot"),
-                    jurisdictions=list(state.get("jurisdictions") or []) or None,
-                    draft_original=md.get("original_draft", "") or draft,
-                    draft_final=final,
-                    trace_id=trace_id,
-                    alias=_persona_alias(state)))
-                _BG_TASKS.add(task)
-                task.add_done_callback(_BG_TASKS.discard)
-            except Exception:  # noqa: BLE001 — lanzar la cosecha es best-effort
-                logger.debug("no se pudo lanzar la cosecha (best-effort)", exc_info=True)
-        md.update(stage="finalize", final_status=status)
+        learning_jobs: list[dict] = []
+        learning_errors: list[str] = []
+        if status in ("approved", "editing") and md.get("final_ready"):
+            final_hash = legal_ledger.content_hash(final)
+            base_payload = {
+                "matter_id": str(state["matter_id"]),
+                "artifact_hash": final_hash,
+                "trace_id": trace_id,
+                "decision": status,
+            }
+            job_types = ["learn_approved_artifact", "harvest_lessons"]
+            if status == "approved":
+                job_types.extend(["wiki_approved_artifact", "skill_improvement"])
+            for job_type in job_types:
+                try:
+                    job_id, created, job_status = await enqueue_learning_job(
+                        state["tenant_id"], job_type, base_payload,
+                        dedupe_key=f"{job_type}:{final_hash}")
+                    learning_jobs.append({"id": job_id, "type": job_type,
+                                          "status": job_status, "created": created})
+                except Exception:  # noqa: BLE001 -- la decisión ya quedó guardada
+                    logger.exception("no se pudo encolar aprendizaje %s (tenant=%s matter=%s)",
+                                     job_type, state["tenant_id"], state["matter_id"])
+                    learning_errors.append(job_type)
+        known_statuses = {str(job.get("status")) for job in learning_jobs}
+        if learning_errors and learning_jobs:
+            learning_status = "partially_queued"
+        elif learning_errors:
+            learning_status = "blocked"
+        elif learning_jobs and known_statuses == {"succeeded"}:
+            learning_status = "completed"
+        elif "failed" in known_statuses:
+            learning_status = "needs_attention"
+        elif learning_jobs:
+            learning_status = "queued"
+        elif status in ("approved", "editing"):
+            learning_status = "blocked"
+        else:
+            learning_status = "not_applicable"
+        md["learning"] = {
+            "decision_saved": True,
+            "status": learning_status,
+            "jobs": learning_jobs,
+            "not_queued": learning_errors,
+            "blocked_reason": ("final_not_verified"
+                               if status in ("approved", "editing")
+                               and not md.get("final_ready") else None),
+        }
+        effective_status = (status if status not in ("approved", "editing") or md.get("final_ready")
+                            else "verification_required")
+        md.update(stage="finalize", final_status=effective_status)
         # Medición por etapa (sesión 56): ver el comentario gemelo en hitl._resume.
         _fin = time.perf_counter()
         logger.info("finalize(%s): capture=%.1fs index=%.1fs sellos=%.1fs",
@@ -2343,47 +2493,10 @@ class MatterGraphBuilder:
         return {
             "draft": final,
             "trace_id": trace_id,
+            "hitl_status": ("pending" if effective_status == "verification_required" else status),
             "messages": [{"role": "assistant", "content": final}],
             "metadata": md,
         }
-
-    # ── 9 · cosecha en segundo plano (F1.1 — ya no es nodo del grafo) ─────────
-    async def _harvest_background(self, *, tenant_id: str, soul_snapshot: Any,
-                                  jurisdictions: list[str] | None,
-                                  draft_original: str, draft_final: str,
-                                  trace_id: str, alias: Optional[str]) -> None:
-        """Cosecha de aprendizaje tras una APROBACIÓN, fuera del camino del abogado.
-
-        Prompt magro (build_lean_system: la cosecha compara dos borradores, no redacta
-        litigio) y una sola llamada. El reporte queda como propuesta pendiente en
-        feedback_proposals; si la llamada o el INSERT fallan, se pierde ESTA cosecha y
-        nada más — jamás afecta al turno ya cerrado."""
-        try:
-            estado_minimo = {"soul_snapshot": soul_snapshot,
-                             "jurisdictions": jurisdictions or []}
-            report, _usage = await self._llm([
-                {"role": "system", "content": prompt_builder.build_lean_system(
-                    estado_minimo, "harvest", jurisdictions=jurisdictions)},
-                {"role": "user", "content": (
-                    f"Borrador original de Mia:\n{draft_original}\n\n"
-                    f"Versión final aprobada por el abogado:\n{draft_final}")},
-            ], task="main", node="harvest", model=alias)
-            report = (report or "").strip()
-            if not report:
-                return
-            async with db_pool.tenant_connection(tenant_id) as conn:
-                await conn.execute(
-                    "INSERT INTO feedback_proposals "
-                    "  (tenant_id, proposal_type, target_playbook_id, suggested_content, "
-                    "   rationale, signal_count, trace_ids) "
-                    "VALUES (%s::uuid, 'harvest_lessons', NULL, %s, %s, 1, %s)",
-                    (tenant_id, report[:20000],
-                     "Lecciones del borrador aprobado: qué corrigió el abogado y qué "
-                     "conviene incorporar. Propuesta de la cosecha — nada se aplica solo.",
-                     [trace_id]))
-        except Exception:  # noqa: BLE001 — la cosecha nunca rompe nada
-            logger.warning("la cosecha en segundo plano falló; se pierde solo este reporte",
-                           exc_info=True)
 
     # ── ensamblaje ───────────────────────────────────────────────────────────
     def build(self, checkpointer: Any):
@@ -2417,8 +2530,8 @@ class MatterGraphBuilder:
         # hallazgo es del abogado en el HITL, no del gate.
         g.add_edge("verificador_citas", "hitl_checkpoint")
         g.add_edge("hitl_checkpoint", "finalize")
-        # F1.1: la cosecha ya NO es un nodo — finalize la dispara en segundo plano solo
-        # tras una aprobación. El clic de Aprobar deja de pagar su llamada al modelo.
+        # La cosecha ya NO es un nodo: finalize solo deja un trabajo durable. El clic
+        # de Aprobar no paga la llamada al modelo y un reinicio no pierde la señal.
         g.add_edge("finalize", END)
 
         return g.compile(checkpointer=checkpointer)

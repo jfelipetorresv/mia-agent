@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { COUNTRY_NAME_BY_CODE } from "@/app/_components/CountrySelector";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ type Matter = {
   status?: string;
   created_at?: string;
   pending_review?: boolean;
+  jurisdictions?: string[];
 };
 
 function fmtDate(s?: string): string {
@@ -68,6 +70,8 @@ function AsuntosPageContent() {
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [organizationJurisdictions, setOrganizationJurisdictions] = useState<string[]>([]);
+  const [selectedJurisdictions, setSelectedJurisdictions] = useState<string[]>([]);
   const [error, setError] = useState("");
 
   async function load() {
@@ -82,6 +86,14 @@ function AsuntosPageContent() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    apiGet<{ jurisdictions?: string[] }>("/api/profile/full")
+      .then((profile) => setOrganizationJurisdictions(
+        (profile.jurisdictions || []).filter((code) => code && code !== "generic"),
+      ))
+      .catch(() => setOrganizationJurisdictions([]));
   }, []);
 
   // El buscador de comandos (Ctrl+K → "Nuevo asunto") llega aquí como "/?nuevo=1".
@@ -103,10 +115,12 @@ function AsuntosPageContent() {
       const m = await apiSend<Matter>("POST", "/api/matters", {
         name: name.trim(),
         description: description.trim(),
+        ...(selectedJurisdictions.length > 0 ? { jurisdictions: selectedJurisdictions } : {}),
       });
       setShowModal(false);
       setName("");
       setDescription("");
+      setSelectedJurisdictions([]);
       setError("");
       router.push(`/asuntos/${m.id}`);
     } catch {
@@ -126,7 +140,7 @@ function AsuntosPageContent() {
                 no solo en el estado vacío: en un asunto Mia siempre termina en un
                 borrador que el abogado aprueba. */}
             {loading
-              ? "Cargando tu despacho…"
+              ? "Cargando tu firma u organización…"
               : matters.length === 0
                 ? "Aquí Mia siempre termina en un borrador que tú apruebas."
                 : pendientes > 0
@@ -168,7 +182,7 @@ function AsuntosPageContent() {
           </div>
           <h2 className="text-lg font-semibold tracking-tight">Crea tu primer asunto</h2>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-            Un asunto es un caso de tu despacho: conectas carpetas, subes el expediente y
+            Un asunto es un caso de tu firma u organización: conectas carpetas, subes el expediente y
             conversas con Mia — y todo termina en un borrador que tú apruebas antes de que
             salga. Si prefieres que te responda directo, sin ese paso, usa un proyecto.
           </p>
@@ -206,6 +220,11 @@ function AsuntosPageContent() {
                   </div>
                   {m.description ? (
                     <div className="mt-0.5 truncate text-sm text-muted-foreground">{m.description}</div>
+                  ) : null}
+                  {m.jurisdictions && m.jurisdictions.length > 0 ? (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Contexto jurídico: {m.jurisdictions.map((code) => COUNTRY_NAME_BY_CODE[code] || "General").join(", ")}
+                    </div>
                   ) : null}
                 </div>
                 {m.pending_review ? (
@@ -254,6 +273,30 @@ function AsuntosPageContent() {
                 }}
               />
             </div>
+            {organizationJurisdictions.length > 0 ? (
+              <div className="space-y-2">
+                <Label>Jurisdicción de este asunto</Label>
+                <p className="text-xs text-muted-foreground">
+                  Si no eliges una, Mia usará todas las jurisdicciones de tu firma u organización.
+                </p>
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  {organizationJurisdictions.map((code) => (
+                    <label key={code} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={selectedJurisdictions.includes(code)}
+                        onChange={(event) => setSelectedJurisdictions((current) =>
+                          event.target.checked
+                            ? [...current, code]
+                            : current.filter((item) => item !== code),
+                        )}
+                      />
+                      {COUNTRY_NAME_BY_CODE[code] || code}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="space-y-1.5">
               <Label htmlFor="matter-desc">Descripción (opcional)</Label>
               <Textarea

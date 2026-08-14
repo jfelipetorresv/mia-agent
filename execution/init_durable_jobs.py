@@ -1,4 +1,4 @@
-"""Aplica la cola local durable (034). Idempotente."""
+"""Aplica la cola local durable (034) y la unicidad del aprendizaje (056)."""
 from __future__ import annotations
 
 import os
@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
-MIGRATION = ROOT / "backend/mia/db/migrations/034_durable_jobs.sql"
+MIGRATIONS = [
+    ROOT / "backend/mia/db/migrations/034_durable_jobs.sql",
+    ROOT / "backend/mia/db/migrations/056_durable_learning_once.sql",
+]
 
 
 def apply() -> None:
@@ -22,9 +25,10 @@ def apply() -> None:
         dbname=os.getenv("PG_DB", "mia"),
         user="postgres", password=password, autocommit=True,
     ) as conn:
-        conn.execute(MIGRATION.read_text(encoding="utf-8"))
+        for migration in MIGRATIONS:
+            conn.execute(migration.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
     apply()
-    print("[OK] 034_durable_jobs.sql aplicado")
+    print("[OK] cola durable y unicidad de aprendizaje aplicadas")

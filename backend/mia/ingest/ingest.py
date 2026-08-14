@@ -18,6 +18,7 @@ from pathlib import Path
 from .. import embeddings
 from ..db import pool
 from ..jobs import enqueue_classification
+from .document_derivation import chunk_markdown
 
 # psycopg async requiere SelectorEventLoop en Windows (Modo B); el Proactor no sirve.
 if sys.platform == "win32":
@@ -73,6 +74,36 @@ def chunk_text_with_folios(text: str, offset_map: list[tuple[int, int, int]],
         out.append((text[i:i + size], _folio_at(spans, i)))
         i += step
     return out
+
+
+def chunk_extracted_text(text: str, metadata: dict | None = None,
+                         *, size: int = 1200, overlap: int = 150,
+                         ) -> list[tuple[str, int | None]]:
+    """Chunk extraction output while preserving the strongest provenance available.
+
+    PDF/OCR output with a folio map always uses the legacy exact-offset splitter.
+    AnyDoc office output carries structural chunks; its section breadcrumb is
+    prepended to the embedding text because the current ``chunks`` table has no
+    heading column. Plain text and fallback parsers retain the old splitter.
+    """
+    metadata = metadata or {}
+    folio_map = metadata.get("folio_map") or []
+    if folio_map:
+        return chunk_text_with_folios(text, folio_map, size=size, overlap=overlap)
+    derivation = metadata.get("derivation") or {}
+    if derivation.get("parser") == "anydoc":
+        structured = chunk_markdown(text, str(derivation.get("source_file") or ""))
+        out: list[tuple[str, int | None]] = []
+        for chunk in structured:
+            heading = str(chunk.get("heading_path") or "").strip()
+            content = str(chunk.get("text") or "").strip()
+            if not content:
+                continue
+            if heading:
+                content = f"[Sección: {heading}]\n{content}"
+            out.append((content, None))
+        return out
+    return chunk_text_with_folios(text, [], size=size, overlap=overlap)
 
 
 async def ingest_file(tenant_id: str, matter_id: str, path: Path) -> int:

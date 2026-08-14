@@ -31,7 +31,8 @@ _hub = AgentHub()
 
 # §G: etiquetas SIN jerga técnica — el abogado nunca ve "CLI", "API" ni "Ollama".
 _POLICY_LABELS: dict[str, str] = {
-    "suscripcion": "Mi suscripción (recomendado)",
+    "quality_adaptive": "Calidad adaptativa (recomendado)",
+    "suscripcion": "Mi suscripción (configuración directa)",
     "nube": "Nube",
     "soberano": "Todo en mi equipo",
     "openrouter": "Tu cuenta de OpenRouter",
@@ -162,6 +163,31 @@ def _policy_options() -> list[dict]:
     return [{"id": k, "nombre": v} for k, v in _POLICY_LABELS.items()]
 
 
+def _model_capabilities() -> dict[str, Any]:
+    """Capacidades comprobables de la instalación, sin prometer planes ni modelos ajenos.
+
+    El resultado se entrega a la UI junto con la política: una recomendación solo es honesta si
+    Mia puede comprobar que el ejecutable existe. La disponibilidad concreta de un plan/modelo
+    sigue siendo responsabilidad del CLI en cada llamada y se refleja en la cadena de fallback.
+    """
+    from ...agent import subscription_llm
+
+    claude_ready = subscription_llm.is_available()
+    return {
+        "claude_code": {
+            "installed": claude_ready,
+            "recommended_for": "análisis jurídico complejo",
+            "recommendation_basis": "se valida con las pruebas de calidad de Mia",
+            "max_is_exceptional": True,
+            "available_efforts": subscription_llm.supported_efforts(),
+        },
+        "codex": {
+            "installed": bool(_hub.list_available().get("codex", {}).get("installed")),
+            "role": "verificación independiente o respaldo",
+        },
+    }
+
+
 @router.get("/settings/model-policy")
 async def get_model_policy(request: Request):
     """Política efectiva del tenant + las 3 opciones (etiquetas en español, sin jerga).
@@ -179,6 +205,7 @@ async def get_model_policy(request: Request):
         "allow_notebooklm": await llm.notebooklm_allowed_for(tenant_id),
         "notebooklm_notebook": await notebooklm.configured_notebook(tenant_id) or "",
         "notebooklm_disponible": policy != "soberano",
+        "capabilities": _model_capabilities(),
     }
 
 
@@ -273,7 +300,8 @@ async def put_model_policy(request: Request):
     if policy not in _POLICY_LABELS:
         raise HTTPException(
             status_code=422,
-            detail="Opción no válida. Usa 'suscripcion', 'nube', 'soberano' u 'openrouter'.",
+            detail=("Opción no válida. Usa 'quality_adaptive', 'suscripcion', 'nube', "
+                    "'soberano' u 'openrouter'."),
         )
     allow_or_raw = (body or {}).get("allow_openrouter") if isinstance(body, dict) else None
     merge: dict[str, Any] = {"model_policy": policy}
@@ -324,4 +352,5 @@ async def put_model_policy(request: Request):
         "allow_notebooklm": await llm.notebooklm_allowed_for(tenant_id),
         "notebooklm_notebook": await notebooklm.configured_notebook(tenant_id) or "",
         "notebooklm_disponible": policy != "soberano",
+        "capabilities": _model_capabilities(),
     }

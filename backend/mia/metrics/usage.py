@@ -41,10 +41,16 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "openrouter-haiku": (1.00, 5.00),
     "cli-claude": (0.0, 0.0),
     "cli-claude-haiku": (0.0, 0.0),
+    # La política adaptativa conserva el mismo modelo de costo marginal: estos aliases
+    # invocan la suscripción local del abogado, no una API facturable por token.
+    "cli-claude-opus": (0.0, 0.0),
+    "cli-claude-sonnet": (0.0, 0.0),
     "mia-local": (0.0, 0.0),
 }
 
-FREE_ALIASES = frozenset({"cli-claude", "cli-claude-haiku", "mia-local"})
+FREE_ALIASES = frozenset({
+    "cli-claude", "cli-claude-haiku", "cli-claude-opus", "cli-claude-sonnet", "mia-local",
+})
 UNKNOWN_ALIAS_RATES = (3.00, 15.00)
 
 _scope: ContextVar[tuple[str, str | None, str] | None] = ContextVar(
@@ -176,7 +182,8 @@ def _cache_tokens(usage: Any) -> tuple[int, int]:
 
 
 def record(alias: str, task: str | None, usage: Any,
-           *, stop_reason: str | None = None) -> None:
+           *, stop_reason: str | None = None, effective_model: str | None = None,
+           effort: str | None = None, quality_escalation: str | None = None) -> None:
     """Bufferiza el uso de UNA llamada al LLM. Sin scope o sin usage → no-op."""
     try:
         scope = _scope.get()
@@ -198,6 +205,12 @@ def record(alias: str, task: str | None, usage: Any,
             "matter_id": matter_id,
             "task": (task or "")[:64] or None,
             "model": str(alias)[:128],
+            # `model` conserva el alias histórico (precios/panel existentes); los campos
+            # efectivos registran la decisión real del router, sin inventar que todos los
+            # proveedores exponen el mismo nombre o nivel de razonamiento.
+            "effective_model": str(effective_model or alias)[:128],
+            "effort": (str(effort)[:16] if effort else None),
+            "quality_escalation": (str(quality_escalation)[:16] if quality_escalation else None),
             "prompt_tokens": prompt,
             "completion_tokens": completion,
             "total_tokens": total,
@@ -238,10 +251,12 @@ def pending_count() -> int:
 
 # ── Persistencia (async, bajo RLS) ──────────────────────────────────────────────
 _INSERT_SQL = (
-    "INSERT INTO turn_usage (tenant_id, matter_id, task, model, prompt_tokens, "
+    "INSERT INTO turn_usage (tenant_id, matter_id, task, model, effective_model, effort, "
+    "quality_escalation, prompt_tokens, "
     "completion_tokens, total_tokens, cost_usd, source, cache_read_tokens, "
     "cache_creation_tokens, stop_reason, node) VALUES "
-    "(%(tenant_id)s::uuid, %(matter_id)s::uuid, %(task)s, %(model)s, %(prompt_tokens)s, "
+    "(%(tenant_id)s::uuid, %(matter_id)s::uuid, %(task)s, %(model)s, %(effective_model)s, "
+    "%(effort)s, %(quality_escalation)s, %(prompt_tokens)s, "
     "%(completion_tokens)s, %(total_tokens)s, %(cost_usd)s, %(source)s, "
     "%(cache_read_tokens)s, %(cache_creation_tokens)s, %(stop_reason)s, %(node)s)"
 )

@@ -39,6 +39,15 @@ def main() -> int:
         checks.append((f"{path}: tipos acumulativos", proposals <= values(
             path, "feedback_proposals_proposal_type_check")))
 
+    durable_once = (MIG / "056_durable_learning_once.sql").read_text(encoding="utf-8")
+    checks.append((
+        "056_durable_learning_once.sql: señales inmutables no se duplican",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_durable_learning_once" in durable_once
+        and all(name in durable_once for name in (
+            "wiki_approved_artifact", "learn_approved_artifact",
+            "skill_improvement", "harvest_lessons")),
+    ))
+
     for name, ok in checks:
         print(f"  [{'OK' if ok else 'FAIL'}] {name}")
     passed = sum(ok for _, ok in checks)

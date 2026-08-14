@@ -116,3 +116,6 @@ jobs:
         run: |
           python execution/test_rls.py
           python execution/test_hitl_flow.py
+          python execution/test_matter_jurisdictions.py
+          python execution/test_p0_legal_ledger.py
+          python execution/test_durable_learning.py

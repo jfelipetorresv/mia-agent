@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import time
+import hashlib
 from typing import Optional
 
 from ..agents import verification
@@ -62,13 +63,15 @@ async def list_seals(tenant_id: str) -> list[dict]:
     try:
         async with pool.tenant_connection(tenant_id) as conn:
             rows = await (await conn.execute(
-                "SELECT citation, citation_norm, fuente_tipo, fuente_ref, fuente_titulo "
+                "SELECT citation, citation_norm, fuente_tipo, fuente_ref, fuente_titulo, "
+                "source_passage_hash, artifact_hash, jurisdiction_codes "
                 "FROM citation_seals ORDER BY created_at DESC"
             )).fetchall()
         data = [
             {"citation": str(r[0] or ""), "citation_norm": str(r[1] or ""),
              "fuente_tipo": str(r[2] or ""), "fuente_ref": str(r[3] or ""),
-             "fuente_titulo": str(r[4] or "")}
+             "fuente_titulo": str(r[4] or ""), "source_passage_hash": str(r[5] or ""),
+             "artifact_hash": str(r[6] or ""), "jurisdiction_codes": list(r[7] or [])}
             for r in rows
         ]
         _cache[str(tenant_id)] = (time.monotonic(), data)
@@ -78,8 +81,50 @@ async def list_seals(tenant_id: str) -> list[dict]:
         return []
 
 
+def active_source_hashes(sources: list[dict] | None, documents: list[dict] | None) -> set[str]:
+    """Huellas del contenido de las fuentes efectivamente disponibles en este turno."""
+    hashes: set[str] = set()
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        digest = str(source.get("source_passage_hash") or "")
+        if len(digest) == 64:
+            hashes.add(digest)
+    for document in documents or []:
+        if not isinstance(document, dict):
+            continue
+        content = str(document.get("content") or "")
+        if content:
+            hashes.add(hashlib.sha256(content.encode("utf-8")).hexdigest())
+    return hashes
+
+
+async def list_compatible_seals(tenant_id: str, *, source_hashes: set[str],
+                                jurisdictions: list[str] | None) -> list[dict]:
+    """Solo reutiliza un sello si el mismo pasaje sigue presente y su derecho aplica.
+
+    Los sellos heredados con campos vacíos quedan fuera por construcción. Sin fuentes
+    actuales tampoco hay reutilización: se vuelve a verificar, nunca se presume.
+    """
+    if not source_hashes:
+        return []
+    active_jurisdictions = {str(j) for j in (jurisdictions or []) if str(j)}
+    if not active_jurisdictions:
+        return []
+    out = []
+    for seal in await list_seals(tenant_id):
+        passage = str(seal.get("source_passage_hash") or "")
+        artifact = str(seal.get("artifact_hash") or "")
+        seal_jurisdictions = {str(j) for j in (seal.get("jurisdiction_codes") or []) if str(j)}
+        if (len(passage) == 64 and len(artifact) == 64 and passage in source_hashes
+                and seal_jurisdictions.intersection(active_jurisdictions)):
+            out.append(seal)
+    return out
+
+
 async def seal_from_approved_report(tenant_id: str, report: dict,
-                                    trace_id: str = "") -> int:
+                                    trace_id: str = "", *, artifact_hash: str = "",
+                                    jurisdictions: list[str] | None = None) -> int:
     """Sella las citas RESPALDADAS del informe de un borrador APROBADO. Devuelve cuántas.
 
     Solo entra lo que el muro dio por respaldado (estado 'respaldada', con fuente); las
@@ -96,20 +141,36 @@ async def seal_from_approved_report(tenant_id: str, report: dict,
         if not cita or not norm:
             continue
         fuente = e.get("fuente") or {}
-        candidatas.append((cita, norm, str(fuente.get("tipo") or ""),
-                           str(fuente.get("referencia") or ""),
-                           str(fuente.get("titulo") or "")))
+        ftipo = str(fuente.get("tipo") or "")
+        fref = str(fuente.get("referencia") or "")
+        ftitulo = str(fuente.get("titulo") or "")
+        # La fuente puede no exponer el pasaje completo; la huella ata al menos la
+        # decisión a su identificador + cita exacta. Nunca se confunde con el hash
+        # del documento del abogado, que viaja separado en ``artifact_hash``.
+        passage = str(fuente.get("source_passage_hash") or "")
+        # Un identificador de fuente no es un pasaje. Sin huella de contenido, no
+        # nace sello reutilizable (fail-closed).
+        if len(passage) != 64 or len(artifact_hash or "") != 64 or not jurisdictions:
+            continue
+        candidatas.append((cita, norm, ftipo, fref, ftitulo, passage))
     if not candidatas:
         return 0
     try:
         async with pool.tenant_connection(tenant_id) as conn:
-            for cita, norm, ftipo, fref, ftitulo in candidatas:
+            for cita, norm, ftipo, fref, ftitulo, passage in candidatas:
                 await conn.execute(
                     "INSERT INTO citation_seals (tenant_id, citation, citation_norm, "
-                    "  fuente_tipo, fuente_ref, fuente_titulo, trace_id) "
-                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (tenant_id, citation_norm) DO NOTHING",
-                    (tenant_id, cita, norm, ftipo, fref, ftitulo, trace_id or ""))
+                    "  fuente_tipo, fuente_ref, fuente_titulo, trace_id, "
+                    "  source_passage_hash, artifact_hash, jurisdiction_codes) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (tenant_id, citation_norm) DO UPDATE SET "
+                    " citation=EXCLUDED.citation, fuente_tipo=EXCLUDED.fuente_tipo, "
+                    " fuente_ref=EXCLUDED.fuente_ref, fuente_titulo=EXCLUDED.fuente_titulo, "
+                    " trace_id=EXCLUDED.trace_id, source_passage_hash=EXCLUDED.source_passage_hash, "
+                    " artifact_hash=EXCLUDED.artifact_hash, "
+                    " jurisdiction_codes=EXCLUDED.jurisdiction_codes, created_at=now()",
+                    (tenant_id, cita, norm, ftipo, fref, ftitulo, trace_id or "",
+                     passage, artifact_hash or "", list(jurisdictions or [])))
         invalidate(tenant_id)
         return len(candidatas)
     except Exception:  # noqa: BLE001

@@ -12,6 +12,7 @@ por email contra `users` bajo RLS. §G: errores sin jerga técnica.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import AsyncIterator
 
@@ -35,6 +36,33 @@ logger = logging.getLogger("mia.api.assistant")
 # Servicio del proceso — SIN estado entre requests: el ContextCompressor se crea por
 # turno dentro de chat() (aislamiento en memoria entre tenants, además del RLS).
 _service = AssistantService()
+
+# El chat general sirve para organización personal. El trabajo jurídico que puede
+# acabar en un escrito, una estrategia o una conclusión sobre un caso debe vivir en
+# un Asunto: allí sí hay expediente, jurisdicción, fuentes, revisión y ledger. La
+# detección es conservadora (acción + objeto jurídico) para no bloquear una charla
+# casual por contener una sola palabra como "contrato".
+_LEGAL_ACTION = re.compile(
+    r"\b(redact\w*|contest\w*|analiz\w*|revis\w*|prepar\w*|elabor\w*|"
+    r"impugn\w*|apel\w*|demand\w*|defend\w*|estrateg\w*|argument\w*)\b",
+    re.IGNORECASE,
+)
+_LEGAL_OBJECT = re.compile(
+    r"\b(demanda|contestaci[oó]n|contrato|cl[aá]usula|escrito|recurso|caso|"
+    r"expediente|sentencia|audiencia|prueba|alegato|concepto jur[ií]dico|"
+    r"estrategia jur[ií]dica|acci[oó]n judicial)\b",
+    re.IGNORECASE,
+)
+_MATTER_REDIRECT_MESSAGE = (
+    "Para trabajar jurídicamente con precisión necesito hacerlo dentro de un Asunto, "
+    "con su jurisdicción, expediente y verificaciones. Elige un asunto o crea uno nuevo."
+)
+
+
+def requires_legal_matter(message: str) -> bool:
+    """Detecta solicitudes sustantivas; nunca intenta decidir el derecho aplicable."""
+    text = " ".join((message or "").split())
+    return bool(_LEGAL_ACTION.search(text) and _LEGAL_OBJECT.search(text))
 
 
 def _tenant(request: Request) -> str:
@@ -61,6 +89,8 @@ class ChatBody(BaseModel):
 async def assistant_chat(body: ChatBody, request: Request):
     """Un turno de conversación libre con Mia. Devuelve {conversation_id, reply}."""
     tid = _tenant(request)
+    if requires_legal_matter(body.message):
+        raise HTTPException(status_code=409, detail=_MATTER_REDIRECT_MESSAGE)
     # CP-E1: tope de gasto de IA del despacho (política activa) antes del turno.
     try:
         await policy_budget.enforce_budget(tid)
@@ -100,6 +130,11 @@ async def assistant_chat_stream(body: ChatBody, request: Request):
     Las validaciones que deben ser HTTP (sin sesión → 401, tope de gasto → 402) se
     lanzan ANTES de abrir el stream, igual que el turno del asunto (stream.py)."""
     tid = _tenant(request)
+    if requires_legal_matter(body.message):
+        async def matter_required() -> AsyncIterator[dict]:
+            yield sse("matter_required", _MATTER_REDIRECT_MESSAGE, redirect="/")
+
+        return EventSourceResponse(matter_required(), ping=SSE_PING_SECONDS)
     # CP-E1: tope de gasto de IA del despacho ANTES de abrir el stream (como en stream.py).
     try:
         await policy_budget.enforce_budget(tid)

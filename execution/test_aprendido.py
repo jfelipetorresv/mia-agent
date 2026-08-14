@@ -281,12 +281,14 @@ def check_cableado_hitl() -> None:
     # test_hitl_flow; lo que este gate protege es que el path `editing` no vuelva
     # a quedar descableado en silencio (estuvo así hasta F2 pese a que el módulo
     # ya traía SOURCE_CORREGIDO).
-    src = (ROOT / "backend" / "mia" / "api" / "routes" / "hitl.py").read_text(
+    src = (ROOT / "backend" / "mia" / "agents" / "graph.py").read_text(encoding="utf-8")
+    jobs_src = (ROOT / "backend" / "mia" / "jobs" / "durable.py").read_text(
         encoding="utf-8")
     check("H1 · el aprendizaje corre al aprobar Y al corregir (no solo approved)",
           'in ("approved", "editing")' in src)
     check("H2 · la corrección aprende con su propia fuente (SOURCE_CORREGIDO)",
-          "SOURCE_CORREGIDO" in src and "SOURCE_APROBADO" in src)
+          "SOURCE_CORREGIDO" in jobs_src and "SOURCE_APROBADO" in jobs_src
+          and 'payload.get("decision") == "editing"' in jobs_src)
 
 
 async def async_main() -> int:

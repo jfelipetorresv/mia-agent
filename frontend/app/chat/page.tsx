@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Scale,
   Plus,
@@ -21,7 +22,7 @@ import { cn } from "@/lib/utils";
 type Conversation = { id: string; title: string; updated_at: string };
 type Role = "user" | "assistant";
 type Message = { role: Role; content: string };
-// Atajo de despacho (guía o agente del despacho): un clic PRE-LLENA el cuadro de mensaje
+// Atajo de la firma u organización: un clic PRE-LLENA el cuadro de mensaje
 // con `texto` — el abogado revisa y decide si lo envía (consent-first, nunca se auto-envía).
 type Atajo = { kind: "guia" | "agente"; id: string; label: string; texto: string };
 
@@ -41,7 +42,7 @@ const EXAMPLES = [
   { icon: FolderOpen, text: "¿Qué asuntos tengo pendientes?" },
   { icon: BellRing, text: "Recuérdame revisar mis plazos mañana a las 9" },
   { icon: Settings2, text: "¿Qué me falta para terminar de configurar a Mia?" },
-  { icon: Sparkles, text: "¿Qué has aprendido del despacho hasta ahora?" },
+  { icon: Sparkles, text: "¿Qué has aprendido de mi firma u organización hasta ahora?" },
 ];
 
 function saludoDelDia(): string {
@@ -52,6 +53,7 @@ function saludoDelDia(): string {
 }
 
 export default function ChatPage() {
+  const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -60,6 +62,7 @@ export default function ChatPage() {
   const [status, setStatus] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [typing, setTyping] = useState(false); // Mia "escribiendo" (typewriter activo)
+  const [matterRequired, setMatterRequired] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const typerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -103,6 +106,7 @@ export default function ChatPage() {
     if (streaming) return;
     setActiveId(id);
     setStatus("");
+    setMatterRequired(false);
     try {
       const rows = await apiGet<{ role: Role; content: string }[]>(
         `/api/assistant/conversations/${id}/messages`,
@@ -119,6 +123,7 @@ export default function ChatPage() {
     setMessages([]);
     setStatus("");
     setInput("");
+    setMatterRequired(false);
     inputRef.current?.focus();
   }
 
@@ -153,6 +158,7 @@ export default function ChatPage() {
     const text = (preset ?? input).trim();
     if (!text || streaming) return;
     setInput("");
+    setMatterRequired(false);
     setMessages((m) => [...m, { role: "user", content: text }, { role: "assistant", content: "" }]);
     setStatus("Mia está pensando…");
     setStreaming(true);
@@ -173,6 +179,18 @@ export default function ChatPage() {
             setStatus("");
             if (payload.conversation_id) setActiveId(payload.conversation_id);
             typewriter(payload.message || "");
+          } else if (event === "matter_required") {
+            answered = true;
+            setStatus("");
+            setMatterRequired(true);
+            setMessages((m) => {
+              const copy = [...m];
+              copy[copy.length - 1] = {
+                role: "assistant",
+                content: payload.message || "Este trabajo debe continuar dentro de un asunto.",
+              };
+              return copy;
+            });
           } else if (event === "error") {
             answered = true;
             setStatus("");
@@ -274,8 +292,8 @@ export default function ChatPage() {
                 className="mt-3 max-w-md animate-slide-up text-muted-foreground"
                 style={{ animationDelay: "120ms", animationFillMode: "backwards" }}
               >
-                Pregúntame lo que necesites: tus asuntos, un recordatorio o una duda
-                jurídica. Yo propongo, tú tienes la última palabra.
+                Aquí puedo ayudarte a organizar tu trabajo y tus recordatorios. Para analizar
+                un caso o preparar un escrito, entra al asunto correspondiente.
               </p>
               <div className="mt-10 grid w-full max-w-lg gap-3 sm:grid-cols-2">
                 {EXAMPLES.map((ex, i) => (
@@ -363,6 +381,14 @@ export default function ChatPage() {
                 </div>
               ))}
               <div ref={endRef} />
+              {matterRequired ? (
+                <div className="mb-6 flex justify-center animate-slide-up">
+                  <Button onClick={() => router.push("/")} variant="cta" className="gap-2">
+                    <FolderOpen className="h-4 w-4" />
+                    Ir a mis asuntos
+                  </Button>
+                </div>
+              ) : null}
             </div>
           )}
         </div>

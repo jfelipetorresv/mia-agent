@@ -330,7 +330,9 @@ MIA_AGENTIC_READING_COMPACT_WORDS = int(
 # eso puede ser justo lo que se quiere (ahorro) o señal de que el arranque es demasiado
 # corto para sus asuntos — súbase `MIA_AGENTIC_READING_SEED_TOP_K` antes que apagarla.
 
-# Política de modelo POR DEFECTO (CP2 · decisión #27). Valores: "suscripcion" (CLI de
+# Política de modelo POR DEFECTO. `quality_adaptive` está disponible y recomendado en la
+# activación para el razonamiento jurídico complejo; "suscripcion" se conserva como default
+# operativo para no cambiar costo ni latencia a tenants existentes. Valores: "suscripcion" (CLI de
 # Claude Code del abogado, sin billing por API) · "nube" (API Anthropic vía proxy) ·
 # "soberano" (todo local en Ollama) · "openrouter" (CP-OR: la propia cuenta de OpenRouter
 # del abogado como motor principal, con su clave/crédito; exige OPENROUTER_API_KEY). El

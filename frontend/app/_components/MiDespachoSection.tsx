@@ -212,7 +212,7 @@ export default function MiDespachoSection() {
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
         <h3 className="text-sm font-semibold">Identidad</h3>
-        <TextField label="Nombre del despacho" value={firm.firm} onChange={(v) => setFirm({ ...firm, firm: v })} />
+        <TextField label="Nombre de la firma u organización" value={firm.firm} onChange={(v) => setFirm({ ...firm, firm: v })} />
         <TextField
           label="Tu nombre (abogado principal)"
           value={firm.lawyer}
@@ -285,7 +285,7 @@ export default function MiDespachoSection() {
       {summary ? (
         <details className="rounded-xl border border-border bg-card/60">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
-            Así entendí a tu despacho
+            Así entendí a tu firma u organización
           </summary>
           <div className="whitespace-pre-wrap border-t border-border px-4 py-3 text-sm leading-relaxed text-muted-foreground">
             {summary}

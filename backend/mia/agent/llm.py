@@ -118,7 +118,7 @@ LEGAL_TASKS = (
 # (su cuenta/clave de OpenRouter, cargada de crédito). A diferencia de "nube" (API
 # directa de Anthropic de la instalación), en "openrouter" TODO el razonamiento sale
 # por la clave del despacho vía el alias openrouter-* del gateway, con red local final.
-VALID_POLICIES = ("suscripcion", "nube", "soberano", "openrouter")
+VALID_POLICIES = ("quality_adaptive", "suscripcion", "nube", "soberano", "openrouter")
 
 # Tareas auxiliares (baratas): comparten cadena dentro de cada política.
 # CP-HUB2 · `delegation_triage` (¿le sirve al abogado un ayudante externo en este turno?)
@@ -155,10 +155,39 @@ OPENROUTER_HAIKU_ALIAS = "openrouter-haiku"
 # sin saldo, que no salta solo— y hay red después en la cadena, se salta al siguiente).
 _OPENROUTER_ALIASES = frozenset({OPENROUTER_ALIAS, OPENROUTER_HAIKU_ALIAS})
 
+# La política adaptativa nombra capacidades, no una presunta superioridad jurídica de un
+# proveedor. Opus se reserva para razonamiento jurídico complejo; Sonnet/Haiku para trabajo
+# dirigido o mecánico. `max` NO es un modelo: es un esfuerzo excepcional y se exige de forma
+# explícita desde el flujo que ya determinó que el caso lo amerita.
+CLI_OPUS_ALIAS = "cli-claude-opus"
+CLI_SONNET_ALIAS = "cli-claude-sonnet"
+CLI_HAIKU_ALIAS = "cli-claude-haiku"
+QUALITY_ESCALATION_STANDARD = "standard"
+QUALITY_ESCALATION_EXCEPTIONAL = "exceptional"
+VALID_QUALITY_ESCALATIONS = frozenset({
+    QUALITY_ESCALATION_STANDARD, QUALITY_ESCALATION_EXCEPTIONAL,
+})
+# Un expediente grande y jurídico es el único gatillo automático para el esfuerzo máximo.
+# Son caracteres de entrada (no una suposición sobre el mérito del caso), por lo que el
+# criterio es determinista, auditable y no añade coste al turno ordinario.
+_EXCEPTIONAL_LEGAL_CONTEXT_CHARS = 40_000
+
 # Cadenas por política. Se SUPERPONEN a _TASK_FALLBACK_CHAINS (que queda como mapa base,
 # compat con tests que lo leen/mutan): un task inyectado ahí (no estándar) sigue resolviendo.
 # `compression` sigue en _LOCKED_TASKS en las 3 políticas (un model explícito no la cambia).
 _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
+    # Calidad adaptativa (recomendación de producto): Claude Code es el productor
+    # preferido para análisis jurídico complejo, pero su disponibilidad se comprueba en
+    # cada llamada y toda cadena conserva respaldos explícitos. No afirma que Claude sea
+    # "mejor para derecho"; la recomendación se recalibra con el benchmark de Mia.
+    "quality_adaptive": {
+        "main": [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"],
+        **{t: [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"]
+           for t in LEGAL_TASKS},
+        "curator": [CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"],
+        "compression": [CLI_HAIKU_ALIAS, "claude-haiku"],
+        **{t: [CLI_HAIKU_ALIAS, "mia-local"] for t in _AUX_TASKS},
+    },
     # Suscripción de Claude Code del abogado (sin billing por API): CLI primero,
     # nube y local como red de seguridad. Auxiliares → hint haiku por el CLI.
     "suscripcion": {
@@ -264,7 +293,46 @@ def _openrouter_key_present() -> bool:
 
 # Alias CLI → hint de modelo para subscription_llm ("cli-claude" usa el default de la
 # suscripción; "cli-claude-haiku" pide el modelo pequeño para tareas auxiliares baratas).
-_CLI_MODEL_HINTS: dict[str, str | None] = {"cli-claude": None, "cli-claude-haiku": "haiku"}
+_CLI_MODEL_HINTS: dict[str, str | None] = {
+    "cli-claude": None,
+    CLI_OPUS_ALIAS: "opus",
+    CLI_SONNET_ALIAS: "sonnet",
+    CLI_HAIKU_ALIAS: "haiku",
+}
+
+
+def _cli_effort(alias: str, task: str | None, escalation: str | None = None) -> str:
+    """Nivel de razonamiento por función, con Max únicamente en una escalada explícita.
+
+    El gatillo es auditable: una solicitud explícita o el contexto jurídico extraordinariamente
+    extenso que detecta `_automatic_quality_escalation`. Por defecto Mia usa el nivel suficiente
+    y preserva costo/latencia. Las tareas auxiliares nunca escalan.
+    """
+    if alias == CLI_HAIKU_ALIAS:
+        return "low"
+    if alias == CLI_SONNET_ALIAS:
+        return "high"
+    if alias in (CLI_OPUS_ALIAS, "cli-claude"):
+        if (escalation == QUALITY_ESCALATION_EXCEPTIONAL
+                and task in {"main", *LEGAL_TASKS}):
+            return "max"
+        return "xhigh" if alias == CLI_OPUS_ALIAS else "high"
+    return "medium"
+
+
+def _automatic_quality_escalation(task: str | None, messages: list[dict]) -> str:
+    """Aplica Max solo a expedientes jurídicos excepcionalmente extensos.
+
+    La decisión no depende de instrucciones del usuario ni de una clasificación opaca:
+    exige política adaptativa, función jurídica y un umbral fijo de contexto. Quien llama
+    puede aún solicitar una escalada explícita, que queda registrada en telemetría.
+    """
+    if get_model_policy() != "quality_adaptive" or task not in LEGAL_TASKS:
+        return QUALITY_ESCALATION_STANDARD
+    size = sum(len(str(message.get("content") or "")) for message in messages)
+    if size >= _EXCEPTIONAL_LEGAL_CONTEXT_CHARS:
+        return QUALITY_ESCALATION_EXCEPTIONAL
+    return QUALITY_ESCALATION_STANDARD
 
 # Timeout del CLI por task (revisión CP2): el razonamiento largo (main/curator) puede
 # tardar minutos; las tareas auxiliares/compresión no deben retener el request tanto.
@@ -282,7 +350,7 @@ def _cli_timeout(task: str | None) -> float:
 
 
 def _default_policy() -> str:
-    """Política por defecto desde config (env MIA_MODEL_POLICY); inválida → 'suscripcion'."""
+    """Política por defecto desde config; sin valor → suscripción estable."""
     p = (getattr(config, "MIA_MODEL_POLICY", "") or "").strip().lower()
     return p if p in VALID_POLICIES else "suscripcion"
 
@@ -596,13 +664,16 @@ def _active_chains() -> dict[str, list[str]]:
     return merged
 
 
-def resolve_fallback_chain(task: str | None, model: str | None = None) -> list[str]:
+def resolve_fallback_chain(task: str | None, model: str | None = None,
+                           quality_escalation: str | None = None) -> list[str]:
     """Cadena de aliases a intentar para un `task` (sin vacíos ni duplicados), según la
     política de modelo activa (CP2 · get_model_policy()).
 
     - `compression` está bloqueado (decisión #7): un `model` distinto se ignora con warning.
     - `model` explícito (tarea no bloqueada) gana como cadena de UN alias (override sin fallback).
     - Sin `model`: la cadena de la política activa; un task desconocido cae a la de 'main'.
+    - `quality_escalation` no altera por sí sola la cadena; habilita el esfuerzo Max solo
+      durante una invocación explícitamente excepcional de la política adaptativa.
     """
     chains = _active_chains()
     if task in _LOCKED_TASKS:
@@ -691,6 +762,7 @@ def call_llm(
     temperature: float | None = None,
     max_tokens: int | None = None,
     tools: list | None = None,
+    quality_escalation: str | None = None,
     **extra: Any,
 ) -> Any:
     """Llamada LLM central y síncrona a través del gateway LiteLLM, con cadena de fallback.
@@ -707,7 +779,12 @@ def call_llm(
       - cadena entera agotada → LLMError('ALL_PROVIDERS_EXHAUSTED').
     call_llm es SÍNCRONO y se invoca vía asyncio.to_thread → time.sleep no bloquea el loop.
     """
-    chain = resolve_fallback_chain(task, model)
+    escalation = ((quality_escalation if quality_escalation is not None
+                   else _automatic_quality_escalation(task, messages))
+                  .strip().lower())
+    if escalation not in VALID_QUALITY_ESCALATIONS:
+        raise ValueError("quality_escalation debe ser 'standard' o 'exceptional'.")
+    chain = resolve_fallback_chain(task, model, escalation)
     base_kwargs: dict[str, Any] = {"messages": messages}
     if temperature is not None:
         base_kwargs["temperature"] = temperature
@@ -745,11 +822,27 @@ def call_llm(
             # proveedor, (b) los previos a un éxito y (c) un éxito sin usage se contabilizan
             # cada uno, en vez de eludir el tope. Mismo modelo por-intento que eval.spend_guard.
             alias_messages = _messages_with_cache(messages, alias)
+            retry_kwargs: dict[str, Any] = {}
+            # Se omite el argumento estándar para conservar el contrato de los dobles de
+            # prueba y de extensiones existentes; solo la escalada excepcional necesita
+            # atravesar la pila de invocación.
+            if escalation == QUALITY_ESCALATION_EXCEPTIONAL:
+                retry_kwargs["quality_escalation"] = escalation
             resp = _call_with_retries(
                 client, {**base_kwargs, "messages": alias_messages, "model": alias},
-                MAX_RETRIES, task=task, alias=alias, next_alias=next_alias,
+                MAX_RETRIES, task=task, alias=alias, next_alias=next_alias, **retry_kwargs,
             )
-            _record_usage(alias, task, resp)   # CP-V1: tokens reales → turn_usage
+            # Metadatos de decisión para la telemetría. No alteran la respuesta pública
+            # OpenAI-compatible; sí impiden que el panel confunda un alias de ruta con el
+            # modelo/esfuerzo que realmente se le pidió al CLI.
+            _record_usage(
+                alias, task, resp,
+                effective_model=(getattr(resp, "mia_model_hint", None)
+                                 or getattr(resp, "model", alias)),
+                effort=(getattr(resp, "mia_effort", None)
+                        or (_cli_effort(alias, task, escalation) if alias.startswith("cli-") else None)),
+                quality_escalation=escalation,
+            )   # CP-V1: tokens reales → turn_usage
             return resp
         except (policy_budget.BudgetExceeded, policy_budget.BudgetControlUnavailable):
             # El presupuesto MENSUAL cortó ESTE alias pagado (la reserva del primer intento no
@@ -779,7 +872,9 @@ def call_llm(
     ) from (last.exc if last else None)
 
 
-def _record_usage(alias: str, task: str | None, resp: Any) -> None:
+def _record_usage(alias: str, task: str | None, resp: Any, *,
+                  effective_model: str | None = None, effort: str | None = None,
+                  quality_escalation: str | None = None) -> None:
     """CP-V1 (Ola 4): registra el uso real de la llamada (tokens→costo) en el buffer
     de metrics/usage. Cubre las 3 políticas: la API/OpenRouter traen `resp.usage`
     OpenAI-compatible y el CLI de la suscripción también lo construye
@@ -797,12 +892,19 @@ def _record_usage(alias: str, task: str | None, resp: Any) -> None:
                 stop_reason = getattr(choices[0], "finish_reason", None)
         except Exception:  # noqa: BLE001 — nunca romper por leer un campo opcional
             stop_reason = None
-        usage_metrics.record(alias, task, getattr(resp, "usage", None), stop_reason=stop_reason)
+        usage_metrics.record(
+            alias, task, getattr(resp, "usage", None), stop_reason=stop_reason,
+            effective_model=effective_model or getattr(resp, "mia_model_hint", None)
+            or getattr(resp, "model", alias),
+            effort=effort or getattr(resp, "mia_effort", None),
+            quality_escalation=quality_escalation,
+        )
     except Exception:  # noqa: BLE001 — una métrica nunca tumba una respuesta buena
         logger.exception("no se pudo registrar el uso (alias=%s task=%s)", alias, task)
 
 
-def _invoke(client: Any, alias: str, kwargs: dict[str, Any], task: str | None = None) -> Any:
+def _invoke(client: Any, alias: str, kwargs: dict[str, Any], task: str | None = None,
+            quality_escalation: str | None = None) -> Any:
     """Despacha UNA llamada según el alias: los "cli-*" van al CLI de la suscripción
     (agent/subscription_llm); el resto, al proxy LiteLLM (cliente OpenAI). Los errores de
     ambos caminos pasan por el MISMO error_classifier/should_fallback aguas arriba."""
@@ -825,12 +927,14 @@ def _invoke(client: Any, alias: str, kwargs: dict[str, Any], task: str | None = 
             kwargs["messages"],
             model_hint=_CLI_MODEL_HINTS.get(alias),
             timeout=_cli_timeout(task),   # 300s main/curator · 120s resto (revisión CP2)
+            effort=_cli_effort(alias, task, quality_escalation),
         )
     return client.chat.completions.create(**kwargs)
 
 
 def _invoke_metered(client: Any, alias: str, kwargs: dict[str, Any],
-                    task: str | None = None) -> Any:
+                    task: str | None = None,
+                    quality_escalation: str | None = None) -> Any:
     """UN intento físico contra el proveedor, con la reserva/liquidación del presupuesto
     MENSUAL de producción POR INTENTO (R4-CRÍTICO, Codex ronda 4).
 
@@ -864,14 +968,14 @@ def _invoke_metered(client: Any, alias: str, kwargs: dict[str, Any],
         task=task, tools=kwargs.get("tools"))
     is_eval = scope is not None and scope[2] == "eval"
     if scope is None or estimate <= 0 or is_eval:
-        return _invoke(client, alias, kwargs, task)
+        return _invoke(client, alias, kwargs, task, quality_escalation)
 
     budget_tenant = scope[0]
     hold_id = policy_budget.reserve_call_sync(budget_tenant, estimate, model=alias, task=task)
     if not hold_id:                       # estimate>0 pero la reserva no apartó nada: sin cobro
-        return _invoke(client, alias, kwargs, task)
+        return _invoke(client, alias, kwargs, task, quality_escalation)
     try:
-        resp = _invoke(client, alias, kwargs, task)
+        resp = _invoke(client, alias, kwargs, task, quality_escalation)
     except BaseException as exc:
         # INCIERTO se cobra; solo un fallo que DEMOSTRABLEMENTE no llegó al proveedor devuelve.
         never_reached = provider_never_reached(exc)
@@ -900,6 +1004,7 @@ def _call_with_retries(
     task: str | None,
     alias: str,
     next_alias: str | None,
+    quality_escalation: str | None = None,
 ) -> Any:
     """Ejecuta UN alias con reintentos. Devuelve la respuesta o decide el destino del error:
 
@@ -910,7 +1015,9 @@ def _call_with_retries(
     """
     for attempt in range(max_retries + 1):     # 1 intento inicial + hasta max_retries reintentos
         try:
-            return _invoke_metered(client, alias, kwargs, task)
+            if quality_escalation is None:
+                return _invoke_metered(client, alias, kwargs, task)
+            return _invoke_metered(client, alias, kwargs, task, quality_escalation)
         except Exception as exc:               # noqa: BLE001 — se clasifica y re-lanza abajo
             # El presupuesto MENSUAL (R4-CRÍTICO) reserva/ liquida DENTRO de `_invoke_metered`,
             # por intento. Un corte del tope NO es un error del proveedor: no se clasifica ni se

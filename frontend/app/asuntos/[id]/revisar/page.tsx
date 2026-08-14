@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Download, Pencil, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Download, Globe2, Pencil, X } from "lucide-react";
 import { apiDownload, apiGet, streamPost } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,8 +23,15 @@ import { renderInline } from "@/components/MiaMarkdown";
 import { PageShell } from "@/app/_components/PageShell";
 import { cardVariants } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { COUNTRY_NAME_BY_CODE } from "@/app/_components/CountrySelector";
 
-type DraftResponse = { draft: string; verification?: Verification | null };
+type DraftResponse = {
+  draft: string;
+  verification?: Verification | null;
+  draft_hash: string;
+  final_ready: boolean;
+  final_status?: string;
+};
 
 // El resaltado de [VERIFICAR…] —la señal de "esto lo confirmas tú"— vive en
 // MiaMarkdown y es el MISMO en todo el producto: borrador, sala de estrategia y
@@ -130,11 +137,22 @@ function textoConfirmacionCitas(n: number): string {
 // Aprobar/rechazar responden con un flujo de eventos (el mismo canal del turno),
 // no con JSON: hay que consumirlo con streamPost y decidir por el evento final.
 // El backend emite "done" al terminar bien y "error" (en llano) si algo falló.
-async function resumeDraft(path: string, body: unknown): Promise<void> {
+type LearningReceipt = {
+  decision_saved?: boolean;
+  learning?: { status?: "queued" | "partially_queued" | "blocked" | "completed" | "needs_attention" | "not_applicable" };
+  final_ready?: boolean;
+  final_status?: string;
+};
+
+async function resumeDraft(path: string, body: unknown): Promise<LearningReceipt> {
   let ok = false;
   let errMsg = "";
+  let receipt: LearningReceipt = {};
   await streamPost(path, body, (event, data) => {
-    if (event === "done") ok = true;
+    if (event === "done") {
+      ok = true;
+      receipt = (data || {}) as LearningReceipt;
+    }
     else if (event === "aviso_de_costo") {
       // Cerrar el borrador también razona y puede acabar en crédito de pago. Esta
       // pantalla vuelve al asunto enseguida, así que el aviso viaja con el abogado.
@@ -148,12 +166,16 @@ async function resumeDraft(path: string, body: unknown): Promise<void> {
     }
   });
   if (!ok) throw new Error(errMsg || "La operación no terminó bien.");
+  return receipt;
 }
 
 export default function RevisarPage({ params }: { params: Promise<{ id: string }> }) {
   const matterId = use(params).id;
   const router = useRouter();
   const [draft, setDraft] = useState<string | null>(null);
+  const [draftHash, setDraftHash] = useState("");
+  const [finalReady, setFinalReady] = useState(false);
+  const [jurisdictions, setJurisdictions] = useState<string[]>([]);
   const [verification, setVerification] = useState<Verification | null>(null);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
@@ -162,18 +184,25 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
   const [downloading, setDownloading] = useState(false);
   const [downloadMsg, setDownloadMsg] = useState("");
   const [citasVerificadas, setCitasVerificadas] = useState(false);
+  const [revisionAtestada, setRevisionAtestada] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectBusy, setRejectBusy] = useState(false);
   const [rejectError, setRejectError] = useState("");
   const [showCelebration, setShowCelebration] = useState(false);
+  const [learningMessage, setLearningMessage] = useState("Tu decisión quedó guardada.");
 
   useEffect(() => {
+    apiGet<{ jurisdictions?: string[] }>(`/api/matters/${matterId}`)
+      .then((matter) => setJurisdictions(matter.jurisdictions || []))
+      .catch(() => setJurisdictions([]));
     apiGet<DraftResponse>(`/api/matters/${matterId}/draft`)
       .then((d) => {
         setDraft(d.draft);
         setText(d.draft);
         setVerification(d.verification || null);
+        setDraftHash(d.draft_hash || "");
+        setFinalReady(Boolean(d.final_ready));
       })
       .catch(() => {
         router.push(`/asuntos/${matterId}?sin_borrador=true`);
@@ -206,13 +235,35 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
   }, []);
 
   async function approve() {
-    if (busy || gateCitasPendiente || versionVacia) return; // anti doble-clic y gate
+    if (busy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada) return;
     setBusy(true);
     setActionMsg("");
     try {
-      await resumeDraft(
+      const receipt = await resumeDraft(
         `/api/matters/${matterId}/draft/approve`,
-        text !== draft ? { edited_text: text } : {},
+        text !== draft
+          ? { edited_text: text, draft_hash: draftHash, attested: true }
+          : { draft_hash: draftHash, attested: true },
+      );
+      setFinalReady(Boolean(receipt.final_ready));
+      if (!receipt.final_ready) {
+        setBusy(false);
+        setActionMsg("Tu revisión quedó registrada, pero el documento todavía no puede salir como final.");
+        return;
+      }
+      const learningStatus = receipt.learning?.status;
+      setLearningMessage(
+        learningStatus === "queued"
+          ? "Tu decisión quedó guardada. El aprendizaje continúa en segundo plano."
+          : learningStatus === "completed"
+            ? "Tu decisión quedó guardada y el aprendizaje ya terminó."
+          : learningStatus === "partially_queued"
+            ? "Tu decisión quedó guardada. Parte del aprendizaje continúa en segundo plano."
+            : learningStatus === "needs_attention"
+              ? "Tu decisión quedó guardada. Una parte del aprendizaje necesita reintentarse."
+            : learningStatus === "blocked"
+              ? "Tu decisión quedó guardada, pero el aprendizaje no se inició."
+              : "Tu decisión quedó guardada.",
       );
       // Micro-celebración (Fase 1c): un respiro breve antes de volver al asunto,
       // reforzando que la decisión fue del abogado y que Mia aprende de ella.
@@ -239,13 +290,25 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
     }
   }
 
-  async function downloadWord() {
+  async function downloadDraftWord() {
     setDownloadMsg("");
     setDownloading(true);
     try {
-      await apiDownload(`/api/matters/${matterId}/draft.docx`, "borrador.docx");
+      await apiDownload(`/api/matters/${matterId}/draft.docx`, "borrador-no-presentar.docx");
     } catch {
       setDownloadMsg("No se pudo descargar el documento. Intenta de nuevo.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function downloadFinalWord() {
+    setDownloadMsg("");
+    setDownloading(true);
+    try {
+      await apiDownload(`/api/matters/${matterId}/final.docx`, "documento-final-verificado.docx");
+    } catch {
+      setDownloadMsg("No se pudo descargar el documento final. Intenta de nuevo.");
     } finally {
       setDownloading(false);
     }
@@ -276,12 +339,31 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
             Volver al asunto
           </button>
           <h1 className="mt-1 text-title">Revisar borrador</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
+            <Globe2 className="h-3.5 w-3.5 text-primary" />
+            <span>Contexto jurídico:</span>
+            {(jurisdictions.length ? jurisdictions : ["generic"]).map((code) => (
+              <span key={code} className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-primary">
+                {COUNTRY_NAME_BY_CODE[code] || "General"}
+              </span>
+            ))}
+          </div>
         </div>
         <div className="text-right">
-          <Button variant="outline" onClick={downloadWord} disabled={downloading} className="gap-2">
+          <Button variant="outline" onClick={downloadDraftWord} disabled={downloading} className="gap-2">
             <Download className="h-4 w-4" />
-            {downloading ? "Preparando…" : "Descargar en Word"}
+            {downloading ? "Preparando…" : "Descargar borrador — no presentar"}
           </Button>
+          {finalReady ? (
+            <Button variant="cta" onClick={downloadFinalWord} disabled={downloading} className="mt-2 gap-2">
+              <CheckCircle2 className="h-4 w-4" />
+              Descargar documento final verificado
+            </Button>
+          ) : (
+            <p className="mt-1 text-meta text-muted-foreground">
+              El documento final se habilita solo después de la aprobación y las verificaciones.
+            </p>
+          )}
           {downloadMsg ? (
             <p role="alert" className="mt-1 text-meta text-warning">{downloadMsg}</p>
           ) : null}
@@ -361,12 +443,32 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
             </Label>
           </div>
         ) : null}
+        <div className="mb-3 flex items-center justify-center gap-2">
+          <input
+            type="checkbox"
+            id="revision-humana"
+            checked={revisionAtestada}
+            onChange={(e) => setRevisionAtestada(e.target.checked)}
+            className="h-4 w-4 shrink-0 rounded border-input text-primary accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <Label htmlFor="revision-humana" className="cursor-pointer font-normal">
+            Revisé personalmente esta versión y confirmo que es la que deseo aprobar
+          </Label>
+        </div>
+        <p className="mb-3 text-center text-meta text-muted-foreground">
+          Esta constancia registra tu decisión; no reemplaza la verificación independiente de Mia.
+        </p>
+        {!finalReady && actionMsg ? (
+          <p className="mb-3 text-center text-meta text-warning">
+            Estado: pendiente de superar todos los controles. Solo entonces se habilita el documento final.
+          </p>
+        ) : null}
         <div className="flex flex-wrap justify-center gap-3">
           <Button
             variant="cta"
             size="lg"
             onClick={approve}
-            disabled={busy || gateCitasPendiente || versionVacia}
+            disabled={busy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada}
             className="gap-2"
           >
             <Check className="h-4 w-4" />
@@ -401,6 +503,11 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
         {versionVacia ? (
           <p className="mt-2 text-center text-meta text-warning">
             Tu versión está vacía — escribe el texto o restaura la propuesta de Mia antes de aprobar.
+          </p>
+        ) : null}
+        {!draftHash ? (
+          <p className="mt-2 text-center text-meta text-warning">
+            Esta versión no se puede aprobar todavía. Recarga el borrador para verificar su integridad.
           </p>
         ) : null}
         {/* SIN modificador de opacidad. Antes era `text-muted-foreground/80`, que
@@ -464,7 +571,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
         >
           <CheckCircle2 className="h-16 w-16 text-success" />
           <p className="text-title">Borrador aprobado</p>
-          <p className="text-body text-muted-foreground">Mia aprende de cada decisión tuya.</p>
+          <p className="text-body text-muted-foreground">{learningMessage}</p>
         </div>
       ) : null}
     </div>

@@ -10,6 +10,8 @@ import {
   ChevronRight,
   ClipboardCheck,
   FileText,
+  Download,
+  Globe2,
   Moon,
   Paperclip,
   Scale,
@@ -19,7 +21,7 @@ import {
   Swords,
   X,
 } from "lucide-react";
-import { apiGet, apiSend, apiUpload, streamPost, streamTurn } from "@/lib/api";
+import { apiDownload, apiGet, apiSend, apiUpload, streamPost, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
 import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
@@ -47,6 +49,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { COUNTRY_NAME_BY_CODE } from "@/app/_components/CountrySelector";
 
 type DelegationProposal = {
   agente?: string;
@@ -106,7 +109,10 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   const matterId = params.id;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [matter, setMatter] = useState<{ name?: string } | null>(null);
+  const [matter, setMatter] = useState<{ name?: string; jurisdictions?: string[] } | null>(null);
+  const [organizationJurisdictions, setOrganizationJurisdictions] = useState<string[]>([]);
+  const [jurisdictionBusy, setJurisdictionBusy] = useState(false);
+  const [jurisdictionError, setJurisdictionError] = useState("");
   const [docs, setDocs] = useState<Doc[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -124,6 +130,8 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   // abogado RECHAZA o EDITA el borrador, así que se usa el desenlace explícito
   // (hitl_outcome) que expone GET /matters/{id}/draft, no un proxy.
   const [draftApproved, setDraftApproved] = useState(false);
+  const [finalReady, setFinalReady] = useState(false);
+  const [finalDownloading, setFinalDownloading] = useState(false);
   const [guideWizardOpen, setGuideWizardOpen] = useState(false);
   const [diagnosis, setDiagnosis] = useState("");
   // CP7: cierre estructurado del diagnostico (problema/normas/riesgo) cuando el
@@ -244,7 +252,14 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   }
 
   useEffect(() => {
-    apiGet<{ name?: string }>(`/api/matters/${matterId}`).then(setMatter).catch(() => {});
+    apiGet<{ name?: string; jurisdictions?: string[] }>(`/api/matters/${matterId}`)
+      .then(setMatter)
+      .catch(() => {});
+    apiGet<{ jurisdictions?: string[] }>("/api/profile/full")
+      .then((profile) => setOrganizationJurisdictions(
+        (profile.jurisdictions || []).filter(Boolean),
+      ))
+      .catch(() => setOrganizationJurisdictions([]));
     loadDocs();
     loadPendingCount();
     // Contador liviano del plan de trabajo: decide si la card empieza expandida.
@@ -270,6 +285,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       hitl_outcome?: "approved" | "rejected" | "edited" | null;
       diagnosis_summary?: DiagnosisSummary | null;
       verification?: Verification | null;
+      final_ready?: boolean;
     }>(`/api/matters/${matterId}/draft`)
       .then((d) => {
         if (d.diagnosis) setDiagnosis(d.diagnosis);
@@ -277,6 +293,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
         if (d.verification) setVerification(d.verification);
         if (d.awaiting_review) setHasDraft(true);
         setDraftApproved(Boolean(d.draft) && d.hitl_outcome === "approved");
+        setFinalReady(Boolean(d.final_ready));
       })
       .catch(() => {
         /* sin borrador todavia */
@@ -630,6 +647,45 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
     }
   }
 
+  async function toggleJurisdiction(code: string) {
+    if (!matter || jurisdictionBusy) return;
+    const current = matter.jurisdictions || [];
+    const next = current.includes(code)
+      ? current.filter((item) => item !== code)
+      : [...current, code];
+    // El asunto siempre conserva al menos un contexto activo. No se infiere un país.
+    if (next.length === 0) {
+      setJurisdictionError("El asunto debe conservar al menos una jurisdicción activa.");
+      return;
+    }
+    setJurisdictionBusy(true);
+    setJurisdictionError("");
+    try {
+      const result = await apiSend<{ jurisdictions: string[] }>(
+        "PUT",
+        `/api/matters/${matterId}/jurisdictions`,
+        { jurisdictions: next },
+      );
+      setMatter((previous) => previous ? { ...previous, jurisdictions: result.jurisdictions } : previous);
+    } catch {
+      setJurisdictionError("No pude cambiar el contexto jurídico. Intenta de nuevo.");
+    } finally {
+      setJurisdictionBusy(false);
+    }
+  }
+
+  async function downloadFinal() {
+    if (finalDownloading) return;
+    setFinalDownloading(true);
+    try {
+      await apiDownload(`/api/matters/${matterId}/final.docx`, "documento-final-verificado.docx");
+    } catch {
+      setNotice({ type: "warning", text: "No pude descargar el documento final. Intenta de nuevo." });
+    } finally {
+      setFinalDownloading(false);
+    }
+  }
+
   const lastIdx = messages.length - 1;
 
   return (
@@ -677,7 +733,14 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
               autocontenido que carga y refresca su propia lista. */}
           <FuentesPanel matterId={matterId} kind="asunto" onChanged={loadDocs} />
 
-          <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" multiple onChange={onUpload} className="hidden" />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.docm,.odt,.rtf,.ppt,.pptx,.pptm,.pps,.ppsx,.xls,.xlsx,.xlsm,.xlsb,.ods,.odp,.epub,.csv,.txt,.md"
+            multiple
+            onChange={onUpload}
+            className="hidden"
+          />
           <Button
             variant="outline"
             onClick={() => fileRef.current?.click()}
@@ -723,6 +786,42 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
       {/* Consulta: espacio único de conversación (el plan vive en el aside derecho) */}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex-1 space-y-5 overflow-auto px-6 py-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/80 px-4 py-3 shadow-sm">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Globe2 className="h-4 w-4 shrink-0 text-primary" />
+              <span className="text-xs font-medium text-muted-foreground">Contexto jurídico</span>
+              {(matter?.jurisdictions?.length ? matter.jurisdictions : ["generic"]).map((code) => (
+                <span key={code} className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                  {COUNTRY_NAME_BY_CODE[code] || "General"}
+                </span>
+              ))}
+            </div>
+            {organizationJurisdictions.length > 1 ? (
+              <details className="relative">
+                <summary className="cursor-pointer list-none rounded-lg px-2 py-1 text-xs font-medium text-primary hover:bg-primary/5">
+                  Cambiar
+                </summary>
+                <div className="absolute right-0 z-20 mt-2 min-w-56 space-y-2 rounded-xl border border-border bg-card p-3 shadow-lg">
+                  <p className="text-xs text-muted-foreground">
+                    Mia concentrará la investigación y las verificaciones en lo que marques.
+                  </p>
+                  {organizationJurisdictions.map((code) => (
+                    <label key={code} className="flex cursor-pointer items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={(matter?.jurisdictions || []).includes(code)}
+                        onChange={() => void toggleJurisdiction(code)}
+                        disabled={jurisdictionBusy}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      {COUNTRY_NAME_BY_CODE[code] || "General"}
+                    </label>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+            {jurisdictionError ? <p role="alert" className="w-full text-xs text-warning">{jurisdictionError}</p> : null}
+          </div>
           {notice ? (
             <div
               role={notice.type === "warning" ? "alert" : "status"}
@@ -867,6 +966,18 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
                 >
                   <FileText className="h-3.5 w-3.5" />
                   Revisar borrador
+                </Button>
+              ) : null}
+              {finalReady ? (
+                <Button
+                  variant="cta"
+                  size="sm"
+                  onClick={downloadFinal}
+                  disabled={finalDownloading}
+                  className="gap-1.5 animate-slide-up"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  {finalDownloading ? "Preparando…" : "Descargar final verificado"}
                 </Button>
               ) : null}
             </div>

@@ -40,7 +40,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 // ── Contratos backend (welcome) ────────────────────────────────────────────
-type Politica = "suscripcion" | "nube" | "soberano" | "openrouter";
+type Politica = "quality_adaptive" | "suscripcion" | "nube" | "soberano" | "openrouter";
 
 interface WelcomeStatus {
   instalado: boolean;
@@ -334,7 +334,7 @@ export default function ActivarPage() {
   const [subStep, setSubStep] = React.useState(0);
   const [direction, setDirection] = React.useState(1);
 
-  const [politica, setPolitica] = React.useState<Politica>("suscripcion");
+  const [politica, setPolitica] = React.useState<Politica>("quality_adaptive");
   const busqueda = useKeyValidation("busqueda");
   const respaldo = useKeyValidation("respaldo");
   const openrouter = useKeyValidation("openrouter");
@@ -364,7 +364,7 @@ export default function ActivarPage() {
           return;
         }
         setStatus(s);
-        setPolitica(s.politica ?? "suscripcion");
+        setPolitica(s.politica ?? "quality_adaptive");
         setPhase("activar");
       } catch {
         if (cancel) return;
@@ -574,7 +574,7 @@ export default function ActivarPage() {
           onKeyDown={(e) => {
             // El orden DEBE coincidir con el orden visual de las tarjetas (abajo):
             // las flechas mueven el foco por índice de DOM.
-            const order: Politica[] = ["suscripcion", "nube", "openrouter", "soberano"];
+            const order: Politica[] = ["quality_adaptive", "suscripcion", "nube", "openrouter", "soberano"];
             const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
             const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
             if (!forward && !backward) return;
@@ -589,14 +589,18 @@ export default function ActivarPage() {
         >
           <EngineCard
             icon={Sparkles}
-            title="Mi suscripción"
+            title="Calidad jurídica adaptativa"
             badge="Recomendado"
-            // La recomendación del plan Max va AQUÍ, en la instalación, y no solo cuando ya
-            // pasó (decisión de Pipe, sesión 52). Medido con un expediente real de 174
-            // páginas: una suscripción normal no alcanzó a responderlo y el trabajo se
-            // resolvió con crédito de pago. Mejor que el abogado lo sepa al elegir el motor
-            // que enterarse por un cargo. En llano y sin cifras que no podemos sostener.
-            description="Funciona con la suscripción que ya pagas. Requiere un plan Max: en planes inferiores un expediente extenso no cabe y genera cobros de crédito adicionales. Con Max no hay costo extra."
+            description="Para análisis jurídico complejo, Mia prefiere Claude Code y ajusta la profundidad según la tarea. Los modos máximos se reservan para casos excepcionales y siempre se registran. Si Claude Code no está disponible, Mia te lo avisará y usará solo los respaldos autorizados."
+            detected={status.motor_detectado.claude}
+            detectedLabel="Ya detecté Claude Code en este equipo."
+            selected={politica === "quality_adaptive"}
+            onSelect={() => setPolitica("quality_adaptive")}
+          />
+          <EngineCard
+            icon={Sparkles}
+            title="Mi suscripción"
+            description="Usa directamente la configuración habitual de tu suscripción. Si una capacidad no está disponible, Mia te lo mostrará y usará el respaldo que hayas autorizado."
             detected={status.motor_detectado.claude}
             detectedLabel="Ya la detecté lista en este equipo."
             selected={politica === "suscripcion"}

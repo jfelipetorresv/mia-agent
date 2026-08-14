@@ -230,7 +230,7 @@ export default function OnboardingPage() {
           id: JURISDICTION_QUESTION_ID,
           block: "jurisdiction",
           field: JURISDICTION_FIELD,
-          question: "¿Con las reglas jurídicas de qué país trabaja tu despacho?",
+          question: "¿Con las reglas jurídicas de qué país trabaja tu firma u organización?",
           example: "",
         };
         const p2Index = list.findIndex((q) => q.id === "p2");
@@ -342,13 +342,13 @@ export default function OnboardingPage() {
     );
   }
 
-  // ── Mia "pensando" mientras arma el perfil del despacho ──
+  // ── Mia "pensando" mientras arma el perfil de la firma u organización ──
   if (submitting) {
     return (
       <WelcomeShell progress={<WelcomeProgress current={2} />}>
         <div className="space-y-3 text-center">
           <MiaLine
-            text="Estoy armando el perfil de tu despacho…"
+            text="Estoy armando el perfil de tu firma u organización…"
             className="text-center text-xl font-semibold tracking-tight sm:text-2xl"
           />
           <p className="text-sm text-muted-foreground">Un momento — casi listo.</p>
@@ -357,7 +357,7 @@ export default function OnboardingPage() {
     );
   }
 
-  // ── Pantalla final: celebración detrás del resumen "Así entendí a tu despacho" ──
+  // ── Pantalla final: celebración detrás del resumen de la firma u organización ──
   if (completion !== null) {
     return (
       <WelcomeShell progress={<WelcomeProgress current={3} />} width="lg">
@@ -370,7 +370,7 @@ export default function OnboardingPage() {
           <div className="relative z-10 space-y-6">
             <div className="space-y-2 text-center">
               <MiaLine
-                text="Así entendí a tu despacho."
+                text="Así entendí a tu firma u organización."
                 className="text-center text-2xl font-semibold tracking-tight sm:text-3xl"
               />
               <p className="mx-auto max-w-md text-sm text-muted-foreground">
@@ -751,12 +751,12 @@ function QuestionInput({
           </p>
         </div>
       );
-    // P1 — dos campos: despacho + abogado.
+    // P1 — dos campos: firma u organización + abogado.
     case "p1": {
       const n = asNamePair(value);
       return (
         <div className="space-y-3">
-          <Field label="Nombre del despacho">
+          <Field label="Nombre de la firma u organización">
             <Input
               value={n.firm}
               onChange={(e) => onChange({ ...n, firm: e.target.value })}

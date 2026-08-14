@@ -67,7 +67,7 @@ export default function RegisterPage() {
           <WelcomeField>
             <div className="space-y-2 text-center">
               <MiaLine
-                text="Soy Mia. Creemos el espacio de tu despacho."
+                text="Soy Mia. Creemos el espacio de tu firma u organización."
                 className="text-xl sm:text-2xl"
               />
               <p className="text-sm text-muted-foreground">
@@ -76,7 +76,7 @@ export default function RegisterPage() {
             </div>
           </WelcomeField>
 
-          <WelcomeField label="¿Cómo se llama tu despacho?" htmlFor="firm">
+          <WelcomeField label="¿Cómo se llama tu firma u organización?" htmlFor="firm">
             <Input
               id="firm"
               value={firmName}
@@ -94,7 +94,7 @@ export default function RegisterPage() {
               onChange={(e) => setEmail(e.target.value)}
               type="email"
               autoComplete="email"
-              placeholder="tu@despacho.com"
+              placeholder="tu@firma.com"
               required
             />
           </WelcomeField>
@@ -131,7 +131,7 @@ export default function RegisterPage() {
               size="lg"
               className="w-full"
             >
-              {loading ? "Creando tu espacio…" : "Crear mi despacho"}
+              {loading ? "Creando tu espacio…" : "Crear mi firma u organización"}
             </Button>
           </WelcomeField>
         </Stagger>

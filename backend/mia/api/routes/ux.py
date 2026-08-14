@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import time
+from typing import Literal
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -41,15 +42,17 @@ from ...security.at_rest import encrypt_secret
 from ...cron import build_scheduler
 from ...db import pool
 from ...ingest.extract import extract_text_async, extract_text_detailed_async
-from ...ingest.ingest import chunk_text, chunk_text_with_folios
+from ...ingest.ingest import chunk_text, chunk_extracted_text
 from ...jobs import enqueue_classification
 from ...jurisdiction.pack import GENERIC_CODE, list_packs, load_pack
+from ...jurisdiction.resolver import resolve_jurisdictions
 from ...memory.gepa import GEPALoop
 from ...memory.playbook_manager import Playbook, PlaybookManager
 from ...memory.profile_manager import ProfileManager
 from ...memory import soul_manager
 from ...memory.trace_capture import TraceCapture
 from ...memory.wiki_manager import WikiManager
+from ...memory import legal_ledger
 from ...observability import audit
 from ...onboarding.soul_interview import (
     KNOWN_FIELDS, SoulInterview, build_soul, build_summary, derive_firm_profile,
@@ -149,6 +152,38 @@ class MatterCreate(BaseModel):
     name: str
     description: str = ""
     kind: str = "asunto"
+    jurisdictions: list[str] | None = None
+
+
+class MatterJurisdictionsBody(BaseModel):
+    jurisdictions: list[str]
+
+
+async def _matter_jurisdictions(tid: str, requested: list[str] | None) -> list[str]:
+    """Valida el contexto activo: solo puede ser un subconjunto de la organización.
+
+    Ausencia/vacío conserva la compatibilidad y hereda todas las jurisdicciones configuradas
+    de la firma u organización. Nunca se permite que un asunto agregue por API un país que no
+    esté declarado arriba: eso rompería la promesa de que las casillas del perfil son el borde
+    del contexto jurídico disponible.
+    """
+    allowed = await resolve_jurisdictions(tid)
+    raw = requested if requested else allowed
+    selected: list[str] = []
+    seen: set[str] = set()
+    for value in raw:
+        code = str(value).strip().lower()
+        if code and code not in seen:
+            seen.add(code)
+            selected.append(code)
+    if not selected:
+        selected = [GENERIC_CODE]
+    if not set(selected).issubset(set(allowed)):
+        raise HTTPException(
+            status_code=422,
+            detail="Elige únicamente jurisdicciones que ya configuraste para tu firma u organización.",
+        )
+    return selected
 
 
 @router.get("/matters")
@@ -165,10 +200,11 @@ async def list_matters(request: Request, kind: str = Query("asunto")):
         where, params = "WHERE kind = %s", (k,)
     async with pool.tenant_connection(tid) as conn:
         rows = await (await conn.execute(
-            "SELECT id, title, description, status, created_at, pending_review, kind FROM matters "
+            "SELECT id, title, description, status, created_at, pending_review, kind, jurisdictions FROM matters "
             f"{where} ORDER BY created_at DESC", params)).fetchall()
     return [{"id": str(r[0]), "name": r[1], "description": r[2], "status": r[3],
-             "created_at": r[4], "pending_review": bool(r[5]), "kind": r[6]} for r in rows]
+             "created_at": r[4], "pending_review": bool(r[5]), "kind": r[6],
+             "jurisdictions": (r[7] or [])} for r in rows]
 
 
 @router.post("/matters", status_code=201)
@@ -176,11 +212,13 @@ async def create_matter(request: Request, body: MatterCreate):
     tid = _tenant(request)
     if body.kind not in _MATTER_KINDS:
         raise HTTPException(status_code=422, detail="Ese tipo de espacio no existe")
+    jurisdictions = await _matter_jurisdictions(tid, body.jurisdictions)
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
-            "INSERT INTO matters (tenant_id, title, description, kind) VALUES (%s::uuid, %s, %s, %s) "
+            "INSERT INTO matters (tenant_id, title, description, kind, jurisdictions) "
+            "VALUES (%s::uuid, %s, %s, %s, %s::jsonb) "
             "RETURNING id, status, created_at",
-            (tid, body.name, body.description, body.kind))).fetchone()
+            (tid, body.name, body.description, body.kind, Json(jurisdictions)))).fetchone()
     # Andamiaje en disco del expediente (solo Asuntos): alias = UUID del asunto (convención
     # crítica y consistente). El disco es ACCESORIO — jamás debe tumbar el alta, así que va
     # fuera del event loop y en try/except que solo loguea.
@@ -193,7 +231,8 @@ async def create_matter(request: Request, body: MatterCreate):
                 "no se pudo andamiar el expediente en disco (tenant=%s matter=%s)",
                 tid, str(row[0]))
     return {"id": str(row[0]), "name": body.name, "description": body.description,
-            "status": row[1], "created_at": row[2], "kind": body.kind}
+            "status": row[1], "created_at": row[2], "kind": body.kind,
+            "jurisdictions": jurisdictions}
 
 
 @router.get("/matters/{matter_id}")
@@ -202,12 +241,27 @@ async def get_matter(matter_id: str, request: Request):
     await assert_owns_matter(tid, matter_id)
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
-            "SELECT id, title, description, status, created_at, kind FROM matters "
+            "SELECT id, title, description, status, created_at, kind, jurisdictions FROM matters "
             "WHERE id = %s::uuid", (matter_id,))).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Asunto no encontrado")
     return {"id": str(row[0]), "name": row[1], "description": row[2], "status": row[3],
-            "created_at": row[4], "kind": row[5]}
+            "created_at": row[4], "kind": row[5], "jurisdictions": row[6] or []}
+
+
+@router.put("/matters/{matter_id}/jurisdictions")
+async def put_matter_jurisdictions(matter_id: str, request: Request,
+                                   body: MatterJurisdictionsBody):
+    """Cambia el contexto jurídico del asunto sin modificar el perfil de la organización."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    jurisdictions = await _matter_jurisdictions(tid, body.jurisdictions)
+    async with pool.tenant_connection(tid) as conn:
+        await conn.execute(
+            "UPDATE matters SET jurisdictions=%s::jsonb WHERE id=%s::uuid",
+            (Json(jurisdictions), matter_id),
+        )
+    return {"jurisdictions": jurisdictions}
 
 
 # ── Pantalla 2 · documentos ──────────────────────────────────────────────────
@@ -246,7 +300,7 @@ async def upload_document(matter_id: str, request: Request, response: Response,
                 "message": "Ese documento ya estaba en el expediente — no lo dupliqué."}
     try:
         # M1: la extracción (OCR incluido) es CPU-pesada y va a un hilo — NO al event loop.
-        text, meta = await extract_text_detailed_async(file.filename, data)
+        text, meta = await extract_text_detailed_async(file.filename, data, file.content_type)
     except ValueError as e:
         raise HTTPException(status_code=415, detail=str(e))
     # M3: un escaneo del que no se pudo leer NADA no es un documento válido — solo la nota
@@ -259,10 +313,12 @@ async def upload_document(matter_id: str, request: Request, response: Response,
         raise HTTPException(status_code=422, detail="No pude leer texto en este documento.")
     # Troceo con folio: cada chunk lleva el folio (página del PDF) de su offset de inicio,
     # medido sobre el MISMO `text` que devolvió extract (meta['folio_map']). Sin páginas → None.
-    pairs = chunk_text_with_folios(text, meta.get("folio_map") or [])
+    pairs = chunk_extracted_text(text, meta)
     if not pairs:
         raise HTTPException(status_code=400, detail="El documento está vacío o no tiene texto.")
-    vectors = embeddings.embed_texts([c for c, _ in pairs])
+    # El proveedor de embeddings es síncrono y puede hacer E/S de red. Sacarlo del
+    # event loop evita congelar las demás solicitudes mientras responde.
+    vectors = await asyncio.to_thread(embeddings.embed_texts, [c for c, _ in pairs])
     async with pool.tenant_connection(tid) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, origin) "
@@ -310,7 +366,7 @@ async def create_output(matter_id: str, request: Request, response: Response, bo
                 "message": "Ese archivo ya estaba guardado en el proyecto — no lo dupliqué."}
     chunks = chunk_text(body.content)
     try:
-        vectors = embeddings.embed_texts(chunks) if chunks else []
+        vectors = await asyncio.to_thread(embeddings.embed_texts, chunks) if chunks else []
     except Exception:
         # M1 (mismo criterio que upload_document): si falla el embebido no se deja NADA
         # a medias — aquí todavía no se insertó nada en documents/chunks.
@@ -439,7 +495,16 @@ async def get_draft(matter_id: str, request: Request):
     # "Convertir en guía" es válido, alineado con el mismo criterio que ya usa
     # interviewer.py para cargar evidencia (`hitl_outcome == 'approved'`).
     hitl_outcome = HITL_OUTCOME.get(values.get("hitl_status"))
+    draft_hash = legal_ledger.content_hash(draft)
+    try:
+        final_ready = await legal_ledger.is_current_final(tid, matter_id, draft)
+    except Exception:  # noqa: BLE001 -- una tabla ausente no autoriza un final
+        logger.warning("no se pudo consultar el ledger jurídico", exc_info=True)
+        final_ready = False
     return {"draft": draft, "awaiting_review": awaiting, "hitl_outcome": hitl_outcome,
+            "draft_hash": draft_hash, "final_ready": final_ready,
+            "final_status": ("verified" if final_ready else
+                             str(md.get("final_status") or "awaiting_verification")),
             "diagnosis": strip_diagnosis_closing(md.get("diagnosis") or "") or None,
             "diagnosis_summary": md.get("diagnosis_summary"),
             # CP9: informe del especialista de verificación de citas (None en
@@ -474,7 +539,7 @@ async def matter_history(matter_id: str, request: Request):
 
 @router.get("/matters/{matter_id}/draft.docx")
 async def download_draft_docx(matter_id: str, request: Request):
-    """CP9 · emisión Word: el borrador actual como .docx con formato de escrito.
+    """Emisión explícita de BORRADOR: no equivale a un documento final.
 
     Disponible para el borrador pendiente Y para el aprobado (el checkpoint conserva
     el último borrador del asunto). 404 si el asunto aún no tiene borrador."""
@@ -492,7 +557,7 @@ async def download_draft_docx(matter_id: str, request: Request):
         row = await (await conn.execute(
             "SELECT title FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
     title = (row[0] if row and row[0] else "Borrador")
-    data = draft_to_docx(draft, title=title, author="Mia")
+    data = draft_to_docx(draft, title=f"BORRADOR — NO PRESENTAR — {title}", author="Mia")
     # filename ASCII-safe + variante UTF-8 (RFC 5987) para títulos con tildes.
     # ASCII-only a propósito (bugfix): el header HTTP filename= (sin *) no tolera un
     # carácter no-ASCII crudo (p. ej. 'á' de un título en español pasa isalnum() pero
@@ -512,6 +577,8 @@ async def download_draft_docx(matter_id: str, request: Request):
 
 
 class ApproveBody(BaseModel):
+    draft_hash: str = Field(min_length=64, max_length=64)
+    attested: Literal[True]
     edited_text: str | None = None
 
 
@@ -521,15 +588,61 @@ class RejectBody(BaseModel):
 
 @router.post("/matters/{matter_id}/draft/approve")
 async def approve_draft(matter_id: str, request: Request, body: ApproveBody | None = None):
-    if body and body.edited_text:
-        return await _resume(request, matter_id, {"decision": "editing", "edits": body.edited_text})
-    return await _resume(request, matter_id, {"decision": "approved"})
+    if body and body.edited_text is not None:
+        if not body.edited_text:
+            raise HTTPException(status_code=422, detail="La versión editada no puede estar vacía.")
+        return await _resume(request, matter_id, {
+            "decision": "editing", "edited_text": body.edited_text,
+            "draft_hash": body.draft_hash, "attested": body.attested,
+        })
+    if body is None:
+        raise HTTPException(status_code=422, detail="Falta la huella del borrador revisado.")
+    return await _resume(request, matter_id,
+                         {"decision": "approved", "draft_hash": body.draft_hash,
+                          "attested": body.attested})
 
 
 @router.post("/matters/{matter_id}/draft/reject")
 async def reject_draft(matter_id: str, request: Request, body: RejectBody | None = None):
     reason = body.reason if body else ""
     return await _resume(request, matter_id, {"decision": "rejected", "feedback": reason})
+
+
+@router.get("/matters/{matter_id}/final.docx")
+async def download_final_docx(matter_id: str, request: Request):
+    """Única salida Word final; falla cerrada sin recibos válidos de esa versión."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    try:
+        final = await legal_ledger.latest_final(tid, matter_id)
+    except Exception as exc:  # noqa: BLE001 -- no degradar a borrador si falla el ledger
+        logger.exception("no se pudo leer el ledger jurídico")
+        raise HTTPException(status_code=409,
+                            detail="No pude comprobar la revisión final del documento.") from exc
+    if not final:
+        raise HTTPException(status_code=409,
+                            detail="El documento aún no supera todas las revisiones necesarias.")
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT title FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
+    title = (row[0] if row and row[0] else "Documento final")
+    data = draft_to_docx(final["content"], title=title, author="Mia")
+    try:
+        await legal_ledger.record_export(
+            tid, matter_id, final["content_hash"], export_format="docx")
+    except Exception as exc:  # noqa: BLE001 -- sin recibo no sale como final
+        logger.exception("no se pudo registrar la exportación jurídica")
+        raise HTTPException(status_code=409,
+                            detail="No pude registrar la salida final del documento.") from exc
+    safe = "".join(c if c.isascii() and (c.isalnum() or c in "-_ ") else ""
+                   for c in title).strip() or "documento-final"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition":
+                 f'attachment; filename="{safe[:60]}-final.docx"; '
+                 f"filename*=UTF-8''{quote(title[:60], safe='')}-final.docx"},
+    )
 
 
 @router.post("/matters/{matter_id}/delegation/aprobar")
@@ -868,7 +981,8 @@ async def create_playbook(request: Request, body: PlaybookBody):
     tid = _tenant(request)
     if body.origin not in _PLAYBOOK_ORIGINS:
         raise HTTPException(status_code=422, detail="Ese origen no es válido.")
-    vec = embeddings.embed_texts([f"{body.summary}\n{body.applies_when}"])[0]
+    vec = (await asyncio.to_thread(
+        embeddings.embed_texts, [f"{body.summary}\n{body.applies_when}"]))[0]
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
             "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content, "
@@ -907,7 +1021,8 @@ async def update_playbook(playbook_id: str, request: Request, body: PlaybookUpda
     new_summary = body.summary if body.summary is not None else row["summary"]
     new_applies = body.applies_when if body.applies_when is not None else row["applies_when"]
     new_content = body.content if body.content is not None else row["content"]
-    vec = embeddings.embed_texts([f"{new_summary}\n{new_applies}"])[0]
+    vec = (await asyncio.to_thread(
+        embeddings.embed_texts, [f"{new_summary}\n{new_applies}"]))[0]
     async with pool.tenant_connection(tid) as conn:
         await conn.execute(
             "INSERT INTO playbook_versions (tenant_id, playbook_id, title, summary, "
@@ -995,7 +1110,8 @@ async def restore_playbook_version(playbook_id: str, version_id: str, request: R
     # E/S de red (embeddings) FUERA de la conexión pooled del tenant — mismo criterio que
     # update_playbook y que el comentario de apply_proposal sobre no agotar el pool del
     # tenant bajo carga concurrente (hallazgo del revisor).
-    vec = embeddings.embed_texts([f"{ver['summary']}\n{ver['applies_when']}"])[0]
+    vec = (await asyncio.to_thread(
+        embeddings.embed_texts, [f"{ver['summary']}\n{ver['applies_when']}"]))[0]
     async with pool.tenant_connection(tid) as conn:
         try:
             await conn.execute(
@@ -1195,15 +1311,53 @@ async def apply_proposal(proposal_id: str, request: Request,
         raise HTTPException(status_code=404, detail="Sugerencia no encontrada o ya revisada.")
     edited_content = body.content if body and body.content else None
     edited_title = body.title if body and body.title else None
+    prepared_new: dict | None = None
+    # Prelectura sin lock: para propuestas que crearán una guía calculamos el
+    # embedding antes de abrir la transacción de aplicación. Al volver a adquirir
+    # FOR UPDATE se coteja la firma de la propuesta; si cambió, se falla cerrado.
+    async with pool.tenant_connection(tid) as read_conn:
+        async with read_conn.cursor(row_factory=dict_row) as read_cur:
+            await read_cur.execute(
+                "SELECT proposal_type, suggested_content FROM feedback_proposals "
+                "WHERE id=%s::uuid AND status='pending'", (proposal_id,))
+            preflight = await read_cur.fetchone()
+    if not preflight:
+        raise HTTPException(status_code=404, detail="Sugerencia no encontrada o ya revisada.")
+    if preflight["proposal_type"] in ("new_playbook", "harvest_lessons"):
+        new_content = (edited_content if edited_content is not None
+                       else preflight["suggested_content"])
+        if edited_title:
+            new_title = edited_title[:200]
+        else:
+            words = (preflight["suggested_content"] or "").strip().split()
+            prefix = ("Lección aprendida"
+                      if preflight["proposal_type"] == "harvest_lessons"
+                      else "Procedimiento sugerido")
+            new_title = (" ".join(words[:8])[:200]
+                         or f"{prefix} {proposal_id[:8]}")
+        new_summary = ("Lección revisada y aprobada por el abogado"
+                       if preflight["proposal_type"] == "harvest_lessons"
+                       else "Propuesta aplicada de Mia")
+        new_applies = "(por afinar)"
+        vec_new = (await asyncio.to_thread(
+            embeddings.embed_texts, [f"{new_summary}\n{new_applies}"]))[0]
+        prepared_new = {
+            "proposal_type": preflight["proposal_type"],
+            "suggested_content": preflight["suggested_content"],
+            "content": new_content, "title": new_title, "summary": new_summary,
+            "applies": new_applies, "embedding": vec_new,
+        }
     async with pool.tenant_connection(tid) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT proposal_type, target_playbook_id, suggested_content, rationale, target_concept "
-                "FROM feedback_proposals WHERE id = %s::uuid AND status = 'pending'", (proposal_id,))
+                "FROM feedback_proposals WHERE id = %s::uuid AND status = 'pending' FOR UPDATE",
+                (proposal_id,))
             p = await cur.fetchone()
         if not p:
             raise HTTPException(status_code=404, detail="Sugerencia no encontrada o ya revisada.")
         note: str | None = None
+        applied_mutation = False
         if p["proposal_type"] == "improve_playbook" and p["target_playbook_id"]:
             # H.6: no se puede sobrescribir un playbook protegido (semilla/core) desde una
             # sugerencia automática. La propuesta queda pendiente; se responde 409.
@@ -1237,7 +1391,7 @@ async def apply_proposal(proposal_id: str, request: Request,
             # aplicar una mejora deja de ser irreversible (hallazgo mayor del revisor).
             applied_at = datetime.now(timezone.utc).isoformat()
             try:
-                await conn.execute(
+                updated = await conn.execute(
                     "UPDATE playbooks SET content = %s, title = COALESCE(%s, title), "
                     "updated_at = now(), "
                     "metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{last_improvement}', "
@@ -1246,30 +1400,42 @@ async def apply_proposal(proposal_id: str, request: Request,
                     "WHERE id = %s AND NOT protected",
                     (new_content, new_title, str(proposal_id), applied_at,
                      p["target_playbook_id"]))
+                applied_mutation = updated.rowcount == 1
             except psycopg.errors.UniqueViolation:
                 raise HTTPException(status_code=409, detail="Ya existe otra guía con ese nombre.")
-        elif p["proposal_type"] == "new_playbook":
-            new_content = edited_content if edited_content is not None else p["suggested_content"]
-            if edited_title:
-                new_title = edited_title[:200]
-            else:
-                # nunca más el placeholder "Sugerencia {id}" — se deriva un título en
-                # llano de las primeras palabras de la sugerencia (revisor B4).
-                words = (p["suggested_content"] or "").strip().split()
-                new_title = (" ".join(words[:8])[:200]
-                            or f"Procedimiento sugerido {proposal_id[:8]}")
-            new_summary = "Propuesta aplicada de Mia"
-            new_applies = "(por afinar)"
+            if not applied_mutation:
+                raise HTTPException(
+                    status_code=409,
+                    detail="La guía cambió o ya no existe. La sugerencia sigue pendiente.")
+        elif p["proposal_type"] in ("new_playbook", "harvest_lessons"):
+            if (not prepared_new
+                    or prepared_new["proposal_type"] != p["proposal_type"]
+                    or prepared_new["suggested_content"] != p["suggested_content"]):
+                raise HTTPException(
+                    status_code=409,
+                    detail="La sugerencia cambió mientras se preparaba. Vuelve a intentarlo.")
+            new_content = prepared_new["content"]
+            new_title = prepared_new["title"]
+            new_summary = prepared_new["summary"]
+            new_applies = prepared_new["applies"]
+            vec_new = prepared_new["embedding"]
             # Re-embed (hallazgo del revisor): sin esto el playbook "aprendido" nace con
             # embedding=NULL y el Curator jamás lo considera en su dedup/consolidación
             # semántica (find_candidates exige embedding IS NOT NULL en ambos lados).
-            vec_new = embeddings.embed_texts([f"{new_summary}\n{new_applies}"])[0]
-            await conn.execute(
+            inserted = await conn.execute(
                 "INSERT INTO playbooks (tenant_id, title, summary, applies_when, content, "
                 "embedding, metadata) VALUES (%s::uuid, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (tenant_id, title) DO NOTHING",
+                "ON CONFLICT (tenant_id, title) DO NOTHING RETURNING id",
                 (tid, new_title, new_summary, new_applies, new_content, vec_new,
-                 Json({"origin": "aprendida"})))
+                 Json({"origin": ("cosecha_aprobada"
+                                  if p["proposal_type"] == "harvest_lessons"
+                                  else "aprendida"),
+                       "proposal_id": str(proposal_id)})))
+            applied_mutation = (await inserted.fetchone()) is not None
+            if not applied_mutation:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Ya existe una guía con ese nombre. Cambia el título para aplicarla.")
         # wiki_correction: el append al archivo del concepto es E/S de disco bloqueante
         # (el vault puede vivir en OneDrive) — se hace DESPUÉS de soltar esta conexión
         # pooled (revisor capa 2: sostenerla durante la escritura arriesgaba agotar el
@@ -1281,6 +1447,10 @@ async def apply_proposal(proposal_id: str, request: Request,
         # el pool del tenant; y si el tope rechaza el cambio, la propuesta debe quedarse
         # PENDIENTE — no marcarse aplicada aquí antes de saber si de verdad se aplicó.
         if p["proposal_type"] not in ("wiki_correction", "soul_rule"):
+            if not applied_mutation:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Esta sugerencia no produjo un cambio y sigue pendiente.")
             await conn.execute(
                 "UPDATE feedback_proposals SET status = 'applied', reviewed_at = now() "
                 "WHERE id = %s::uuid", (proposal_id,))

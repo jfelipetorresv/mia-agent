@@ -90,6 +90,19 @@ _BASE_FLAGS = [
 # "sonnet"/"opus" documentados como ejemplos en `claude --help`. Cualquier otro hint se
 # ignora con warning (no se arriesga un 404 por un alias inventado).
 _ACCEPTED_MODEL_HINTS = frozenset({"haiku", "sonnet", "opus"})
+# `--effort` se confirma contra el `claude --help` real al introducir una versión del CLI
+# en Mia. No es una promesa de que todos los planes tengan el mismo techo: si el CLI no
+# acepta un nivel, devuelve su error estructurado y la cadena degrada de forma visible.
+_ACCEPTED_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
+
+def supported_efforts() -> tuple[str, ...]:
+    """Niveles de esfuerzo que Mia puede pedir al CLI instalado.
+
+    Es una interfaz pública intencional: la superficie de configuración no debe
+    depender de la constante interna que también protege la construcción del comando.
+    """
+    return tuple(sorted(_ACCEPTED_EFFORTS))
 
 _SYS_HEADER = "=== INSTRUCCIONES DEL SISTEMA ==="
 _REQ_HEADER = "=== SOLICITUD ==="
@@ -200,7 +213,7 @@ def _split_messages(messages: list[dict]) -> tuple[str, str]:
     return system, prompt
 
 
-def _build_command(exe: str, model_hint: str | None) -> list[str]:
+def _build_command(exe: str, model_hint: str | None, effort: str | None = None) -> list[str]:
     """Arma la lista de args (NUNCA shell). Defensa en profundidad: NINGÚN contenido
     del tenant (system ni conversación) viaja como argumento — todo va por stdin; aquí
     solo entran flags fijos y el alias de modelo validado contra una allowlist.
@@ -216,10 +229,15 @@ def _build_command(exe: str, model_hint: str | None) -> list[str]:
             cmd += ["--model", hint]
         else:
             logger.warning("model_hint '%s' no confirmado para el CLI claude; se ignora", hint)
+    if effort:
+        if effort in _ACCEPTED_EFFORTS:
+            cmd += ["--effort", effort]
+        else:
+            logger.warning("effort '%s' no confirmado para el CLI claude; se ignora", effort)
     return cmd
 
 
-def _to_openai_response(data: dict) -> Any:
+def _to_openai_response(data: dict, *, model_hint: str | None, effort: str | None) -> Any:
     """Adapta el JSON del CLI a la forma OpenAI-compatible que consumen llm.py/graph.py."""
     text = data.get("result") or ""
     u = data.get("usage") or {}
@@ -238,19 +256,26 @@ def _to_openai_response(data: dict) -> Any:
     )
     message = SimpleNamespace(role="assistant", content=text, tool_calls=None)
     choice = SimpleNamespace(index=0, message=message, finish_reason="stop")
-    return SimpleNamespace(
+    response = SimpleNamespace(
         id=data.get("session_id") or "cli-claude",
         model="cli-claude",
         choices=[choice],
         usage=usage,
     )
+    # Telemetría de verdad: no inferir después el modelo configurado de una etiqueta de
+    # ruta. Estos dos campos no cambian el contrato OpenAI-compatible, pero permiten que
+    # el router y sus pruebas registren qué se pidió efectivamente al CLI.
+    response.mia_model_hint = model_hint or getattr(config, "MIA_CLI_MODEL", "sonnet")
+    response.mia_effort = effort or ""
+    return response
 
 
 def call_cli(messages: list[dict], model_hint: str | None = None,
-             timeout: float = DEFAULT_TIMEOUT) -> Any:
+             timeout: float = DEFAULT_TIMEOUT, effort: str | None = None) -> Any:
     """Invoca el CLI `claude` headless y devuelve una respuesta OpenAI-compatible.
 
     `model_hint` (p. ej. "haiku") se pasa como `--model` solo si es un alias confirmado.
+    `effort` se pasa como `--effort` solo desde la política interna de calidad de Mia.
     Lanza TimeoutError / SubscriptionCLIError / SubscriptionCLIUnavailable — todas
     clasificables por error_classifier para que la cadena de fallback avance."""
     exe = _resolve_exe()
@@ -261,7 +286,7 @@ def call_cli(messages: list[dict], model_hint: str | None = None,
         )
 
     system, prompt = _split_messages(messages)
-    cmd = _build_command(exe, model_hint)
+    cmd = _build_command(exe, model_hint, effort)
     # El system SIEMPRE va por stdin (nunca como argumento — ver docstring del módulo).
     if system:
         prompt = f"{_SYS_HEADER}\n{system}\n\n{_REQ_HEADER}\n{prompt}"
@@ -313,4 +338,4 @@ def call_cli(messages: list[dict], model_hint: str | None = None,
             stderr=stderr or None,
         )
 
-    return _to_openai_response(data)
+    return _to_openai_response(data, model_hint=model_hint, effort=effort)
