@@ -48,6 +48,17 @@ $BuildStartedUtc = [DateTime]::UtcNow
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 
+function Get-Sha256Hex([string]$Path) {
+    # .NET puro: funciona incluso si el host de PowerShell no logra cargar
+    # Microsoft.PowerShell.Utility durante un build largo.
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
 # Un release no puede mezclar versiones ni salir de fuentes modificadas. Los
 # artefactos de build están ignorados; cualquier entrada de status restante es
 # código/documentación que todavía no pertenece a un commit reproducible.
@@ -164,7 +175,7 @@ $PgToolHashes = [ordered]@{}
 foreach ($tool in @('pg_dump.exe', 'pg_restore.exe', 'pg_ctl.exe', 'pg_isready.exe')) {
     $toolPath = Join-Path $PgDest "bin\$tool"
     if (-not (Test-Path $toolPath)) { throw "pgsql copiado sin bin\$tool" }
-    $PgToolHashes[$tool] = (Get-FileHash -Algorithm SHA256 -LiteralPath $toolPath).Hash.ToLowerInvariant()
+    $PgToolHashes[$tool] = Get-Sha256Hex $toolPath
 }
 
 $PgManifest = [ordered]@{ version = 1; sha256 = $PgToolHashes } | ConvertTo-Json -Depth 3
@@ -280,7 +291,7 @@ if ($setup) {
         throw "El instalador esperado existe pero es anterior a esta corrida: $($setup.FullName)"
     }
     $sizeMB = [math]::Round($setup.Length / 1MB, 1)
-    $setupSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $setup.FullName).Hash.ToLowerInvariant()
+    $setupSha = Get-Sha256Hex $setup.FullName
     $payloads = [ordered]@{}
     foreach ($payloadName in @('mia-backend', 'mia-litellm', 'mia-frontend', 'pgsql')) {
         $payloadPath = Join-Path $DistDir $payloadName
