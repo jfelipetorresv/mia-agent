@@ -1,0 +1,155 @@
+{
+  "certifiable": false,
+  "winner": null,
+  "blockers": [
+    "claude:evidencia_incompleta",
+    "codex:evidencia_incompleta",
+    "revision_juridica_humana_ciega_incompleta"
+  ],
+  "validations": {
+    "claude": {
+      "complete": false,
+      "missing_runs": [
+        "fuga-jurisdiccion-contrato-sin-pais:0/10",
+        "disciplina-citas-formas-abreviadas:0/10",
+        "procedencia-despacho-vacio:0/10",
+        "entailment-cita-real-no-sostiene:0/10",
+        "afirmacion-juridica-sin-cita:0/10",
+        "soporte-cruzado-mal-anclado:0/10",
+        "holdout-anclaje-norma-sellada:0/10",
+        "holdout-expediente-vacio:0/10",
+        "holdout-forma-abreviada-sigla:0/10"
+      ],
+      "runs_without_complete_telemetry": 0,
+      "foreign_legal_routes": []
+    },
+    "codex": {
+      "complete": false,
+      "missing_runs": [
+        "fuga-jurisdiccion-contrato-sin-pais:1/10",
+        "disciplina-citas-formas-abreviadas:0/10",
+        "procedencia-despacho-vacio:0/10",
+        "entailment-cita-real-no-sostiene:0/10",
+        "afirmacion-juridica-sin-cita:0/10",
+        "soporte-cruzado-mal-anclado:0/10",
+        "holdout-anclaje-norma-sellada:0/10",
+        "holdout-expediente-vacio:0/10",
+        "holdout-forma-abreviada-sigla:0/10"
+      ],
+      "runs_without_complete_telemetry": 0,
+      "foreign_legal_routes": []
+    }
+  },
+  "metrics": {
+    "claude": {
+      "n": 0,
+      "tokens_total": 0,
+      "tokens_mean": null,
+      "latency_p50_ms": null,
+      "cost_total_usd": 0,
+      "cost_mean_usd": null,
+      "fallback_rate": null,
+      "jurisdiction_leaks": 0,
+      "unsupported_citations": 0
+    },
+    "codex": {
+      "n": 1,
+      "tokens_total": 60706,
+      "tokens_mean": 60706.0,
+      "latency_p50_ms": 162674.3,
+      "cost_total_usd": 0.258858,
+      "cost_mean_usd": 0.258858,
+      "fallback_rate": 0.0,
+      "jurisdiction_leaks": 0,
+      "unsupported_citations": 0
+    }
+  },
+  "note": "El ganador solo se calcula tras desenmascarar revisiones humanas completas.",
+  "spend_current_invocation": {
+    "session_id": "provider-benchmark-20260814",
+    "source": "cli",
+    "run_spent_usd": 0.0,
+    "run_limit_usd": 1.0,
+    "session_limit_usd": 30.0,
+    "global_limit_usd": 100.0,
+    "closeout_reserve_usd": 0.1229,
+    "calls": 4,
+    "total_tokens": 60706,
+    "llm_seconds": 160.045,
+    "stopped": false,
+    "stop_reason": null,
+    "gasto_no_gobernado": [
+      {
+        "que": "agents.retrieval.pinecone_secondary_notes",
+        "detalle": "[DESACTIVADA] consulta Pinecone con su propio cliente (factura por lectura) y no pasa por las capas envueltas. Es un store SECUNDARIO opt-in y fail-soft: devolver [] es un camino soportado."
+      },
+      {
+        "que": "connectors.notebooklm.consult_notebook",
+        "detalle": "[DESACTIVADA] lanza un subproceso con el CLI de NotebookLM del abogado (su cuota, fuera de este tope). El enriquecimiento es fail-soft: devolver None es un camino soportado."
+      },
+      {
+        "que": "mcp.turn.consult",
+        "detalle": "[DESACTIVADA] levanta los servidores MCP del despacho (subprocesos + red a terceros) y da vueltas de tool-calling; lo que cobren esas herramientas no lo ve este tope. graph._mcp_context ya trata None como 'sigue con el corpus local'."
+      },
+      {
+        "que": "gateway.agent_hub.AgentHub.invoke_result",
+        "detalle": "[DESACTIVADA] delegación a CLIs de agentes externos por subproceso (graph.py ~L939): consume la cuota del despacho por una vía que este tope no puede medir. El llamador ya degrada fail-soft ante un resultado NO-ok."
+      },
+      {
+        "que": "agent.subscription_llm (CLIs de la suscripción)",
+        "detalle": "[DECLARADA] los aliases 'cli-*' salen por subproceso al CLI de la suscripción del abogado. Pasan por agent.llm._invoke, así que el guardián los CUENTA (tokens y duración), pero su coste en USD es 0 por definición: lo que consumen es la CUOTA de la suscripción, que no se puede medir en dólares desde aquí. Hueco declarado a propósito: no es dinero de la tarjeta, es cuota del plan."
+      }
+    ],
+    "rutas_de_gasto": [
+      {
+        "ruta": "agent.llm._invoke",
+        "estado": "GOBERNADA",
+        "por_que": "punto ÚNICO donde se despacha UN intento cobrable del modelo. Reserva con cota superior antes y liquida al coste real después."
+      },
+      {
+        "ruta": "embeddings.embed_texts",
+        "estado": "GOBERNADA",
+        "por_que": "Voyage es red PAGADA y nunca pasó por call_llm. Reserva el peor caso (EMBED_MAX_ATTEMPTS intentos, 1 token por carácter) y devuelve lo no usado."
+      },
+      {
+        "ruta": "agents.retrieval.pinecone_secondary_notes",
+        "estado": "DESACTIVADA",
+        "por_que": "consulta Pinecone con su propio cliente (factura por lectura) y no pasa por las capas envueltas. Es un store SECUNDARIO opt-in y fail-soft: devolver [] es un camino soportado."
+      },
+      {
+        "ruta": "connectors.notebooklm.consult_notebook",
+        "estado": "DESACTIVADA",
+        "por_que": "lanza un subproceso con el CLI de NotebookLM del abogado (su cuota, fuera de este tope). El enriquecimiento es fail-soft: devolver None es un camino soportado."
+      },
+      {
+        "ruta": "mcp.turn.consult",
+        "estado": "DESACTIVADA",
+        "por_que": "levanta los servidores MCP del despacho (subprocesos + red a terceros) y da vueltas de tool-calling; lo que cobren esas herramientas no lo ve este tope. graph._mcp_context ya trata None como 'sigue con el corpus local'."
+      },
+      {
+        "ruta": "gateway.agent_hub.AgentHub.invoke_result",
+        "estado": "DESACTIVADA",
+        "por_que": "delegación a CLIs de agentes externos por subproceso (graph.py ~L939): consume la cuota del despacho por una vía que este tope no puede medir. El llamador ya degrada fail-soft ante un resultado NO-ok."
+      },
+      {
+        "ruta": "agent.subscription_llm (CLIs de la suscripción)",
+        "estado": "DECLARADA",
+        "por_que": "los aliases 'cli-*' salen por subproceso al CLI de la suscripción del abogado. Pasan por agent.llm._invoke, así que el guardián los CUENTA (tokens y duración), pero su coste en USD es 0 por definición: lo que consumen es la CUOTA de la suscripción, que no se puede medir en dólares desde aquí. Hueco declarado a propósito: no es dinero de la tarjeta, es cuota del plan."
+      }
+    ],
+    "session_spent_usd": 0.0,
+    "global_spent_usd": 10.136976
+  },
+  "cumulative": {
+    "wall_seconds": 163.797,
+    "spent_usd": 0.0,
+    "calls": 4,
+    "total_tokens": 60706,
+    "llm_seconds": 160.045
+  },
+  "mode": "smoke-single-arm-non-comparable",
+  "execution_complete": true,
+  "comparable": false,
+  "partial": false,
+  "diagnostic_only": true
+}

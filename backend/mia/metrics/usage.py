@@ -45,11 +45,15 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     # invocan la suscripción local del abogado, no una API facturable por token.
     "cli-claude-opus": (0.0, 0.0),
     "cli-claude-sonnet": (0.0, 0.0),
+    # Adaptador lateral y aislado del benchmark: usa la sesión ChatGPT/Codex,
+    # nunca una API facturable por token. No está disponible en producción.
+    "cli-codex-eval": (0.0, 0.0),
     "mia-local": (0.0, 0.0),
 }
 
 FREE_ALIASES = frozenset({
-    "cli-claude", "cli-claude-haiku", "cli-claude-opus", "cli-claude-sonnet", "mia-local",
+    "cli-claude", "cli-claude-haiku", "cli-claude-opus", "cli-claude-sonnet",
+    "cli-codex-eval", "mia-local",
 })
 UNKNOWN_ALIAS_RATES = (3.00, 15.00)
 

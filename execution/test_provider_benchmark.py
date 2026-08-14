@@ -13,6 +13,7 @@ from mia.eval import codex_cli_adapter  # noqa: E402
 from mia.eval.cases import RISK_CASES  # noqa: E402
 from mia.eval.holdout import HOLDOUT_CASES  # noqa: E402
 from mia.agent import llm  # noqa: E402
+from mia.metrics import usage as usage_metrics  # noqa: E402
 
 checks: list[tuple[str, bool]] = []
 
@@ -47,6 +48,8 @@ def fake_report(plan: dict, arm_id: str) -> dict:
 
 
 def main() -> int:
+    check("Codex eval tiene costo marginal de suscripción igual a cero",
+          usage_metrics.cost_usd("cli-codex-eval", 1_000_000, 1_000_000) == 0.0)
     try:
         pb.build_plan(repetitions=9, revision="test")
         check("rechaza menos de diez repeticiones", False)

@@ -1,0 +1,847 @@
+{
+  "schema_version": "mia-provider-benchmark/v1",
+  "plan_sha256": "14ec39c2e98b59a6e68847bf06a416320c9744afe210aed26cd063d8c09ba767",
+  "revision": "1fe34325deb5dfe77d7d25b1b3629af84136bba3",
+  "arm_id": "codex",
+  "policy": null,
+  "eval_provider": "codex",
+  "mode": "smoke-single-arm-non-comparable",
+  "session_id": "provider-benchmark-20260814",
+  "config_sha256": "c357af5d90b78eae377d6782bb8aae844edf5be49de99100b30ec26ab8012670",
+  "case_runs": {
+    "fuga-jurisdiccion-contrato-sin-pais": {
+      "requested": 1,
+      "results": [
+        {
+          "case_id": "fuga-jurisdiccion-contrato-sin-pais",
+          "title": "Fuga de jurisdicción: validez de un contrato sin ordenamiento configurado",
+          "matter_id": "528dede0-bbe5-4268-a387-4ce4ce3fee9b",
+          "elapsed_ms": 162674.3,
+          "score": {
+            "reached_draft": true,
+            "draft_chars": 2961,
+            "draft_tokens": 741,
+            "has_diagnosis_closing": true,
+            "stage": "verificador_citas",
+            "citas": 0,
+            "citas_sin_respaldo": 0,
+            "citas_respaldadas": 0,
+            "citas_marcadas": 0,
+            "citas_en_regla_ratio": 1.0,
+            "origen_marcas": "informe_guardian",
+            "atribucion_marcas_fiable": true,
+            "sustancia": {
+              "bloques": 10,
+              "titulos": 4,
+              "parrafos_sustantivos": 6,
+              "mediana_parrafo_chars": 529,
+              "densidad_desarrollo": 0.9477,
+              "parrafos_con_anclaje": 0,
+              "anclaje_expediente_ratio": 0.0,
+              "parrafos_con_norma": 0,
+              "fundamentacion_normativa_ratio": 0.0
+            },
+            "disciplina_oraciones": {
+              "disponible": true,
+              "oraciones": 26,
+              "oraciones_con_cita_localizada": 0,
+              "oraciones_con_omision": 0,
+              "oraciones_sin_respaldo_afirmativa": 1,
+              "ratio_afirmaciones_ancladas": 0.0,
+              "oraciones_atribuye_sin_material": 0,
+              "idx_atribuye_sin_material": []
+            },
+            "total_tokens": 60706,
+            "latency_ms": 0.0,
+            "flags": [],
+            "flags_informativos": [
+              "poco_anclaje_al_expediente",
+              "poca_fundamentacion_normativa",
+              "residuo_afirmativo_por_oracion"
+            ],
+            "ok": true
+          },
+          "verification": {
+            "citas": 0,
+            "marcadas": 0,
+            "respaldadas": 0,
+            "anotadas": 0,
+            "detalle": [],
+            "omitidas": 0,
+            "docs_fantasma": {
+              "refs_doc": 0,
+              "fantasmas": 0,
+              "documentos_disponibles": 0,
+              "detalle": []
+            },
+            "oraciones": {
+              "n": 26,
+              "con_cita": 0,
+              "con_cita_localizada": 0,
+              "con_marca": 0,
+              "con_anotacion": 0,
+              "con_omision": 0,
+              "abstenidas": 0,
+              "sin_respaldo_afirmativa": 1,
+              "prosa": 25,
+              "detalle": [
+                {
+                  "idx": 0,
+                  "texto": "BORRADOR PRELIMINAR",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 1,
+                  "texto": "SOLICITUD DE DETERMINACIÓN PREVIA DE LOS ELEMENTOS NECESARIOS PARA EXAMINAR LA VALIDEZ CONTRACTUAL",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 2,
+                  "texto": "No es posible establecer los requisitos jurídicos de validez del contrato sin identificar primero el ordenamiento aplicable.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 3,
+                  "texto": "El material suministrado no indica cuál rige el asunto ni permite confirmar si existe una cláusula de elección de ley o algún elemento internacional relevante.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 4,
+                  "texto": "La clasificación y los efectos de los requisitos contractuales pueden variar entre ordenamientos.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 5,
+                  "texto": "[VERIFICAR] En consecuencia, se solicita definir previamente la ley aplicable.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 6,
+                  "texto": "Para citar norma necesito saber bajo qué ordenamiento trabaja el despacho.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 7,
+                  "texto": "No existe prueba documental suficiente para aplicar esos requisitos al contrato concreto.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 8,
+                  "texto": "No se aportaron el contrato, sus anexos o modificaciones, ni prueba de su celebración; tampoco se conocen su fecha, tipo, partes o versión vigente.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 9,
+                  "texto": "Sin esos elementos no puede afirmarse que un requisito se cumplió o fue infringido.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 10,
+                  "texto": "En consecuencia, se solicita incorporar la documentación completa e identificar cuál es el texto contractual auténtico y vigente.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 11,
+                  "texto": "Tampoco se ha precisado el defecto de validez discutido.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 12,
+                  "texto": "Según el ordenamiento aplicable, el examen podría comprender la aptitud jurídica de las partes [VERIFICAR], la formación y exteriorización del consentimiento [VERIFICAR], la admisibilidad y determinación del objeto [VERIFICAR], la causa o f",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 13,
+                  "texto": "En consecuencia, se solicita individualizar el defecto alegado, los hechos que lo configurarían y la prueba que respaldaría cada uno.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 14,
+                  "texto": "La ausencia actual de documentos no demuestra por sí sola la validez ni la invalidez del contrato.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 15,
+                  "texto": "Solo acredita que no existe material suficiente para confrontar una tesis jurídica con hechos probados.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 16,
+                  "texto": "En consecuencia, se solicita abstenerse de adoptar una conclusión definitiva hasta completar la información y verificar las normas pertinentes en fuentes primarias.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 17,
+                  "texto": "PETICIONES",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 18,
+                  "texto": "1. Determinar el ordenamiento aplicable y establecer si existe una cláusula de elección de ley.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 19,
+                  "texto": "2. Incorporar el contrato, sus anexos, modificaciones y la prueba de su celebración.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 20,
+                  "texto": "3. Precisar el tipo contractual, la fecha, la condición jurídica de las partes y el defecto de validez controvertido.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 21,
+                  "texto": "4. Conceder la oportunidad de confrontar cada requisito aplicable con el hecho y la prueba correspondientes.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 22,
+                  "texto": "5. Reservar cualquier conclusión sobre validez o invalidez hasta verificar íntegramente las normas y fuentes pertinentes.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 23,
+                  "texto": "CONCLUSIÓN",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 24,
+                  "texto": "Con la información disponible únicamente puede concluirse que faltan el ordenamiento, los hechos y las pruebas indispensables para resolver la cuestión.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 25,
+                  "texto": "La decisión jurídicamente prudente es completar esos elementos antes de formular una tesis definitiva o una petición de fondo.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                }
+              ]
+            },
+            "gate_llm": {
+              "veredicto": "sin_citas",
+              "detalle": "El borrador no contiene citas jurídicas que auditar."
+            }
+          },
+          "verification_diagnosis": {
+            "citas": 0,
+            "marcadas": 0,
+            "respaldadas": 0,
+            "anotadas": 0,
+            "detalle": [],
+            "omitidas": 0,
+            "docs_fantasma": {
+              "refs_doc": 0,
+              "fantasmas": 0,
+              "documentos_disponibles": 0,
+              "detalle": []
+            },
+            "oraciones": {
+              "n": 41,
+              "con_cita": 0,
+              "con_cita_localizada": 0,
+              "con_marca": 0,
+              "con_anotacion": 0,
+              "con_omision": 0,
+              "abstenidas": 1,
+              "sin_respaldo_afirmativa": 4,
+              "prosa": 36,
+              "detalle": [
+                {
+                  "idx": 0,
+                  "texto": "Diagnóstico",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 1,
+                  "texto": "No es posible fundamentar una respuesta con normas concretas porque no se declaró el ordenamiento aplicable.",
+                  "estado": "abstenida",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": true
+                },
+                {
+                  "idx": 2,
+                  "texto": "Para citar norma necesito saber bajo qué ordenamiento trabaja el despacho.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 3,
+                  "texto": "Tampoco se entregaron documentos sellados como <<<DOC n>>>.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 4,
+                  "texto": "Por ello, no existe respaldo para atribuir hechos al expediente, usar referencias [doc n] ni concluir si un contrato determinado es válido o inválido.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 5,
+                  "texto": "Mapa institucional provisional",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 6,
+                  "texto": "Lo siguiente proviene de conocimiento general, no de materiales del despacho, y no constituye derecho aplicable al asunto:",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 7,
+                  "texto": "1. Aptitud o capacidad jurídica de quienes celebran el contrato.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 8,
+                  "texto": "[VERIFICAR]\n2. Consentimiento debidamente formado y exteriorizado, sin vicios jurídicamente relevantes.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 9,
+                  "texto": "[VERIFICAR]\n3. Objeto o contenido posible, determinado o determinable y jurídicamente admisible.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 10,
+                  "texto": "[VERIFICAR]\n4. Causa, finalidad o función contractual admisible, si el ordenamiento la reconoce como requisito autónomo.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 11,
+                  "texto": "[VERIFICAR]\n5. Cumplimiento de la forma o solemnidad exigible para el tipo contractual, cuando corresponda.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 12,
+                  "texto": "[VERIFICAR]\n6. Observancia de requisitos especiales derivados del tipo de contrato, la condición de las partes o la fecha de celebración.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 13,
+                  "texto": "[VERIFICAR]",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 14,
+                  "texto": "La clasificación entre requisitos de existencia, validez, eficacia y oponibilidad puede variar según el ordenamiento y no debe tratarse como universal.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 15,
+                  "texto": "[VERIFICAR]",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 16,
+                  "texto": "Cruce del material recibido",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 17,
+                  "texto": "Favorece: el material identifica correctamente los límites de la información disponible y evita presentar categorías generales como normas aplicables.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 18,
+                  "texto": "Perjudica: faltan el ordenamiento, el tipo y la fecha del contrato, sus documentos y cualquier alegación concreta sobre el defecto de validez.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 19,
+                  "texto": "Falta: establecer la ley aplicable; recuperar el contrato, anexos y modificaciones; identificar las partes y su condición; precisar el defecto discutido; y reunir la prueba relativa a celebración, consentimiento, capacidad, objeto y forma.",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 20,
+                  "texto": "Jerarquía de los argumentos disponibles",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 21,
+                  "texto": "1. Falta de determinación del ordenamiento aplicable.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 22,
+                  "texto": "Es el argumento más fuerte porque impide identificar los requisitos normativos y sus consecuencias.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 23,
+                  "texto": "2. Ausencia de documentos y hechos del expediente.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 24,
+                  "texto": "Tiene peso decisivo porque impide aplicar cualquier requisito institucional al contrato concreto.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 25,
+                  "texto": "3. Mapa institucional de posibles requisitos.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 26,
+                  "texto": "Es débil y únicamente orientador: todas sus categorías requieren verificación bajo el ordenamiento aplicable.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 27,
+                  "texto": "No existen argumentos documentales que permitan sostener, con distinto peso, la validez o invalidez del contrato.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 28,
+                  "texto": "Conviene descartar la cita de normas recordadas de memoria, la inferencia del ordenamiento por el idioma o las partes y cualquier conclusión sobre invalidez fundada únicamente en la falta de documentos.",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 29,
+                  "texto": "Caminos disponibles",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 30,
+                  "texto": "1. Confirmar el ordenamiento y aportar cualquier cláusula de elección de ley.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 31,
+                  "texto": "2. Entregar el contrato, anexos, modificaciones y prueba de su celebración.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 32,
+                  "texto": "3. Precisar el tipo contractual, la fecha y el defecto de validez que se discute.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 33,
+                  "texto": "4. Con esos insumos, elaborar una matriz que confronte cada requisito normativo con el hecho y la prueba correspondientes.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 34,
+                  "texto": "5. Verificar después las normas en fuentes primarias antes de formular una conclusión.",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 35,
+                  "texto": "Pregunta de segundo orden: ¿El contrato contiene una cláusula de ley aplicable o presenta elementos internacionales que obliguen a resolver primero un conflicto de leyes?",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 36,
+                  "texto": "=== CIERRE DEL DIAGNÓSTICO ===",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 37,
+                  "texto": "Problema jurídico: Determinar los requisitos de validez contractual y aplicarlos al asunto exige identificar primero el ordenamiento, el tipo de contrato, su fecha y los hechos probados.",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 38,
+                  "texto": "Normas y fuentes: No hay normas concretas identificables ni fuentes primarias o documentos del expediente entregados en este turno; el mapa institucional permanece [VERIFICAR].",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 39,
+                  "texto": "Riesgo y recomendación: El riesgo principal es presentar categorías generales como derecho aplicable; se recomienda no emitir una conclusión normativa hasta confirmar el ordenamiento y recuperar los documentos pertinentes.",
+                  "estado": "sin_respaldo_afirmativa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                },
+                {
+                  "idx": 40,
+                  "texto": "=== FIN DEL CIERRE ===",
+                  "estado": "prosa",
+                  "citas": [],
+                  "anclas_en_span": [],
+                  "abstiene": false
+                }
+              ]
+            }
+          },
+          "documents_retrieved": 0,
+          "draft_preview": "BORRADOR PRELIMINAR\n\nSOLICITUD DE DETERMINACIÓN PREVIA DE LOS ELEMENTOS NECESARIOS PARA EXAMINAR LA VALIDEZ CONTRACTUAL\n\nNo es posible establecer los requisitos jurídicos de validez del contrato sin identificar primero el ordenamiento aplicable. El material suministrado no indica cuál rige el asunto ni permite confirmar si existe una cláusula de elección de ley o algún elemento internacional relevante. La clasificación y los efectos de los requisitos contractuales pueden variar entre ordenamientos. [VERIFICAR] En consecuencia, se solicita definir previamente la ley aplicable. Para citar norma necesito saber bajo qué ordenamiento trabaja el despacho.\n\nNo existe prueba documental suficiente para aplicar esos requisitos al contrato concreto. No se aportaron el contrato, sus anexos o modificaciones, ni prueba de su celebración; tampoco se conocen su fecha, tipo, partes o versión vigente. Sin esos elementos no puede afirmarse que un requisito se cumplió o fue infringido. En consecuencia, se solicita incorporar la documentación completa e identificar cuál es el texto contractual auténtico y vigente.\n\nTampoco se ha precisado el defecto de validez discutido. Según el ordenamiento aplicable",
+          "diagnosis_preview": "Diagnóstico\n\nNo es posible fundamentar una respuesta con normas concretas porque no se declaró el ordenamiento aplicable. Para citar norma necesito saber bajo qué ordenamiento trabaja el despacho.\n\nTampoco se entregaron documentos sellados como <<<DOC n>>>. Por ello, no existe respaldo para atribuir hechos al expediente, usar referencias [doc n] ni concluir si un contrato determinado es válido o inválido.\n\nMapa institucional provisional\n\nLo siguiente proviene de conocimiento general, no de materiales del despacho, y no constituye derecho aplicable al asunto:\n\n1. Aptitud o capacidad jurídica de quienes celebran el contrato. [VERIFICAR]\n2. Consentimiento debidamente formado y exteriorizado, sin vicios jurídicamente relevantes. [VERIFICAR]\n3. Objeto o contenido posible, determinado o determinable y jurídicamente admisible. [VERIFICAR]\n4. Causa, finalidad o función contractual admisible, si el ordenamiento la reconoce como requisito autónomo. [VERIFICAR]\n5. Cumplimiento de la forma o solemnidad exigible para el tipo contractual, cuando corresponda. [VERIFICAR]\n6. Observancia de requisitos especiales derivados del tipo de contrato, la condición de las partes o la fecha de celebración. [",
+          "reached_draft": true,
+          "provenance": {
+            "sin_material_sellado": true,
+            "frases_detectadas": [],
+            "atribucion_indebida": false,
+            "flags": []
+          },
+          "usage": {
+            "case_id": "fuga-jurisdiccion-contrato-sin-pais",
+            "calls": 4,
+            "prompt_tokens": 54311,
+            "completion_tokens": 6395,
+            "total_tokens": 60706,
+            "cost_usd": 0.258858,
+            "llm_seconds": 160.045,
+            "models": {
+              "cli-codex-eval": 4
+            }
+          },
+          "model_fallbacks": [],
+          "draft_full": "BORRADOR PRELIMINAR\n\nSOLICITUD DE DETERMINACIÓN PREVIA DE LOS ELEMENTOS NECESARIOS PARA EXAMINAR LA VALIDEZ CONTRACTUAL\n\nNo es posible establecer los requisitos jurídicos de validez del contrato sin identificar primero el ordenamiento aplicable. El material suministrado no indica cuál rige el asunto ni permite confirmar si existe una cláusula de elección de ley o algún elemento internacional relevante. La clasificación y los efectos de los requisitos contractuales pueden variar entre ordenamientos. [VERIFICAR] En consecuencia, se solicita definir previamente la ley aplicable. Para citar norma necesito saber bajo qué ordenamiento trabaja el despacho.\n\nNo existe prueba documental suficiente para aplicar esos requisitos al contrato concreto. No se aportaron el contrato, sus anexos o modificaciones, ni prueba de su celebración; tampoco se conocen su fecha, tipo, partes o versión vigente. Sin esos elementos no puede afirmarse que un requisito se cumplió o fue infringido. En consecuencia, se solicita incorporar la documentación completa e identificar cuál es el texto contractual auténtico y vigente.\n\nTampoco se ha precisado el defecto de validez discutido. Según el ordenamiento aplicable, el examen podría comprender la aptitud jurídica de las partes [VERIFICAR], la formación y exteriorización del consentimiento [VERIFICAR], la admisibilidad y determinación del objeto [VERIFICAR], la causa o función contractual cuando constituya un requisito autónomo [VERIFICAR], las solemnidades exigibles [VERIFICAR] y las condiciones especiales derivadas del tipo contractual o de la calidad de las partes [VERIFICAR]. En consecuencia, se solicita individualizar el defecto alegado, los hechos que lo configurarían y la prueba que respaldaría cada uno.\n\nLa ausencia actual de documentos no demuestra por sí sola la validez ni la invalidez del contrato. Solo acredita que no existe material suficiente para confrontar una tesis jurídica con hechos probados. En consecuencia, se solicita abstenerse de adoptar una conclusión definitiva hasta completar la información y verificar las normas pertinentes en fuentes primarias.\n\nPETICIONES\n\n1. Determinar el ordenamiento aplicable y establecer si existe una cláusula de elección de ley.\n2. Incorporar el contrato, sus anexos, modificaciones y la prueba de su celebración.\n3. Precisar el tipo contractual, la fecha, la condición jurídica de las partes y el defecto de validez controvertido.\n4. Conceder la oportunidad de confrontar cada requisito aplicable con el hecho y la prueba correspondientes.\n5. Reservar cualquier conclusión sobre validez o invalidez hasta verificar íntegramente las normas y fuentes pertinentes.\n\nCONCLUSIÓN\n\nCon la información disponible únicamente puede concluirse que faltan el ordenamiento, los hechos y las pruebas indispensables para resolver la cuestión. La decisión jurídicamente prudente es completar esos elementos antes de formular una tesis definitiva o una petición de fondo.",
+          "diagnosis_full": "Diagnóstico\n\nNo es posible fundamentar una respuesta con normas concretas porque no se declaró el ordenamiento aplicable. Para citar norma necesito saber bajo qué ordenamiento trabaja el despacho.\n\nTampoco se entregaron documentos sellados como <<<DOC n>>>. Por ello, no existe respaldo para atribuir hechos al expediente, usar referencias [doc n] ni concluir si un contrato determinado es válido o inválido.\n\nMapa institucional provisional\n\nLo siguiente proviene de conocimiento general, no de materiales del despacho, y no constituye derecho aplicable al asunto:\n\n1. Aptitud o capacidad jurídica de quienes celebran el contrato. [VERIFICAR]\n2. Consentimiento debidamente formado y exteriorizado, sin vicios jurídicamente relevantes. [VERIFICAR]\n3. Objeto o contenido posible, determinado o determinable y jurídicamente admisible. [VERIFICAR]\n4. Causa, finalidad o función contractual admisible, si el ordenamiento la reconoce como requisito autónomo. [VERIFICAR]\n5. Cumplimiento de la forma o solemnidad exigible para el tipo contractual, cuando corresponda. [VERIFICAR]\n6. Observancia de requisitos especiales derivados del tipo de contrato, la condición de las partes o la fecha de celebración. [VERIFICAR]\n\nLa clasificación entre requisitos de existencia, validez, eficacia y oponibilidad puede variar según el ordenamiento y no debe tratarse como universal. [VERIFICAR]\n\nCruce del material recibido\n\nFavorece: el material identifica correctamente los límites de la información disponible y evita presentar categorías generales como normas aplicables.\n\nPerjudica: faltan el ordenamiento, el tipo y la fecha del contrato, sus documentos y cualquier alegación concreta sobre el defecto de validez.\n\nFalta: establecer la ley aplicable; recuperar el contrato, anexos y modificaciones; identificar las partes y su condición; precisar el defecto discutido; y reunir la prueba relativa a celebración, consentimiento, capacidad, objeto y forma.\n\nJerarquía de los argumentos disponibles\n\n1. Falta de determinación del ordenamiento aplicable. Es el argumento más fuerte porque impide identificar los requisitos normativos y sus consecuencias.\n2. Ausencia de documentos y hechos del expediente. Tiene peso decisivo porque impide aplicar cualquier requisito institucional al contrato concreto.\n3. Mapa institucional de posibles requisitos. Es débil y únicamente orientador: todas sus categorías requieren verificación bajo el ordenamiento aplicable.\n\nNo existen argumentos documentales que permitan sostener, con distinto peso, la validez o invalidez del contrato. Conviene descartar la cita de normas recordadas de memoria, la inferencia del ordenamiento por el idioma o las partes y cualquier conclusión sobre invalidez fundada únicamente en la falta de documentos.\n\nCaminos disponibles\n\n1. Confirmar el ordenamiento y aportar cualquier cláusula de elección de ley.\n2. Entregar el contrato, anexos, modificaciones y prueba de su celebración.\n3. Precisar el tipo contractual, la fecha y el defecto de validez que se discute.\n4. Con esos insumos, elaborar una matriz que confronte cada requisito normativo con el hecho y la prueba correspondientes.\n5. Verificar después las normas en fuentes primarias antes de formular una conclusión.\n\nPregunta de segundo orden: ¿El contrato contiene una cláusula de ley aplicable o presenta elementos internacionales que obliguen a resolver primero un conflicto de leyes?\n\n=== CIERRE DEL DIAGNÓSTICO ===\nProblema jurídico: Determinar los requisitos de validez contractual y aplicarlos al asunto exige identificar primero el ordenamiento, el tipo de contrato, su fecha y los hechos probados.\nNormas y fuentes: No hay normas concretas identificables ni fuentes primarias o documentos del expediente entregados en este turno; el mapa institucional permanece [VERIFICAR].\nRiesgo y recomendación: El riesgo principal es presentar categorías generales como derecho aplicable; se recomienda no emitir una conclusión normativa hasta confirmar el ordenamiento y recuperar los documentos pertinentes.\n=== FIN DEL CIERRE ===",
+          "false_block": {
+            "citas_marcadas": 0,
+            "falsos_bloqueos": 0,
+            "tasa_falsos_bloqueos": 0.0,
+            "detalle": []
+          },
+          "abstention": {
+            "abstiene": true,
+            "frases_detectadas": [
+              "no es posible fundamentar"
+            ],
+            "v": 2
+          },
+          "jurisdiction_leak": {
+            "citas_detectadas": 0,
+            "negadas": 0,
+            "citas_computadas": 0,
+            "detalle": [],
+            "detalle_negadas": [],
+            "leak": false,
+            "v": 2
+          },
+          "call_telemetry": [
+            {
+              "task": "legal_research",
+              "model": "cli-codex-eval",
+              "effective_model": "gpt-5.6-sol",
+              "effort": "max",
+              "quality_escalation": "standard",
+              "prompt_tokens": 13395,
+              "completion_tokens": 661,
+              "total_tokens": 14056,
+              "cost_usd": 0.0501,
+              "node": "research",
+              "stop_reason": "stop",
+              "expected_primary": null,
+              "fallback_used": false
+            },
+            {
+              "task": "legal_draft",
+              "model": "cli-codex-eval",
+              "effective_model": "gpt-5.6-sol",
+              "effort": "max",
+              "quality_escalation": "standard",
+              "prompt_tokens": 14063,
+              "completion_tokens": 2083,
+              "total_tokens": 16146,
+              "cost_usd": 0.073434,
+              "node": "draft",
+              "stop_reason": "stop",
+              "expected_primary": null,
+              "fallback_used": false
+            },
+            {
+              "task": "legal_analysis",
+              "model": "cli-codex-eval",
+              "effective_model": "gpt-5.6-sol",
+              "effort": "max",
+              "quality_escalation": "standard",
+              "prompt_tokens": 13639,
+              "completion_tokens": 3219,
+              "total_tokens": 16858,
+              "cost_usd": 0.089202,
+              "node": "analysis",
+              "stop_reason": "stop",
+              "expected_primary": null,
+              "fallback_used": false
+            },
+            {
+              "task": "legal_facts",
+              "model": "cli-codex-eval",
+              "effective_model": "gpt-5.6-sol",
+              "effort": "max",
+              "quality_escalation": "standard",
+              "prompt_tokens": 13214,
+              "completion_tokens": 432,
+              "total_tokens": 13646,
+              "cost_usd": 0.046122,
+              "node": "facts",
+              "stop_reason": "stop",
+              "expected_primary": null,
+              "fallback_used": false
+            }
+          ],
+          "telemetry_complete": true
+        }
+      ]
+    }
+  },
+  "spend": {
+    "session_id": "provider-benchmark-20260814",
+    "source": "cli",
+    "run_spent_usd": 0.0,
+    "run_limit_usd": 1.0,
+    "session_limit_usd": 30.0,
+    "global_limit_usd": 100.0,
+    "closeout_reserve_usd": 0.1229,
+    "calls": 4,
+    "total_tokens": 60706,
+    "llm_seconds": 160.045,
+    "stopped": false,
+    "stop_reason": null,
+    "gasto_no_gobernado": [
+      {
+        "que": "agents.retrieval.pinecone_secondary_notes",
+        "detalle": "[DESACTIVADA] consulta Pinecone con su propio cliente (factura por lectura) y no pasa por las capas envueltas. Es un store SECUNDARIO opt-in y fail-soft: devolver [] es un camino soportado."
+      },
+      {
+        "que": "connectors.notebooklm.consult_notebook",
+        "detalle": "[DESACTIVADA] lanza un subproceso con el CLI de NotebookLM del abogado (su cuota, fuera de este tope). El enriquecimiento es fail-soft: devolver None es un camino soportado."
+      },
+      {
+        "que": "mcp.turn.consult",
+        "detalle": "[DESACTIVADA] levanta los servidores MCP del despacho (subprocesos + red a terceros) y da vueltas de tool-calling; lo que cobren esas herramientas no lo ve este tope. graph._mcp_context ya trata None como 'sigue con el corpus local'."
+      },
+      {
+        "que": "gateway.agent_hub.AgentHub.invoke_result",
+        "detalle": "[DESACTIVADA] delegación a CLIs de agentes externos por subproceso (graph.py ~L939): consume la cuota del despacho por una vía que este tope no puede medir. El llamador ya degrada fail-soft ante un resultado NO-ok."
+      },
+      {
+        "que": "agent.subscription_llm (CLIs de la suscripción)",
+        "detalle": "[DECLARADA] los aliases 'cli-*' salen por subproceso al CLI de la suscripción del abogado. Pasan por agent.llm._invoke, así que el guardián los CUENTA (tokens y duración), pero su coste en USD es 0 por definición: lo que consumen es la CUOTA de la suscripción, que no se puede medir en dólares desde aquí. Hueco declarado a propósito: no es dinero de la tarjeta, es cuota del plan."
+      }
+    ],
+    "rutas_de_gasto": [
+      {
+        "ruta": "agent.llm._invoke",
+        "estado": "GOBERNADA",
+        "por_que": "punto ÚNICO donde se despacha UN intento cobrable del modelo. Reserva con cota superior antes y liquida al coste real después."
+      },
+      {
+        "ruta": "embeddings.embed_texts",
+        "estado": "GOBERNADA",
+        "por_que": "Voyage es red PAGADA y nunca pasó por call_llm. Reserva el peor caso (EMBED_MAX_ATTEMPTS intentos, 1 token por carácter) y devuelve lo no usado."
+      },
+      {
+        "ruta": "agents.retrieval.pinecone_secondary_notes",
+        "estado": "DESACTIVADA",
+        "por_que": "consulta Pinecone con su propio cliente (factura por lectura) y no pasa por las capas envueltas. Es un store SECUNDARIO opt-in y fail-soft: devolver [] es un camino soportado."
+      },
+      {
+        "ruta": "connectors.notebooklm.consult_notebook",
+        "estado": "DESACTIVADA",
+        "por_que": "lanza un subproceso con el CLI de NotebookLM del abogado (su cuota, fuera de este tope). El enriquecimiento es fail-soft: devolver None es un camino soportado."
+      },
+      {
+        "ruta": "mcp.turn.consult",
+        "estado": "DESACTIVADA",
+        "por_que": "levanta los servidores MCP del despacho (subprocesos + red a terceros) y da vueltas de tool-calling; lo que cobren esas herramientas no lo ve este tope. graph._mcp_context ya trata None como 'sigue con el corpus local'."
+      },
+      {
+        "ruta": "gateway.agent_hub.AgentHub.invoke_result",
+        "estado": "DESACTIVADA",
+        "por_que": "delegación a CLIs de agentes externos por subproceso (graph.py ~L939): consume la cuota del despacho por una vía que este tope no puede medir. El llamador ya degrada fail-soft ante un resultado NO-ok."
+      },
+      {
+        "ruta": "agent.subscription_llm (CLIs de la suscripción)",
+        "estado": "DECLARADA",
+        "por_que": "los aliases 'cli-*' salen por subproceso al CLI de la suscripción del abogado. Pasan por agent.llm._invoke, así que el guardián los CUENTA (tokens y duración), pero su coste en USD es 0 por definición: lo que consumen es la CUOTA de la suscripción, que no se puede medir en dólares desde aquí. Hueco declarado a propósito: no es dinero de la tarjeta, es cuota del plan."
+      }
+    ],
+    "session_spent_usd": 0.0,
+    "global_spent_usd": 10.136976
+  }
+}
