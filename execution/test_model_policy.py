@@ -135,8 +135,8 @@ def run() -> None:
               all(llm.resolve_fallback_chain(t) == ["cli-claude-haiku", "mia-local"] for t in _AUX))
         check("1e · [suscripcion] compression → cli-claude-haiku→claude-haiku (red barata si el CLI falla)",
               llm.resolve_fallback_chain("compression") == ["cli-claude-haiku", "claude-haiku"])
-        check("1f · [suscripcion] funciones jurídicas conservan el piso de main",
-              all(llm.resolve_fallback_chain(t) == ["cli-claude", "claude-sonnet", "mia-local"]
+        check("1f · [suscripcion] funciones jurídicas nunca degradan silenciosamente a local",
+              all(llm.resolve_fallback_chain(t) == ["cli-claude", "claude-sonnet"]
                   for t in llm.LEGAL_TASKS))
     with_policy("suscripcion", _sus)
 
@@ -193,8 +193,8 @@ def run() -> None:
               llm.resolve_fallback_chain("compression") == ["claude-haiku"])
         check("3c · [nube] auxiliares → claude-haiku→mia-local",
               all(llm.resolve_fallback_chain(t) == ["claude-haiku", "mia-local"] for t in _AUX))
-        check("3d · [nube] funciones jurídicas conservan el piso de main",
-              all(llm.resolve_fallback_chain(t) == ["claude-sonnet", "mia-local"]
+        check("3d · [nube] funciones jurídicas nunca degradan silenciosamente a local",
+              all(llm.resolve_fallback_chain(t) == ["claude-sonnet"]
                   for t in llm.LEGAL_TASKS))
     with_policy("nube", _nub)
 

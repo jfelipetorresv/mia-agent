@@ -177,7 +177,10 @@ def _model_capabilities() -> dict[str, Any]:
         "claude_code": {
             "installed": claude_ready,
             "recommended_for": "análisis jurídico complejo",
-            "recommendation_basis": "se valida con las pruebas de calidad de Mia",
+            "recommendation_basis": (
+                "recomendada para trabajo jurídico complejo; la disponibilidad real "
+                "depende de la sesión y el plan del proveedor"
+            ),
             "max_is_exceptional": True,
             "available_efforts": subscription_llm.supported_efforts(),
         },

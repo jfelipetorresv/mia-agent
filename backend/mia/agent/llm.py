@@ -182,7 +182,7 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     # "mejor para derecho"; la recomendación se recalibra con el benchmark de Mia.
     "quality_adaptive": {
         "main": [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"],
-        **{t: [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"]
+        **{t: [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS, "claude-sonnet"]
            for t in LEGAL_TASKS},
         "curator": [CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"],
         "compression": [CLI_HAIKU_ALIAS, "claude-haiku"],
@@ -192,7 +192,7 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     # nube y local como red de seguridad. Auxiliares → hint haiku por el CLI.
     "suscripcion": {
         "main": ["cli-claude", "claude-sonnet", "mia-local"],
-        **{t: ["cli-claude", "claude-sonnet", "mia-local"] for t in LEGAL_TASKS},
+        **{t: ["cli-claude", "claude-sonnet"] for t in LEGAL_TASKS},
         "curator": ["cli-claude", "claude-sonnet", "mia-local"],
         # Sigue BLOQUEADA (model explícito no la cambia), pero con red: si el CLI
         # falla, cae a la API haiku barata (ajuste de la revisión CP2, decisión #27).
@@ -203,7 +203,7 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     # (la clave de Anthropic volvió a funcionar, verificado 2026-07-01).
     "nube": {
         "main": ["claude-sonnet", "mia-local"],
-        **{t: ["claude-sonnet", "mia-local"] for t in LEGAL_TASKS},
+        **{t: ["claude-sonnet"] for t in LEGAL_TASKS},
         "curator": ["claude-sonnet", "mia-local"],
         "compression": ["claude-haiku"],
         **{t: ["claude-haiku", "mia-local"] for t in _AUX_TASKS},
@@ -221,7 +221,7 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     # otras políticas). Requiere OPENROUTER_API_KEY en el .env (lo exige la UI de activación).
     "openrouter": {
         "main": [OPENROUTER_ALIAS, "mia-local"],
-        **{t: [OPENROUTER_ALIAS, "mia-local"] for t in LEGAL_TASKS},
+        **{t: [OPENROUTER_ALIAS] for t in LEGAL_TASKS},
         "curator": [OPENROUTER_ALIAS, "mia-local"],
         "compression": [OPENROUTER_HAIKU_ALIAS, "mia-local"],
         **{t: [OPENROUTER_HAIKU_ALIAS, "mia-local"] for t in _AUX_TASKS},
@@ -470,8 +470,7 @@ def aviso_cambio_de_motor(cambios: list[dict] | None) -> dict | None:
         return None
     desde_suscripcion = [c for c in cambios
                          if str(c.get("desde", "")).startswith(_PREFIJO_SUSCRIPCION)
-                         and not str(c.get("hacia", "")).startswith(_PREFIJO_SUSCRIPCION)
-                         and str(c.get("hacia", "")) != "mia-local"]
+                         and not str(c.get("hacia", "")).startswith(_PREFIJO_SUSCRIPCION)]
     if not desde_suscripcion:
         return None
 
