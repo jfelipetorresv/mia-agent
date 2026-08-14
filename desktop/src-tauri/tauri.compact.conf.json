@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "windows": {
+      "webviewInstallMode": {
+        "type": "skip"
+      },
+      "nsis": {
+        "installerHooks": "./windows/webview2-required.nsh"
+      }
+    }
+  }
+}

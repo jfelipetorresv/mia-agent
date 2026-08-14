@@ -35,7 +35,9 @@ param(
     [switch]$PayloadsOnly,   # deja los payloads listos pero no corre cargo tauri build
     [string]$PgSource = '',  # ruta al pgsql portable; por defecto se autodetecta
     [ValidateSet('core', 'ocr', 'voice', 'full')]
-    [string]$BackendProfile = 'core'
+    [string]$BackendProfile = 'core',
+    [ValidateSet('Compact', 'Offline')]
+    [string]$WebViewProfile = 'Compact'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +47,8 @@ $RepoRoot     = Split-Path -Parent $PackagingDir
 $DistDir      = Join-Path $PackagingDir 'dist'
 $DesktopDir   = Join-Path $RepoRoot 'desktop'
 $BuildStartedUtc = [DateTime]::UtcNow
+$CompactTauriConfig = Join-Path $DesktopDir 'src-tauri\tauri.compact.conf.json'
+$CompactWebViewHook = Join-Path $DesktopDir 'src-tauri\windows\webview2-required.nsh'
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 
@@ -80,6 +84,19 @@ if ($SourceStatus.Count -gt 0) {
 }
 $SourceCommit = (& git -C $RepoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $SourceCommit) { throw 'No se pudo determinar el commit del release.' }
+
+if ($WebViewProfile -eq 'Compact') {
+    if (-not (Test-Path $CompactTauriConfig)) { throw "Falta el perfil compacto: $CompactTauriConfig" }
+    if (-not (Test-Path $CompactWebViewHook)) { throw "Falta el gate de WebView2: $CompactWebViewHook" }
+    $compactConfig = Get-Content -Raw -LiteralPath $CompactTauriConfig | ConvertFrom-Json
+    if ([string]$compactConfig.bundle.windows.webviewInstallMode.type -ne 'skip') {
+        throw "El perfil compacto debe usar WebView2 Evergreen del sistema (type=skip)."
+    }
+    $hookText = Get-Content -Raw -LiteralPath $CompactWebViewHook
+    if ($hookText -notmatch 'F3017226-FE2A-4295-8BDF-00C3A9A7E4C5' -or $hookText -notmatch '(?m)^\s*Abort\s*$') {
+        throw 'El perfil compacto no tiene un preflight WebView2 fail-closed verificable.'
+    }
+}
 
 # --------------------------------------------------------------------------
 # 0. Autodeteccion del Postgres portable (con pgvector) si no se paso -PgSource.
@@ -274,7 +291,11 @@ if ($PayloadsOnly) {
 Write-Step 'Corriendo el bundler NSIS de Tauri (npm run tauri build)'
 Push-Location $DesktopDir
 try {
-    & npm run tauri build
+    if ($WebViewProfile -eq 'Compact') {
+        & npm run tauri build -- --config 'src-tauri/tauri.compact.conf.json'
+    } else {
+        & npm run tauri build
+    }
     if ($LASTEXITCODE -ne 0) { throw "npm run tauri build fallo (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location
@@ -304,6 +325,7 @@ if ($setup) {
     $installedPayloadBytes = [long](($payloads.Values | ForEach-Object { $_.bytes } | Measure-Object -Sum).Sum)
     # La meta comercial se expresa en MB decimales, no en MiB de PowerShell.
     $targetInstallerBytes = [long](335 * 1000 * 1000)
+    $targetApplicable = $WebViewProfile -eq 'Compact'
     $manifest = [ordered]@{
         schema_version = 1
         product = 'Mia'
@@ -312,11 +334,13 @@ if ($setup) {
         created_at_utc = [DateTime]::UtcNow.ToString('o')
         reused_payloads = [bool]$SkipPayloads
         backend_profile = $BackendProfile
+        webview_profile = $WebViewProfile.ToLowerInvariant()
         capabilities = $ComponentManifest.capabilities
         first_run_ms = $FirstRunMs
         installed_payload_bytes = $installedPayloadBytes
         target_installer_bytes = $targetInstallerBytes
-        target_met = [bool]($setup.Length -le $targetInstallerBytes)
+        target_applicable = [bool]$targetApplicable
+        target_met = if ($targetApplicable) { [bool]($setup.Length -le $targetInstallerBytes) } else { $null }
         installer = [ordered]@{ file = $setup.Name; bytes = $setup.Length; sha256 = $setupSha }
         payloads = $payloads
     }
@@ -327,7 +351,9 @@ if ($setup) {
     Write-Host "  $sizeMB MB" -ForegroundColor Green
     Write-Host "  SHA-256 $setupSha" -ForegroundColor Green
     Write-Host "  Manifiesto $manifestPath" -ForegroundColor Green
-    if ($setup.Length -le $targetInstallerBytes) {
+    if (-not $targetApplicable) {
+        Write-Host '  Perfil Offline: incluye WebView2; la meta de 335 MB no aplica a esta variante de compatibilidad.' -ForegroundColor Yellow
+    } elseif ($setup.Length -le $targetInstallerBytes) {
         Write-Host '  Meta de instalador <=335 MB: CUMPLIDA y medida.' -ForegroundColor Green
     } else {
         Write-Host '  Meta de instalador <=335 MB: NO cumplida; no se declara ahorro sin evidencia.' -ForegroundColor Yellow

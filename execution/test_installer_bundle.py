@@ -74,6 +74,8 @@ LITELLM_SPEC = PACKAGING / "mia-litellm.spec"
 BUILD_INSTALLER = PACKAGING / "build_installer.ps1"
 ORCH_INSTALLER = PACKAGING / "orchestration.installer.json"
 TAURI_CONF = ROOT / "desktop" / "src-tauri" / "tauri.conf.json"
+TAURI_COMPACT_CONF = ROOT / "desktop" / "src-tauri" / "tauri.compact.conf.json"
+WEBVIEW_HOOK = ROOT / "desktop" / "src-tauri" / "windows" / "webview2-required.nsh"
 CARGO_TOML = ROOT / "desktop" / "src-tauri" / "Cargo.toml"
 FRONTEND_PACKAGE = ROOT / "frontend" / "package.json"
 DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
@@ -148,6 +150,33 @@ def main() -> int:
     nsis = windows.get("nsis", {}) if isinstance(windows, dict) else {}
     check("bundle.windows.nsis existe (installMode/compression)", isinstance(nsis, dict) and len(nsis) > 0)
 
+    compact = {}
+    try:
+        compact = json.loads(TAURI_COMPACT_CONF.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    compact_windows = compact.get("bundle", {}).get("windows", {}) if isinstance(compact, dict) else {}
+    compact_nsis = compact_windows.get("nsis", {}) if isinstance(compact_windows, dict) else {}
+    check(
+        "perfil compacto usa WebView2 del sistema sin descarga ni payload offline",
+        compact_windows.get("webviewInstallMode", {}).get("type") == "skip",
+    )
+    check(
+        "perfil compacto conecta un hook NSIS de preflight",
+        compact_nsis.get("installerHooks") == "./windows/webview2-required.nsh",
+    )
+    hook = WEBVIEW_HOOK.read_text(encoding="utf-8") if WEBVIEW_HOOK.is_file() else ""
+    check(
+        "preflight comprueba las claves oficiales de WebView2 y aborta si falta",
+        "F3017226-FE2A-4295-8BDF-00C3A9A7E4C5" in hook
+        and "NSIS_HOOK_PREINSTALL" in hook
+        and bool(re.search(r"^\s*Abort\s*$", hook, re.MULTILINE)),
+    )
+    check(
+        "preflight dirige al instalador Offline sin descarga silenciosa",
+        "Mia Offline" in hook and "no instalara una aplicacion incompleta" in hook,
+    )
+
     # --- 3 · EL renombrado orchestration.installer.json -> orchestration.json
     print("\n3 · el renombrado a orchestration.json (la cáscara lee ese nombre literal)")
     rename_ok = (
@@ -221,6 +250,12 @@ def main() -> int:
     )
     check("build_installer.ps1 corre el bundler de Tauri", "tauri build" in bi)
     check(
+        "build_installer.ps1 ofrece perfiles Compact y Offline y registra cuál produjo",
+        "ValidateSet('Compact', 'Offline')" in bi
+        and "tauri.compact.conf.json" in bi
+        and "webview_profile" in bi,
+    )
+    check(
         "build_installer.ps1 recompila los 3 payloads (backend/litellm/frontend)",
         all(s in bi for s in ("build_backend.ps1", "build_litellm.ps1", "build_frontend.ps1")),
     )
@@ -254,6 +289,8 @@ def main() -> int:
           all(token in bi for token in ("FirstRunWatch", "--first-run", ".mia-setup-complete", "first_run_ms")))
     check("tamaño instalado y meta decimal de 335 MB quedan medidos, no prometidos",
           all(token in bi for token in ("installed_payload_bytes", "target_installer_bytes", "target_met", "335 * 1000 * 1000", "NO cumplida")))
+    check("la meta de 335 MB solo aplica al perfil compacto medido",
+          "target_applicable" in bi and "Perfil Offline" in bi)
     check("el ensamblado rechaza caches/tests/docs/harness privados",
           "Assert-NoPrivateBuildContent" in bi and all(token in bi for token in ("__pycache__", "tests", "docs", "harness")))
     check("orquestación expone el manifiesto de capacidades al backend",
