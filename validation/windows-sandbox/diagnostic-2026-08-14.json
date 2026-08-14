@@ -1,0 +1,32 @@
+{
+  "schema_version": "mia-windows-sandbox-diagnostic/v1",
+  "observed_at": "2026-08-14T19:33:49Z",
+  "outcome": "blocked",
+  "certified": false,
+  "blocker": "sandbox_closed_without_result",
+  "guest_started": false,
+  "result_json_created": false,
+  "model_or_secret_activity": "none",
+  "host_preflight": {
+    "windows_sandbox_exe": true,
+    "hypervisor_present": true,
+    "vmcompute": "Running",
+    "cmservice": "Running",
+    "feature_state_query": "requires_elevation"
+  },
+  "release_selection": {
+    "source": "mia-release-manifest.json",
+    "current_setup": "Mia_0.1.0_x64-setup.exe",
+    "current_version": "0.1.0",
+    "current_sha256": "fe5fde7032728e5fc5c85ff38a784d664f1d7c633094d2af9a5881890cbcf28f",
+    "commit": "bcf8aa5d55b721e811a4634b1350f4b073dfd51a",
+    "legacy_setup": "Mia_0.2.0_x64-setup.exe",
+    "legacy_version": "0.2.0",
+    "upgrade_decision": "downgrade_blocked"
+  },
+  "product_blockers": [
+    "maintenance_cli_has_no_restore_action",
+    "release_version_chronology_inconsistent_0.2.0_to_0.1.0"
+  ],
+  "note": "No se certificó instalación, health, reinicio, backup/restore, reinstalación ni uninstall dentro de VM. El harness queda listo y fail-closed para una máquina donde Windows Sandbox sí complete el arranque."
+}
