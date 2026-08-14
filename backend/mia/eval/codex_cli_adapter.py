@@ -403,7 +403,8 @@ def invoke_codex(
         try:
             completed = runner(
                 command, cwd=temp_dir, env=sanitized_environment(), input=prompt,
-                capture_output=True, text=True, timeout=timeout_seconds, check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="strict",
+                timeout=timeout_seconds, check=False,
             )
         except subprocess.TimeoutExpired as exc:
             raise CodexAdapterError(f"Codex excedió {timeout_seconds}s.") from exc

@@ -60,6 +60,8 @@ def main() -> int:
 
     check("prompt viaja por stdin, no por argv",
           payload["case_id"] in call["input"] and payload["case_id"] not in " ".join(command))
+    check("stdin y salida del CLI usan UTF-8 estricto también en Windows",
+          call.get("encoding") == "utf-8" and call.get("errors") == "strict")
     check("cwd efímero no es el repositorio",
           Path(call["cwd"]).resolve() != ROOT.resolve()
           and "mia-codex-benchmark-" in Path(call["cwd"]).name)
