@@ -250,13 +250,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mia-backend --maintenance")
     parser.add_argument(
         "action",
-        choices=("status", "startup", "backup", "verify", "export-key", "confirm-key", "import-key"),
+        choices=("status", "startup", "backup", "verify", "restore", "export-key", "confirm-key", "import-key"),
     )
     parser.add_argument("--pg-bin", required=True)
     parser.add_argument("--pg-port", type=int, default=None)
     parser.add_argument("--app-dir", default=None)
     parser.add_argument("--source", default=None)
     parser.add_argument("--destination", default=None)
+    parser.add_argument(
+        "--confirm-database",
+        default=None,
+        help="Nombre exacto de la base que se autoriza restaurar.",
+    )
     args = parser.parse_args(argv)
 
     app_dir = resolve_app_dir(args.app_dir)
@@ -277,6 +282,28 @@ def main(argv: list[str] | None = None) -> int:
                 backup_path=Path(args.source), app_dir=app_dir, pg_bin=pg_bin,
             )
             print("MIA-MAINTENANCE: la copia está completa y puede recuperarse.")
+        elif args.action == "restore":
+            if not args.source:
+                raise RuntimeError("Selecciona la copia que quieres recuperar.")
+            settings = _settings(app_dir, args.pg_port)
+            if args.confirm_database != settings["db"]:
+                raise RuntimeError(
+                    f"Confirma la recuperación escribiendo exactamente: {settings['db']}"
+                )
+            safety = backup.restore_database_backup(
+                backup_path=Path(args.source),
+                pg_bin=pg_bin,
+                app_dir=app_dir,
+                host=settings["host"],
+                port=settings["port"],
+                db=settings["db"],
+                password=settings["password"],
+                confirmed_database=args.confirm_database,
+            )
+            print(
+                "MIA-MAINTENANCE: recuperación completada; "
+                f"la copia de seguridad previa quedó verificada como {safety.name}."
+            )
         elif args.action == "export-key":
             if not args.destination:
                 raise RuntimeError("Selecciona dónde guardar la llave de recuperación.")

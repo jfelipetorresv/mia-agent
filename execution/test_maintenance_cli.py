@@ -35,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix="mia-maint-cli-") as td:
     original_settings = maintenance._settings
     original_verified = maintenance._verified_backup
     original_verify = maintenance.backup.verify_database_backup
+    original_restore = maintenance.backup.restore_database_backup
     original_export = maintenance.backup.export_recovery_key
     original_confirm = maintenance.backup.confirm_recovery_key_saved
     original_import = maintenance.backup.import_recovery_key
@@ -45,6 +46,7 @@ with tempfile.TemporaryDirectory(prefix="mia-maint-cli-") as td:
         }
         maintenance._verified_backup = lambda a, p, s: calls.append(("backup", a, p)) or Path("ok")
         maintenance.backup.verify_database_backup = lambda **kw: calls.append(("verify", kw["backup_path"])) or {}
+        maintenance.backup.restore_database_backup = lambda **kw: calls.append(("restore", kw["backup_path"])) or Path("safety.mia-backup")
         maintenance.backup.export_recovery_key = lambda a, d: calls.append(("export", d)) or d
         maintenance.backup.confirm_recovery_key_saved = lambda a: calls.append(("confirm", a))
         maintenance.backup.import_recovery_key = lambda a, text: calls.append(("import", text)) or a
@@ -63,6 +65,10 @@ with tempfile.TemporaryDirectory(prefix="mia-maint-cli-") as td:
                 "verify", "--pg-bin", str(pg_bin), "--app-dir", str(app_dir),
                 "--source", str(source),
             ])
+            rc_restore = maintenance.main([
+                "restore", "--pg-bin", str(pg_bin), "--app-dir", str(app_dir),
+                "--source", str(source), "--confirm-database", "mia",
+            ])
             rc_export = maintenance.main([
                 "export-key", "--pg-bin", str(pg_bin), "--app-dir", str(app_dir),
                 "--destination", str(Path(td) / "export.txt"),
@@ -76,24 +82,25 @@ with tempfile.TemporaryDirectory(prefix="mia-maint-cli-") as td:
             ])
 
         combined = output.getvalue() + error.getvalue()
-        check("los seis comandos terminan correctamente",
-              [rc_start, rc_backup, rc_verify, rc_export, rc_confirm, rc_import]
-              == [0, 0, 0, 0, 0, 0])
+        check("los siete comandos terminan correctamente",
+              [rc_start, rc_backup, rc_verify, rc_restore, rc_export, rc_confirm, rc_import]
+              == [0, 0, 0, 0, 0, 0, 0])
         check("startup conserva app-dir, pg-bin y puerto", calls[0] == (
             "startup", app_dir.resolve(), pg_bin, 55555
         ))
         check("backup, verify, export e import llegan a la operación correcta",
-              [c[0] for c in calls] == ["startup", "backup", "verify", "export", "confirm", "import"])
+              [c[0] for c in calls] == ["startup", "backup", "verify", "restore", "export", "confirm", "import"])
         check("ninguna contraseña viaja por argumentos o salida",
               "SECRETO-NO-SALIR" not in combined and
               all("password" not in arg.lower() for arg in sys.argv))
         check("los mensajes finales son breves y en lenguaje llano",
-              combined.count("MIA-MAINTENANCE:") == 6 and "Traceback" not in combined)
+              combined.count("MIA-MAINTENANCE:") == 7 and "Traceback" not in combined)
     finally:
         maintenance.startup = original_startup
         maintenance._settings = original_settings
         maintenance._verified_backup = original_verified
         maintenance.backup.verify_database_backup = original_verify
+        maintenance.backup.restore_database_backup = original_restore
         maintenance.backup.export_recovery_key = original_export
         maintenance.backup.confirm_recovery_key_saved = original_confirm
         maintenance.backup.import_recovery_key = original_import

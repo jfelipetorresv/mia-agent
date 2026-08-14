@@ -405,6 +405,92 @@ def create_verified_database_backup(**kwargs) -> Path:
     return path
 
 
+def restore_database_backup(
+    *,
+    backup_path: Path,
+    pg_bin: Path,
+    app_dir: Path,
+    host: str,
+    port: int,
+    db: str,
+    password: str,
+    confirmed_database: str,
+) -> Path:
+    """Restaura una copia autenticada tras preservar el estado actual.
+
+    La confirmación nombra la base de destino y no es un booleano reutilizable.
+    La copia de seguridad previa debe crearse y pasar ``pg_restore --list``
+    antes de que el primer comando mutante pueda ejecutarse.
+    """
+    if not db or confirmed_database != db:
+        raise BackupError(
+            f"Para recuperar esta base confirma exactamente su nombre: {db}"
+        )
+    source = backup_path.expanduser().resolve()
+    if not source.is_file():
+        raise BackupError("No encuentro la copia seleccionada para recuperar.")
+
+    pg_restore = _validated_pg_dump(pg_bin).with_name("pg_restore.exe")
+    header = verify_database_backup(
+        backup_path=source, app_dir=app_dir, pg_bin=pg_bin,
+    )
+    if str(header.get("database") or "") != db:
+        raise BackupError(
+            "La copia pertenece a otra base de datos y no puede aplicarse aquí."
+        )
+
+    safety_backup = create_verified_database_backup(
+        pg_bin=pg_bin,
+        app_dir=app_dir,
+        host=host,
+        port=port,
+        db=db,
+        password=password,
+        require_recovery_confirmation=True,
+    )
+    child_env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PGPASSWORD": password,
+        "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+    }
+    with decrypted_backup_temp(source, app_dir) as (dump_path, current_header):
+        if str(current_header.get("database") or "") != db:
+            raise BackupError("La copia cambió durante la validación; se canceló la recuperación.")
+        command = [
+            str(pg_restore),
+            "--clean",
+            "--if-exists",
+            "--single-transaction",
+            "--exit-on-error",
+            "--no-owner",
+            "--no-acl",
+            "--host", host,
+            "--port", str(port),
+            "--username", "postgres",
+            "--dbname", db,
+            str(dump_path),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                env=child_env,
+                shell=False,
+                timeout=15 * 60,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise BackupError("La recuperación excedió el tiempo seguro y fue cancelada.") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or "")[-1200:]
+            _save_failure_log(app_dir, detail)
+            raise BackupError(
+                "PostgreSQL rechazó la recuperación; la transacción fue revertida."
+            )
+    return safety_backup
+
+
 def _save_failure_log(app_dir: Path, detail: str) -> None:
     """Conserva solo el último diagnóstico técnico, nunca el dump parcial."""
     log_path = app_dir / "logs" / "backup-last-error.log"

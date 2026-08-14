@@ -1,6 +1,6 @@
 # Alcanzabilidad productiva de Mia
 
-Huella reproducible: `33ee5aaefcb22441435574b2b412cb9ffe1d7ea7d3ed52ab38d0e614bd8928ea`
+Huella reproducible: `b7b6ae4d8ea8348a1a52cd2d61515e46110a7f7fb82bb350be9c5d275efbbfd6`
 
 Este informe es informativo: no autoriza ni ejecuta eliminaciones. Las referencias desde pruebas no cuentan como uso productivo.
 
@@ -29,7 +29,7 @@ Este informe es informativo: no autoriza ni ejecuta eliminaciones. Las referenci
 - **high** · symbol · `backend/mia/channels/telegram_bridge.py:148` `MiaClient`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 6)
 - **high** · symbol · `backend/mia/channels/telegram_bridge.py:155` `TelegramBridge`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
 - **high** · symbol · `backend/mia/channels/telegram_bridge.py:321` `run_bot`: Su archivo no es alcanzable desde producción. (tests: 0)
-- **high** · symbol · `backend/mia/channels/telegram_bridge.py:425` `main`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 534)
+- **high** · symbol · `backend/mia/channels/telegram_bridge.py:425` `main`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 538)
 - **medium** · symbol · `backend/mia/config.py:37` `optional_capabilities`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
 - **high** · file · `backend/mia/connectors/vault_export.py`: No existe camino estático desde un entrypoint productivo. (tests: 0)
 - **high** · symbol · `backend/mia/connectors/vault_export.py:53` `_short`: Su archivo no es alcanzable desde producción. (tests: 0)

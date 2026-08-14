@@ -142,7 +142,7 @@
       "production_references": 73,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "main",
-      "test_references": 534
+      "test_references": 538
     },
     {
       "confidence": "medium",
@@ -6963,7 +6963,7 @@
       "to": "frontend/lib/wav.ts"
     }
   ],
-  "fingerprint": "33ee5aaefcb22441435574b2b412cb9ffe1d7ea7d3ed52ab38d0e614bd8928ea",
+  "fingerprint": "b7b6ae4d8ea8348a1a52cd2d61515e46110a7f7fb82bb350be9c5d275efbbfd6",
   "parse_errors": [],
   "policy": {
     "analysis": "conservative-static",

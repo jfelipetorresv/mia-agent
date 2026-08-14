@@ -183,6 +183,32 @@ try:
             ).fetchone()[0]
         check("el dato restaurado coincide", restored == marker)
 
+        # La misma ruta que usa el CLI debe preservar el estado anterior y
+        # restaurar atómicamente la base instalada, no solo descifrar el dump.
+        with psycopg.connect(host=host, port=port, dbname=source_db,
+                             user="postgres", password=password) as conn:
+            conn.execute("UPDATE asuntos_prueba SET contenido='estado-alterado' WHERE id=1")
+            conn.commit()
+        safety_backup = backup.restore_database_backup(
+            backup_path=backup_path,
+            pg_bin=pg_bin,
+            app_dir=app_dir,
+            host=host,
+            port=port,
+            db=source_db,
+            password=password,
+            confirmed_database=source_db,
+        )
+        check("restore CLI crea antes una copia de seguridad verificada",
+              safety_backup.is_file())
+        with psycopg.connect(host=host, port=port, dbname=source_db,
+                             user="postgres", password=password) as conn:
+            restored_in_place = conn.execute(
+                "SELECT contenido FROM asuntos_prueba WHERE id=1"
+            ).fetchone()[0]
+        check("restore CLI repone el dato original en la base instalada",
+              restored_in_place == marker)
+
         # Simula equipo nuevo: importa la llave exportada y abre el mismo backup.
         app_dir_b = work / "app-b"
         backup.import_recovery_key(app_dir_b, recovery_text)
