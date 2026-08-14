@@ -376,7 +376,7 @@ def run_e2e(client, auth, tid) -> list[str]:
             "POST",
             f"/api/matters/{mid}/draft/approve",
             headers=auth,
-            json={"draft_hash": draft_payload.get("draft_hash")},
+            json={"draft_hash": draft_payload.get("draft_hash"), "attested": True},
         ) as s:
             ok_appr = s.status_code == 200
             _ = "".join(s.iter_text())
