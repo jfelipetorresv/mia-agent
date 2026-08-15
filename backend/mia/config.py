@@ -430,16 +430,18 @@ MIA_AGENTIC_READING_COMPACT_WORDS = int(
 # eso puede ser justo lo que se quiere (ahorro) o señal de que el arranque es demasiado
 # corto para sus asuntos — súbase `MIA_AGENTIC_READING_SEED_TOP_K` antes que apagarla.
 
-# Política de modelo POR DEFECTO. `quality_adaptive` está disponible y recomendado en la
-# activación para el razonamiento jurídico complejo; "suscripcion" se conserva como default
-# operativo para no cambiar costo ni latencia a tenants existentes. Valores: "suscripcion" (CLI de
+# Política de modelo POR DEFECTO — DECISIÓN DE PIPE 2026-08-14: `quality_adaptive` manda
+# como default, igual que la recomendación de la pantalla de activación (el más
+# inteligente piensa/orquesta y la ejecución se asigna por tarea). Un tenant que nunca
+# guarde la pantalla queda en la MISMA política que la pantalla le mostró como
+# seleccionada. Valores: "quality_adaptive" · "suscripcion" (CLI de
 # Claude Code del abogado, sin billing por API) · "nube" (API Anthropic vía proxy) ·
 # "soberano" (todo local en Ollama) · "openrouter" (CP-OR: la propia cuenta de OpenRouter
 # del abogado como motor principal, con su clave/crédito; exige OPENROUTER_API_KEY) ·
 # "codex" (sesión autenticada local de Codex, sin tarifa marginal atribuible por llamada). El
 # default aplica cuando el tenant no configuró `tenant_settings.config['model_policy']`;
 # agent/llm.py la resuelve por request/job.
-MIA_MODEL_POLICY = os.getenv("MIA_MODEL_POLICY", "suscripcion").strip().lower()
+MIA_MODEL_POLICY = os.getenv("MIA_MODEL_POLICY", "quality_adaptive").strip().lower()
 # Modelo que el CLI de la suscripción usa por defecto cuando la tarea no trae hint.
 # "sonnet": calidad alta y mucho más rápido escribiendo documentos extensos que el
 # modelo grande default del plan (medido 2026-07-01: el default excedió los 300s en un

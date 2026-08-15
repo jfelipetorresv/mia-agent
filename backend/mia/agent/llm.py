@@ -368,9 +368,10 @@ def _cli_timeout(task: str | None) -> float:
 
 
 def _default_policy() -> str:
-    """Política por defecto desde config; sin valor → suscripción estable."""
+    """Política por defecto desde config; sin valor → calidad adaptativa (decisión de
+    Pipe 2026-08-14: el default del backend dice lo mismo que la pantalla de activación)."""
     p = (getattr(config, "MIA_MODEL_POLICY", "") or "").strip().lower()
-    return p if p in VALID_POLICIES else "suscripcion"
+    return p if p in VALID_POLICIES else "quality_adaptive"
 
 
 _model_policy: ContextVar[str | None] = ContextVar("mia_model_policy", default=None)

@@ -132,6 +132,10 @@ def _gate_circuit_breaker() -> None:
     original_client = llm._get_client
     llm._invoke_metered = _doble  # type: ignore[assignment]
     llm._get_client = lambda: None  # type: ignore[assignment]
+    # El gate ejerce la cadena de 'suscripcion' y la fija explícitamente: el default
+    # global es quality_adaptive (decisión de Pipe 2026-08-14) y este gate no debe
+    # depender de cuál sea el default.
+    politica_tok = llm.set_model_policy("suscripcion")
     try:
         with llm.recolectar_cambios_de_motor() as cambios:
             # Nodo 1 del grafo: la suscripción expira y se salta a la nube.
@@ -162,6 +166,7 @@ def _gate_circuit_breaker() -> None:
         check("sin turno activo no hay breaker (cada llamada intenta la suscripción)",
               invocaciones.count("cli-claude") == 2, str(invocaciones))
     finally:
+        llm.reset_model_policy(politica_tok)
         llm._invoke_metered = original_metered  # type: ignore[assignment]
         llm._get_client = original_client  # type: ignore[assignment]
 

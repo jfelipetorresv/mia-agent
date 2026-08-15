@@ -83,8 +83,11 @@ nombre de base) y se APLICA en el próximo arranque vía `--maintenance startup`
 apagados = la condición segura de pg_restore); fail-open del arranque si falla (marca
 `.failed`, aviso en la UI). Comandos Tauri maintenance_list_backups/stage_restore;
 acciones CLI stage-restore/list-backups; tests en test_restore_cli (4 passed);
-`cargo check` limpio. QUEDA de producto: alinear el default de política del backend
-(`suscripcion`) con el de la UI (`quality_adaptive`) — Pipe no se pronunció sobre este.
+`cargo check` limpio. (4) El default de política es
+`quality_adaptive` también en el backend (config + fallback de llm): un tenant que nunca
+guarda la pantalla queda en la política que la pantalla le mostró. Gate 10b-bis en
+test_model_policy (58/58); el gate del breaker fija ahora 'suscripcion' explícita.
+Con esto, CERO decisiones de producto pendientes de este bloque.
 
 - **P2**: `capabilities` del backend sin lector en frontend; `legal_export_events` sin
   lector; `anydoc_available()` muerto justo donde haría falta; quemar no retira finales ya

@@ -523,6 +523,15 @@ def run() -> None:
               tuple(capabilities["claude_code"]["available_efforts"])
               == subscription_llm.supported_efforts())
         activation = (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8")
+        # 10b-bis (decisión de Pipe 2026-08-14): el default del backend dice lo MISMO que
+        # la pantalla de activación — un tenant que nunca guarda queda en la política que
+        # la pantalla le mostró seleccionada. Cubre config, el fallback de llm y la UI.
+        from mia import config as _config
+        check("10b-bis · default backend = default UI = quality_adaptive",
+              _config.MIA_MODEL_POLICY == "quality_adaptive"
+              and llm._default_policy() == "quality_adaptive"
+              and 'useState<Politica>("quality_adaptive")'
+              in (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8"))
         # 10c-bis (auditoría 2026-08-14): `capabilities` dejó de ser payload huérfano —
         # Ajustes deshabilita Codex cuando no está instalado y muestra blocked_reason.
         conexiones = (ROOT / "frontend" / "app" / "_components" /
