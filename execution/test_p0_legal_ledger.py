@@ -85,6 +85,18 @@ def main() -> int:
     check("los sellos nacen solo después de final_ready",
           'and md.get("final_ready")' in graph
           and "seal_from_approved_report" in graph)
+    # Auditoría 2026-08-14: el LEDGER decide antes de capturar la traza; una traza
+    # 'approved' sin final registrado alimentaba wiki/banco de oro/skills con turnos no
+    # verificados. El desenlace efectivo (verification_required si no hay final) es el
+    # que viaja a la traza y al índice.
+    i_ledger = graph.index("md[\"final_ready\"] = await legal_ledger.finalise_if_gated")
+    i_outcome = graph.index("outcome_efectivo = HITL_OUTCOME.get(status")
+    i_capture = graph.index("trace = self.trace_capture.capture")
+    check("el ledger corre ANTES de capturar la traza", i_ledger < i_capture)
+    check("la traza y el índice llevan el desenlace EFECTIVO, no el crudo",
+          i_outcome < i_capture
+          and graph.count("hitl_outcome=outcome_efectivo") == 2
+          and '"verification_required"' in graph)
 
     passage = hashlib.sha256(b"pasaje vigente").hexdigest()
     seal = {"citation": "Ley 1", "source_passage_hash": passage,

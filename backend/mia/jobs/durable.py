@@ -392,6 +392,22 @@ async def enqueue_learning_job(
             (job_type, dedupe_key),
         )).fetchone()
     if existing:
+        # REENCOLADO de fallidos (auditoría 2026-08-14): el índice de 056 es
+        # incondicional, así que un trabajo agotado (failed×max) no admitía una fila
+        # nueva y la señal quedaba perdida para siempre con `needs_attention` sin
+        # acción posible. Un turno que vuelve a encolar la MISMA señal la reactiva:
+        # mismo dedupe (sigue sin duplicarse), contadores a cero. El UPDATE exige
+        # status='failed' — succeeded/queued/running conservan su coalescing intacto.
+        if str(existing[1]) == "failed":
+            async with pool.tenant_connection(tenant_id) as conn:
+                requeued = await (await conn.execute(
+                    "UPDATE durable_jobs SET status='queued', attempts=0, last_error=NULL, "
+                    "available_at=now() WHERE id=%s::uuid AND status='failed' "
+                    "RETURNING id::text",
+                    (existing[0],),
+                )).fetchone()
+            if requeued:
+                return str(requeued[0]), True, "queued"
         return str(existing[0]), False, str(existing[1])
     try:
         job_id, created = await enqueue_job(

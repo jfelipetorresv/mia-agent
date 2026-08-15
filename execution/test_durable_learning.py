@@ -126,6 +126,52 @@ async def main() -> None:
     assert pre_embed < write_lock
     assert "uq_durable_learning_once" in migration
 
+    # Reencolado de fallidos (auditoría 2026-08-14): una señal agotada (failed×max)
+    # vuelve a la cola al re-encolarse la MISMA señal; succeeded conserva el coalescing.
+    class _FakeConn:
+        def __init__(self, rows):
+            self.rows = list(rows)
+            self.sql: list[str] = []
+
+        async def execute(self, sql, params=None):
+            self.sql.append(sql)
+            row = self.rows.pop(0) if self.rows else None
+
+            class _Cur:
+                async def fetchone(_self):
+                    return row
+            return _Cur()
+
+    from contextlib import asynccontextmanager
+    from mia.db import pool as pool_mod
+    old_tc = pool_mod.tenant_connection
+    payload = {"matter_id": matter, "artifact_hash": digest, "trace_id": "t"}
+
+    failed_conn = _FakeConn([("job-1", "failed"), ("job-1",)])
+
+    @asynccontextmanager
+    async def _fake_tc(_tid):
+        yield failed_conn
+    pool_mod.tenant_connection = _fake_tc
+    try:
+        rid, created, st = await durable.enqueue_learning_job(
+            tenant, "harvest_lessons", payload, dedupe_key="harvest_lessons:k")
+        assert (rid, created, st) == ("job-1", True, "queued"), (rid, created, st)
+        assert any("status='queued'" in s and "status='failed'" in s for s in failed_conn.sql)
+
+        ok_conn = _FakeConn([("job-2", "succeeded")])
+
+        @asynccontextmanager
+        async def _fake_tc2(_tid):
+            yield ok_conn
+        pool_mod.tenant_connection = _fake_tc2
+        rid2, created2, st2 = await durable.enqueue_learning_job(
+            tenant, "harvest_lessons", payload, dedupe_key="harvest_lessons:k")
+        assert (rid2, created2, st2) == ("job-2", False, "succeeded"), (rid2, created2, st2)
+    finally:
+        pool_mod.tenant_connection = old_tc
+    print("PASS: una señal fallida agotada se reencola; una completada no se duplica")
+
     print("PASS: los cuatro aprendizajes usan handlers durables allowlisted")
     print("PASS: la traza queda ligada a la huella exacta del artefacto")
     print("PASS: HITL informa decisión guardada y aprendizaje separado")

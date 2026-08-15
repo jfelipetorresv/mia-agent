@@ -517,6 +517,13 @@ def run() -> None:
               tuple(capabilities["claude_code"]["available_efforts"])
               == subscription_llm.supported_efforts())
         activation = (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8")
+        # 10c-bis (auditoría 2026-08-14): `capabilities` dejó de ser payload huérfano —
+        # Ajustes deshabilita Codex cuando no está instalado y muestra blocked_reason.
+        conexiones = (ROOT / "frontend" / "app" / "_components" /
+                      "ConexionesSection.tsx").read_text(encoding="utf-8")
+        check("10c-bis · Ajustes lee capabilities: Codex no disponible se deshabilita con razón",
+              "capabilities?.codex?.installed === false" in conexiones
+              and "blocked_reason" in conexiones)
         check("10c · UI expone Codex como motor explícito y no promete cambio silencioso",
               "Codex en este equipo" in activation
               and "No funciona en servidores ni cambia a Claude, nube ni otro motor" in activation

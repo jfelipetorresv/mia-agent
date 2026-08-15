@@ -90,8 +90,9 @@ _BASE_FLAGS = [
 # "sonnet"/"opus" documentados como ejemplos en `claude --help`. Cualquier otro hint se
 # ignora con warning (no se arriesga un 404 por un alias inventado).
 _ACCEPTED_MODEL_HINTS = frozenset({"haiku", "sonnet", "opus"})
-# `--effort` se confirma contra el `claude --help` real al introducir una versión del CLI
-# en Mia. No es una promesa de que todos los planes tengan el mismo techo: si el CLI no
+# `--effort` VERIFICADO contra el `claude --help` real el 2026-08-14: el CLI documenta
+# `--effort <level> (low, medium, high, xhigh, max)` — coincide exactamente con este set.
+# No es una promesa de que todos los planes tengan el mismo techo: si el CLI no
 # acepta un nivel, devuelve su error estructurado y la cadena degrada de forma visible.
 _ACCEPTED_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 

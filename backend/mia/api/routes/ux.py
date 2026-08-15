@@ -167,8 +167,14 @@ async def _matter_jurisdictions(tid: str, requested: list[str] | None) -> list[s
     esté declarado arriba: eso rompería la promesa de que las casillas del perfil son el borde
     del contexto jurídico disponible.
     """
+    # HERENCIA REAL (auditoría 2026-08-14): sin selección explícita se guarda [] — el
+    # marcador de "hereda de la firma" que resolver.py resuelve EN CADA turno. Guardar
+    # aquí la foto de `allowed` congelaba las jurisdicciones del asunto: si la firma
+    # añadía un país después, los asuntos viejos no lo heredaban, contra el copy de la UI.
+    if not requested:
+        return []
     allowed = await resolve_jurisdictions(tid)
-    raw = requested if requested else allowed
+    raw = requested
     selected: list[str] = []
     seen: set[str] = set()
     for value in raw:
@@ -245,8 +251,13 @@ async def get_matter(matter_id: str, request: Request):
             "WHERE id = %s::uuid", (matter_id,))).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Asunto no encontrado")
+    # `jurisdictions` es lo GUARDADO ([] = hereda de la firma); `jurisdictions_effective`
+    # es lo que el grafo usa de verdad este turno (resolver con precedencia asunto→firma).
+    # Sin el efectivo, la UI pintaba "General" para [] cuando el backend usaba las de la firma.
+    effective = await resolve_jurisdictions(tid, matter_id)
     return {"id": str(row[0]), "name": row[1], "description": row[2], "status": row[3],
-            "created_at": row[4], "kind": row[5], "jurisdictions": row[6] or []}
+            "created_at": row[4], "kind": row[5], "jurisdictions": row[6] or [],
+            "jurisdictions_effective": effective}
 
 
 @router.put("/matters/{matter_id}/jurisdictions")

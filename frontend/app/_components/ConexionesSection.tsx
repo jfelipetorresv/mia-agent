@@ -23,6 +23,11 @@ type MotorPolicy = {
   allow_notebooklm?: boolean;
   notebooklm_notebook?: string;
   notebooklm_disponible?: boolean;
+  // Capacidades comprobables de la instalación (auditoría 2026-08-14: viajaban del
+  // backend y ninguna pantalla las leía — la lista ofrecía Codex aunque no estuviera).
+  capabilities?: {
+    codex?: { installed?: boolean; blocked_reason?: string };
+  };
 };
 
 type ObsidianStatus = { installed: boolean; vault_configured: boolean; vault_path?: string | null; message: string };
@@ -438,10 +443,18 @@ export default function ConexionesSection({
           aria-label="Motor de IA"
           className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {(policy?.opciones || []).map((o) => (
-            <option key={o.id} value={o.id}>{o.nombre}</option>
-          ))}
+          {(policy?.opciones || []).map((o) => {
+            const codexBlocked = o.id === "codex" && policy?.capabilities?.codex?.installed === false;
+            return (
+              <option key={o.id} value={o.id} disabled={codexBlocked}>
+                {o.nombre}{codexBlocked ? " (no disponible en este equipo)" : ""}
+              </option>
+            );
+          })}
         </select>
+        {policy?.capabilities?.codex?.installed === false && policy?.capabilities?.codex?.blocked_reason ? (
+          <p className="mt-2 text-sm text-muted-foreground">{policy.capabilities.codex.blocked_reason}</p>
+        ) : null}
         {policyMsg ? <p className="mt-2 text-sm text-muted-foreground">{policyMsg}</p> : null}
       </ConnectorCard>
 

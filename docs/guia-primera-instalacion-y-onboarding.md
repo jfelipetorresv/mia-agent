@@ -36,3 +36,18 @@ La prueba queda aprobada si Mia llega desde registro hasta borrador sin mostrar 
 - Archivo: `desktop/src-tauri/target/release/bundle/nsis/Mia_0.1.0_x64-setup.exe`.
 - Integridad SHA-256: `80748B644C7828577093EE2BF15E09AA5E22F2699760474556F2A33BD5BFF89E`.
 - Fecha de generación: 2026-08-12.
+
+## Recuperar Mia desde una copia de seguridad
+
+La pantalla de Protección de datos crea copias (`.mia-backup`) y exporta la llave de
+recuperación. La restauración aún no tiene botón en la app: se ejecuta por consola con el
+backend empaquetado, y pide el nombre exacto de la base como confirmación (crea además una
+copia previa verificada antes de tocar nada):
+
+```
+mia-backend.exe --maintenance restore --pg-bin "C:\ruta\a\postgres\bin" --source "C:\ruta\copia.mia-backup" --confirm-database mia
+```
+
+Requisito: Mia cerrada. Si el nombre confirmado no coincide, no se restaura nada. La
+restauración dentro de la app (con selector de archivo) está pendiente como trabajo de
+producto.

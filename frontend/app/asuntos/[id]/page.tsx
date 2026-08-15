@@ -109,7 +109,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   const matterId = params.id;
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [matter, setMatter] = useState<{ name?: string; jurisdictions?: string[] } | null>(null);
+  const [matter, setMatter] = useState<{ name?: string; jurisdictions?: string[]; jurisdictions_effective?: string[] } | null>(null);
   const [organizationJurisdictions, setOrganizationJurisdictions] = useState<string[]>([]);
   const [jurisdictionBusy, setJurisdictionBusy] = useState(false);
   const [jurisdictionError, setJurisdictionError] = useState("");
@@ -252,7 +252,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
   }
 
   useEffect(() => {
-    apiGet<{ name?: string; jurisdictions?: string[] }>(`/api/matters/${matterId}`)
+    apiGet<{ name?: string; jurisdictions?: string[]; jurisdictions_effective?: string[] }>(`/api/matters/${matterId}`)
       .then(setMatter)
       .catch(() => {});
     apiGet<{ jurisdictions?: string[] }>("/api/profile/full")
@@ -649,7 +649,11 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
 
   async function toggleJurisdiction(code: string) {
     if (!matter || jurisdictionBusy) return;
-    const current = matter.jurisdictions || [];
+    // Con [] (hereda de la firma) el punto de partida son las jurisdicciones EFECTIVAS:
+    // antes el primer clic estrechaba en silencio el asunto a una sola.
+    const current = matter.jurisdictions?.length
+      ? matter.jurisdictions
+      : matter.jurisdictions_effective || [];
     const next = current.includes(code)
       ? current.filter((item) => item !== code)
       : [...current, code];
@@ -666,7 +670,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
         `/api/matters/${matterId}/jurisdictions`,
         { jurisdictions: next },
       );
-      setMatter((previous) => previous ? { ...previous, jurisdictions: result.jurisdictions } : previous);
+      setMatter((previous) => previous ? { ...previous, jurisdictions: result.jurisdictions, jurisdictions_effective: result.jurisdictions.length ? result.jurisdictions : previous.jurisdictions_effective } : previous);
     } catch {
       setJurisdictionError("No pude cambiar el contexto jurídico. Intenta de nuevo.");
     } finally {
@@ -790,7 +794,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Globe2 className="h-4 w-4 shrink-0 text-primary" />
               <span className="text-xs font-medium text-muted-foreground">Contexto jurídico</span>
-              {(matter?.jurisdictions?.length ? matter.jurisdictions : ["generic"]).map((code) => (
+              {(matter?.jurisdictions?.length ? matter.jurisdictions : matter?.jurisdictions_effective?.length ? matter.jurisdictions_effective : ["generic"]).map((code) => (
                 <span key={code} className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
                   {COUNTRY_NAME_BY_CODE[code] || "General"}
                 </span>
@@ -809,7 +813,7 @@ function WorkspacePageContent({ params }: { params: { id: string } }) {
                     <label key={code} className="flex cursor-pointer items-center gap-2 text-sm">
                       <input
                         type="checkbox"
-                        checked={(matter?.jurisdictions || []).includes(code)}
+                        checked={((matter?.jurisdictions?.length ? matter.jurisdictions : matter?.jurisdictions_effective) || []).includes(code)}
                         onChange={() => void toggleJurisdiction(code)}
                         disabled={jurisdictionBusy}
                         className="h-4 w-4 accent-primary"

@@ -42,6 +42,7 @@ import math
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from langgraph.graph import END, START, StateGraph
@@ -2341,52 +2342,12 @@ class MatterGraphBuilder:
         if started is not None:
             md["latency_ms"] = (time.perf_counter() - float(started)) * 1000
         activated = md.get("activated_playbooks") or []
-        _t_capture = time.perf_counter()
-        trace = self.trace_capture.capture(
-            tenant_id=state["tenant_id"],
-            matter_id=state["matter_id"],
-            input=_last_user_message(state),
-            output=final,
-            model=config.MIA_MODEL,
-            tokens=md.get("usage", {"prompt": 0, "completion": 0, "total": 0}),
-            latency_ms=float(md.get("latency_ms", 0.0)),
-            hitl_outcome=HITL_OUTCOME.get(status, "approved"),
-            draft_original=draft,
-            draft_final=final,
-            retrieved_doc_ids=retrieved_doc_ids,
-            activated_playbooks=activated or None,
-            rejection_reason=rejection_reason or None,
-        )
-        trace_id = f"{state['tenant_id']}:{state['matter_id']}:{trace.timestamp}"
-        _t_index = time.perf_counter()
-        # Dual-write H.3: además del JSONL (SFT), indexa la traza en Postgres para session_search
-        # (FTS sin LLM). Best-effort: un fallo aquí (tabla ausente, DB) NO debe tumbar el turno.
-        try:
-            await trace_search.index_trace(
-                state["tenant_id"],
-                matter_id=state["matter_id"],
-                input=_last_user_message(state),
-                output=final,
-                model=config.MIA_MODEL,
-                hitl_outcome=HITL_OUTCOME.get(status, "approved"),
-                activated_playbooks=activated,
-                retrieved_doc_ids=retrieved_doc_ids,
-                trace_ts=trace.timestamp,
-                # Riesgo #68: persistir el diagnóstico del turno (vivía solo en el
-                # checkpoint, que se borra) para que la captura del banco de oro no
-                # lo lea vacío. El summary ya viene parseado desde analysis_node.
-                diagnosis=md.get("diagnosis") or None,
-                diagnosis_summary=md.get("diagnosis_summary") or None,
-            )
-        except Exception:  # noqa: BLE001 — indexado best-effort, no crítico para el turno
-            # Riesgo #71: index_trace ya reintentó los fallos transitorios. Si llega aquí,
-            # el fallo es persistente (esquema o DB caída): se registra en WARNING —no debug—
-            # porque sin esta fila el banco de oro no encontrará el turno. El turno del
-            # abogado sigue en pie (la traza JSONL sí se escribió).
-            logger.warning("index_trace falló tras reintentos; la traza JSONL sí se escribió "
-                           "pero el turno no quedó en el índice consultable", exc_info=True)
-        _t_sellos = time.perf_counter()
-
+        # Auditoría 2026-08-14: el LEDGER decide ANTES de capturar la traza. La traza
+        # etiquetada 'approved' sin final registrado alimentaba dreams→wiki y gold_cases
+        # con turnos no verificados. El trace_id se pre-genera (capture acepta timestamp)
+        # para que los recibos del ledger referencien la misma traza.
+        trace_ts = datetime.now(timezone.utc).isoformat()
+        trace_id = f"{state['tenant_id']}:{state['matter_id']}:{trace_ts}"
         # El aprendizaje se encola DESPUÉS de que el ledger haya creado el final. La
         # decisión del abogado no espera llamadas al modelo, pero una caída tampoco
         # pierde la señal: payload mínimo (asunto+huella+traza), sin duplicar el escrito.
@@ -2430,6 +2391,57 @@ class MatterGraphBuilder:
             except Exception:  # noqa: BLE001 -- no se habilita un final sin ledger
                 logger.exception("no se pudo registrar el final jurídico; queda solo borrador")
                 md["final_ready"] = False
+
+        outcome_efectivo = HITL_OUTCOME.get(status, "approved")
+        if status in ("approved", "editing") and not md.get("final_ready"):
+            # Sin final en el ledger, la traza no puede decir 'approved': los consumidores
+            # del aprendizaje (wiki, banco de oro, skills) filtran por approved/edited.
+            outcome_efectivo = "verification_required"
+        _t_capture = time.perf_counter()
+        trace = self.trace_capture.capture(
+            tenant_id=state["tenant_id"],
+            matter_id=state["matter_id"],
+            input=_last_user_message(state),
+            output=final,
+            model=config.MIA_MODEL,
+            tokens=md.get("usage", {"prompt": 0, "completion": 0, "total": 0}),
+            latency_ms=float(md.get("latency_ms", 0.0)),
+            timestamp=trace_ts,
+            hitl_outcome=outcome_efectivo,
+            draft_original=draft,
+            draft_final=final,
+            retrieved_doc_ids=retrieved_doc_ids,
+            activated_playbooks=activated or None,
+            rejection_reason=rejection_reason or None,
+        )
+        _t_index = time.perf_counter()
+        # Dual-write H.3: además del JSONL (SFT), indexa la traza en Postgres para session_search
+        # (FTS sin LLM). Best-effort: un fallo aquí (tabla ausente, DB) NO debe tumbar el turno.
+        try:
+            await trace_search.index_trace(
+                state["tenant_id"],
+                matter_id=state["matter_id"],
+                input=_last_user_message(state),
+                output=final,
+                model=config.MIA_MODEL,
+                hitl_outcome=outcome_efectivo,
+                activated_playbooks=activated,
+                retrieved_doc_ids=retrieved_doc_ids,
+                trace_ts=trace.timestamp,
+                # Riesgo #68: persistir el diagnóstico del turno (vivía solo en el
+                # checkpoint, que se borra) para que la captura del banco de oro no
+                # lo lea vacío. El summary ya viene parseado desde analysis_node.
+                diagnosis=md.get("diagnosis") or None,
+                diagnosis_summary=md.get("diagnosis_summary") or None,
+            )
+        except Exception:  # noqa: BLE001 — indexado best-effort, no crítico para el turno
+            # Riesgo #71: index_trace ya reintentó los fallos transitorios. Si llega aquí,
+            # el fallo es persistente (esquema o DB caída): se registra en WARNING —no debug—
+            # porque sin esta fila el banco de oro no encontrará el turno. El turno del
+            # abogado sigue en pie (la traza JSONL sí se escribió).
+            logger.warning("index_trace falló tras reintentos; la traza JSONL sí se escribió "
+                           "pero el turno no quedó en el índice consultable", exc_info=True)
+        _t_sellos = time.perf_counter()
 
         if (status in ("approved", "editing") and md.get("final_ready")
                 and legal_ledger.verification_passes(md.get("verification"))):

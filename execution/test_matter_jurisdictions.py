@@ -76,6 +76,14 @@ async def run() -> bool:
         except HTTPException as exc:
             rejected = exc.status_code == 422
         results.append(check("API rechaza jurisdicción no declarada", rejected))
+        # Herencia REAL (auditoría 2026-08-14): sin selección explícita se guarda [] —
+        # el marcador que el resolver resuelve en cada turno. Guardar la foto de la
+        # organización congelaba el asunto: un país añadido después jamás se heredaba.
+        results.append(check(
+            "sin selección se guarda [] (hereda), no la foto de la organización",
+            await ux._matter_jurisdictions("tenant", None) == []
+            and await ux._matter_jurisdictions("tenant", []) == [],
+        ))
 
         graph = (ROOT / "backend" / "mia" / "agents" / "graph.py").read_text(encoding="utf-8")
         results.append(check(

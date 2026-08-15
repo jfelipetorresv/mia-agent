@@ -56,20 +56,25 @@ NO ejecutables localmente (van en CI con Postgres). `test_first_run.py` sigue SI
 como verde (pendiente #2 del cierre anterior). No se llamó a ningún modelo ni se creó
 credencial alguna; `validation/provider-benchmark-full-2026-08-14/` intacta.
 
-## Pendientes que deja la auditoría (con dueño técnico, sin decisión de producto tomada)
+## Pendientes que deja la auditoría — ACTUALIZADO tras la 2ª pasada (mismo día)
 
-- **P1 traza**: la traza JSONL/índice se etiqueta `approved` ANTES del ledger; si el final
-  no se registra, `dreams→wiki` y `gold_cases` pueden aprender de un turno no verificado
-  (los jobs durables SÍ están protegidos). Requiere reordenar capture/ledger con cuidado
-  del trace_id.
-- **P1 restore sin UI**: la lógica de `setup/backup.py` es sólida pero solo se llega por
-  consola; la pantalla promete recuperación. Falta comando Tauri o guía.
-- **P1 jurisdicción `[]`**: `create_matter` congela la foto de jurisdicciones (no hereda
-  cambios de la firma); chips «General» con `[]`; primer clic estrecha en silencio.
-- **P1 aprendizaje**: `harvest_lessons` vacío quema el dedupe para siempre; `failed`×5 no
-  es reencolable (056 no filtra por estado); `wiki/skill` no se encolan en `editing`.
-- **P1 quality_adaptive**: `--effort` del CLI sin evidencia contra `claude --help` real, y
-  el default de entorno (`suscripcion`) no coincide con la UI (`quality_adaptive`).
+CERRADOS en la 2ª pasada (commit posterior a 4084300): la traza lleva el desenlace
+EFECTIVO (el ledger corre ANTES de capturar; sin final registrado la traza dice
+`verification_required` y wiki/banco de oro/skills la ignoran — checks nuevos en
+`test_p0_legal_ledger.py`); jurisdicción hereda de VERDAD (sin selección se guarda `[]`,
+el GET expone `jurisdictions_effective`, los chips pintan lo efectivo y el primer clic ya
+no estrecha — check en `test_matter_jurisdictions.py`); una señal de aprendizaje
+`failed`×5 se reencola al re-encolarse la misma señal (check en `test_durable_learning.py`);
+`--effort` VERIFICADO contra `claude --help` real 2026-08-14 (low/medium/high/xhigh/max,
+coincide con `_ACCEPTED_EFFORTS`); `capabilities` ya tiene consumidor (Ajustes deshabilita
+Codex no disponible y muestra la razón — check 10c-bis en `test_model_policy.py`); el
+restore quedó documentado con su sintaxis real en
+`docs/guia-primera-instalacion-y-onboarding.md`.
+
+SIGUEN abiertos (decisión de producto): botón de restore dentro de la app; ¿`wiki/skill`
+también en `editing` (aprobado con cambios)?; alinear el default de política del backend
+(`suscripcion`) con el de la UI (`quality_adaptive`).
+
 - **P2**: `capabilities` del backend sin lector en frontend; `legal_export_events` sin
   lector; `anydoc_available()` muerto justo donde haría falta; quemar no retira finales ya
   emitidos (ledger append-only sin retractación); techo del guardián de docs fantasma
