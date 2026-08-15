@@ -361,6 +361,26 @@
     conseguía marcar un país y parecía un bloqueo del onboarding; era el selector del script (la
     casilla es `sr-only` bajo la ficha). Un clic real la marcó a la primera. Una herramienta de
     verificación también falla, y su fallo se disfraza de defecto del producto.
+78. **Al cambiar la firma de una función productiva, actualizar TODOS sus dobles de prueba en el
+    mismo commit.** `resolve_jurisdictions_for` creció a `(tenant_id, matter_id)` en la sesión 58 y
+    los 5 mocks de `test_projects.py` quedaron con un argumento; como `_turn_jurisdictions` es
+    fail-soft, el `TypeError` no reventó: degradó a la rama restrictiva y tumbó 8 checks que
+    parecían regresión del guardián. Un fail-soft convierte el error de contrato en falsos
+    negativos lejos del punto de cambio: `grep` de mocks/monkeypatch del nombre antes de cerrar.
+79. **El lanzador que ningún gate ejecuta está roto hasta que se demuestre lo contrario.**
+    `python -m mia.api.run` (el camino de `start_api.ps1`) moría con `UnboundLocalError` porque
+    una local `config = uvicorn.Config(...)` sombreaba el módulo `config`; ningún test lo cubría
+    (todos montan la app por otra vía). Todo punto de entrada canónico necesita un gate que lo
+    arranque de verdad y espere el health.
+80. **Un archivo con secretos no se borra sin dejar dicho cómo regenerar cada secreto.** El `.env`
+    de desarrollo era la ÚNICA copia de las contraseñas del clúster portable 55432; borrarlo por
+    higiene convirtió el arranque siguiente en una sesión de recuperación (trust temporal en
+    pg_hba + reset de roles + .env regenerado). Si se elimina, el HANDOFF lista qué contenía y la
+    ruta de regeneración.
+81. **DDL/utility de Postgres no acepta placeholders.** `ALTER ROLE ... PASSWORD %s` da
+    `syntax error at or near "$1"`; se compone con `psycopg.sql.Literal`/`Identifier`. Y las sondas
+    a la DB en esta máquina van con psycopg + `connect_timeout`, nunca con psql interactivo (se
+    cuelga esperando contraseña con stdin nulo).
 # 2026-08-12: Un gate queda obsoleto cuando cambia el contrato del grafo
 
 **Error:** el runtime cambió de `verification` a `verificador_citas`, pero el gate HITL

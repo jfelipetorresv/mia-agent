@@ -9,7 +9,61 @@
 
 ---
 
-# CIERRE — 2026-08-14 (tarde) · Auditoría adversarial integral post-b93d9ab: 4 P0 corregidos · EMPEZAR AQUÍ
+# CIERRE — 2026-08-15 · E2E con DB verde, first_run capturado y pantallas revisadas en vivo · EMPEZAR AQUÍ
+
+## Resultado de esta sesión (commits 12bf5e9 + cierre, pusheados)
+
+Los tres puntos de la «primera tarea» del cierre anterior quedaron cerrados con evidencia:
+
+1. **`test_first_run.py` VERDE 73/73 con salida capturada** (exit 0). Ya cuenta como gate.
+2. **E2E con DB, todo verde**: test_rls 19/19 · test_e2e 59/59 · test_hitl_flow 21/21
+   (el riesgo #86 queda re-verificado: la suite pasa con DB) · test_citation_seals 20/20 ·
+   test_projects 61/61 · `verify.ps1 -Mode quick` VERDE 16 suites (14,3 s).
+3. **Pantallas nuevas revisadas en vivo** (Playwright + `seed_despacho_demo.py`):
+   /activar con «Calidad jurídica adaptativa» RECOMENDADO y el copy del plan Max en
+   «Mi suscripción»; selector de motor en Conexiones con «Codex en este equipo (no
+   disponible en este equipo)» deshabilitado con su razón; chips «Contexto jurídico
+   [General]» pintando lo efectivo; tarjeta «Recuperar desde una copia» con su copy y el
+   aviso de aplicación al reinicio. En dev /activar redirige a /onboarding
+   (`instalado=false`, correcto); para verla se interceptó `/api/welcome/status`.
+
+Dos defectos REALES corregidos en 12bf5e9:
+
+- **El lanzador canónico de la API estaba roto en Windows**: en `backend/mia/api/run.py`
+  una local `config = uvicorn.Config(...)` sombreaba el módulo `config` y
+  `python -m mia.api.run` (el camino de `start_api.ps1`) moría con `UnboundLocalError`.
+  Ningún gate lo ejecutaba. Pendiente: gate que lo arranque de verdad (regla 79).
+- **8 checks rojos de test_projects que parecían regresión**: los 5 mocks de
+  `resolve_jurisdictions_for` tenían la firma vieja de 1 argumento (la sesión 58 la
+  amplió a `(tenant_id, matter_id)`); el fail-soft de `_turn_jurisdictions` tragaba el
+  `TypeError` y degradaba a la rama restrictiva. Mocks actualizados (regla 78).
+
+**Entorno reconstruido**: el `.env` eliminado el 2026-08-14 era la única copia de las
+contraseñas del clúster portable 55432. Se resetearon (`trust` temporal en `pg_hba.conf`
+con backup, restaurado a scram) las contraseñas de `postgres`/`mia_app`/`mia_curator` y
+se regeneró el `.env` con las claves del semilla de `first_run.py` (regla 80). Las 56
+migraciones se re-aplicaron idempotentes (3 fallos esperados: constraints viejos
+superados por migraciones posteriores; los vigentes quedaron intactos).
+
+## Pendientes que deja esta sesión
+
+- **P3 nuevo**: aviso de hidratación en /configurar#conexiones — un `<div>` dentro de un
+  `<p>` (badge «2 Issues» del overlay de Next dev). Ubicar y corregir.
+- **Gate del lanzador**: ejecutar `python -m mia.api.run` hasta health 200 en CI o tramo
+  rápido.
+- **`scripts/setup_db.ps1`** revienta en PowerShell 5.1 (here-string con Python
+  embebido); migrar ese bloque a un `.py`.
+- El bloque grande sigue siendo el del cierre 2026-08-14: **API propia por instalación**
+  (decisión de Pipe), benchmark solo por decisión de negocio, y distribución sin
+  prometer ≤335 MB.
+
+Retrospectivas: técnica en `docs/retrospectives/retrospective-2026-08-15-e2e-db-y-lanzador-api.md`;
+de sesión en `Pipe-OS\01-operacion\retrospectivas\retrospective-2026-08-15-002-mia-e2e-db-first-run-pantallas.md`.
+Reglas nuevas 78-81 en `APRENDIZAJES.md`.
+
+---
+
+# CIERRE — 2026-08-14 (tarde) · Auditoría adversarial integral post-b93d9ab: 4 P0 corregidos
 
 ## Qué encontró y cerró la auditoría (informe completo en la conversación; barreras en los gates)
 
@@ -126,85 +180,6 @@ Con esto, CERO decisiones de producto pendientes de este bloque.
   concreta de 7 piezas para el alta por instalador quedó en el informe de la auditoría.
 
 ---
-
-# CIERRE — 2026-08-14 · Jurisdicción, proveedores y evaluación: correcciones cerradas; API por instalador pendiente
-
-## Resultado de esta sesión
-
-Mia ya separa el dato aportado por el abogado de la evidencia que autoriza una cita
-generada: sin jurisdicción configurada, una referencia repetida desde el mensaje se
-omite del borrador y queda trazada, pero el mensaje original no se altera. La ruta
-configurada conserva el marcado clásico. Gate: `execution/test_jurisdiction_omission.py`
-29/29 y `execution/test_sentence_report.py` 47/47.
-
-La selección de proveedor dejó de gastar o cambiar datos de asunto en silencio:
-calidad estándar inicia Sonnet, Opus/Max solo entra por escalada excepcional y las
-políticas de membresía fallan claro para `main` y tareas jurídicas. Codex es una
-política explícita de membresía local: no es el alias de evaluación, no usa API ni
-cae a Claude/local. Gate: `execution/test_model_policy.py` 55/55.
-
-Codex por membresía está limitado a la app Tauri del titular: Tauri inyecta en cada
-arranque/reinicio una marca efímera, host loopback y CORS local; el bootstrap no
-persiste esas marcas. Un servidor o reverse-proxy ordinario queda apagado; esto NO
-es una frontera contra el administrador del mismo host. Gate adversarial:
-`execution/test_codex_production_provider.py` 15/15. Pasaron también compilación
-Python, lint/typecheck frontend, `cargo check` Tauri y `git diff --check`.
-
-Se eliminó el `.env` local con configuración personal. No se hicieron llamadas a
-modelos ni se guardó una clave nueva. La corrida de benchmark `validation/provider-
-benchmark-full-2026-08-14/` fue detenida por Pipe: es evidencia parcial, no una
-comparación ni una certificación, y no debe borrarse ni usarse en comunicación comercial.
-
-## Próximo bloque — no asumir, ejecutar en este orden
-
-1. **API propia por instalación (decisión ya tomada por Pipe):** construir en el
-   instalador el alta separada de Claude API y Codex/OpenAI API. Cada computador
-   aporta y guarda su propia credencial local ignorada; no reutilizar claves de
-   desarrollo. Antes de cualquier llamada OpenAI, aplicar el gate de credenciales
-   seguro y pedir/recibir la clave de esa instalación.
-2. **Cierre de instalación:** correr `execution/test_first_run.py` hasta obtener
-   exit/result capturado y la colección rápida/CI desde entorno limpio. Esta sesión
-   no cuenta ese gate como verde porque la ejecución larga terminó sin salida capturable.
-3. **Benchmark solo por decisión de negocio:** definir qué afirmación se quiere
-   demostrar, tiempo, presupuesto y criterio; entonces usar el runner durable en
-   carriles separados. No reanudar la matriz actual automáticamente.
-4. **Distribución:** no prometer aún la meta de instalador ≤335 MB; requiere build
-   limpio medido. Mantener la variante Compact/Offline y sus gates existentes.
-
-La retrospectiva técnica está en
-`docs/retrospectives/retrospective-2026-08-14-proveedor-jurisdiccion-y-evaluacion.md`;
-las reglas permanentes se absorbieron en `APRENDIZAJES.md`.
-
----
-
-# CIERRE — 2026-08-12 (sesión 57) · Auditoría integral del harness aplicada a Mia · EMPEZAR AQUÍ
-
-Se ejecutó el plan integral sin copiar la implementación reservada: informe público,
-trazabilidad privada, catálogo y comando único de verificación, CI, enrutamiento por función,
-contexto progresivo, migraciones reejecutables y poda del runtime aparente sin consumidores.
-
-La metodología jurídica fija bajó de ~1.744 a 363 tokens y el system del borrador de ~3.255
-a 1.171, conservando 66/66 invariantes. Next pasó de 14 a 16.3.0 y React a 19.2.8: build de
-14 rutas, auditoría 0 vulnerabilidades, empaquetado 24/24, UX 41/41, memoria 27/27 y auth
-21/21. Playwright confirmó navegación hidratada Login→Registro; el HMR del entorno dev dejó
-avisos WebSocket, pero producción compila y empaqueta. El lint quedó limpio y el instalador
-produjo y probó un paquete portable de 131,9 MB con su Node propio y cabeceras seguras.
-
-La pasada completa recorrió 142 suites en 629 s y expuso seis contratos de prueba obsoletos;
-se corrigieron y las seis suites quedaron verdes. La pasada posterior terminó 142/142 en 623 s.
-El verificador reintenta una sola vez el cierre transitorio del pool de SAT-Graph; una segunda
-falla conserva el bloqueo. Pendiente evolutivo: reducir el tiempo de la pasada completa. No
-borrar `mia-cory-audit-worktree`, `tools`, `Lexia-Vault` ni los prototipos externos sin respaldo.
-
-Commits de esta sesión: ver `git log` inmediatamente bajo este cierre.
-
-**Continuación 2026-08-12 · instalador y onboarding listos para prueba interna:** se generó
-`desktop/src-tauri/target/release/bundle/nsis/Mia_0.1.0_x64-setup.exe` (447 MB,
-SHA-256 `80748B644C7828577093EE2BF15E09AA5E22F2699760474556F2A33BD5BFF89E`).
-Pasaron 30/30 checks de ensamblaje y 78/78 del onboarding y configuración. La guía para
-Pipe está en `docs/guia-primera-instalacion-y-onboarding.md`. El ejecutable **no está
-firmado**: apto solo para prueba interna; falta aceptación visual de una instalación limpia
-antes de distribuirlo, y firma de código antes de entregarlo a terceros.
 
 ---
 

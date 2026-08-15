@@ -3,6 +3,8 @@
 > Entradas archivadas del HANDOFF.md, de la más reciente a la más antigua.
 > En HANDOFF.md viven solo la entrada vigente y la anterior.
 
+- [CIERRE — 2026-08-14 · Jurisdicción, proveedores y evaluación](066-cierre-2026-08-14-jurisdiccion-proveedores-evaluacion.md)
+- [CIERRE — 2026-08-12 (sesión 57) · Auditoría integral del harness aplicada a Mia](065-cierre-2026-08-12-sesion-57-auditoria-integral-harness.md)
 - [CIERRE — 2026-08-08 (sesión 56) · Circuit-breaker de la suscripción + approve medido](064-cierre-2026-08-08-sesion-56-circuit-breaker-approve-medido.md)
 - [CIERRE — 2026-08-07 (sesión 55) · Los 4 puntos de la 54 + plan de eficiencia F0-F2](063-cierre-2026-08-07-sesion-55-cuatro-puntos-eficiencia-f0-f2.md)
 - [CIERRE — 2026-08-04 (sesión 54) · El recorrido de primera vez, automatizado: 3 corridas verdes](062-cierre-2026-08-04-sesion-54-recorrido-primera-vez-automatizado.md)
