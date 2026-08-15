@@ -156,6 +156,19 @@ async def seal_from_approved_report(tenant_id: str, report: dict,
     if not candidatas:
         return 0
     try:
+        # Ventana quemar↔aprobar: el informe pudo verificarse ANTES de que el abogado
+        # quemara la cita. Se re-coteja el banco en el momento de sellar (lectura
+        # directa, sin caché) — si la consulta falla, no se sella nada (fail-closed).
+        from ..agents import verification as _verification
+        from . import burned_citations as _burned
+        vivas = await _burned.list_burned(tenant_id, use_cache=False)
+        burned_norm = frozenset(
+            str(b.get("citation_norm") or "") for b in vivas or [] if isinstance(b, dict))
+        burned_norm = frozenset(x for x in burned_norm if x)
+        candidatas = [c for c in candidatas
+                      if not _verification._is_burned(c[0], burned_norm)]
+        if not candidatas:
+            return 0
         async with pool.tenant_connection(tenant_id) as conn:
             for cita, norm, ftipo, fref, ftitulo, passage in candidatas:
                 await conn.execute(

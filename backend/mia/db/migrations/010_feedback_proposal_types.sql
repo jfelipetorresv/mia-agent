@@ -7,7 +7,5 @@ ALTER TABLE feedback_proposals ADD CONSTRAINT feedback_proposals_proposal_type_c
     'new_playbook',
     'flag_gap',
     'wiki_correction',
-    'weekly_report',
-    'soul_rule',
-    'harvest_lessons'
+    'weekly_report'
   ));

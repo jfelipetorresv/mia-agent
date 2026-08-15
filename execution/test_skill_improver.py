@@ -158,20 +158,15 @@ async def run_gate(t: dict) -> None:
             nb = (await (await conn.execute("SELECT count(*) FROM feedback_proposals")).fetchone())[0]
         check("RLS: B no ve las propuestas de A", nb == 0)
 
-        # ===================== 7 · C.4: drain_bg_tasks espera las tareas en vuelo ==========
+        # ===================== 7 · C.4: contrato del lifespan tras la cola durable =========
+        # `_BG_TASKS` ya no existe: el aprendizaje vive en la cola durable (056) y
+        # `drain_bg_tasks` quedó como stub de compatibilidad del lifespan. El check
+        # vigila el contrato vigente: el stub sigue siendo awaitable (el lifespan lo
+        # espera) y el mecanismo viejo no reaparece a medias.
         from mia.agents import graph
-        ran = {"done": False}
-
-        async def _slow():
-            await asyncio.sleep(0.05)
-            ran["done"] = True
-
-        task = asyncio.create_task(_slow())
-        graph._BG_TASKS.add(task)
-        task.add_done_callback(graph._BG_TASKS.discard)
         await graph.drain_bg_tasks()
-        check("C.4: drain_bg_tasks espera las tareas fire-and-forget (no se pierden en shutdown)",
-              ran["done"] is True and len(graph._BG_TASKS) == 0)
+        check("C.4: drain_bg_tasks es awaitable (compat lifespan) y _BG_TASKS no existe",
+              not hasattr(graph, "_BG_TASKS"))
     finally:
         await pool.close_pool()
 

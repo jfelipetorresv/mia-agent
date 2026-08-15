@@ -315,8 +315,11 @@ async def put_model_policy(request: Request):
     if policy == "codex" and not codex_subscription_llm.is_available():
         raise HTTPException(
             status_code=409,
+            # Honestidad: aquí solo se comprueba instalación local + binario presente;
+            # la sesión de Codex se valida en la primera solicitud, no ahora.
             detail=("Codex por membresía solo está disponible en la instalación local del "
-                    "titular, con Codex iniciado en este equipo."),
+                    "titular y con Codex instalado en este equipo. La sesión se comprueba "
+                    "en la primera solicitud."),
         )
     allow_or_raw = (body or {}).get("allow_openrouter") if isinstance(body, dict) else None
     merge: dict[str, Any] = {"model_policy": policy}

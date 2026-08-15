@@ -50,3 +50,8 @@ def test_report_is_deterministic_and_never_deletes(tmp_path: Path) -> None:
     assert first == second
     assert first["policy"]["automatic_deletion"] is False
     assert reachability.markdown(first) == reachability.markdown(second)
+
+
+if __name__ == "__main__":  # verify.ps1 corre las suites como scripts: sin esto, "verde" sin correr nada
+    import pytest
+    raise SystemExit(pytest.main([__file__, "-q"]))

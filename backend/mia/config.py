@@ -32,6 +32,11 @@ elif getattr(sys, "frozen", False):
     PROJECT_ROOT = (Path(os.getenv("LOCALAPPDATA") or Path.home()) / "Mia").resolve()
 else:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# La marca de escritorio de Codex se captura del PROCESO antes de leer el .env:
+# Tauri la inyecta al lanzar y no debe poder suplantarse con dos líneas persistidas
+# en un .env de servidor (la marca dejaría de ser efímera).
+_PROCESS_CODEX_MODE = os.environ.get("MIA_CODEX_MEMBERSHIP_MODE", "")
+_PROCESS_DESKTOP_RUNTIME = os.environ.get("MIA_DESKTOP_RUNTIME", "")
 load_dotenv(PROJECT_ROOT / ".env")
 
 
@@ -143,8 +148,10 @@ def codex_membership_allowed(mode: str, desktop_runtime: str, api_host: str,
 # un proveedor de servidor. Tauri inyecta la marca de runtime en cada lanzamiento.
 # Requerir la marca, loopback y CORS local apaga una configuración remota ordinaria;
 # frente a un administrador del mismo host no es una frontera criptográfica.
-MIA_CODEX_MEMBERSHIP_MODE = os.getenv("MIA_CODEX_MEMBERSHIP_MODE", "disabled").strip().lower()
-MIA_DESKTOP_RUNTIME = os.getenv("MIA_DESKTOP_RUNTIME", "").strip()
+# Solo cuenta la marca inyectada al PROCESO (capturada antes de load_dotenv):
+# un .env no puede encender la membresía.
+MIA_CODEX_MEMBERSHIP_MODE = (_PROCESS_CODEX_MODE or "disabled").strip().lower()
+MIA_DESKTOP_RUNTIME = _PROCESS_DESKTOP_RUNTIME.strip()
 CODEX_MEMBERSHIP_LOCAL_ALLOWED = (
     bool(_app_dir or getattr(sys, "frozen", False))
     and codex_membership_allowed(

@@ -680,6 +680,14 @@ def _project_material_sources(state: MatterState, patterns: list) -> list[dict]:
                 titulo = untrusted.document_origin(item)
             else:
                 titulo = str(item.get("source_path") or item.get("source") or "").strip()
+                # Bucle de realimentación (auditoría 2026-08-14): las notas que la
+                # PROPIA Mia escribe en el vault ({vault}/Mia/ — conceptos, reportes)
+                # vuelven por el sync como "nota del despacho". Sirven como memoria en
+                # el prompt, pero NUNCA como respaldo de una cita: una cita generada en
+                # el turno T no puede respaldarse a sí misma (y sellarse) en T+n.
+                rel = titulo.replace("\\", "/").lower()
+                if rel == "mia" or rel.startswith("mia/") or "/mia/" in rel:
+                    continue
             for c in verification.scan_citations(content, patterns):
                 ref = str(c.get("citation") or "").strip()
                 if not ref:
@@ -2051,7 +2059,9 @@ class MatterGraphBuilder:
             primera = (veredicto or "").strip().splitlines()[0].strip().upper() if veredicto else ""
             if isinstance(report, dict):
                 report["gate_llm"] = {
-                    "veredicto": "apto" if primera.startswith("APTO") else "hallazgos",
+                    # Solo el APTO limpio aprueba: "APTO CON REPAROS" u otra coletilla es
+                    # un hallazgo (fail-closed; auditoría 2026-08-14).
+                    "veredicto": "apto" if primera.rstrip(".:") == "APTO" else "hallazgos",
                     "detalle": (veredicto or "Sin veredicto del revisor independiente.").strip()[:2000],
                 }
                 md["verification"] = report
@@ -2304,7 +2314,7 @@ class MatterGraphBuilder:
                 _accum_usage(md, usage)
                 first = (verdict or "").strip().splitlines()[0].strip().upper()
                 md["verification"]["gate_llm"] = {
-                    "veredicto": "apto" if first.startswith("APTO") else "hallazgos",
+                    "veredicto": "apto" if first.rstrip(".:") == "APTO" else "hallazgos",
                     "detalle": (verdict or "Sin veredicto del revisor independiente.").strip()[:2000],
                 }
             except Exception:  # noqa: BLE001 -- deja revisar, bloquea final
@@ -2453,9 +2463,13 @@ class MatterGraphBuilder:
                 job_types.extend(["wiki_approved_artifact", "skill_improvement"])
             for job_type in job_types:
                 try:
+                    # El dedupe lleva el ASUNTO: dos asuntos con el mismo texto final
+                    # (plantillas, el caso normal) aprenden cada uno; sin el matter_id,
+                    # el segundo se perdía en silencio y lo aprendido quedaba atado a la
+                    # jurisdicción del primero (auditoría 2026-08-14).
                     job_id, created, job_status = await enqueue_learning_job(
                         state["tenant_id"], job_type, base_payload,
-                        dedupe_key=f"{job_type}:{final_hash}")
+                        dedupe_key=f"{job_type}:{state['matter_id']}:{final_hash}")
                     learning_jobs.append({"id": job_id, "type": job_type,
                                           "status": job_status, "created": created})
                 except Exception:  # noqa: BLE001 -- la decisión ya quedó guardada

@@ -57,6 +57,38 @@ def main() -> int:
     check("0e · bootstrap no persiste las marcas efímeras de membresía",
           '"MIA_CODEX_MEMBERSHIP_MODE=local_individual"' not in bootstrap
           and '"MIA_DESKTOP_RUNTIME=tauri-local-v1"' not in bootstrap)
+    # 0f · funcional, en proceso limpio: un .env que persista las marcas NO enciende
+    # la membresía — la marca vale solo inyectada al proceso (Tauri). Mutación real:
+    # con la lectura post-dotenv de antes, este check se pone rojo.
+    import os as _os
+    import tempfile as _tempfile
+    with _tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / ".env").write_text(
+            "MIA_CODEX_MEMBERSHIP_MODE=local_individual\n"
+            "MIA_DESKTOP_RUNTIME=tauri-local-v1\n"
+            "MIA_API_HOST=127.0.0.1\n"
+            "MIA_CORS_ORIGINS=http://localhost:3100\n", encoding="utf-8")
+        env = {k: v for k, v in _os.environ.items()
+               if k not in ("MIA_CODEX_MEMBERSHIP_MODE", "MIA_DESKTOP_RUNTIME")}
+        env["MIA_APP_DIR"] = tmp
+        env["PYTHONPATH"] = str(ROOT / "backend")
+        probe = real_subprocess.run(
+            [sys.executable, "-c",
+             "from mia import config; import sys;"
+             "sys.exit(0 if not config.CODEX_MEMBERSHIP_LOCAL_ALLOWED else 1)"],
+            env=env, capture_output=True, text=True, timeout=60)
+        check("0f · un .env con las marcas persistidas no enciende la membresía",
+              probe.returncode == 0)
+        env_tauri = dict(env)
+        env_tauri["MIA_CODEX_MEMBERSHIP_MODE"] = "local_individual"
+        env_tauri["MIA_DESKTOP_RUNTIME"] = "tauri-local-v1"
+        probe2 = real_subprocess.run(
+            [sys.executable, "-c",
+             "from mia import config; import sys;"
+             "sys.exit(0 if config.CODEX_MEMBERSHIP_LOCAL_ALLOWED else 1)"],
+            env=env_tauri, capture_output=True, text=True, timeout=60)
+        check("0g · la misma marca inyectada al proceso sí la enciende (mutación)",
+              probe2.returncode == 0)
     captured: dict[str, object] = {}
     old_resolve, old_run = codex._resolve_exe, codex.subprocess.run
     old_local_mode = config.CODEX_MEMBERSHIP_LOCAL_ALLOWED

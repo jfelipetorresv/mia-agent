@@ -250,9 +250,12 @@ async def run_gate() -> None:
         finally:
             llm.reset_openrouter_allowed(or_tok)
             llm.reset_model_policy(tok)
+        # 2026-08-14: la cadena main de 'suscripcion' ya no termina en mia-local (las
+        # membresías fallan claro en vez de degradar a local). Lo protegido: el overflow
+        # va DESPUÉS de la suscripción y solo con opt-in.
         check("s3-20b · 'suscripcion' usa openrouter como overflow con clave + opt-in",
               llm.OPENROUTER_ALIAS in c_sus
-              and c_sus.index(llm.OPENROUTER_ALIAS) < c_sus.index("mia-local"))
+              and c_sus.index(llm.OPENROUTER_ALIAS) > c_sus.index("cli-claude"))
 
         # Y el consentimiento manda también aquí: sin opt-in del despacho, la suscripción
         # NO enruta a un tercero por el mero hecho de que exista una clave.

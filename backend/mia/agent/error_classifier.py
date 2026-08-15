@@ -122,7 +122,13 @@ def classify_llm_error(exc: BaseException) -> LLMErrorKind:
         "prompt is too long", "string too long",
         "max_model_len", "maximum model length",                     # Ollama / vLLM
         "input is too long", "input too long", "too long for", "exceeds the context",  # Bedrock/otros
+        "excede el máximo seguro",                                   # Codex CLI (413, mensaje propio)
     )):
+        return LLMErrorKind.CONTEXT_TOO_LONG
+
+    # 1-bis · 413 Payload Too Large (Codex CLI y proxies): mismo remedio que el overflow
+    # de contexto — lo resuelve el compresor, no el retry ni otro proveedor.
+    if _status_code(exc) == 413:
         return LLMErrorKind.CONTEXT_TOO_LONG
 
     # 2 · Por status HTTP (lo más fiable cuando está presente).

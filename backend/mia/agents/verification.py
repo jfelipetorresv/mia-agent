@@ -1010,13 +1010,18 @@ def _sealed_index(sealed: Optional[list]) -> dict[str, dict]:
 
 
 def _sealed_entry(citation: str, sealed_norm: dict[str, dict]) -> Optional[dict]:
-    """¿Esta cita está sellada? Mismo cotejo bidireccional que _is_burned — quemar y
-    sellar tienen que ver la MISMA cita, o el orden quemada-gana no significa nada."""
-    n = _normalize(citation or "")
-    if not n:
+    """¿Esta cita está sellada? Cotejo por PIEZAS (_tokens_match), no por substring.
+
+    Un sello OTORGA respaldo (la dirección peligrosa), así que rige la misma regla que
+    el cotejo cita↔fuente: el substring respaldaba «Ley 800 de 1993» con un sello de
+    «Ley 80». El banco de quemadas conserva su cotejo laxo (retirar de más es la
+    dirección segura); como este cotejo es estrictamente más exigente que _is_burned,
+    toda cita que un sello acepte también la ve el banco: quemada-gana se conserva."""
+    ct = _match_tokens(citation or "")
+    if not ct:
         return None
     for k, entry in sealed_norm.items():
-        if n == k or k in n or n in k:
+        if _tokens_match(ct, _match_tokens(k)):
             return entry
     return None
 

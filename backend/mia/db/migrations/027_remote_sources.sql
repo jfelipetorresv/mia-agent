@@ -73,9 +73,7 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'upl
 
 ALTER TABLE documents DROP CONSTRAINT IF EXISTS ck_documents_origin;
 ALTER TABLE documents
-  -- `mia` lo añadió la migración 028. Conservarlo hace esta migración realmente
-  -- idempotente cuando un gate antiguo la reaplica sobre un esquema más nuevo.
-  ADD CONSTRAINT ck_documents_origin CHECK (origin IN ('upload', 'folder', 'mail', 'drive', 'mia'));
+  ADD CONSTRAINT ck_documents_origin CHECK (origin IN ('upload', 'folder', 'mail', 'drive'));
 
 
 -- ── remote_drive_sources: allowlist de fuentes remotas de OneDrive ───────────────

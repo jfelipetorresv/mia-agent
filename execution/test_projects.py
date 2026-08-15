@@ -391,6 +391,23 @@ def run_guard_checks() -> None:
     check("respaldo: una referencia que termina en número suelto NO respalda a nadie",
           "Resolución 123" not in refs)
 
+    # Bucle de realimentación (auditoría 2026-08-14): las notas que la PROPIA Mia
+    # escribió en el vault ({vault}/Mia/) vuelven por el sync como "nota del despacho".
+    # Jamás pueden respaldar una cita: una cita generada en el turno T se respaldaría
+    # (y sellaría) a sí misma en T+n. Mutación: la misma nota bajo carpeta del abogado sí cuenta.
+    nota_mia = [{"content": "Concepto consolidado: aplica la Ley 599 de 2000.",
+                 "source_path": "Mia/conceptos/penal.md"}]
+    fuentes_mia = _project_material_sources({"documents": [], "knowledge": nota_mia},
+                                            verification.compile_patterns(None))
+    check("respaldo: una nota escrita por Mia (Mia/) NO cuenta como fuente",
+          not fuentes_mia)
+    nota_abogado = [{"content": "Concepto consolidado: aplica la Ley 599 de 2000.",
+                     "source_path": "criterios/penal.md"}]
+    fuentes_abogado = _project_material_sources({"documents": [], "knowledge": nota_abogado},
+                                                verification.compile_patterns(None))
+    check("respaldo: la misma nota en carpeta del abogado SÍ cuenta (mutación)",
+          any(f["referencia"] == "Ley 599 de 2000" for f in fuentes_abogado))
+
     texto = ("Aplica la Ley 1437 de 2011 y también la Ley 99 de 1993, además del "
              "artículo 90 de la Constitución Política.")
     anotado, informe = verification.annotate_draft(texto, sources=fuentes)

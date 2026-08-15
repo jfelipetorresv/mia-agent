@@ -119,5 +119,6 @@ jobs:
           python execution/test_matter_jurisdictions.py
           python execution/test_p0_legal_ledger.py
           python execution/test_durable_learning.py
+          python execution/test_citation_seals.py
           python execution/test_document_derivation.py
           python execution/test_cors_contract.py

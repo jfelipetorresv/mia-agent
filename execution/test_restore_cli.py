@@ -93,3 +93,7 @@ def test_restore_failure_is_fail_closed_and_temp_is_removed(tmp_path: Path, monk
             confirmed_database="mia",
         )
     assert not dump.exists()
+
+
+if __name__ == "__main__":  # verify.ps1 corre las suites como scripts: sin esto, "verde" sin correr nada
+    raise SystemExit(pytest.main([__file__, "-q"]))

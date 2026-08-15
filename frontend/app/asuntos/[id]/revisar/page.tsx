@@ -3,7 +3,7 @@
 import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Download, Globe2, Pencil, X } from "lucide-react";
-import { apiDownload, apiGet, streamPost } from "@/lib/api";
+import { apiDownload, apiGet, plainMessage, streamPost } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -271,9 +271,12 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
       celebrationTimer.current = setTimeout(() => {
         router.push(`/asuntos/${matterId}?confirmed=true`);
       }, 900);
-    } catch {
+    } catch (e) {
       setBusy(false);
-      setActionMsg("No se pudo confirmar el borrador. Intenta de nuevo.");
+      // El backend redacta el `detail` del 409 en llano (borrador desactualizado,
+      // revisión independiente pendiente). Tragarlo dejaba al abogado reintentando
+      // algo que reintentar no arregla.
+      setActionMsg(plainMessage(e, "No se pudo confirmar el borrador. Intenta de nuevo."));
     }
   }
 
@@ -284,9 +287,9 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
     try {
       await resumeDraft(`/api/matters/${matterId}/draft/reject`, { reason: rejectReason });
       router.push(`/asuntos/${matterId}?confirmed=true`);
-    } catch {
+    } catch (e) {
       setRejectBusy(false);
-      setRejectError("No se pudo rechazar el borrador. Intenta de nuevo.");
+      setRejectError(plainMessage(e, "No se pudo rechazar el borrador. Intenta de nuevo."));
     }
   }
 

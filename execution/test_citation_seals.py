@@ -55,11 +55,15 @@ def parte_pura() -> None:
     from mia.agents import verification as v
 
     print("1 · puro: sellada se resuelve; no sellada sigue anotada (mutación)")
-    sellos = [{"citation": CITA, "citation_norm": v._normalize(CITA),
+    # El sello se guarda con la forma que capturó el ESCÁNER (seal_from_approved_report
+    # toma e["cita"] del informe), no con el texto completo del borrador. Desde el fix
+    # del cotejo por piezas (P0 2026-08-14), un sello con complementos de más
+    # («…, artículo 32») ya NO respalda la forma corta — dirección segura: el fixture
+    # sella lo que producción sella.
+    CITA_SELLADA = "Ley 599 de 2000"
+    sellos = [{"citation": CITA_SELLADA, "citation_norm": v._normalize(CITA_SELLADA),
                "fuente_tipo": "corpus", "fuente_ref": "N-TEST-001", "fuente_titulo": "Ficha"}]
     texto, report = v.annotate_draft(BORRADOR, sealed=sellos)
-    # El escáner puede capturar la cita sin sus complementos («Ley 599 de 2000» a secas):
-    # se coteja por contención, igual que el muro.
     estados = {e["cita"]: e["estado"] for e in report["detalle"]}
 
     def estado_de(cita: str) -> str:
@@ -76,6 +80,24 @@ def parte_pura() -> None:
     check("la fuente del sello viaja al detalle",
           any(e.get("fuente", {}).get("referencia") == "N-TEST-001"
               for e in report["detalle"] if e["estado"] == "sellada"))
+
+    print("1-bis · el sello coteja por PIEZAS, no por substring (P0 2026-08-14)")
+    # Con el cotejo substring, un sello de «Ley 80» respaldaba «Ley 800 de 1993»:
+    # una cita inventada salía como sellada-verificada. La regla es la misma del
+    # cotejo cita↔fuente: piezas completas, contiguas, con conectores tolerados.
+    sello_corto = {"ley 80": {"citation": "Ley 80", "fuente_ref": "N-TEST-080"}}
+    check("«Ley 800 de 1993» NO coteja un sello de «Ley 80»",
+          v._sealed_entry("Ley 800 de 1993", sello_corto) is None)
+    check("«Ley 80 de 1993» SÍ coteja el sello de «Ley 80» (legítimo conservado)",
+          v._sealed_entry("Ley 80 de 1993", sello_corto) is not None)
+    check("«artículo 3 de la Ley 80» SÍ coteja (cita con complementos)",
+          v._sealed_entry("artículo 3 de la Ley 80", sello_corto) is not None)
+    check("«Decreto Ley 80» NO coteja (cambia el tipo de norma)",
+          v._sealed_entry("Decreto Ley 80", sello_corto) is None)
+    # Quemada-gana sigue teniendo sentido: el banco laxo ve todo lo que el sello ve.
+    check("toda cita que el sello acepta también la ve el banco de quemadas",
+          all(v._is_burned(c, frozenset({"ley 80"}))
+              for c in ("Ley 80 de 1993", "artículo 3 de la Ley 80")))
 
     print("2 · quemada GANA al sello")
     quemadas = [{"citation": CITA, "citation_norm": v._normalize(CITA), "reason": "falsa"}]
@@ -115,18 +137,35 @@ async def parte_db() -> None:
     await pool.open_pool()
     try:
         print("3 · DB: sellar desde un informe aprobado (RLS real)")
+        # Contrato hash-bound (053): sin source_passage_hash + artifact_hash de 64 hex
+        # y jurisdicciones, NO nace sello (fail-closed) — se prueba primero la negativa.
+        passage_hash = "a" * 64
+        artifact_hash = "b" * 64
         report = {"detalle": [
             {"cita": CITA, "estado": "respaldada",
-             "fuente": {"tipo": "corpus", "referencia": "N-TEST-001", "titulo": "Ficha"}},
+             "fuente": {"tipo": "corpus", "referencia": "N-TEST-001", "titulo": "Ficha",
+                        "source_passage_hash": passage_hash}},
             {"cita": OTRA, "estado": "anotada"},
         ]}
-        n = await citation_seals.seal_from_approved_report(t1, report, trace_id="tr-1")
+        sin_huella = {"detalle": [
+            {"cita": CITA, "estado": "respaldada",
+             "fuente": {"tipo": "corpus", "referencia": "N-TEST-001", "titulo": "Ficha"}},
+        ]}
+        n0 = await citation_seals.seal_from_approved_report(
+            t1, sin_huella, trace_id="tr-0", artifact_hash=artifact_hash,
+            jurisdictions=["generic"])
+        check("sin huella de pasaje NO nace sello (fail-closed 053)", n0 == 0, str(n0))
+        n = await citation_seals.seal_from_approved_report(
+            t1, report, trace_id="tr-1", artifact_hash=artifact_hash,
+            jurisdictions=["generic"])
         check("sella exactamente las respaldadas", n == 1, str(n))
         citation_seals.invalidate(t1)
         sellos = await citation_seals.list_seals(t1)
         check("el sello quedó en la DB con su fuente",
               len(sellos) == 1 and sellos[0]["fuente_ref"] == "N-TEST-001", str(sellos))
-        n2 = await citation_seals.seal_from_approved_report(t1, report, trace_id="tr-2")
+        n2 = await citation_seals.seal_from_approved_report(
+            t1, report, trace_id="tr-2", artifact_hash=artifact_hash,
+            jurisdictions=["generic"])
         citation_seals.invalidate(t1)
         check("re-sellar es idempotente (sigue habiendo 1)",
               len(await citation_seals.list_seals(t1)) == 1, str(n2))

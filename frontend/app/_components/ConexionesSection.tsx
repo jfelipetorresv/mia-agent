@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { BookOpen, Layers, Mail, Mic, NotebookPen, Settings2 } from "lucide-react";
-import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { ApiError, apiGet, apiSend, plainMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -131,8 +131,10 @@ export default function ConexionesSection({
       const res = await apiSend<MotorPolicy>("PUT", "/settings/model-policy", { politica: id });
       setPolicy(res);
       setPolicyMsg(`Listo: Mia trabajará con "${res.nombre}".`);
-    } catch {
-      setPolicyMsg("No se pudo cambiar el motor. Intenta de nuevo.");
+    } catch (e) {
+      // El 409 del backend explica en llano POR QUÉ no se puede (p. ej. Codex sin
+      // iniciar en este equipo); tragarlo invitaba a reintentar sin arreglo posible.
+      setPolicyMsg(plainMessage(e, "No se pudo cambiar el motor. Intenta de nuevo."));
     }
   }
 

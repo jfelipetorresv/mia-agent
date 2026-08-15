@@ -65,7 +65,7 @@ def _correr_un_alias(alias: str, next_alias: str | None, max_retries: int = 3):
     (intentos, saltó)."""
     cliente = _ClienteQueExpira()
     original = llm._invoke_metered
-    llm._invoke_metered = lambda client, al, kwargs, task: cliente()  # type: ignore[assignment]
+    llm._invoke_metered = lambda client, al, kwargs, task, *a, **kw: cliente()  # type: ignore[assignment]
     salto = False
     try:
         llm._call_with_retries(  # type: ignore[attr-defined]
@@ -110,7 +110,11 @@ def _correr_turno_sse(fallar: bool, registrar: bool) -> list[dict]:
 def _gate_circuit_breaker() -> None:
     """Ejerce call_llm COMPLETO (cadena real de la política 'suscripcion') con un doble que
     hace expirar la suscripción y responder la nube. Verifica que dentro del MISMO turno la
-    suscripción solo paga el timeout una vez, y que el turno siguiente vuelve a intentarla."""
+    suscripción solo paga el timeout una vez, y que el turno siguiente vuelve a intentarla.
+
+    2026-08-14: las políticas de membresía dejaron main/legal en cadenas de UN proveedor
+    (fallan claro, sin salto). La cadena real con respaldo que queda en 'suscripcion' es la
+    de curator (cli-claude → claude-sonnet → mia-local): el gate ejerce esa."""
 
     class _Resp:
         choices: list = []
@@ -118,7 +122,7 @@ def _gate_circuit_breaker() -> None:
 
     invocaciones: list[str] = []
 
-    def _doble(client, alias, kwargs, task):
+    def _doble(client, alias, kwargs, task, *a, **kw):
         invocaciones.append(alias)
         if alias.startswith("cli-"):
             raise TimeoutError("El CLI 'claude' no respondió en 300s (timeout).")
@@ -131,11 +135,11 @@ def _gate_circuit_breaker() -> None:
     try:
         with llm.recolectar_cambios_de_motor() as cambios:
             # Nodo 1 del grafo: la suscripción expira y se salta a la nube.
-            llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+            llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
             tras_nodo_1 = list(invocaciones)
             # Nodos 2 y 3 del mismo turno: la suscripción NO debe volver a intentarse.
-            llm.call_llm([{"role": "user", "content": "hola"}], task="main")
-            llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+            llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
+            llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
         check("el primer nodo intentó la suscripción y saltó a la nube",
               tras_nodo_1 == ["cli-claude", "claude-sonnet"], str(tras_nodo_1))
         cli_total = invocaciones.count("cli-claude")
@@ -147,14 +151,14 @@ def _gate_circuit_breaker() -> None:
         # Turno NUEVO: el breaker murió con el anterior y la suscripción va primero otra vez.
         invocaciones.clear()
         with llm.recolectar_cambios_de_motor():
-            llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+            llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
         check("el turno siguiente vuelve a intentar la suscripción primero",
               invocaciones and invocaciones[0] == "cli-claude", str(invocaciones))
 
         # Sin contexto de turno (scripts/tests que llaman directo): comportamiento intacto.
         invocaciones.clear()
-        llm.call_llm([{"role": "user", "content": "hola"}], task="main")
-        llm.call_llm([{"role": "user", "content": "hola"}], task="main")
+        llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
+        llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
         check("sin turno activo no hay breaker (cada llamada intenta la suscripción)",
               invocaciones.count("cli-claude") == 2, str(invocaciones))
     finally:
@@ -248,8 +252,11 @@ def main() -> int:  # noqa: C901
         print("\n3 · sin próximo motor no se salta a la nada")
         with llm.recolectar_cambios_de_motor():
             intentos_solo, _ = _correr_un_alias("cli-claude", None, max_retries=1)
-        check("sin motor siguiente, el salto rápido no se dispara",
-              intentos_solo >= 2, f"{intentos_solo} intentos")
+        # Auditoría 2026-08-14: un timeout de cli-* es determinista por volumen; SIN
+        # respaldo tampoco se reintenta dentro del alias (eran hasta 4×300 s por nodo
+        # en las cadenas de un solo alias: quality_adaptive/codex). Falla claro a la 1ª.
+        check("sin motor siguiente tampoco se reintenta: un intento y falla claro",
+              intentos_solo == 1, f"{intentos_solo} intentos")
 
         print("\n3-bis · circuit-breaker: el turno no paga el mismo timeout dos veces")
         # El defecto que esto custodia (sesión 56): el salto rápido evitaba los reintentos

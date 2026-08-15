@@ -3,6 +3,8 @@
 > Entradas archivadas del HANDOFF.md, de la más reciente a la más antigua.
 > En HANDOFF.md viven solo la entrada vigente y la anterior.
 
+- [CIERRE — 2026-08-08 (sesión 56) · Circuit-breaker de la suscripción + approve medido](064-cierre-2026-08-08-sesion-56-circuit-breaker-approve-medido.md)
+- [CIERRE — 2026-08-07 (sesión 55) · Los 4 puntos de la 54 + plan de eficiencia F0-F2](063-cierre-2026-08-07-sesion-55-cuatro-puntos-eficiencia-f0-f2.md)
 - [CIERRE — 2026-08-04 (sesión 54) · El recorrido de primera vez, automatizado: 3 corridas verdes](062-cierre-2026-08-04-sesion-54-recorrido-primera-vez-automatizado.md)
 - [CIERRE — 2026-07-30 (sesión 53) · Los cuatro pendientes de la 52, cerrados](061-cierre-2026-07-30-sesion-53-cuatro-pendientes-cerrados.md)
 - [CIERRE — 2026-07-29 (sesión 52) · Instalador re-ensamblado + caso de oro GRANDE + PRIMER PILOTO CON EXPEDIENTE REAL](060-cierre-2026-07-29-sesion-52-instalador-piloto-real.md)

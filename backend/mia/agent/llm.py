@@ -509,7 +509,10 @@ def aviso_cambio_de_motor(cambios: list[dict] | None) -> dict | None:
         return None
     desde_suscripcion = [c for c in cambios
                          if str(c.get("desde", "")).startswith(_PREFIJO_SUSCRIPCION)
-                         and not str(c.get("hacia", "")).startswith(_PREFIJO_SUSCRIPCION)]
+                         and not str(c.get("hacia", "")).startswith(_PREFIJO_SUSCRIPCION)
+                         # La caída al motor local no cuesta dinero: afirmarle al abogado
+                         # que "lo resolví con crédito de pago" sería un cobro inventado.
+                         and not str(c.get("hacia", "")).startswith("mia-local")]
     if not desde_suscripcion:
         return None
 
@@ -1135,7 +1138,13 @@ def _call_with_retries(
                 raise _FallbackNeeded(kind, exc) from exc
 
             # Reintento dentro del alias mientras queden intentos y sea transitorio.
-            if is_retryable(kind) and attempt < max_retries:
+            # EXCEPCIÓN (auditoría 2026-08-14): un timeout de `cli-*` es determinista
+            # por volumen — reintentar manda el MISMO prompt y vuelve a expirar. Con
+            # respaldo se salta (bloque de arriba); SIN respaldo (cadenas de un alias:
+            # quality_adaptive/codex) tampoco se reintenta: eran hasta 4×300 s por nodo
+            # para fallar igual. Falla claro ya.
+            if (is_retryable(kind) and attempt < max_retries
+                    and not (kind is LLMErrorKind.TIMEOUT and alias.startswith("cli-"))):
                 delay = retry_delay(kind, attempt)
                 logger.warning("call_llm reintento %d/%d [%s] en %.2fs (task=%s alias=%s): %s",
                                attempt + 1, max_retries, kind.value, delay, task, alias, exc)

@@ -591,7 +591,9 @@ export default function ActivarPage() {
             icon={Sparkles}
             title="Calidad jurídica adaptativa"
             badge="Recomendado"
-            description="Para trabajo ordinario usa una ruta rápida y reserva la máxima profundidad para asuntos excepcionales. Si una capacidad no está disponible, Mia te lo avisará antes de cambiar de motor."
+            // Honestidad del aviso: el cambio de motor se informa AL CERRAR el turno (así
+            // está construido el SSE aviso_de_costo); prometer "antes" sería falso.
+            description="Para trabajo ordinario usa una ruta rápida y reserva la máxima profundidad para asuntos excepcionales. Si una capacidad no está disponible, Mia falla claro o te informa cada cambio de motor y su costo al terminar el turno."
             detected={status.motor_detectado.claude}
             detectedLabel="Ya detecté Claude Code en este equipo."
             selected={politica === "quality_adaptive"}
@@ -600,7 +602,12 @@ export default function ActivarPage() {
           <EngineCard
             icon={Sparkles}
             title="Mi suscripción"
-            description="Usa directamente la configuración habitual de tu suscripción. Si una capacidad no está disponible, Mia te lo mostrará y usará el respaldo que hayas autorizado."
+            // La recomendación del plan Max va AQUÍ, en la instalación, y no solo cuando ya
+            // pasó (decisión de Pipe, sesión 52). Medido con un expediente real de 174
+            // páginas: una suscripción normal no alcanzó a responderlo y el trabajo se
+            // resolvió con crédito de pago. Mejor que el abogado lo sepa al elegir el motor
+            // que enterarse por un cargo. En llano y sin cifras que no podemos sostener.
+            description="Usa directamente la configuración habitual de tu suscripción. Con un plan Max, un expediente extenso cabe en lo que ya pagas, sin costo extra; en planes inferiores no cabe y genera cobros de crédito adicionales. Si una capacidad no está disponible, Mia te lo mostrará y usará el respaldo que hayas autorizado."
             detected={status.motor_detectado.claude}
             detectedLabel="Ya la detecté lista en este equipo."
             selected={politica === "suscripcion"}

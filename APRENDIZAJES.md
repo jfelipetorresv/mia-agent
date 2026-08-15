@@ -491,3 +491,46 @@ certificable. Antes de reanudar, fijar pregunta de negocio, carriles, tiempo, to
 
 **Aplica en:** benchmarks de proveedores, evals con suscripción o API y cualquier prueba que
 consuma cuota o dinero.
+
+# 2026-08-14 (auditoría adversarial): El sello otorga respaldo, así que coteja como el muro de fuentes
+
+**Error:** `_sealed_entry` cotejaba por substring bidireccional ("mismo cotejo que
+_is_burned"). Un sello de «Ley 80» resolvía como sellada la cita inventada «Ley 800 de
+1993», sin [VERIFICAR], con la fuente de otra norma, y podía saltar el gate LLM entero.
+
+**Fix:** el cotejo de sellos usa `_tokens_match` (piezas completas, contiguas, conectores
+tolerados) — la misma regla que ya cerraba esta clase para cita↔fuente. El banco de
+quemadas conserva su cotejo laxo porque retirar de más es la dirección segura; como el
+sello es estrictamente más exigente, «quemada gana» se conserva.
+
+**Aplica en:** todo cotejo nuevo se clasifica primero por DIRECCIÓN (¿otorga o retira
+confianza?) y hereda el cotejo de su dirección; nunca se copia un cotejo por analogía de
+mecánica. Barrera: bloque 1-bis de `execution/test_citation_seals.py`.
+
+# 2026-08-14 (auditoría adversarial): Una migración aplicada es inmutable — y ahora hay manifiesto
+
+**Error:** un commit amplió vocabularios EDITANDO las migraciones históricas 010/027/040/049
+ya registradas en el ledger de checksums. `db_bootstrap` es fail-closed
+(`MigrationChecksumError`): toda instalación existente habría quedado sin arrancar al
+actualizar. Peor: `test_migration_contracts` EXIGÍA esas ediciones (verificaba el
+vocabulario en los archivos históricos), institucionalizando el defecto.
+
+**Fix:** los 4 SQL volvieron a su contenido registrado; el estado final vive en la
+migración nueva 058. El gate ahora verifica el vocabulario en la ÚLTIMA migración dueña de
+cada CHECK, y `config/migration_shas.json` congela el sha de cada migración: editar una
+registrada es rojo; una nueva se sella a propósito con `--sellar`.
+
+**Aplica en:** cualquier repo con ledger de migraciones fail-closed. Barrera:
+`execution/test_migration_contracts.py` (checks de inmutabilidad).
+
+# 2026-08-14 (auditoría adversarial): Un test estilo pytest en un runner de scripts es verde sin correr nada
+
+**Error:** `test_restore_cli.py` y `test_production_reachability.py` eran los únicos tests
+pytest del repo; `verify.ps1` los ejecuta como `python -u archivo` → importan y salen 0 sin
+correr una sola aserción. El gate del restore jamás había corrido.
+
+**Fix:** ambos llevan `if __name__ == "__main__": pytest.main([__file__])` y pytest quedó
+declarado en `backend[full]`.
+
+**Aplica en:** todo test nuevo del repo es script directo o trae su runner; un archivo sin
+`__main__` en `execution/` es sospechoso por defecto.

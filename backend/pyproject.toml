@@ -48,6 +48,8 @@ full = [
   "rapidocr-onnxruntime~=1.4",
   "sherpa-onnx~=1.13",
   "av~=13.1",
+  # test_restore_cli / test_production_reachability se autoejecutan con pytest
+  "pytest~=9.1",
 ]
 
 # Proyecto "virtual": no se empaqueta; las deps se instalan en mia/.venv con uv.
