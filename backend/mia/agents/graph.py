@@ -1945,9 +1945,12 @@ class MatterGraphBuilder:
                 text, sources=sources, extra_patterns=extra,
                 num_documents=num_documents, documents=docs,
                 omit_unbacked=generic,
-                # Input fidedigno: una cita que el abogado escribió en su mensaje jamás
-                # se omite (revisión adversarial de e0c1634 — regla del producto).
-                lawyer_text=_last_user_message(state) if generic else None,
+                # El mensaje original del abogado sigue íntegro en `state["messages"]` y
+                # en la traza. No se lo usa, sin embargo, como respaldo de una cita en el
+                # TEXTO EMITIDO: bajo jurisdicción desconocida una referencia concreta
+                # reproducida por el modelo debe quedar fuera hasta que exista respaldo
+                # verificable. De lo contrario el input convertía una cita en salida
+                # jurídica y abría una fuga de jurisdicción.
                 # F2 · informe POR ORACIÓN (aditivo, read-only): viaja bajo la MISMA clave
                 # (`verification`/`verification_diagnosis`) y en AMBOS modos (omisión y clásico).
                 sentence_report=True,

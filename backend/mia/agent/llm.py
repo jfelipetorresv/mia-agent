@@ -118,7 +118,7 @@ LEGAL_TASKS = (
 # (su cuenta/clave de OpenRouter, cargada de crédito). A diferencia de "nube" (API
 # directa de Anthropic de la instalación), en "openrouter" TODO el razonamiento sale
 # por la clave del despacho vía el alias openrouter-* del gateway, con red local final.
-VALID_POLICIES = ("quality_adaptive", "suscripcion", "nube", "soberano", "openrouter")
+VALID_POLICIES = ("quality_adaptive", "suscripcion", "codex", "nube", "soberano", "openrouter")
 
 # Tareas auxiliares (baratas): comparten cadena dentro de cada política.
 # CP-HUB2 · `delegation_triage` (¿le sirve al abogado un ayudante externo en este turno?)
@@ -162,6 +162,7 @@ _OPENROUTER_ALIASES = frozenset({OPENROUTER_ALIAS, OPENROUTER_HAIKU_ALIAS})
 CLI_OPUS_ALIAS = "cli-claude-opus"
 CLI_SONNET_ALIAS = "cli-claude-sonnet"
 CLI_HAIKU_ALIAS = "cli-claude-haiku"
+CLI_CODEX_ALIAS = "cli-codex"
 QUALITY_ESCALATION_STANDARD = "standard"
 QUALITY_ESCALATION_EXCEPTIONAL = "exceptional"
 VALID_QUALITY_ESCALATIONS = frozenset({
@@ -176,29 +177,39 @@ _EXCEPTIONAL_LEGAL_CONTEXT_CHARS = 40_000
 # compat con tests que lo leen/mutan): un task inyectado ahí (no estándar) sigue resolviendo.
 # `compression` sigue en _LOCKED_TASKS en las 3 políticas (un model explícito no la cambia).
 _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
-    # Calidad adaptativa (recomendación de producto): Claude Code es el productor
-    # preferido para análisis jurídico complejo, pero su disponibilidad se comprueba en
-    # cada llamada y toda cadena conserva respaldos explícitos. No afirma que Claude sea
-    # "mejor para derecho"; la recomendación se recalibra con el benchmark de Mia.
+    # Calidad adaptativa: el trabajo jurídico ORDINARIO empieza en Sonnet/alto. Opus/xhigh
+    # se inserta solo en la escalada excepcional de resolve_fallback_chain; no se intenta
+    # primero por inercia, porque el benchmark mostró que eso añade timeouts sin calidad
+    # demostrada. Los asuntos jurídicos no saltan a API/local sin consentimiento explícito.
     "quality_adaptive": {
-        "main": [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"],
-        **{t: [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS, "claude-sonnet"]
+        # `main` puede transportar trabajo jurídico aunque el clasificador no haya
+        # asignado aún una subtarea. Por ello conserva el mismo consentimiento
+        # estricto que LEGAL_TASKS: una caída de la suscripción se informa, no se
+        # transforma en una salida de API/local sin que el titular lo elija.
+        "main": [CLI_SONNET_ALIAS],
+        **{t: [CLI_SONNET_ALIAS]
            for t in LEGAL_TASKS},
         "curator": [CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"],
         "compression": [CLI_HAIKU_ALIAS, "claude-haiku"],
         **{t: [CLI_HAIKU_ALIAS, "mia-local"] for t in _AUX_TASKS},
     },
-    # Suscripción de Claude Code del abogado (sin billing por API): CLI primero,
-    # nube y local como red de seguridad. Auxiliares → hint haiku por el CLI.
+    # Suscripción de Claude Code: en funciones jurídicas no hay red pagada/local.
+    # La elección de esta política es consentimiento para Claude Code, no para que Mia
+    # cambie proveedor con datos del asunto. Auxiliares mantienen rutas económicas.
     "suscripcion": {
-        "main": ["cli-claude", "claude-sonnet", "mia-local"],
-        **{t: ["cli-claude", "claude-sonnet"] for t in LEGAL_TASKS},
+        "main": ["cli-claude"],
+        **{t: ["cli-claude"] for t in LEGAL_TASKS},
         "curator": ["cli-claude", "claude-sonnet", "mia-local"],
         # Sigue BLOQUEADA (model explícito no la cambia), pero con red: si el CLI
         # falla, cae a la API haiku barata (ajuste de la revisión CP2, decisión #27).
         "compression": ["cli-claude-haiku", "claude-haiku"],
         **{t: ["cli-claude-haiku", "mia-local"] for t in _AUX_TASKS},
     },
+    # Codex es un proveedor productivo alternativo, no un alias de evaluación ni un
+    # fallback de Claude. Cadena de un alias: ausencia, auth o timeout se comunican y
+    # preservan que el abogado eligió exactamente este motor para datos del asunto.
+    "codex": {t: [CLI_CODEX_ALIAS] for t in (
+        "main", *LEGAL_TASKS, "curator", "compression", *_AUX_TASKS)},
     # Nube (API Anthropic vía proxy). Restaura la decisión #7: compression=claude-haiku
     # (la clave de Anthropic volvió a funcionar, verificado 2026-07-01).
     "nube": {
@@ -312,6 +323,8 @@ def _cli_effort(alias: str, task: str | None, escalation: str | None = None) -> 
         return "low"
     if alias == CLI_SONNET_ALIAS:
         return "high"
+    if alias == CLI_CODEX_ALIAS:
+        return "xhigh" if escalation == QUALITY_ESCALATION_EXCEPTIONAL else "high"
     if alias in (CLI_OPUS_ALIAS, "cli-claude"):
         if (escalation == QUALITY_ESCALATION_EXCEPTIONAL
                 and task in {"main", *LEGAL_TASKS}):
@@ -716,6 +729,12 @@ def resolve_fallback_chain(task: str | None, model: str | None = None,
     if model:
         return [model]
     chain = chains.get(task or _DEFAULT_TASK, chains[_DEFAULT_TASK])
+    # La escalada excepcional es un cambio deliberado de profundidad, no una política
+    # escondida: únicamente quality_adaptive, main/legal y sin proveedor seleccionado.
+    if (get_model_policy() == "quality_adaptive"
+            and quality_escalation == QUALITY_ESCALATION_EXCEPTIONAL
+            and task in {"main", *LEGAL_TASKS}):
+        chain = [CLI_OPUS_ALIAS, *chain]
     return _dedupe_chain(chain)
 
 
@@ -953,6 +972,18 @@ def _invoke(client: Any, alias: str, kwargs: dict[str, Any], task: str | None = 
         return call_graph_cli(
             kwargs["messages"], timeout=int(_cli_timeout(task)),
             reasoning_effort="max",
+        )
+    if alias == CLI_CODEX_ALIAS:
+        from . import codex_subscription_llm
+
+        if kwargs.get("tools"):
+            logger.warning("Codex productivo no admite tools; se ignoran en esta llamada")
+        dropped = [k for k in ("temperature", "max_tokens") if kwargs.get(k) is not None]
+        if dropped:
+            logger.warning("Codex productivo descarta %s; el CLI aislado no los acepta", dropped)
+        return codex_subscription_llm.call_cli(
+            kwargs["messages"], timeout=_cli_timeout(task),
+            effort=_cli_effort(alias, task, quality_escalation),
         )
     if alias.startswith("cli-"):
         from . import subscription_llm  # import diferido (mismo criterio que _get_client)

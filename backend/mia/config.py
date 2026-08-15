@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -86,6 +87,11 @@ PG_DB = os.getenv("PG_DB", "mia")
 MIA_ENV = os.getenv("MIA_ENV", "dev").strip().lower()
 IS_PRODUCTION = MIA_ENV in ("prod", "production")
 
+# El backend de escritorio nunca escucha fuera de loopback. Esta misma variable se
+# usa para decidir si una membresía personal de Codex puede habilitarse.
+MIA_API_HOST = os.getenv("MIA_API_HOST", "127.0.0.1").strip().lower()
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
 # Conexión de la app: rol mia_app (RLS SÍ aplica). NUNCA el superusuario.
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -105,6 +111,46 @@ CORS_ORIGINS = [
     ).split(",")
     if o.strip()
 ]
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    """Un origen de UI es local solo si su host URL es estrictamente loopback."""
+    try:
+        parsed = urlparse(origin)
+    except (TypeError, ValueError):
+        return False
+    return parsed.scheme in {"http", "https"} and (parsed.hostname or "").lower() in _LOOPBACK_HOSTS
+
+
+def codex_membership_allowed(mode: str, desktop_runtime: str, api_host: str,
+                             cors_origins: list[str] | tuple[str, ...]) -> bool:
+    """Defensa en profundidad para una membresía individual de Codex.
+
+    No pretende proteger frente al administrador de la misma máquina (que puede
+    cambiar el entorno), sino impedir que una configuración normal de servidor o
+    reverse-proxy active por accidente una sesión personal de escritorio.
+    """
+    return (
+        mode.strip().lower() == "local_individual"
+        and desktop_runtime.strip() == "tauri-local-v1"
+        and api_host.strip().lower() in _LOOPBACK_HOSTS
+        and bool(cors_origins)
+        and all(_is_loopback_origin(origin) for origin in cors_origins)
+    )
+
+
+# Codex por MEMBRESÍA es una capacidad del titular en la app de escritorio, nunca
+# un proveedor de servidor. Tauri inyecta la marca de runtime en cada lanzamiento.
+# Requerir la marca, loopback y CORS local apaga una configuración remota ordinaria;
+# frente a un administrador del mismo host no es una frontera criptográfica.
+MIA_CODEX_MEMBERSHIP_MODE = os.getenv("MIA_CODEX_MEMBERSHIP_MODE", "disabled").strip().lower()
+MIA_DESKTOP_RUNTIME = os.getenv("MIA_DESKTOP_RUNTIME", "").strip()
+CODEX_MEMBERSHIP_LOCAL_ALLOWED = (
+    bool(_app_dir or getattr(sys, "frozen", False))
+    and codex_membership_allowed(
+        MIA_CODEX_MEMBERSHIP_MODE, MIA_DESKTOP_RUNTIME, MIA_API_HOST, CORS_ORIGINS,
+    )
+)
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "voyage-law-2")
 EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))
@@ -382,7 +428,8 @@ MIA_AGENTIC_READING_COMPACT_WORDS = int(
 # operativo para no cambiar costo ni latencia a tenants existentes. Valores: "suscripcion" (CLI de
 # Claude Code del abogado, sin billing por API) · "nube" (API Anthropic vía proxy) ·
 # "soberano" (todo local en Ollama) · "openrouter" (CP-OR: la propia cuenta de OpenRouter
-# del abogado como motor principal, con su clave/crédito; exige OPENROUTER_API_KEY). El
+# del abogado como motor principal, con su clave/crédito; exige OPENROUTER_API_KEY) ·
+# "codex" (sesión autenticada local de Codex, sin tarifa marginal atribuible por llamada). El
 # default aplica cuando el tenant no configuró `tenant_settings.config['model_policy']`;
 # agent/llm.py la resuelve por request/job.
 MIA_MODEL_POLICY = os.getenv("MIA_MODEL_POLICY", "suscripcion").strip().lower()

@@ -145,6 +145,7 @@ def ensure_seed_env(app_dir: Path, pg_port: int) -> tuple[Path, bool]:
         f"LITELLM_API_KEY={litellm_key}",
         f"LITELLM_MASTER_KEY={litellm_key}",
         "MIA_CORS_ORIGINS=http://localhost:3100,http://127.0.0.1:3100",
+        "MIA_API_HOST=127.0.0.1",
         "VOYAGE_API_KEY=",
         # MIA_ENV=prod (sub-tarea 7 del contrato): esta instancia corre en el
         # equipo real del abogado, no en un entorno de desarrollo compartido.
@@ -152,6 +153,8 @@ def ensure_seed_env(app_dir: Path, pg_port: int) -> tuple[Path, bool]:
         # `secure=True`, JWT exige `exp` — y auth.py SIEMPRE firma `exp`
         # (routes/auth.py:150-152), así que este endurecimiento no rompe el login.
         "MIA_ENV=prod",
+        # Las marcas de membresía Codex NO se guardan: Tauri las inyecta solo en
+        # el proceso local que inicia. Un bootstrap de servidor no puede heredarlas.
         "",
     ]
     _atomic_write_text(env_path, "\n".join(lines))

@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from psycopg.types.json import Json
 
-from ...agent import llm
+from ...agent import codex_subscription_llm, llm
 from ...db import pool
 from ...eval.harness import read_eval_policy
 from ...gateway import hub_config, hub_gate
@@ -33,6 +33,7 @@ _hub = AgentHub()
 _POLICY_LABELS: dict[str, str] = {
     "quality_adaptive": "Calidad adaptativa (recomendado)",
     "suscripcion": "Mi suscripción (configuración directa)",
+    "codex": "Codex en este equipo",
     "nube": "Nube",
     "soberano": "Todo en mi equipo",
     "openrouter": "Tu cuenta de OpenRouter",
@@ -185,8 +186,13 @@ def _model_capabilities() -> dict[str, Any]:
             "available_efforts": subscription_llm.supported_efforts(),
         },
         "codex": {
-            "installed": bool(_hub.list_available().get("codex", {}).get("installed")),
-            "role": "verificación independiente o respaldo",
+            "installed": codex_subscription_llm.is_available(),
+            "role": "motor jurídico local del titular, seleccionado explícitamente",
+            "marginal_cost_basis": "subscription_not_per_call",
+            "local_membership_required": True,
+            "blocked_reason": ("Solo funciona en la app local del titular; no se habilita "
+                               "en servidores ni instalaciones compartidas."
+                               if not codex_subscription_llm.is_available() else ""),
         },
     }
 
@@ -303,8 +309,14 @@ async def put_model_policy(request: Request):
     if policy not in _POLICY_LABELS:
         raise HTTPException(
             status_code=422,
-            detail=("Opción no válida. Usa 'quality_adaptive', 'suscripcion', 'nube', "
+            detail=("Opción no válida. Usa 'quality_adaptive', 'suscripcion', 'codex', 'nube', "
                     "'soberano' u 'openrouter'."),
+        )
+    if policy == "codex" and not codex_subscription_llm.is_available():
+        raise HTTPException(
+            status_code=409,
+            detail=("Codex por membresía solo está disponible en la instalación local del "
+                    "titular, con Codex iniciado en este equipo."),
         )
     allow_or_raw = (body or {}).get("allow_openrouter") if isinstance(body, dict) else None
     merge: dict[str, Any] = {"model_policy": policy}

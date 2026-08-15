@@ -14,10 +14,11 @@ Cubre:
       [VERIFICAR] del modelo no autoriza nada; el guardián de [doc n] fantasma sigue
       corriendo después.
   C · cableado real vía graph._verify_draft: jurisdictions=["generic"] o ausente →
-      omite (fail-safe); jurisdicción configurada → comportamiento clásico INTACTO;
-      report_key separa el informe del diagnóstico del informe del borrador.
-  M · mutación: el mismo texto SIN el modo omisión conserva la cita — el aserto de
-      este gate discrimina de verdad (no está verde por accidente).
+      omite (fail-safe), INCLUSO si la cita venía en el mensaje del abogado; ese input
+      permanece intacto en la traza. Jurisdicción configurada → comportamiento clásico
+      INTACTO; report_key separa el informe del diagnóstico del informe del borrador.
+  M · mutación: desactivar el modo omisión conserva la cita — el aserto de este gate
+      discrimina de verdad (no está verde por accidente).
 
 Sin DB obligatoria (fail-soft de citation_patterns_for) y sin LLM.
 Salida: exit 0 = PASS · exit 1 = FAIL.
@@ -177,12 +178,22 @@ def _verify_msgs(jurisdictions, text, mensaje):
              "messages": [{"role": "user", "content": mensaje}]}
     md: dict = {}
     out = asyncio.run(MatterGraphBuilder._verify_draft(SimpleNamespace(), state, md, text))
-    return out, md
+    return out, md, state
 
 
-out_abog, _ = _verify_msgs(["generic"], TEXTO, MENSAJE_ABOGADO)
-check(CITA in out_abog,
-      "c6 · cableado real: la cita del mensaje del abogado sobrevive vía _verify_draft")
+out_abog_gen, md_abog_gen, state_abog_gen = _verify_msgs(["generic"], TEXTO, MENSAJE_ABOGADO)
+check(CITA not in out_abog_gen and verification.OMIT_MARK in out_abog_gen,
+      "c6 · genérica: una cita reproducida desde el mensaje del abogado se OMITE del output")
+check(state_abog_gen["messages"][-1]["content"] == MENSAJE_ABOGADO and CITA in MENSAJE_ABOGADO,
+      "c7 · genérica: el mensaje original queda íntegro en el estado/traza")
+check((md_abog_gen.get("verification") or {}).get("omitidas") == 1
+      and any(d.get("cita") == CITA and d.get("estado") == "omitida"
+              for d in (md_abog_gen.get("verification") or {}).get("detalle", [])),
+      "c8 · genérica: la omisión deja evidencia de la cita original en el informe")
+
+out_abog_co, _, _ = _verify_msgs(["co"], TEXTO, MENSAJE_ABOGADO)
+check(CITA in out_abog_co and verification.VERIFY_MARK in out_abog_co,
+      "c9 · configurada: la misma cita conserva el flujo clásico (se marca, no se omite)")
 
 # El payload del checkpoint HITL expone el informe del diagnóstico (transparencia:
 # el abogado ve QUÉ se omitió del diagnóstico, no solo la marca en el texto).
@@ -192,7 +203,7 @@ _graph_src = (ROOT / "backend" / "mia" / "agents" / "graph.py").read_text(encodi
 _interrupt_block = _graph_src.split("Borrador listo para tu aprobación.", 1)[1].split(
     "de aquí en adelante", 1)[0]
 check('"verification_diagnosis"' in _interrupt_block,
-      "c7 · el payload del checkpoint HITL incluye verification_diagnosis")
+      "c10 · el payload del checkpoint HITL incluye verification_diagnosis")
 
 print("== M · mutación: el gate sabe reprobar ==")
 
@@ -201,7 +212,7 @@ check(CITA in t_mut,
       "m1 · SIN el modo omisión la cita sobrevive — el aserto o1 discrimina de verdad")
 
 print()
-total = 3 + 15 + 7 + 1
+total = 3 + 15 + 10 + 1
 if failures:
     print(f"{len(failures)}/{total} checks FAIL:")
     for f in failures:

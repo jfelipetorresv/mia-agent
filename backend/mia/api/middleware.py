@@ -4,7 +4,7 @@ El `tenant_id` del JWT viaja a request.state y, en los handlers, al GUC
 `app.tenant_id` vía db.pool.tenant_connection (donde RLS lo aplica).
 
 CP2 (decisión #27): tras autenticar, el middleware también fija la POLÍTICA DE MODELO
-del tenant (suscripcion/nube/soberano) en el ContextVar de agent/llm.py, leyendo
+del tenant (suscripcion/codex/nube/soberano) en el ContextVar de agent/llm.py, leyendo
 `tenant_settings.config['model_policy']` con un caché en memoria por tenant (TTL 60s)
 para no pagar un roundtrip de DB en cada request. Se resetea en finally.
 """

@@ -1112,6 +1112,11 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
         }
         if let Some(app_dir) = &cfg.app_dir {
             command.env("MIA_APP_DIR", app_dir);
+            command.env("MIA_API_HOST", "127.0.0.1");
+            // Codex por membresía pertenece solo a esta app de escritorio del titular.
+            // El backend exige además runtime Tauri, loopback y CORS local.
+            command.env("MIA_CODEX_MEMBERSHIP_MODE", "local_individual");
+            command.env("MIA_DESKTOP_RUNTIME", "tauri-local-v1");
             log_line(&log_dir, &format!("Backend: MIA_APP_DIR={app_dir}"));
         }
         let child = command.spawn().map_err(|e| {
@@ -1434,6 +1439,9 @@ async fn restart_backend_service(
     }
     if let Some(dir) = app_dir {
         command.env("MIA_APP_DIR", dir);
+        command.env("MIA_API_HOST", "127.0.0.1");
+        command.env("MIA_CODEX_MEMBERSHIP_MODE", "local_individual");
+        command.env("MIA_DESKTOP_RUNTIME", "tauri-local-v1");
     }
     let child = command.spawn().map_err(|e| {
         log_line(

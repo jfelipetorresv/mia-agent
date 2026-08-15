@@ -40,8 +40,9 @@ que devuelve siempre, con o sin sesión, son deliberadamente NO sensibles:
     (cuenta tenants — no distingue CUÁL despacho, ni sus datos).
   - `faltan_llaves`: si el `.env` de la instalación tiene o no la clave de
     búsqueda/respaldo puesta — un booleano, nunca el valor de la clave.
-  - `motor_detectado`: si el equipo tiene el CLI de la suscripción o un
-    motor local instalado (`shutil.which`) — dato del EQUIPO, no del despacho.
+  - `motor_detectado`: si el equipo detecta Claude Code, Codex o un motor local
+    (`shutil.which`) — dato del EQUIPO, no del despacho. Es detección, no promesa
+    de sesión autenticada; esa validación ocurre antes de la primera inferencia.
 Los campos que SÍ dependen del despacho concreto (`onboarding_completo`,
 `politica` real de un tenant) solo se calculan si la request YA trae un JWT
 válido (el middleware ya fijó `request.state.tenant_id`); sin sesión se
@@ -63,7 +64,7 @@ from starlette.concurrency import run_in_threadpool
 from typing import Literal
 
 from ... import config
-from ...agent import llm
+from ...agent import codex_subscription_llm, llm
 from ...db import pool
 from ...onboarding.soul_interview import soul_status
 from ...setup.env_writer import read_env_values, upsert_env_keys
@@ -180,6 +181,7 @@ async def welcome_status(request: Request):
     }
     motor_detectado = {
         "claude": bool(shutil.which("claude")),
+        "codex": codex_subscription_llm.is_available(),
         "ollama": bool(shutil.which("ollama")),
     }
 

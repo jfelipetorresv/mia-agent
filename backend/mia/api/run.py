@@ -7,9 +7,11 @@ import sys
 
 import uvicorn
 
+from .. import config
+
 
 def main() -> None:
-    host = os.getenv("MIA_API_HOST", "127.0.0.1")
+    host = config.MIA_API_HOST
     port = int(os.getenv("MIA_API_PORT", "8000"))
     reload = os.getenv("MIA_API_RELOAD", "0") == "1"
 

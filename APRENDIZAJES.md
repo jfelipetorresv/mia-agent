@@ -441,3 +441,53 @@ suite antes de registrar el timeout.
   válido; una excepción absorbida y marcada como éxito es pérdida silenciosa.
 - Una reducción de tokens en fixture solo valida el mecanismo. La meta comercial exige corpus
   real anonimizado, calidad constante y medición repetible de tokens, latencia y costo.
+
+# 2026-08-14: Una cita del abogado no convierte en derecho una cita emitida por Mia
+
+**Error:** bajo jurisdicción desconocida, el verificador usaba el mensaje original del abogado
+como respaldo. Si el modelo repetía una cita incluida allí, podía conservarla en el borrador como
+si fuera fuente jurídica comprobada.
+
+**Fix:** el mensaje se preserva completo como input y traza, pero la rama genérica ya no lo pasa
+como fuente de respaldo para texto emitido. La cita se omite, queda registrada como omitida y la
+rama con jurisdicción configurada conserva su comportamiento clásico.
+
+**Aplica en:** cualquier control que distinga dato suministrado por el usuario de una afirmación
+generada por el sistema. La procedencia del dato no autoriza por sí sola su reutilización como
+evidencia de una inferencia nueva.
+
+# 2026-08-14: Una política de membresía no puede cambiar de proveedor en silencio
+
+**Error:** la ruta estándar intentaba primero Opus, provocó timeouts en la evaluación y podía caer
+a API/local; además `main` quedaba fuera de la protección que ya cubría subtareas jurídicas.
+
+**Fix:** estándar inicia Sonnet; Opus/Max se reserva para escalada excepcional verificable. Las
+políticas de membresía usan cadenas de un proveedor para `main` y trabajo jurídico: ausencia,
+timeout o autenticación fallan claro sin enviar el asunto a otro motor.
+
+**Aplica en:** toda política donde elegir proveedor sea consentimiento para tratar datos. El gate
+debe cubrir `main` y cada subtarea, no solo la lista que parece jurídica hoy.
+
+# 2026-08-14: Una variable de entorno no prueba que el proceso sea de escritorio
+
+**Error:** la primera protección de Codex por membresía confiaba en `MIA_APP_DIR` y una marca que
+el bootstrap escribía en `.env`; una configuración de servidor normal podía heredarlas.
+
+**Fix:** Tauri inyecta una marca efímera al lanzar o reiniciar, y el backend exige esa marca,
+loopback y orígenes CORS locales. El bootstrap no persiste las marcas; la prueba cubre servidor
+sin marca, host remoto, CORS remoto y escritorio correcto.
+
+**Aplica en:** capacidades personales de CLI dentro de un producto multiusuario. Declarar el
+límite: esto bloquea configuraciones remotas ordinarias, no a un administrador del mismo host.
+
+# 2026-08-14: Una evaluación cara necesita meta y presupuesto antes de arrancar
+
+**Error:** se inició una matriz de 180 corridas sin demostrar que la tasa cabía en el límite de
+tiempo. La corrida parcial reveló fallas útiles, pero no produjo una comparación certificable.
+
+**Fix:** detener y preservar la evidencia; el runner durable marca evidencia parcial como no
+certificable. Antes de reanudar, fijar pregunta de negocio, carriles, tiempo, tope y criterio de
+éxito; una fracción no se presenta como benchmark.
+
+**Aplica en:** benchmarks de proveedores, evals con suscripción o API y cualquier prueba que
+consuma cuota o dinero.

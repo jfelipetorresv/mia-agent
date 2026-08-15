@@ -141,12 +141,17 @@ def main() -> int:
         check("JWT_SECRET >= 32 caracteres", len(env_values.get("JWT_SECRET") or "") >= 32)
         for key in ("PG_HOST", "PG_PORT", "PG_DB", "PG_PASSWORD", "PG_APP_PASSWORD",
                     "DATABASE_URL", "LITELLM_BASE_URL", "LITELLM_API_KEY",
-                    "LITELLM_MASTER_KEY", "MIA_CORS_ORIGINS", "MIA_ENV"):
+                    "LITELLM_MASTER_KEY", "MIA_CORS_ORIGINS", "MIA_ENV",
+                    "MIA_API_HOST"):
             check(f".env trae {key}", bool(env_values.get(key)))
         check(".env: VOYAGE_API_KEY presente (vacío por defecto)", "VOYAGE_API_KEY" in env_values)
         check("LITELLM_MASTER_KEY == LITELLM_API_KEY",
               env_values.get("LITELLM_MASTER_KEY") == env_values.get("LITELLM_API_KEY"))
         check("MIA_ENV=prod", env_values.get("MIA_ENV") == "prod")
+        check("las marcas temporales de membresía Codex nunca se persisten en .env",
+              "MIA_CODEX_MEMBERSHIP_MODE" not in env_values
+              and "MIA_DESKTOP_RUNTIME" not in env_values
+              and env_values.get("MIA_API_HOST") == "127.0.0.1")
         check("PG_PORT coincide con el puerto efímero pedido", env_values.get("PG_PORT") == str(pg_port))
         check("DATABASE_URL usa PG_APP_PASSWORD y el puerto pedido",
               (env_values.get("PG_APP_PASSWORD") or "?") in (env_values.get("DATABASE_URL") or "")

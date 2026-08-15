@@ -40,14 +40,14 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 // ── Contratos backend (welcome) ────────────────────────────────────────────
-type Politica = "quality_adaptive" | "suscripcion" | "nube" | "soberano" | "openrouter";
+type Politica = "quality_adaptive" | "suscripcion" | "codex" | "nube" | "soberano" | "openrouter";
 
 interface WelcomeStatus {
   instalado: boolean;
   hay_usuario: boolean;
   faltan_llaves: { busqueda: boolean; respaldo: boolean; openrouter: boolean };
   onboarding_completo: boolean;
-  motor_detectado: { claude: boolean; ollama: boolean };
+  motor_detectado: { claude: boolean; codex: boolean; ollama: boolean };
   politica: Politica;
 }
 
@@ -574,7 +574,7 @@ export default function ActivarPage() {
           onKeyDown={(e) => {
             // El orden DEBE coincidir con el orden visual de las tarjetas (abajo):
             // las flechas mueven el foco por índice de DOM.
-            const order: Politica[] = ["quality_adaptive", "suscripcion", "nube", "openrouter", "soberano"];
+            const order: Politica[] = ["quality_adaptive", "suscripcion", "codex", "nube", "openrouter", "soberano"];
             const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
             const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
             if (!forward && !backward) return;
@@ -591,7 +591,7 @@ export default function ActivarPage() {
             icon={Sparkles}
             title="Calidad jurídica adaptativa"
             badge="Recomendado"
-            description="Para análisis jurídico complejo, Mia prefiere Claude Code y ajusta la profundidad según la tarea. Los modos máximos se reservan para casos excepcionales y siempre se registran. Si Claude Code no está disponible, Mia te lo avisará y usará solo los respaldos autorizados."
+            description="Para trabajo ordinario usa una ruta rápida y reserva la máxima profundidad para asuntos excepcionales. Si una capacidad no está disponible, Mia te lo avisará antes de cambiar de motor."
             detected={status.motor_detectado.claude}
             detectedLabel="Ya detecté Claude Code en este equipo."
             selected={politica === "quality_adaptive"}
@@ -605,6 +605,15 @@ export default function ActivarPage() {
             detectedLabel="Ya la detecté lista en este equipo."
             selected={politica === "suscripcion"}
             onSelect={() => setPolitica("suscripcion")}
+          />
+          <EngineCard
+            icon={Sparkles}
+            title="Codex en este equipo"
+            description="Usa tu membresía de Codex como motor jurídico principal en este computador. No funciona en servidores ni cambia a Claude, nube ni otro motor sin que tú cambies esta selección."
+            detected={status.motor_detectado.codex}
+            detectedLabel="Detecté Codex local; la primera solicitud comprobará tu sesión y fallará claro si no está iniciada."
+            selected={politica === "codex"}
+            onSelect={() => setPolitica("codex")}
           />
           <EngineCard
             icon={Cloud}
