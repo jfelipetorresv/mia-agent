@@ -56,6 +56,25 @@ NO ejecutables localmente (van en CI con Postgres). `test_first_run.py` sigue SI
 como verde (pendiente #2 del cierre anterior). No se llamó a ningún modelo ni se creó
 credencial alguna; `validation/provider-benchmark-full-2026-08-14/` intacta.
 
+## Cierre de la sesión (regla 11)
+
+Estado al cerrar: repo limpio, 4 commits de esta sesión (4084300 → a23f386) pusheados.
+Última verificación: `verify.ps1 -Mode quick` VERDE 16 suites · model_policy 58/58 ·
+cambio_de_motor 46/46 · restore_cli 4/4 · `cargo check` limpio · compileall y `tsc
+--noEmit` limpios. Ningún trabajo queda corriendo en background. Retrospectiva:
+`Pipe-OS-operacionetrospectivasetrospectiva-2026-08-14-auditoria-adversarial-mia.md`.
+
+Qué revisar en pantalla cuando haya entorno con DB: la tarjeta «Calidad jurídica
+adaptativa» y «Mi suscripción» en /activar (copy nuevo), el selector de motor en Ajustes
+(Codex deshabilitado con razón si no está), los chips de jurisdicción del asunto (pintan
+lo efectivo) y la tarjeta «Recuperar desde una copia» en Protección de datos.
+Comportamiento esperado del restore: preparar → cerrar y reabrir Mia → arranca con los
+datos de la copia y una copia previa del estado anterior en la carpeta de respaldos.
+Bugs conocidos sin cambio: riesgo #86 (test_hitl_flow, sin poder re-verificar sin DB) y
+los P2 listados abajo.
+
+---
+
 ## Pendientes que deja la auditoría — ACTUALIZADO tras la 2ª pasada (mismo día)
 
 CERRADOS en la 2ª pasada (commit posterior a 4084300): la traza lleva el desenlace

@@ -534,3 +534,16 @@ declarado en `backend[full]`.
 
 **Aplica en:** todo test nuevo del repo es script directo o trae su runner; un archivo sin
 `__main__` en `execution/` es sospechoso por defecto.
+
+# 2026-08-14 (cierre): Un gate que ejerce una cadena concreta fija su política, no hereda el default
+
+**Error:** el gate del circuit-breaker ejercía la cadena de 'suscripcion' confiando en que
+esa era la política por defecto. Al cambiar el default a `quality_adaptive` (decisión de
+Pipe), el gate se puso rojo sin que el breaker hubiera cambiado.
+
+**Fix:** el gate fija `set_model_policy("suscripcion")` con su token y lo restaura. El
+default tiene su propio gate (10b-bis: config = fallback de llm = selección inicial de la
+UI, los tres iguales).
+
+**Aplica en:** todo test que dependa de una política/config global: se fija en el test lo
+que el test afirma probar; el default se prueba aparte y por igualdad de las tres capas.
