@@ -61,8 +61,15 @@ credencial alguna; `validation/provider-benchmark-full-2026-08-14/` intacta.
 Estado al cerrar: repo limpio, 4 commits de esta sesión (4084300 → a23f386) pusheados.
 Última verificación: `verify.ps1 -Mode quick` VERDE 16 suites · model_policy 58/58 ·
 cambio_de_motor 46/46 · restore_cli 4/4 · `cargo check` limpio · compileall y `tsc
---noEmit` limpios. Ningún trabajo queda corriendo en background. Retrospectiva:
-`Pipe-OS-operacionetrospectivasetrospectiva-2026-08-14-auditoria-adversarial-mia.md`.
+--noEmit` limpios. Ajuste final tras el cierre: `harvest_lessons` (cosecha en background) pasó de
+`task="main"` a `task="curator"` — con el default nuevo habría gastado Opus por cosecha
+(commit 69fa24b, pusheado). PRIMERA TAREA del próximo arranque con entorno completo:
+E2E con DB, `test_first_run.py` con salida capturada y revisar en vivo las pantallas
+nuevas (activar, Ajustes/motor, chips de jurisdicción, Recuperar desde una copia).
+Ningún trabajo queda corriendo en background. Retrospectiva:
+`Pipe-OS-operacion
+etrospectivas
+etrospectiva-2026-08-14-auditoria-adversarial-mia.md`.
 
 Qué revisar en pantalla cuando haya entorno con DB: la tarjeta «Calidad jurídica
 adaptativa» y «Mi suscripción» en /activar (copy nuevo), el selector de motor en Ajustes
