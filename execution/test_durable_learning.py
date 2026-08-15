@@ -114,6 +114,10 @@ async def main() -> None:
     migration = (ROOT / "backend/mia/db/migrations/056_durable_learning_once.sql").read_text(
         encoding="utf-8")
     assert "enqueue_learning_job" in graph_src
+    # Decisión de Pipe 2026-08-14: «Mia aprende lo que aprueba» — aprobar con cambios
+    # (editing) también encola wiki y skills; los cuatro jobs van juntos bajo final_ready.
+    assert 'if status == "approved":' not in graph_src.split("job_types = [")[1][:400]
+    assert graph_src.count('"wiki_approved_artifact", "skill_improvement"]') == 1
     assert "asyncio.create_task(self._harvest_background" not in graph_src
     assert "asyncio.create_task(_wiki_update())" not in hitl_src
     assert "decision_saved=True" in hitl_src and "learning=learning" in hitl_src

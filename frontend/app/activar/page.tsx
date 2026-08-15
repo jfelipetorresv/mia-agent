@@ -593,7 +593,9 @@ export default function ActivarPage() {
             badge="Recomendado"
             // Honestidad del aviso: el cambio de motor se informa AL CERRAR el turno (así
             // está construido el SSE aviso_de_costo); prometer "antes" sería falso.
-            description="Para trabajo ordinario usa una ruta rápida y reserva la máxima profundidad para asuntos excepcionales. Si una capacidad no está disponible, Mia falla claro o te informa cada cambio de motor y su costo al terminar el turno."
+            // Decisión de Pipe 2026-08-14: el más inteligente piensa y orquesta; la
+            // ejecución se asigna por tarea. §G: sin nombres de modelo en el copy.
+            description="El motor más capaz piensa y dirige tu asunto, y asigna cada tarea al ejecutor adecuado: profundidad donde se decide, agilidad donde se ejecuta. Si una capacidad no está disponible, Mia falla claro o te informa cada cambio de motor y su costo al terminar el turno."
             detected={status.motor_detectado.claude}
             detectedLabel="Ya detecté Claude Code en este equipo."
             selected={politica === "quality_adaptive"}

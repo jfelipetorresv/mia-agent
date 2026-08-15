@@ -177,18 +177,23 @@ _EXCEPTIONAL_LEGAL_CONTEXT_CHARS = 40_000
 # compat con tests que lo leen/mutan): un task inyectado ahí (no estándar) sigue resolviendo.
 # `compression` sigue en _LOCKED_TASKS en las 3 políticas (un model explícito no la cambia).
 _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
-    # Calidad adaptativa: el trabajo jurídico ORDINARIO empieza en Sonnet/alto. Opus/xhigh
-    # se inserta solo en la escalada excepcional de resolve_fallback_chain; no se intenta
-    # primero por inercia, porque el benchmark mostró que eso añade timeouts sin calidad
-    # demostrada. Los asuntos jurídicos no saltan a API/local sin consentimiento explícito.
+    # Calidad adaptativa — DECISIÓN DE PIPE 2026-08-14: «el más inteligente piensa y
+    # orquesta y define quién ejecuta según la tarea». El razonamiento que gobierna el
+    # turno (main, que orquesta, y legal_analysis, que piensa el caso) va en Opus/xhigh
+    # PRIMERO, con degradación DENTRO de la misma suscripción a Sonnet (mismo proveedor,
+    # mismo consentimiento, mismo pagador — no es un cambio de motor). La EJECUCIÓN
+    # dirigida (hechos, investigación, redacción, verificación, edición) va en Sonnet;
+    # lo mecánico en Haiku. Los timeouts de Opus ya no cuestan 4×300 s por nodo: un
+    # timeout de cli-* no se reintenta dentro del alias (auditoría 2026-08-14).
+    # Los asuntos jurídicos no saltan a API/local sin consentimiento explícito.
     "quality_adaptive": {
         # `main` puede transportar trabajo jurídico aunque el clasificador no haya
-        # asignado aún una subtarea. Por ello conserva el mismo consentimiento
-        # estricto que LEGAL_TASKS: una caída de la suscripción se informa, no se
-        # transforma en una salida de API/local sin que el titular lo elija.
-        "main": [CLI_SONNET_ALIAS],
+        # asignado aún una subtarea. Conserva el consentimiento estricto de
+        # LEGAL_TASKS: la degradación es solo entre alias de la MISMA suscripción.
+        "main": [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS],
+        "legal_analysis": [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS],
         **{t: [CLI_SONNET_ALIAS]
-           for t in LEGAL_TASKS},
+           for t in LEGAL_TASKS if t != "legal_analysis"},
         "curator": [CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"],
         "compression": [CLI_HAIKU_ALIAS, "claude-haiku"],
         **{t: [CLI_HAIKU_ALIAS, "mia-local"] for t in _AUX_TASKS},
@@ -349,7 +354,7 @@ def _automatic_quality_escalation(task: str | None, messages: list[dict]) -> str
 
 # Timeout del CLI por task (revisión CP2): el razonamiento largo (main/curator) puede
 # tardar minutos; las tareas auxiliares/compresión no deben retener el request tanto.
-_CLI_TIMEOUT_LONG_TASKS = frozenset({"main", "curator"})
+_CLI_TIMEOUT_LONG_TASKS = frozenset({"main", "curator", "legal_analysis"})
 _CLI_TIMEOUT_LONG = 300.0   # segundos — main / curator
 _CLI_TIMEOUT_SHORT = 120.0  # segundos — resto de tareas
 

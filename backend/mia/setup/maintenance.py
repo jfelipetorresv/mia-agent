@@ -189,9 +189,107 @@ def protect_existing_secrets(
     return changed
 
 
+PENDING_RESTORE_NAME = "pending-restore.json"
+
+
+def list_backup_files() -> list[dict]:
+    """Copias .mia-backup disponibles en la carpeta de respaldos, recientes primero."""
+    out: list[dict] = []
+    try:
+        files = sorted(
+            backup.default_backup_dir().glob("*.mia-backup"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return out
+    from datetime import datetime, timezone
+    for f in files:
+        try:
+            out.append({
+                "name": f.name,
+                "created_at": datetime.fromtimestamp(
+                    f.stat().st_mtime, tz=timezone.utc).isoformat(),
+                "size_bytes": f.stat().st_size,
+            })
+        except OSError:
+            continue
+    return out
+
+
+def stage_restore(app_dir: Path, pg_bin: Path, source: str,
+                  confirmed_database: str, port: int | None = None) -> Path:
+    """Deja PREPARADA una recuperación que `startup` aplicará en el próximo arranque.
+
+    La restauración en vivo no es posible: el backend mantiene conexiones y
+    `pg_restore --clean --single-transaction` fallaría o revertiría. `startup`
+    corre ANTES de encender el backend — la condición exacta de «Mia cerrada».
+    Aquí solo se valida todo lo validable sin tocar la base: confirmación por
+    nombre, existencia de la copia y cabecera auténtica de la MISMA base.
+    """
+    settings = _settings(app_dir, port)
+    if not confirmed_database or confirmed_database != settings["db"]:
+        raise RuntimeError(
+            f"Confirma la recuperación escribiendo exactamente: {settings['db']}"
+        )
+    raw = Path(source).expanduser()
+    candidate = raw if raw.is_absolute() else backup.default_backup_dir() / raw
+    candidate = candidate.resolve()
+    if not candidate.is_file() or candidate.suffix != ".mia-backup":
+        raise RuntimeError("No encuentro esa copia de seguridad (.mia-backup).")
+    header = backup.verify_database_backup(
+        backup_path=candidate, app_dir=app_dir, pg_bin=pg_bin,
+    )
+    if str(header.get("database") or "") != settings["db"]:
+        raise RuntimeError("La copia pertenece a otra base de datos y no puede aplicarse aquí.")
+    marker = app_dir / PENDING_RESTORE_NAME
+    marker.write_text(json.dumps({
+        "source": str(candidate),
+        "confirmed_database": confirmed_database,
+    }, ensure_ascii=False), encoding="utf-8")
+    return marker
+
+
+def _apply_pending_restore(app_dir: Path, pg_bin: Path, settings: dict) -> str | None:
+    """Aplica una recuperación preparada. Fail-open para el ARRANQUE: si la
+    restauración falla, el marcador pasa a `.failed.json` (no se reintenta en
+    cada arranque, el diagnóstico queda en logs) y Mia enciende con la base actual."""
+    marker = app_dir / PENDING_RESTORE_NAME
+    if not marker.is_file():
+        return None
+    log = logging.getLogger("mia.setup.maintenance")
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        safety = backup.restore_database_backup(
+            backup_path=Path(str(data.get("source") or "")),
+            pg_bin=pg_bin,
+            app_dir=app_dir,
+            host=settings["host"],
+            port=settings["port"],
+            db=settings["db"],
+            password=settings["password"],
+            confirmed_database=str(data.get("confirmed_database") or ""),
+        )
+        marker.unlink(missing_ok=True)
+        log.info("recuperación preparada aplicada; copia previa: %s", safety.name)
+        return safety.name
+    except Exception:
+        log.exception("la recuperación preparada falló; Mia arranca con la base actual")
+        failed = app_dir / (PENDING_RESTORE_NAME + ".failed")
+        try:
+            failed.unlink(missing_ok=True)
+            marker.rename(failed)
+        except OSError:
+            marker.unlink(missing_ok=True)
+        return None
+
+
 def startup(app_dir: Path, pg_bin: Path, port: int | None = None) -> list[str]:
     backup.cleanup_decrypted_temps(app_dir)
     settings = _settings(app_dir, port)
+    # Recuperación preparada desde la app (decisión de Pipe 2026-08-14): se aplica
+    # aquí, con los servicios apagados, antes de migrar.
+    _apply_pending_restore(app_dir, pg_bin, settings)
 
     backup_done = False
 
@@ -243,6 +341,10 @@ def protection_status(app_dir: Path) -> dict:
         "recovery_key_saved": backup.recovery_key_confirmed(app_dir),
         "last_backup_name": latest.name if latest else None,
         "last_backup_at": last_at,
+        # La UI debe poder decir la verdad: hay una recuperación preparada que se
+        # aplicará en el próximo arranque (o una que falló y quedó en logs).
+        "pending_restore": (app_dir / PENDING_RESTORE_NAME).is_file(),
+        "pending_restore_failed": (app_dir / (PENDING_RESTORE_NAME + ".failed")).is_file(),
     }
 
 
@@ -250,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mia-backend --maintenance")
     parser.add_argument(
         "action",
-        choices=("status", "startup", "backup", "verify", "restore", "export-key", "confirm-key", "import-key"),
+        choices=("status", "startup", "backup", "verify", "restore", "stage-restore", "list-backups", "export-key", "confirm-key", "import-key"),
     )
     parser.add_argument("--pg-bin", required=True)
     parser.add_argument("--pg-port", type=int, default=None)
@@ -304,6 +406,14 @@ def main(argv: list[str] | None = None) -> int:
                 "MIA-MAINTENANCE: recuperación completada; "
                 f"la copia de seguridad previa quedó verificada como {safety.name}."
             )
+        elif args.action == "list-backups":
+            print("MIA-MAINTENANCE-JSON:" + json.dumps(list_backup_files()))
+        elif args.action == "stage-restore":
+            if not args.source:
+                raise RuntimeError("Selecciona la copia que quieres recuperar.")
+            stage_restore(app_dir, pg_bin, args.source,
+                          str(args.confirm_database or ""), args.pg_port)
+            print("MIA-MAINTENANCE: recuperación preparada; se aplicará al reiniciar Mia.")
         elif args.action == "export-key":
             if not args.destination:
                 raise RuntimeError("Selecciona dónde guardar la llave de recuperación.")

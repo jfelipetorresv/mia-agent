@@ -142,12 +142,18 @@ def run() -> None:
 
     # === 1g · política adaptativa: escalamiento determinista y telemetría efectiva ===
     def _adaptive():
-        check("1g · [quality_adaptive] main y jurídico estándar usan Sonnet; Opus solo escala",
-              llm.resolve_fallback_chain("main") == [llm.CLI_SONNET_ALIAS]
-              and llm.resolve_fallback_chain("legal_analysis") == [llm.CLI_SONNET_ALIAS]
-              and llm.resolve_fallback_chain("legal_analysis", quality_escalation="exceptional")[:2]
+        # Decisión de Pipe 2026-08-14: el más inteligente PIENSA Y ORQUESTA (main y
+        # legal_analysis en Opus primero, degradando dentro de la misma suscripción);
+        # la ejecución dirigida va en Sonnet y lo mecánico en Haiku.
+        check("1g · [quality_adaptive] Opus piensa/orquesta; Sonnet ejecuta; Haiku lo mecánico",
+              llm.resolve_fallback_chain("main") == [llm.CLI_OPUS_ALIAS, llm.CLI_SONNET_ALIAS]
+              and llm.resolve_fallback_chain("legal_analysis")
               == [llm.CLI_OPUS_ALIAS, llm.CLI_SONNET_ALIAS]
+              and llm.resolve_fallback_chain("legal_draft") == [llm.CLI_SONNET_ALIAS]
+              and llm.resolve_fallback_chain("legal_verification") == [llm.CLI_SONNET_ALIAS]
               and llm.resolve_fallback_chain("verification")[0] == llm.CLI_HAIKU_ALIAS)
+        check("1g-bis · la degradación del pensador queda dentro de la suscripción (cli-*)",
+              all(a.startswith("cli-") for a in llm.resolve_fallback_chain("main")))
         check("1h · Max solo existe para escalamiento excepcional; caso ordinario conserva xhigh",
               llm._cli_effort(llm.CLI_OPUS_ALIAS, "legal_draft") == "xhigh"
               and llm._cli_effort(llm.CLI_OPUS_ALIAS, "legal_draft", "exceptional") == "max")

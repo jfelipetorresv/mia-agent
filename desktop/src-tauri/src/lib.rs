@@ -1951,6 +1951,36 @@ async fn maintenance_create_backup(app: AppHandle) -> Result<String, String> {
     Ok("creada".into())
 }
 
+#[tauri::command]
+async fn maintenance_list_backups(app: AppHandle) -> Result<String, String> {
+    let line = run_maintenance_action(app, "list-backups", vec![]).await?;
+    line.strip_prefix("MIA-MAINTENANCE-JSON:")
+        .map(str::to_string)
+        .ok_or_else(|| "Mia no pudo listar las copias de seguridad.".to_string())
+}
+
+/// Prepara la recuperación; se APLICA en el próximo arranque (startup corre con
+/// los servicios apagados — la única condición segura para pg_restore).
+#[tauri::command]
+async fn maintenance_stage_restore(
+    app: AppHandle,
+    source: String,
+    confirm_database: String,
+) -> Result<String, String> {
+    run_maintenance_action(
+        app,
+        "stage-restore",
+        vec![
+            "--source".into(),
+            source,
+            "--confirm-database".into(),
+            confirm_database,
+        ],
+    )
+    .await?;
+    Ok("preparada".into())
+}
+
 // ---------------------------------------------------------------------------
 // Entrada
 // ---------------------------------------------------------------------------
@@ -2090,7 +2120,9 @@ pub fn run() {
             maintenance_status,
             maintenance_export_key,
             maintenance_confirm_key,
-            maintenance_create_backup
+            maintenance_create_backup,
+            maintenance_list_backups,
+            maintenance_stage_restore
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar la cáscara de Mia")

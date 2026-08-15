@@ -2470,9 +2470,12 @@ class MatterGraphBuilder:
                 "trace_id": trace_id,
                 "decision": status,
             }
-            job_types = ["learn_approved_artifact", "harvest_lessons"]
-            if status == "approved":
-                job_types.extend(["wiki_approved_artifact", "skill_improvement"])
+            # DECISIÓN DE PIPE 2026-08-14: «Mia aprende lo que aprueba». Aprobar con
+            # cambios (editing) también alimenta la wiki y la mejora de skills — la
+            # edición del abogado es el material más valioso, y este bloque solo corre
+            # con final_ready (el texto editado pasó muro + revisor independiente).
+            job_types = ["learn_approved_artifact", "harvest_lessons",
+                         "wiki_approved_artifact", "skill_improvement"]
             for job_type in job_types:
                 try:
                     # El dedupe lleva el ASUNTO: dos asuntos con el mismo texto final

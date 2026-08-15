@@ -95,5 +95,51 @@ def test_restore_failure_is_fail_closed_and_temp_is_removed(tmp_path: Path, monk
     assert not dump.exists()
 
 
+def test_stage_restore_validates_and_startup_applies_or_fails_open(tmp_path: Path, monkeypatch) -> None:
+    app = tmp_path / "app"; app.mkdir()
+    bdir = tmp_path / "backups"; bdir.mkdir()
+    copia = bdir / "copia.mia-backup"; copia.write_bytes(b"x")
+    settings = {"host": "127.0.0.1", "port": 55432, "db": "mia", "password": "S"}
+    monkeypatch.setattr(maintenance, "_settings", lambda *_a, **_k: settings)
+    monkeypatch.setattr(maintenance.backup, "default_backup_dir", lambda: bdir)
+    monkeypatch.setattr(maintenance.backup, "verify_database_backup",
+                        lambda **_: {"database": "mia"})
+
+    # confirmación por nombre exacto, fail-closed
+    with pytest.raises(RuntimeError):
+        maintenance.stage_restore(app, tmp_path, "copia.mia-backup", "otra")
+    assert not (app / maintenance.PENDING_RESTORE_NAME).is_file()
+
+    # copia de OTRA base, fail-closed
+    monkeypatch.setattr(maintenance.backup, "verify_database_backup",
+                        lambda **_: {"database": "ajena"})
+    with pytest.raises(RuntimeError):
+        maintenance.stage_restore(app, tmp_path, "copia.mia-backup", "mia")
+
+    # camino bueno: marca escrita con la ruta resuelta
+    monkeypatch.setattr(maintenance.backup, "verify_database_backup",
+                        lambda **_: {"database": "mia"})
+    marker = maintenance.stage_restore(app, tmp_path, "copia.mia-backup", "mia")
+    assert marker.is_file()
+
+    # startup aplica: restore invocado y marca eliminada
+    calls: list[dict] = []
+    monkeypatch.setattr(maintenance.backup, "restore_database_backup",
+                        lambda **kw: calls.append(kw) or (tmp_path / "safety.mia-backup"))
+    assert maintenance._apply_pending_restore(app, tmp_path, settings) == "safety.mia-backup"
+    assert len(calls) == 1 and calls[0]["confirmed_database"] == "mia"
+    assert not marker.is_file()
+
+    # fallo al aplicar: fail-open del arranque (marca pasa a .failed, no se reintenta)
+    marker = maintenance.stage_restore(app, tmp_path, "copia.mia-backup", "mia")
+
+    def _boom(**_kw):
+        raise maintenance.backup.BackupError("pg dijo no")
+    monkeypatch.setattr(maintenance.backup, "restore_database_backup", _boom)
+    assert maintenance._apply_pending_restore(app, tmp_path, settings) is None
+    assert not marker.is_file()
+    assert (app / (maintenance.PENDING_RESTORE_NAME + ".failed")).is_file()
+
+
 if __name__ == "__main__":  # verify.ps1 corre las suites como scripts: sin esto, "verde" sin correr nada
     raise SystemExit(pytest.main([__file__, "-q"]))

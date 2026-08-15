@@ -71,9 +71,20 @@ Codex no disponible y muestra la razón — check 10c-bis en `test_model_policy.
 restore quedó documentado con su sintaxis real en
 `docs/guia-primera-instalacion-y-onboarding.md`.
 
-SIGUEN abiertos (decisión de producto): botón de restore dentro de la app; ¿`wiki/skill`
-también en `editing` (aprobado con cambios)?; alinear el default de política del backend
-(`suscripcion`) con el de la UI (`quality_adaptive`).
+DECISIONES DE PIPE (mismo día, aplicadas en el 3er commit): (1) `quality_adaptive` ya no
+es «Sonnet estándar, Opus excepcional»: el más inteligente PIENSA Y ORQUESTA — main y
+legal_analysis van en Opus/xhigh primero con degradación dentro de la misma suscripción a
+Sonnet; la ejecución dirigida (hechos/investigación/redacción/verificación/edición) en
+Sonnet y lo mecánico en Haiku (checks 1g/1g-bis, 57/57). (2) «Mia aprende lo que
+aprueba»: aprobar con cambios (editing) también encola wiki y skills — los 4 jobs van
+juntos bajo final_ready (check en test_durable_learning). (3) Botón de recuperación:
+la restauración se PREPARA desde Protección de datos (lista de copias + confirmación por
+nombre de base) y se APLICA en el próximo arranque vía `--maintenance startup` (servicios
+apagados = la condición segura de pg_restore); fail-open del arranque si falla (marca
+`.failed`, aviso en la UI). Comandos Tauri maintenance_list_backups/stage_restore;
+acciones CLI stage-restore/list-backups; tests en test_restore_cli (4 passed);
+`cargo check` limpio. QUEDA de producto: alinear el default de política del backend
+(`suscripcion`) con el de la UI (`quality_adaptive`) — Pipe no se pronunció sobre este.
 
 - **P2**: `capabilities` del backend sin lector en frontend; `legal_export_events` sin
   lector; `anydoc_available()` muerto justo donde haría falta; quemar no retira finales ya

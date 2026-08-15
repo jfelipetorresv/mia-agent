@@ -11,23 +11,30 @@ type ProtectionStatus = {
   recovery_key_saved: boolean;
   last_backup_name: string | null;
   last_backup_at: string | null;
+  pending_restore?: boolean;
+  pending_restore_failed?: boolean;
 };
 
-type TauriCore = { invoke?: (command: string) => Promise<unknown> };
+type BackupFile = { name: string; created_at: string; size_bytes: number };
 
-async function invokeLocal<T>(command: string): Promise<T> {
+type TauriCore = { invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
+
+async function invokeLocal<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const tauri = (
     window as unknown as { __TAURI__?: { core?: TauriCore } }
   ).__TAURI__;
   if (!tauri?.core?.invoke) {
     throw new Error("Este control está disponible en la aplicación de escritorio.");
   }
-  return (await tauri.core.invoke(command)) as T;
+  return (await tauri.core.invoke(command, args)) as T;
 }
 
 export default function ProteccionDatosSection() {
   const [status, setStatus] = useState<ProtectionStatus | null>(null);
-  const [busy, setBusy] = useState<"key" | "confirm" | "backup" | null>(null);
+  const [busy, setBusy] = useState<"key" | "confirm" | "backup" | "restore" | null>(null);
+  const [backups, setBackups] = useState<BackupFile[] | null>(null);
+  const [restoreSource, setRestoreSource] = useState("");
+  const [restoreConfirm, setRestoreConfirm] = useState("");
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -86,6 +93,42 @@ export default function ProteccionDatosSection() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pude crear la copia. Intenta de nuevo.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openRestore() {
+    setError("");
+    setMessage("");
+    try {
+      const raw = await invokeLocal<string>("maintenance_list_backups");
+      const list = JSON.parse(raw) as BackupFile[];
+      setBackups(list);
+      setRestoreSource(list[0]?.name || "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pude listar las copias de seguridad.");
+    }
+  }
+
+  async function stageRestore() {
+    setBusy("restore");
+    setError("");
+    setMessage("");
+    try {
+      await invokeLocal("maintenance_stage_restore", {
+        source: restoreSource,
+        confirmDatabase: restoreConfirm.trim(),
+      });
+      setBackups(null);
+      setRestoreConfirm("");
+      setMessage(
+        "Recuperación preparada. Se aplicará la próxima vez que abras Mia: ciérrala y vuelve a abrirla. " +
+        "Antes de recuperar, Mia crea y comprueba una copia del estado actual.",
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pude preparar la recuperación.");
     } finally {
       setBusy(null);
     }
@@ -162,6 +205,77 @@ export default function ProteccionDatosSection() {
           </div>
           {!status?.recovery_key_saved ? (
             <p className="mt-3 text-xs text-muted-foreground">Primero guarda y confirma la llave de recuperación.</p>
+          ) : null}
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 font-medium">
+                <DatabaseBackup className="h-4 w-4 text-primary" /> Recuperar desde una copia
+              </div>
+              <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+                Reemplaza los datos actuales por los de una copia comprobada. La recuperación se
+                aplica al reiniciar Mia, con una copia previa del estado actual. Para traer una
+                copia de otro equipo, ponla en la carpeta de copias de Mia junto con tu llave de
+                recuperación importada.
+              </p>
+            </div>
+            <Button variant="outline" className="shrink-0 gap-2" onClick={openRestore} disabled={busy !== null}>
+              Recuperar…
+            </Button>
+          </div>
+          {status?.pending_restore ? (
+            <p className="mt-3 rounded-md bg-warning/10 px-3 py-2 text-sm">
+              Hay una recuperación preparada: se aplicará la próxima vez que abras Mia.
+            </p>
+          ) : null}
+          {status?.pending_restore_failed ? (
+            <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              La última recuperación preparada no pudo aplicarse; Mia sigue con los datos
+              actuales. El detalle quedó en los registros.
+            </p>
+          ) : null}
+          {backups !== null ? (
+            backups.length === 0 ? (
+              <p className="mt-3 text-sm text-muted-foreground">No hay copias .mia-backup en la carpeta de copias.</p>
+            ) : (
+              <div className="mt-4 space-y-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
+                <label className="block text-sm">
+                  Copia a recuperar
+                  <select
+                    value={restoreSource}
+                    onChange={(e) => setRestoreSource(e.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                  >
+                    {backups.map((b) => (
+                      <option key={b.name} value={b.name}>
+                        {b.name} — {fmtHora(b.created_at)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  Esto reemplaza tus datos actuales. Escribe el nombre de la base para confirmar
+                  (normalmente <span className="font-mono">mia</span>)
+                  <input
+                    value={restoreConfirm}
+                    onChange={(e) => setRestoreConfirm(e.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                    placeholder="mia"
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={stageRestore} disabled={busy !== null || !restoreSource || !restoreConfirm.trim()}>
+                    {busy === "restore" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Preparar recuperación
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setBackups(null)} disabled={busy !== null}>
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            )
           ) : null}
         </div>
       </div>
