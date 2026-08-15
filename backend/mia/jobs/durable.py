@@ -286,7 +286,10 @@ async def _harvest_lessons(tenant_id: str, payload: Mapping[str, Any]) -> dict:
             f"Borrador original de Mia:\n{artifact['original']}\n\n"
             f"Versión final aprobada por el abogado:\n{artifact['content']}")},
     ]
-    response = await asyncio.to_thread(llm.call_llm, messages, task="main")
+    # Curaduría de memoria en SEGUNDO PLANO, no razonamiento del turno: con
+    # `main` (donde ahora piensa el motor más capaz, decisión de Pipe 2026-08-14)
+    # cada cosecha de lecciones habría gastado Opus sin que nadie lo pidiera.
+    response = await asyncio.to_thread(llm.call_llm, messages, task="curator")
     report = (response.choices[0].message.content or "").strip()
     if not report:
         return {"created": False, "reason": "empty_report"}
