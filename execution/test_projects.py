@@ -256,7 +256,7 @@ def run_checks(client, auth_a, tid_a, auth_b, tid_b) -> list[str]:
     from mia.agents import research as _research_mod                        # noqa: E402
     _resolve_original = _research_mod.resolve_jurisdictions_for
 
-    async def _ordenamiento_declarado(_tenant):
+    async def _ordenamiento_declarado(_tenant, _matter=None):
         return ["zz"]
 
     _research_mod.resolve_jurisdictions_for = _ordenamiento_declarado
@@ -501,7 +501,7 @@ def run_jurisdiction_checks() -> None:
 
     try:
         # ── despacho CON su ordenamiento configurado ──────────────────────────
-        async def _declarado(_tenant):
+        async def _declarado(_tenant, _matter=None):
             return [DECLARADO]
 
         _research.resolve_jurisdictions_for = _declarado
@@ -523,7 +523,7 @@ def run_jurisdiction_checks() -> None:
                   for n in ("facts", "analysis", "draft")))
 
         # ── despacho SIN configurar → sigue restringido (correcto por defecto) ──
-        async def _sin_declarar(_tenant):
+        async def _sin_declarar(_tenant, _matter=None):
             return [_pack.GENERIC_CODE]
 
         _research.resolve_jurisdictions_for = _sin_declarar
@@ -533,7 +533,7 @@ def run_jurisdiction_checks() -> None:
               pb.JURISDICTION_UNKNOWN in _prompt(salida_sin, "work"))
 
         # ── la resolución falla (base caída, configuración ilegible) ───────────
-        async def _revienta(_tenant):
+        async def _revienta(_tenant, _matter=None):
             raise RuntimeError("configuración ilegible")
 
         _research.resolve_jurisdictions_for = _revienta
@@ -546,7 +546,7 @@ def run_jurisdiction_checks() -> None:
         # ── una sola resolución por turno ─────────────────────────────────────
         consultas: list[str] = []
 
-        async def _cuenta(tenant):
+        async def _cuenta(tenant, _matter=None):
             consultas.append(tenant)
             return [DECLARADO]
 
