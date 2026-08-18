@@ -193,12 +193,6 @@ def recovery_key_confirmed(app_dir: Path, key: bytes | None = None) -> bool:
         return False
 
 
-def recovery_key_text(app_dir: Path) -> str:
-    """Texto portable para descargar; no confirma que el usuario lo guardó."""
-    key = load_or_create_recovery_key(app_dir)
-    return RECOVERY_PREFIX + base64.urlsafe_b64encode(key).decode("ascii") + "\n"
-
-
 def confirm_recovery_key_saved(app_dir: Path) -> None:
     """Marca confirmada solo una llave local existente."""
     _write_recovery_marker(app_dir, load_recovery_key(app_dir))

@@ -56,9 +56,11 @@ molde a copiar**: su `MiaClient` es solo `RelayClient` con el nombre local.
 
 ## Parte 2 · Sistemas conectados (MCP)
 
-Un **sistema** es algo a lo que Mia se conecta para trabajar: la **gestión documental**
-del despacho, la **consulta de estados de procesos**, etc. Mia habla con ellos por el
-protocolo **MCP** (Model Context Protocol). El código vive en `backend/mia/mcp/`.
+Un **sistema** es un servidor externo con el que Mia podría hablar por **MCP**
+(Model Context Protocol). El código vive en `backend/mia/mcp/`. Hoy el catálogo
+de producto está **vacío**: no hay gestor documental ni consulta de procesos.
+La maquinaria de seguridad sí está; una entrada se añade solo cuando exista un
+servidor real del despacho.
 
 ### Principios de seguridad (todos elevan una costura ya probada)
 
@@ -118,7 +120,7 @@ entonces todo queda **listo y apagado** — sin superficie de ataque nueva encen
 
 ## Frontend (capa 3 · Cursor)
 
-Pantalla "Sistemas conectados" en Configurar a Mia: lista `GET /api/mcp/status`, con un
-formulario por servidor (los `fields`, marcando secretos) que hace `POST .../enable`, y
-un interruptor que hace `.../disable`. Todo en llano — el abogado ve "Gestión documental
-del despacho", no "servidor MCP". Ver HANDOFF.md §CP-E6.
+Pantalla "Sistemas conectados" en Configurar: lista `GET /api/mcp/status`. Con el
+catálogo vacío muestra el estado honesto (no hay sistemas conectables en esta
+versión). Si hubiera entradas, cada una tendría formulario (`POST .../enable`) e
+interruptor (`.../disable`), en llano, sin jerga de "servidor MCP".

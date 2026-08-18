@@ -22,7 +22,7 @@ import threading
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from ..agents.untrusted import fence_block
 from ..memory.tokens import estimate_tokens
@@ -553,8 +553,3 @@ def derive_office_document(filename: str, data: bytes,
         assets_count=0,
         source_file=filename,
     )
-
-
-def serialize_chunks(chunks: Iterable[dict[str, Any]]) -> list[str]:
-    """Compatibility view for legacy embedding callers."""
-    return [str(chunk.get("text", "")) for chunk in chunks if chunk.get("text")]

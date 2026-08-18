@@ -1,7 +1,8 @@
 "use client";
 
-// CP-E6 · Sistemas conectados (gestión documental / consulta de procesos).
-// Consent-first: todo nace apagado. Sin jerga (§G): nunca "MCP", "servidor", "tenant".
+// CP-E6 · Sistemas conectados. Catálogo de producto vacío a propósito
+// (no hay DMS ni consulta de procesos). Consent-first: todo nace apagado.
+// Sin jerga (§G): nunca "MCP", "servidor", "tenant".
 
 import { useCallback, useEffect, useState } from "react";
 import { FolderSearch, Scale } from "lucide-react";

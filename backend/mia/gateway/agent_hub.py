@@ -64,10 +64,6 @@ def _prompt_flag(flag: str) -> Callable[[str], list[str]]:
     return lambda prompt: [flag, prompt]
 
 
-def _subcmd(subcmd: str) -> Callable[[str], list[str]]:
-    return lambda prompt: [subcmd, prompt]
-
-
 # Flags que cada conector debe exhibir en `--help` para considerarse listo.
 # Codex no usa -p: el prompt va por stdin (mismo aislamiento del proveedor productivo).
 _HELP_NEEDLES: dict[str, tuple[str, ...]] = {

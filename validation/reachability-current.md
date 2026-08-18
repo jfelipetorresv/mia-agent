@@ -1,36 +1,24 @@
 # Alcanzabilidad productiva de Mia
 
-Huella reproducible: `b7b6ae4d8ea8348a1a52cd2d61515e46110a7f7fb82bb350be9c5d275efbbfd6`
+Huella reproducible: `c4128efe47911bf9c1d9edb8fe1a5854fa4f733c428903582f47ecd38f401f12`
 
 Este informe es informativo: no autoriza ni ejecuta eliminaciones. Las referencias desde pruebas no cuentan como uso productivo.
 
 ## Resumen
 
-- Archivos fuente: 285
-- Alcanzables: 275
-- No alcanzables: 10
-- Aristas: 1490
-- Candidatos: 103
+- Archivos fuente: 289
+- Alcanzables: 282
+- No alcanzables: 7
+- Aristas: 1519
+- Candidatos: 87
 - Errores de análisis: 0
 
 ## Candidatos
 
 - **medium** · symbol · `backend/mia/agent/prompt_builder.py:367` `build_layers`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 2)
+- **medium** · symbol · `backend/mia/agents/packs.py:246` `example_metadata_packs`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
 - **medium** · symbol · `backend/mia/agents/retrieval.py:1027` `unread_documents`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 3)
-- **high** · file · `backend/mia/channels/relay.py`: No existe camino estático desde un entrypoint productivo. (tests: 0)
-- **high** · symbol · `backend/mia/channels/relay.py:32` `RelayApiError`: Su archivo no es alcanzable desde producción. (tests: 0)
-- **medium** · symbol · `backend/mia/channels/relay.py:37` `RelayConfig`: Su archivo no es alcanzable desde producción. (tests: 0)
-- **high** · symbol · `backend/mia/channels/relay.py:48` `RelayClient`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 7)
-- **high** · symbol · `backend/mia/channels/relay.py:133` `load_relay_config`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
-- **high** · file · `backend/mia/channels/telegram_bridge.py`: No existe camino estático desde un entrypoint productivo. (tests: 0)
-- **high** · symbol · `backend/mia/channels/telegram_bridge.py:80` `BridgeConfigError`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 1)
-- **medium** · symbol · `backend/mia/channels/telegram_bridge.py:91` `BridgeSettings`: Su archivo no es alcanzable desde producción. (tests: 0)
-- **high** · symbol · `backend/mia/channels/telegram_bridge.py:117` `load_settings`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 1)
-- **high** · symbol · `backend/mia/channels/telegram_bridge.py:148` `MiaClient`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 6)
-- **high** · symbol · `backend/mia/channels/telegram_bridge.py:155` `TelegramBridge`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
-- **high** · symbol · `backend/mia/channels/telegram_bridge.py:321` `run_bot`: Su archivo no es alcanzable desde producción. (tests: 0)
-- **high** · symbol · `backend/mia/channels/telegram_bridge.py:425` `main`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 538)
-- **medium** · symbol · `backend/mia/config.py:37` `optional_capabilities`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
+- **medium** · symbol · `backend/mia/channels/relay.py:133` `load_relay_config`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
 - **high** · file · `backend/mia/connectors/vault_export.py`: No existe camino estático desde un entrypoint productivo. (tests: 0)
 - **high** · symbol · `backend/mia/connectors/vault_export.py:53` `_short`: Su archivo no es alcanzable desde producción. (tests: 0)
 - **high** · symbol · `backend/mia/connectors/vault_export.py:60` `_fm`: Su archivo no es alcanzable desde producción. (tests: 0)
@@ -45,7 +33,6 @@ Este informe es informativo: no autoriza ni ejecuta eliminaciones. Las referenci
 - **high** · symbol · `backend/mia/connectors/vault_export.py:240` `export_tenant`: Su archivo no es alcanzable desde producción. (tests: 0)
 - **high** · symbol · `backend/mia/connectors/vault_export.py:268` `_list_tenant_ids`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 1)
 - **high** · symbol · `backend/mia/connectors/vault_export.py:290` `_run`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 24)
-- **medium** · symbol · `backend/mia/cron/suggestions.py:175` `generate_suggestions`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 7)
 - **medium** · symbol · `backend/mia/eval/cases.py:383` `load_large_cases`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 6)
 - **medium** · symbol · `backend/mia/eval/codex_cli_adapter.py:145` `resolve_native_codex`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
 - **medium** · symbol · `backend/mia/eval/harness.py:677` `usage_by_node`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 1)
@@ -62,7 +49,7 @@ Este informe es informativo: no autoriza ni ejecuta eliminaciones. Las referenci
 - **high** · symbol · `backend/mia/eval/holdout.py:240` `load_holdout_cases`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
 - **high** · symbol · `backend/mia/eval/holdout.py:266` `write_manifest`: Su archivo no es alcanzable desde producción. (tests: 0)
 - **high** · file · `backend/mia/eval/provider_benchmark.py`: No existe camino estático desde un entrypoint productivo. (tests: 0)
-- **high** · symbol · `backend/mia/eval/provider_benchmark.py:48` `BenchmarkContractError`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 3)
+- **high** · symbol · `backend/mia/eval/provider_benchmark.py:48` `BenchmarkContractError`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 28)
 - **high** · symbol · `backend/mia/eval/provider_benchmark.py:52` `IncompleteEvidence`: Su archivo no es alcanzable desde producción. (tests: 0)
 - **medium** · symbol · `backend/mia/eval/provider_benchmark.py:57` `ArmCapability`: Su archivo no es alcanzable desde producción. (tests: 0)
 - **high** · symbol · `backend/mia/eval/provider_benchmark.py:71` `_canonical`: Su archivo no es alcanzable desde producción. (tests: 0)
@@ -82,15 +69,14 @@ Este informe es informativo: no autoriza ni ejecuta eliminaciones. Las referenci
 - **high** · symbol · `backend/mia/eval/provider_benchmark.py:345` `review_template`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 3)
 - **high** · symbol · `backend/mia/eval/provider_benchmark.py:363` `validate_human_review`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 2)
 - **high** · symbol · `backend/mia/eval/provider_benchmark.py:390` `arm_metrics`: Su archivo no es alcanzable desde producción. (tests: 0)
-- **high** · symbol · `backend/mia/eval/provider_benchmark.py:413` `certification_status`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 3)
-- **medium** · symbol · `backend/mia/ingest/document_derivation.py:351` `anydoc_available`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
+- **high** · symbol · `backend/mia/eval/provider_benchmark.py:413` `certification_status`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 5)
 - **medium** · symbol · `backend/mia/ingest/document_derivation.py:516` `prompt_chunk`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 2)
-- **medium** · symbol · `backend/mia/ingest/document_derivation.py:558` `serialize_chunks`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
 - **medium** · symbol · `backend/mia/memory/aprendido.py:166` `_parse_insights`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 6)
-- **medium** · symbol · `backend/mia/metrics/usage.py:247` `pending_count`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
+- **medium** · symbol · `backend/mia/metrics/usage.py:265` `pending_count`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
+- **medium** · symbol · `backend/mia/policy/turn_budget.py:23` `cost_status_for_alias`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 2)
 - **high** · file · `backend/mia/rag/corpus_factory.py`: No existe camino estático desde un entrypoint productivo. (tests: 0)
 - **high** · symbol · `backend/mia/rag/corpus_factory.py:73` `_normalize`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 9)
-- **high** · symbol · `backend/mia/rag/corpus_factory.py:80` `_sha256`: Su archivo no es alcanzable desde producción. (tests: 0)
+- **high** · symbol · `backend/mia/rag/corpus_factory.py:80` `_sha256`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
 - **high** · symbol · `backend/mia/rag/corpus_factory.py:86` `_now_iso`: Su archivo no es alcanzable desde producción. (tests: 0)
 - **high** · symbol · `backend/mia/rag/corpus_factory.py:90` `_decode_response`: Su archivo no es alcanzable desde producción. (tests: 0)
 - **high** · symbol · `backend/mia/rag/corpus_factory.py:110` `_visible_text`: Su archivo no es alcanzable desde producción. (tests: 0)
@@ -109,12 +95,10 @@ Este informe es informativo: no autoriza ni ejecuta eliminaciones. Las referenci
 - **high** · symbol · `backend/mia/rag/ingest_corpus.py:157` `ingest_baseline_corpus`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 7)
 - **high** · symbol · `backend/mia/rag/ingest_corpus.py:220` `_run`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 24)
 - **medium** · symbol · `backend/mia/setup/backup.py:196` `recovery_key_text`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
-- **medium** · symbol · `desktop/src-tauri/src/lib.rs:2101` `three_consecutive_failures_are_required`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
-- **medium** · symbol · `desktop/src-tauri/src/lib.rs:2111` `crash_loop_stops_after_three_restarts`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
-- **medium** · symbol · `desktop/src-tauri/src/lib.rs:2121` `confirmed_identity_resets_health_failures`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
-- **high** · file · `frontend/components/ui/separator.tsx`: No existe camino estático desde un entrypoint productivo. (tests: 0)
-- **high** · symbol · `frontend/components/ui/separator.tsx:7` `Separator`: Su archivo no es alcanzable desde producción. (tests: 0)
-- **medium** · symbol · `frontend/lib/api.ts:255` `apiConfig`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
+- **medium** · symbol · `backend/mia/setup/db_bootstrap.py:108` `migration_sha256`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 4)
+- **medium** · symbol · `desktop/src-tauri/src/lib.rs:2141` `three_consecutive_failures_are_required`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
+- **medium** · symbol · `desktop/src-tauri/src/lib.rs:2151` `crash_loop_stops_after_three_restarts`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
+- **medium** · symbol · `desktop/src-tauri/src/lib.rs:2161` `confirmed_identity_resets_health_failures`: Sin referencias estáticas productivas fuera de su definición. (tests: 0)
 - **high** · file · `frontend/next-env.d.ts`: No existe camino estático desde un entrypoint productivo. (tests: 0)
 - **high** · file · `frontend/tailwind.config.ts`: No existe camino estático desde un entrypoint productivo. (tests: 0)
-- **high** · symbol · `frontend/tailwind.config.ts:3` `config`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 562)
+- **high** · symbol · `frontend/tailwind.config.ts:3` `config`: El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo. (tests: 617)

@@ -13,6 +13,16 @@
     {
       "confidence": "medium",
       "kind": "symbol",
+      "line": 246,
+      "path": "backend/mia/agents/packs.py",
+      "production_references": 0,
+      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
+      "symbol": "example_metadata_packs",
+      "test_references": 4
+    },
+    {
+      "confidence": "medium",
+      "kind": "symbol",
       "line": 1027,
       "path": "backend/mia/agents/retrieval.py",
       "production_references": 0,
@@ -21,137 +31,13 @@
       "test_references": 3
     },
     {
-      "confidence": "high",
-      "kind": "file",
-      "path": "backend/mia/channels/relay.py",
-      "reason": "No existe camino estático desde un entrypoint productivo.",
-      "test_references": 0
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 32,
-      "path": "backend/mia/channels/relay.py",
-      "production_references": 0,
-      "reason": "Su archivo no es alcanzable desde producción.",
-      "symbol": "RelayApiError",
-      "test_references": 0
-    },
-    {
       "confidence": "medium",
-      "kind": "symbol",
-      "line": 37,
-      "path": "backend/mia/channels/relay.py",
-      "production_references": 0,
-      "reason": "Su archivo no es alcanzable desde producción.",
-      "symbol": "RelayConfig",
-      "test_references": 0
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 48,
-      "path": "backend/mia/channels/relay.py",
-      "production_references": 0,
-      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
-      "symbol": "RelayClient",
-      "test_references": 7
-    },
-    {
-      "confidence": "high",
       "kind": "symbol",
       "line": 133,
       "path": "backend/mia/channels/relay.py",
       "production_references": 0,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "load_relay_config",
-      "test_references": 4
-    },
-    {
-      "confidence": "high",
-      "kind": "file",
-      "path": "backend/mia/channels/telegram_bridge.py",
-      "reason": "No existe camino estático desde un entrypoint productivo.",
-      "test_references": 0
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 80,
-      "path": "backend/mia/channels/telegram_bridge.py",
-      "production_references": 0,
-      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
-      "symbol": "BridgeConfigError",
-      "test_references": 1
-    },
-    {
-      "confidence": "medium",
-      "kind": "symbol",
-      "line": 91,
-      "path": "backend/mia/channels/telegram_bridge.py",
-      "production_references": 0,
-      "reason": "Su archivo no es alcanzable desde producción.",
-      "symbol": "BridgeSettings",
-      "test_references": 0
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 117,
-      "path": "backend/mia/channels/telegram_bridge.py",
-      "production_references": 0,
-      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
-      "symbol": "load_settings",
-      "test_references": 1
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 148,
-      "path": "backend/mia/channels/telegram_bridge.py",
-      "production_references": 1,
-      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
-      "symbol": "MiaClient",
-      "test_references": 6
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 155,
-      "path": "backend/mia/channels/telegram_bridge.py",
-      "production_references": 0,
-      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
-      "symbol": "TelegramBridge",
-      "test_references": 4
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 321,
-      "path": "backend/mia/channels/telegram_bridge.py",
-      "production_references": 0,
-      "reason": "Su archivo no es alcanzable desde producción.",
-      "symbol": "run_bot",
-      "test_references": 0
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 425,
-      "path": "backend/mia/channels/telegram_bridge.py",
-      "production_references": 73,
-      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
-      "symbol": "main",
-      "test_references": 538
-    },
-    {
-      "confidence": "medium",
-      "kind": "symbol",
-      "line": 37,
-      "path": "backend/mia/config.py",
-      "production_references": 0,
-      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
-      "symbol": "optional_capabilities",
       "test_references": 4
     },
     {
@@ -286,20 +172,10 @@
       "kind": "symbol",
       "line": 290,
       "path": "backend/mia/connectors/vault_export.py",
-      "production_references": 5,
+      "production_references": 7,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "_run",
       "test_references": 24
-    },
-    {
-      "confidence": "medium",
-      "kind": "symbol",
-      "line": 175,
-      "path": "backend/mia/cron/suggestions.py",
-      "production_references": 0,
-      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
-      "symbol": "generate_suggestions",
-      "test_references": 7
     },
     {
       "confidence": "medium",
@@ -463,7 +339,7 @@
       "production_references": 0,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "BenchmarkContractError",
-      "test_references": 3
+      "test_references": 28
     },
     {
       "confidence": "high",
@@ -663,17 +539,7 @@
       "production_references": 0,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "certification_status",
-      "test_references": 3
-    },
-    {
-      "confidence": "medium",
-      "kind": "symbol",
-      "line": 351,
-      "path": "backend/mia/ingest/document_derivation.py",
-      "production_references": 0,
-      "reason": "Sin referencias estáticas productivas fuera de su definición.",
-      "symbol": "anydoc_available",
-      "test_references": 0
+      "test_references": 5
     },
     {
       "confidence": "medium",
@@ -688,16 +554,6 @@
     {
       "confidence": "medium",
       "kind": "symbol",
-      "line": 558,
-      "path": "backend/mia/ingest/document_derivation.py",
-      "production_references": 0,
-      "reason": "Sin referencias estáticas productivas fuera de su definición.",
-      "symbol": "serialize_chunks",
-      "test_references": 0
-    },
-    {
-      "confidence": "medium",
-      "kind": "symbol",
       "line": 166,
       "path": "backend/mia/memory/aprendido.py",
       "production_references": 0,
@@ -708,12 +564,22 @@
     {
       "confidence": "medium",
       "kind": "symbol",
-      "line": 247,
+      "line": 265,
       "path": "backend/mia/metrics/usage.py",
       "production_references": 0,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "pending_count",
       "test_references": 4
+    },
+    {
+      "confidence": "medium",
+      "kind": "symbol",
+      "line": 23,
+      "path": "backend/mia/policy/turn_budget.py",
+      "production_references": 0,
+      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
+      "symbol": "cost_status_for_alias",
+      "test_references": 2
     },
     {
       "confidence": "high",
@@ -727,7 +593,7 @@
       "kind": "symbol",
       "line": 73,
       "path": "backend/mia/rag/corpus_factory.py",
-      "production_references": 40,
+      "production_references": 39,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "_normalize",
       "test_references": 9
@@ -738,9 +604,9 @@
       "line": 80,
       "path": "backend/mia/rag/corpus_factory.py",
       "production_references": 0,
-      "reason": "Su archivo no es alcanzable desde producción.",
+      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "_sha256",
-      "test_references": 0
+      "test_references": 4
     },
     {
       "confidence": "high",
@@ -877,7 +743,7 @@
       "kind": "symbol",
       "line": 641,
       "path": "backend/mia/rag/corpus_factory.py",
-      "production_references": 5,
+      "production_references": 7,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "_run",
       "test_references": 24
@@ -904,7 +770,7 @@
       "kind": "symbol",
       "line": 220,
       "path": "backend/mia/rag/ingest_corpus.py",
-      "production_references": 5,
+      "production_references": 7,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "_run",
       "test_references": 24
@@ -922,7 +788,17 @@
     {
       "confidence": "medium",
       "kind": "symbol",
-      "line": 2101,
+      "line": 108,
+      "path": "backend/mia/setup/db_bootstrap.py",
+      "production_references": 0,
+      "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
+      "symbol": "migration_sha256",
+      "test_references": 4
+    },
+    {
+      "confidence": "medium",
+      "kind": "symbol",
+      "line": 2141,
       "path": "desktop/src-tauri/src/lib.rs",
       "production_references": 0,
       "reason": "Sin referencias estáticas productivas fuera de su definición.",
@@ -932,7 +808,7 @@
     {
       "confidence": "medium",
       "kind": "symbol",
-      "line": 2111,
+      "line": 2151,
       "path": "desktop/src-tauri/src/lib.rs",
       "production_references": 0,
       "reason": "Sin referencias estáticas productivas fuera de su definición.",
@@ -942,38 +818,11 @@
     {
       "confidence": "medium",
       "kind": "symbol",
-      "line": 2121,
+      "line": 2161,
       "path": "desktop/src-tauri/src/lib.rs",
       "production_references": 0,
       "reason": "Sin referencias estáticas productivas fuera de su definición.",
       "symbol": "confirmed_identity_resets_health_failures",
-      "test_references": 0
-    },
-    {
-      "confidence": "high",
-      "kind": "file",
-      "path": "frontend/components/ui/separator.tsx",
-      "reason": "No existe camino estático desde un entrypoint productivo.",
-      "test_references": 0
-    },
-    {
-      "confidence": "high",
-      "kind": "symbol",
-      "line": 7,
-      "path": "frontend/components/ui/separator.tsx",
-      "production_references": 4,
-      "reason": "Su archivo no es alcanzable desde producción.",
-      "symbol": "Separator",
-      "test_references": 0
-    },
-    {
-      "confidence": "medium",
-      "kind": "symbol",
-      "line": 255,
-      "path": "frontend/lib/api.ts",
-      "production_references": 0,
-      "reason": "Sin referencias estáticas productivas fuera de su definición.",
-      "symbol": "apiConfig",
       "test_references": 0
     },
     {
@@ -995,10 +844,10 @@
       "kind": "symbol",
       "line": 3,
       "path": "frontend/tailwind.config.ts",
-      "production_references": 438,
+      "production_references": 449,
       "reason": "El símbolo aparece solo en pruebas; las pruebas no lo mantienen vivo.",
       "symbol": "config",
-      "test_references": 562
+      "test_references": 617
     }
   ],
   "edges": [
@@ -1025,6 +874,18 @@
     {
       "from": "backend/mia/agent/auxiliary_client.py",
       "to": "backend/mia/agent/llm.py"
+    },
+    {
+      "from": "backend/mia/agent/codex_subscription_llm.py",
+      "to": "backend/mia/__init__.py"
+    },
+    {
+      "from": "backend/mia/agent/codex_subscription_llm.py",
+      "to": "backend/mia/agent/__init__.py"
+    },
+    {
+      "from": "backend/mia/agent/codex_subscription_llm.py",
+      "to": "backend/mia/config.py"
     },
     {
       "from": "backend/mia/agent/context_compressor.py",
@@ -1057,6 +918,10 @@
     {
       "from": "backend/mia/agent/llm.py",
       "to": "backend/mia/agent/__init__.py"
+    },
+    {
+      "from": "backend/mia/agent/llm.py",
+      "to": "backend/mia/agent/codex_subscription_llm.py"
     },
     {
       "from": "backend/mia/agent/llm.py",
@@ -1288,6 +1153,14 @@
     },
     {
       "from": "backend/mia/agents/graph.py",
+      "to": "backend/mia/agents/handoff.py"
+    },
+    {
+      "from": "backend/mia/agents/graph.py",
+      "to": "backend/mia/agents/packs.py"
+    },
+    {
+      "from": "backend/mia/agents/graph.py",
       "to": "backend/mia/agents/reasoning_filter.py"
     },
     {
@@ -1297,6 +1170,10 @@
     {
       "from": "backend/mia/agents/graph.py",
       "to": "backend/mia/agents/retrieval.py"
+    },
+    {
+      "from": "backend/mia/agents/graph.py",
+      "to": "backend/mia/agents/stage_gate.py"
     },
     {
       "from": "backend/mia/agents/graph.py",
@@ -1423,6 +1300,38 @@
       "to": "backend/mia/policy/budget.py"
     },
     {
+      "from": "backend/mia/agents/graph.py",
+      "to": "backend/mia/policy/turn_budget.py"
+    },
+    {
+      "from": "backend/mia/agents/handoff.py",
+      "to": "backend/mia/__init__.py"
+    },
+    {
+      "from": "backend/mia/agents/handoff.py",
+      "to": "backend/mia/agents/__init__.py"
+    },
+    {
+      "from": "backend/mia/agents/handoff.py",
+      "to": "backend/mia/agents/packs.py"
+    },
+    {
+      "from": "backend/mia/agents/handoff.py",
+      "to": "backend/mia/db/__init__.py"
+    },
+    {
+      "from": "backend/mia/agents/handoff.py",
+      "to": "backend/mia/db/pool.py"
+    },
+    {
+      "from": "backend/mia/agents/packs.py",
+      "to": "backend/mia/__init__.py"
+    },
+    {
+      "from": "backend/mia/agents/packs.py",
+      "to": "backend/mia/agents/__init__.py"
+    },
+    {
       "from": "backend/mia/agents/personas.py",
       "to": "backend/mia/__init__.py"
     },
@@ -1513,6 +1422,18 @@
     {
       "from": "backend/mia/agents/retrieval.py",
       "to": "backend/mia/memory/wiki_manager.py"
+    },
+    {
+      "from": "backend/mia/agents/stage_gate.py",
+      "to": "backend/mia/__init__.py"
+    },
+    {
+      "from": "backend/mia/agents/stage_gate.py",
+      "to": "backend/mia/agents/__init__.py"
+    },
+    {
+      "from": "backend/mia/agents/stage_gate.py",
+      "to": "backend/mia/agents/packs.py"
     },
     {
       "from": "backend/mia/agents/state.py",
@@ -1764,6 +1685,10 @@
     },
     {
       "from": "backend/mia/api/main.py",
+      "to": "backend/mia/channels/telegram_bridge.py"
+    },
+    {
+      "from": "backend/mia/api/main.py",
       "to": "backend/mia/config.py"
     },
     {
@@ -1777,6 +1702,10 @@
     {
       "from": "backend/mia/api/main.py",
       "to": "backend/mia/db/pool.py"
+    },
+    {
+      "from": "backend/mia/api/main.py",
+      "to": "backend/mia/ingest/document_derivation.py"
     },
     {
       "from": "backend/mia/api/main.py",
@@ -2624,6 +2553,10 @@
     },
     {
       "from": "backend/mia/api/routes/settings.py",
+      "to": "backend/mia/agent/codex_subscription_llm.py"
+    },
+    {
+      "from": "backend/mia/api/routes/settings.py",
       "to": "backend/mia/agent/llm.py"
     },
     {
@@ -3104,6 +3037,10 @@
     },
     {
       "from": "backend/mia/api/routes/welcome.py",
+      "to": "backend/mia/agent/codex_subscription_llm.py"
+    },
+    {
+      "from": "backend/mia/api/routes/welcome.py",
       "to": "backend/mia/agent/llm.py"
     },
     {
@@ -3141,6 +3078,10 @@
     {
       "from": "backend/mia/api/run.py",
       "to": "backend/mia/api/__init__.py"
+    },
+    {
+      "from": "backend/mia/api/run.py",
+      "to": "backend/mia/config.py"
     },
     {
       "from": "backend/mia/assistant/__init__.py",
@@ -3777,6 +3718,10 @@
     {
       "from": "backend/mia/cron/scheduler.py",
       "to": "backend/mia/cron/__init__.py"
+    },
+    {
+      "from": "backend/mia/cron/scheduler.py",
+      "to": "backend/mia/cron/suggestions.py"
     },
     {
       "from": "backend/mia/cron/scheduler.py",
@@ -4699,6 +4644,10 @@
       "to": "backend/mia/memory/__init__.py"
     },
     {
+      "from": "backend/mia/memory/citation_seals.py",
+      "to": "backend/mia/memory/burned_citations.py"
+    },
+    {
       "from": "backend/mia/memory/curator.py",
       "to": "backend/mia/__init__.py"
     },
@@ -5312,6 +5261,22 @@
     },
     {
       "from": "backend/mia/policy/budget.py",
+      "to": "backend/mia/policy/__init__.py"
+    },
+    {
+      "from": "backend/mia/policy/turn_budget.py",
+      "to": "backend/mia/__init__.py"
+    },
+    {
+      "from": "backend/mia/policy/turn_budget.py",
+      "to": "backend/mia/metrics/__init__.py"
+    },
+    {
+      "from": "backend/mia/policy/turn_budget.py",
+      "to": "backend/mia/metrics/usage.py"
+    },
+    {
+      "from": "backend/mia/policy/turn_budget.py",
       "to": "backend/mia/policy/__init__.py"
     },
     {
@@ -6073,6 +6038,10 @@
     {
       "from": "frontend/app/_components/ProteccionDatosSection.tsx",
       "to": "frontend/components/ui/button.tsx"
+    },
+    {
+      "from": "frontend/app/_components/ProteccionDatosSection.tsx",
+      "to": "frontend/lib/api.ts"
     },
     {
       "from": "frontend/app/_components/SectionTitle.tsx",
@@ -6935,10 +6904,6 @@
       "to": "frontend/lib/utils.ts"
     },
     {
-      "from": "frontend/components/ui/separator.tsx",
-      "to": "frontend/lib/utils.ts"
-    },
-    {
       "from": "frontend/components/ui/skeleton.tsx",
       "to": "frontend/lib/utils.ts"
     },
@@ -6963,7 +6928,7 @@
       "to": "frontend/lib/wav.ts"
     }
   ],
-  "fingerprint": "b7b6ae4d8ea8348a1a52cd2d61515e46110a7f7fb82bb350be9c5d275efbbfd6",
+  "fingerprint": "c4128efe47911bf9c1d9edb8fe1a5854fa4f733c428903582f47ecd38f401f12",
   "parse_errors": [],
   "policy": {
     "analysis": "conservative-static",
@@ -7001,11 +6966,11 @@
   },
   "schema_version": 1,
   "summary": {
-    "candidates": 103,
-    "edges": 1490,
+    "candidates": 87,
+    "edges": 1519,
     "parse_errors": 0,
-    "reachable_files": 275,
-    "source_files": 285,
-    "unreachable_files": 10
+    "reachable_files": 282,
+    "source_files": 289,
+    "unreachable_files": 7
   }
 }
