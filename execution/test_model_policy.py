@@ -255,19 +255,23 @@ def run() -> None:
 
     # 5f · blindaje BatBadBut (CVE-2024-24576): un `claude` que resuelve a .cmd/.ps1
     # pasaría por cmd.exe al ejecutarse con lista de args → se trata como NO disponible.
-    saved = patch_cli(run_fn=lambda *a, **k: _FakeProc(CLI_OK_JSON), which="C:\\fake\\claude.cmd")
-    try:
-        exc = None
+    # La superficie es Windows (`os.name == "nt"` en subscription_llm._resolve_exe).
+    if sys.platform == "win32":
+        saved = patch_cli(run_fn=lambda *a, **k: _FakeProc(CLI_OK_JSON), which="C:\\fake\\claude.cmd")
         try:
-            subscription_llm.call_cli(MSG)
-        except Exception as e:  # noqa: BLE001
-            exc = e
-        check("5f · which→claude.cmd (no .exe) → SubscriptionCLIUnavailable (BatBadBut)",
-              isinstance(exc, subscription_llm.SubscriptionCLIUnavailable))
-        check("5g · is_available() == False con which→.cmd",
-              subscription_llm.is_available() is False)
-    finally:
-        restore_cli(saved)
+            exc = None
+            try:
+                subscription_llm.call_cli(MSG)
+            except Exception as e:  # noqa: BLE001
+                exc = e
+            check("5f · which→claude.cmd (no .exe) → SubscriptionCLIUnavailable (BatBadBut)",
+                  isinstance(exc, subscription_llm.SubscriptionCLIUnavailable))
+            check("5g · is_available() == False con which→.cmd",
+                  subscription_llm.is_available() is False)
+        finally:
+            restore_cli(saved)
+    else:
+        print("  [SKIP] 5f/5g BatBadBut: cmd.exe solo existe en Windows")
 
     # === 6 · parse correcto del JSON real del CLI ===
     captured: dict = {}
