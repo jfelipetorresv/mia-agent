@@ -102,8 +102,10 @@ foreach ($test in $tests) {
             WorkingDirectory = $root
             RedirectStandardOutput = $stdout
             RedirectStandardError = $stderr
-            WindowStyle = 'Hidden'
             PassThru = $true
+        }
+        if ($IsWindows) {
+            $startArgs['WindowStyle'] = 'Hidden'
         }
         $proc = Start-Process @startArgs
         # Windows PowerShell pierde ExitCode con redirección si el handle no se materializa
