@@ -64,6 +64,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Stub installer payloads for cargo check
+        shell: pwsh
+        run: |
+          # packaging/dist está en .gitignore (artefactos del instalador).
+          # tauri-build exige que las rutas de bundle.resources existan
+          # incluso en `cargo check`; no empaquetamos el instalador aquí.
+          foreach ($name in @('mia-backend', 'mia-litellm', 'mia-frontend', 'pgsql')) {
+            New-Item -ItemType Directory -Force -Path "packaging/dist/$name" | Out-Null
+          }
       - name: Check desktop shell
         working-directory: desktop/src-tauri
         run: cargo check --locked
@@ -112,6 +121,7 @@ jobs:
           migrations = sorted(Path('backend/mia/db/migrations').glob('*.sql'))
           apply_migrations(os.environ['PG_HOST'], os.environ['PG_PORT'], os.environ['PG_DB'], os.environ['PG_PASSWORD'], migrations)
           PY
+          python execution/init_checkpointer.py
       - name: Execute critical RLS and HITL contracts
         run: |
           python execution/test_rls.py

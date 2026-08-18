@@ -19,8 +19,9 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-import psycopg
-from psycopg import sql
+# psycopg se importa dentro de las funciones que tocan Postgres. El SHA-256
+# de migraciones (gate estático / --sellar) no debe exigir el driver: CI lo
+# corre antes de `pip install './backend[full]'`.
 
 # GRANT dinámico: cubre cualquier tabla 'checkpoint%' que cree LangGraph (idéntico
 # al de execution/init_checkpointer.py original).
@@ -137,6 +138,9 @@ def ensure_app_role_and_database(
     decide cómo formatear el mensaje de progreso (execution/*.py imprime
     "[OK] ...", first_run.py imprime "MIA-SETUP: ...").
     """
+    import psycopg
+    from psycopg import sql
+
     with psycopg.connect(autocommit=True, **_super_kw(host, port, "postgres", super_pw)) as c:
         verb = "ALTER" if c.execute(
             "SELECT 1 FROM pg_roles WHERE rolname='mia_app'"
@@ -161,6 +165,8 @@ def apply_extensions_and_schema(
 ) -> dict:
     """Extensiones (vector, pgcrypto) + schema.sql, como superusuario. Devuelve
     diagnóstico (encoding, tablas, policies, versión de pgvector)."""
+    import psycopg
+
     with psycopg.connect(autocommit=True, **_super_kw(host, port, db, super_pw)) as c:
         c.execute("CREATE EXTENSION IF NOT EXISTS vector")
         c.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
@@ -208,6 +214,8 @@ def apply_migrations(
     """
     # Defensa en profundidad: paths.migration_paths() ya ordena, pero este
     # helper también lo garantiza para cualquier llamador futuro.
+    import psycopg
+
     migrations = sorted(migrations, key=lambda path: path.name)
     # Antes de tocar nada: dos migraciones con el mismo prefijo numérico rompen
     # el orden del ledger (incidente real de la sesión 48: dos `038`).
@@ -299,6 +307,7 @@ def apply_migrations(
 
 
 async def _setup_checkpointer_async(host: str, port: str | int, db: str, super_pw: str) -> list[str]:
+    import psycopg
     from psycopg.rows import dict_row
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
