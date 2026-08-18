@@ -15,6 +15,14 @@ $env:PYTHONPATH = Join-Path $root 'backend'
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
 
+# CI pasa `python` (comando en PATH de setup-python), no una ruta de archivo.
+# Start-Process necesita el ejecutable resuelto.
+if (-not (Test-Path -LiteralPath $python)) {
+    $resolved = Get-Command $python -ErrorAction SilentlyContinue
+    if ($resolved -and $resolved.Source) {
+        $python = $resolved.Source
+    }
+}
 if (-not (Test-Path -LiteralPath $python)) {
     Write-Error "PRECHECK: Python de Mia no existe: $python"
     exit 2
