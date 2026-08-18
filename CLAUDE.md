@@ -1,6 +1,6 @@
 # Mia — CLAUDE.md
 # Constitución del proyecto · agente legal cognitivo autónomo
-# Última actualización: 2026-07-01 · Propietario: Juan Felipe Torres Varela
+# Última actualización: 2026-08-18 · Propietario: Juan Felipe Torres Varela
 # LEER ANTES DE TOCAR CUALQUIER ARCHIVO DEL PROYECTO
 
 ---
@@ -11,9 +11,10 @@ Intelligence (Juan Felipe Torres Varela, Lexia Abogados, Bogotá,
 Colombia). Stack: Python 3.11 + FastAPI + LangGraph +
 PostgreSQL/pgvector + Next.js 14.
 Plataforma: Windows 11 — instalación nativa (Modo B).
-Estado: Olas 1 (confidencialidad), 2 (plazos) y 4 (valor visible)
-cerradas; instalador de escritorio ensamblado (42 migraciones DB);
-en pulido/robustecimiento. Ver TRASPASO-MODELO.md para el detalle.
+Estado: producto con login JWT, ~14 routers `/api`, política de modelo
+por defecto `quality_adaptive`, grafo jurídico con HITL por hash,
+MCP/warroom/misiones, puente Telegram opt-in en el lifespan del API.
+Ver TRASPASO-MODELO.md para el detalle.
 
 El proyecto vive en: "D:\Inteligencia Artificial\Mia-Super Agent\mia"
 (la ruta contiene espacios — siempre entre comillas en comandos).
@@ -46,11 +47,18 @@ Dos memorias separadas:
 ## C · Stack
 - Backend: Python 3.11 · FastAPI · LangGraph · AsyncPostgresSaver
 - Base de datos: PostgreSQL 16 + pgvector (extensión de embeddings)
-- LLM Gateway: LiteLLM (proxy unificado — Claude, GPT, Gemini,
-  MiniMax, Ollama)
-- Agent CLIs: Hermes Agent (MIT) · Claude Code · Codex · Antigravity
-  · OpenClaw
-- Frontend: Next.js 14 App Router · TypeScript · SSE streaming
+- LLM Gateway: router propio (`agent/llm.py`) con política
+  `quality_adaptive` (CLI de suscripción / Codex local / nube /
+  soberano). LiteLLM es un proxy opcional de respaldo, no el camino
+  primero del abogado.
+- Agent Hub: cinco conectores (investigación, documentos,
+  automatización, escritorio, navegación). Solo se habilitan si el
+  binario está en PATH y `--help` confirma los flags. Sin confirmar,
+  el catálogo los muestra con razón honesta — nunca `[VERIFICAR]`.
+- Frontend: Next.js 14 App Router · TypeScript · SSE streaming ·
+  login en `/login`. No son «5 pantallas»: hay asunto, revisión HITL,
+  memoria, configuración (conexiones, ayudantes, protección),
+  automatizaciones, misiones, sala de estrategia.
 - Knowledge Stores: pgvector (siempre) · Obsidian vault (opcional)
   · Pinecone (opcional)
 - Despliegue: procesos nativos Windows (Modo B). "Modo A" (Docker +
@@ -58,8 +66,16 @@ Dos memorias separadas:
   de alcance de v1: no existe ni un Dockerfile ni un docker-compose
   en el repo (verificado). No vender ni documentar Modo A como
   capacidad disponible.
-- Arranque Modo B: 3 terminales PowerShell (litellm / uvicorn /
-  npm run dev)
+- Arranque Modo B: `python -m mia.api.run` (API + scheduler +
+  puente Telegram si hay token) y `npm run dev` del frontend. El
+  proxy LiteLLM es opcional según la política del despacho.
+- Herramientas de operaciones (NO son pantallas del abogado):
+  `python -m mia.connectors.vault_export`, `mia.rag.corpus_factory`,
+  `mia.rag.ingest_corpus`. Viven como CLI de ops.
+- `prompt_builder.build_layers` es herramienta de eval/tests, no
+  una caja de producto.
+- Las skills de Cursor/Codex en `.agents/council|lightrag|playwright`
+  NO son boxes de Mia: no se venden en la UI ni en este mapa.
 - Archivos clave:
   - backend/mia/agent/prompt_builder.py → 10 capas de prompt
   - backend/mia/agents/graph.py         → LangGraph StateGraph

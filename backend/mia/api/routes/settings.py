@@ -67,6 +67,8 @@ async def list_agents(request: Request):
             "id": info["slug"],                 # id público neutro (sin marca)
             "nombre": info["display_name"],     # español (§G)
             "instalado": info["installed"],
+            "listo": bool(info.get("invocation_ready")),
+            "razon": info.get("razon") or "",
             "habilitado": bool(enabled_map.get(key, False)),
         }
         for key, info in available.items()
@@ -144,6 +146,13 @@ async def _set(request: Request, agent_id: str, enabled: bool):
     key = slug_to_key(agent_id) or (agent_id if agent_id in CONNECTORS else None)
     if key is None:
         raise HTTPException(status_code=404, detail="Asistente no encontrado")
+    if enabled:
+        info = (_hub.list_available().get(key) or {})
+        if info.get("invocation_ready") is False:
+            raise HTTPException(
+                status_code=409,
+                detail=str(info.get("razon") or "Ese asistente no está listo en este equipo."),
+            )
     await hub_config.set_enabled(tenant_id, key, enabled)
     c = CONNECTORS[key]
     return {"id": c.slug, "nombre": c.display_name, "habilitado": enabled}

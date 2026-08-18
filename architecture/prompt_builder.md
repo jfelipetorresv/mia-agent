@@ -1,6 +1,10 @@
 # architecture/prompt_builder.md
 # Router LLM + constructor de prompt de 10 capas + AuxiliaryClient
 
+> Actualización 2026-08-18: `build_layers` es herramienta de **eval/tests**
+> (inspección de las 10 capas). No es una caja de producto ni una pantalla.
+> El runtime arma el prompt con `build_system_prompt` / `build_graph_system` /
+> `build_lean_system` / `build_gate_system` (auditor de citas, payload magro).
 > Actualización 2026-08-12: el `MiaAgent` experimental y su sistema de plugins fueron
 > retirados porque no participaban en el API ni en los grafos productivos. Este documento
 > conserva antecedentes históricos más abajo; la arquitectura viva entra por LangGraph y

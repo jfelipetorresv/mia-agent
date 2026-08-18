@@ -5,6 +5,7 @@ import { CheckCircle2, DatabaseBackup, Download, Loader2, ShieldCheck } from "lu
 
 import { Button } from "@/components/ui/button";
 import { SectionTitle, fmtHora } from "@/app/_components/PanelUI";
+import { apiGet } from "@/lib/api";
 
 type ProtectionStatus = {
   recovery_key_created: boolean;
@@ -16,6 +17,14 @@ type ProtectionStatus = {
 };
 
 type BackupFile = { name: string; created_at: string; size_bytes: number };
+
+type ExportRow = {
+  matter_id: string;
+  artifact_hash: string;
+  export_format: string;
+  actor: string;
+  created_at: string;
+};
 
 type TauriCore = { invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
 
@@ -33,6 +42,7 @@ export default function ProteccionDatosSection() {
   const [status, setStatus] = useState<ProtectionStatus | null>(null);
   const [busy, setBusy] = useState<"key" | "confirm" | "backup" | "restore" | null>(null);
   const [backups, setBackups] = useState<BackupFile[] | null>(null);
+  const [exports, setExports] = useState<ExportRow[] | null>(null);
   const [restoreSource, setRestoreSource] = useState("");
   const [restoreConfirm, setRestoreConfirm] = useState("");
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
@@ -50,6 +60,9 @@ export default function ProteccionDatosSection() {
 
   useEffect(() => {
     load();
+    apiGet<{ exports: ExportRow[] }>("/api/exports")
+      .then((data) => setExports(data.exports || []))
+      .catch(() => setExports([]));
   }, []);
 
   async function downloadKey() {
@@ -278,6 +291,26 @@ export default function ProteccionDatosSection() {
             )
           ) : null}
         </div>
+      </div>
+      <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <h3 className="text-sm font-semibold tracking-tight">Salidas de documentos finales</h3>
+        <p className="text-sm text-muted-foreground">
+          Cada descarga de un escrito final queda registrada. Aquí ves la auditoría, no el documento.
+        </p>
+        {exports === null ? (
+          <p className="text-sm text-muted-foreground">Cargando…</p>
+        ) : exports.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Todavía no hay salidas finales registradas.</p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {exports.map((row) => (
+              <li key={`${row.artifact_hash}-${row.created_at}`} className="text-muted-foreground">
+                {fmtHora(String(row.created_at))} · {row.export_format} · {row.actor}
+                <span className="ml-2 font-mono text-xs">{row.artifact_hash.slice(0, 12)}…</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </section>
   );

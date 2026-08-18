@@ -55,6 +55,16 @@ type SpeechStatus = {
   progreso: SpeechProgress | null;
 };
 
+type CapItem = { available?: boolean; reason?: string };
+type HealthCaps = {
+  capabilities?: {
+    ocr?: CapItem;
+    voice?: CapItem;
+    anydoc?: CapItem;
+    telegram?: CapItem;
+  };
+};
+
 type Connectors = {
   knowledge_base?: { active?: boolean; last_sync?: string | null; chunks?: number };
   external_store?: { active?: boolean; vectors_count?: number };
@@ -89,6 +99,7 @@ export default function ConexionesSection({
   const [nbStatus, setNbStatus] = useState<NbStatus | null>(null);
   const [nbList, setNbList] = useState<{ id: string; titulo: string }[]>([]);
   const [nbInstallConfirm, setNbInstallConfirm] = useState(false);
+  const [caps, setCaps] = useState<HealthCaps["capabilities"] | null>(null);
 
   useEffect(() => {
     apiGet<MotorPolicy>("/settings/model-policy")
@@ -99,6 +110,9 @@ export default function ConexionesSection({
       .catch(() => setPolicyMsg("No se pudo cargar el motor de IA. Recarga la página."));
     apiGet<ObsidianStatus>("/api/obsidian/status").then(setObsidian).catch(() => setObsidian(null));
     apiGet<SpeechStatus>("/api/speech/status").then(setSpeech).catch(() => setSpeech(null));
+    apiGet<HealthCaps>("/health")
+      .then((h) => setCaps(h.capabilities || null))
+      .catch(() => setCaps(null));
     refreshNbStatus();
   }, []);
 
@@ -291,6 +305,20 @@ export default function ConexionesSection({
 
   return (
     <div className="space-y-4">
+      {caps ? (
+        <ConnectorCard
+          icon={Layers}
+          title="Capacidades de esta instalación"
+          subtitle="Lo que este equipo puede hacer, sin promesas de módulos ausentes"
+        >
+          <ul className="space-y-1 text-sm text-muted-foreground">
+            <li>Lectura óptica: {caps.ocr?.available ? "disponible" : (caps.ocr?.reason || "no incluida")}</li>
+            <li>Dictado por voz: {caps.voice?.available ? "disponible" : (caps.voice?.reason || "no incluido")}</li>
+            <li>Word/Excel: {caps.anydoc?.available ? "disponible" : (caps.anydoc?.reason || "no incluido")}</li>
+            <li>Telegram: {caps.telegram?.available ? "puente listo (opt-in)" : (caps.telegram?.reason || "sin configurar")}</li>
+          </ul>
+        </ConnectorCard>
+      ) : null}
       {/* Espacio de notas (Obsidian) */}
       <ConnectorCard
         icon={NotebookPen}

@@ -878,6 +878,20 @@ def build_lean_system(state: Any, node: str,
     return "\n\n".join(p.strip() for p in partes if p and p.strip())
 
 
+def build_gate_system() -> str:
+    """System MAGRO del auditor de citas: identidad + oficio. Nada de análisis ni draft.
+
+    El payload de usuario (borrador anotado + pack de fuentes + informe del muro) se
+    arma en el nodo; aquí no entra el expediente, ni el diagnóstico, ni las 10 capas.
+    """
+    return "\n\n".join((
+        GRAPH_FALLBACK_IDENTITY.strip(),
+        GRAPH_NODE_INSTRUCTIONS["verificador_citas"].strip(),
+        "No heredas el análisis ni el prompt de redacción. Auditas el texto que te dan "
+        "contra el pack de fuentes y el informe del muro. No reescribes el borrador.",
+    ))
+
+
 def parse_diagnosis_closing(diagnosis: str) -> dict | None:
     """Extrae {problema, normas, riesgo} del bloque de cierre del diagnóstico.
 

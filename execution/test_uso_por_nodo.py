@@ -127,6 +127,8 @@ def main() -> int:
         print("5 · persistencia: SQL y columna reales")
         check("el INSERT incluye la columna node",
               "node" in u._INSERT_SQL and "%(node)s" in u._INSERT_SQL)
+        check("el INSERT incluye cost_status (no fingir USD 0)",
+              "cost_status" in u._INSERT_SQL and "%(cost_status)s" in u._INSERT_SQL)
         import psycopg
         with psycopg.connect(host=os.getenv("PG_HOST", "127.0.0.1"),
                              port=os.getenv("PG_PORT", "5432"),

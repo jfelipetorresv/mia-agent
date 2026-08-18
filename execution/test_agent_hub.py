@@ -279,13 +279,22 @@ def api_checks(a):
         out["list_status"] = r.status_code
         agentes = r.json().get("agentes", [])
         out["count"] = len(agentes)
-        out["shape_ok"] = all({"id", "nombre", "instalado", "habilitado"} <= set(x) for x in agentes)
+        out["shape_ok"] = all(
+            {"id", "nombre", "instalado", "habilitado", "listo", "razon"} <= set(x)
+            for x in agentes)
         brands = ("hermes", "claude", "codex", "antigravity", "openclaw")
         out["no_brand"] = all(not any(brnd in (x["nombre"] + x["id"]).lower() for brnd in brands) for x in agentes)
-        # enable → habilitado True
+        # enable: si el CLI no está listo → 409; si --help lo confirmó → 200
+        before = {x["id"]: x for x in agentes}
+        inv = before["investigacion"]
         out["enable_status"] = client.post("/settings/agents/investigacion/enable", headers=H).status_code
         ag = {x["id"]: x for x in client.get("/settings/agents", headers=H).json()["agentes"]}
         out["enabled_true"] = ag["investigacion"]["habilitado"] is True
+        if inv.get("listo"):
+            out["enable_ok"] = out["enable_status"] == 200 and ag["investigacion"]["habilitado"] is True
+        else:
+            # 409 aunque el tenant ya tuviera el toggle en DB (db_tests lo enciende).
+            out["enable_ok"] = out["enable_status"] == 409
         # disable → habilitado False
         out["disable_status"] = client.post("/settings/agents/investigacion/disable", headers=H).status_code
         ag2 = {x["id"]: x for x in client.get("/settings/agents", headers=H).json()["agentes"]}
@@ -334,10 +343,11 @@ def main() -> int:
 
     # PASO 3 · endpoints de settings
     check("GET /settings/agents responde 200", api["list_status"] == 200)
-    check("lista los 5 conectores con forma {id,nombre,instalado,habilitado}",
+    check("lista los 5 conectores con forma {id,nombre,instalado,habilitado,listo,razon}",
           api["count"] == 5 and api["shape_ok"])
     check("nombres/ids SIN marca de CLI (§G)", api["no_brand"])
-    check("POST enable (por slug) habilita → habilitado True", api["enable_status"] == 200 and api["enabled_true"])
+    check("POST enable respeta listo (409 si el CLI no está confirmado)",
+          api.get("enable_ok") is True)
     check("POST disable deshabilita → habilitado False", api["disable_status"] == 200 and api["disabled_false"])
     check("agente desconocido → 404", api["unknown_status"] == 404)
     check("sin token → 401", api["notoken_status"] == 401)

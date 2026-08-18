@@ -147,16 +147,19 @@ async def offline_checks() -> None:
 
     # ── F · catálogo curado, §G ──────────────────────────────────────────────
     entries = catalog.list_catalog()
-    check("e6-16 · el catálogo trae entradas curadas", len(entries) >= 2)
-    marcas = ("mcp", "hermes", "claude", "server", "npx")
-    check("e6-17 · §G: ningún display_name filtra marca/jerga técnica",
-          all(not any(m in d.display_name.lower() for m in marcas) for d in entries))
-    doc = catalog.get_descriptor("gestion-documental")
-    check("e6-18 · cada entrada declara sus secretos y su nota de permisos mínimos",
-          doc is not None and "dms_api_token" in doc.required_secret_keys()
-          and "solo lectura" in doc.permissions_note.lower())
+    check("e6-16 · el catálogo de producto está vacío a propósito (sin DMS ni procesos fingidos)",
+          entries == [])
+    lab = catalog.lab_filesystem_descriptor()
+    check("e6-17 · el laboratorio de stdio existe pero no se vende al abogado",
+          lab.slug == "lab-filesystem" and lab not in entries)
+    check("e6-18 · el descriptor de laboratorio declara secretos y nota de permisos",
+          "dms_api_token" in lab.required_secret_keys()
+          and "solo lectura" in lab.permissions_note.lower())
     check("e6-19 · el template de entorno usa placeholders ${clave} para los secretos",
-          doc.env_template.get("DMS_API_TOKEN") == "${dms_api_token}")
+          lab.env_template.get("DMS_API_TOKEN") == "${dms_api_token}")
+    check("e6-19b · no hay consulta-procesos ni gestion-documental en el catálogo",
+          catalog.get_descriptor("gestion-documental") is None
+          and catalog.get_descriptor("consulta-procesos") is None)
 
     # ── G · relay (eleva el puente de Telegram) ──────────────────────────────
     from mia.channels import relay
@@ -216,7 +219,9 @@ async def db_checks() -> None:
         b = c.execute("INSERT INTO tenants(name) VALUES('B mcp cpe6') RETURNING id").fetchone()[0]
     ta, tb = str(a), str(b)
     tenants.extend([ta, tb])
-    slug = "gestion-documental"
+    lab = catalog.lab_filesystem_descriptor()
+    catalog.CATALOG[lab.slug] = lab
+    slug = lab.slug
     try:
         # fail-closed ANTES de habilitar: resolve lanza (no hay nada configurado)
         try:
@@ -325,6 +330,7 @@ async def db_checks() -> None:
                   blocked)
         finally:
             catalog.CATALOG.pop("hostil-cpe6", None)
+            catalog.CATALOG.pop(lab.slug, None)
     finally:
         with _sb() as c:
             c.execute("DELETE FROM tenants WHERE id = ANY(%s)", (tenants,))
@@ -426,7 +432,10 @@ async def mcp_live_checks() -> None:
         ta, tb = str(a), str(b)
         tenants.extend([ta, tb])
 
-        slug = "gestion-documental"
+        from mia.mcp import catalog as mcp_catalog
+        lab = mcp_catalog.lab_filesystem_descriptor()
+        mcp_catalog.CATALOG[lab.slug] = lab
+        slug = lab.slug
         await mcp_service.enable_server(
             ta, slug, {"DMS_ROOT": tmp_dir},
             {"dms_api_token": "no-se-usa-server-filesystem"})
@@ -466,6 +475,8 @@ async def mcp_live_checks() -> None:
         check("e6b-03 · no queda un proceso del servidor MCP colgado tras la consulta",
               before < 0 or after <= before)
     finally:
+        from mia.mcp import catalog as mcp_catalog_cleanup
+        mcp_catalog_cleanup.CATALOG.pop("lab-filesystem", None)
         with _sb() as c:
             c.execute("DELETE FROM tenants WHERE id = ANY(%s)", (tenants,))
         await pool.close_pool()

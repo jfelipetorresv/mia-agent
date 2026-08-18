@@ -67,9 +67,11 @@ from ..jobs import enqueue_learning_job
 from ..metrics import usage as usage_metrics
 from ..onboarding.ficha_loader import load_ficha_context
 from ..policy import budget as policy_budget
+from ..policy import turn_budget
 from ..jurisdiction.pack import GENERIC_CODE
 from . import (context_recovery, delegate_intent, delegate_proposal, delegation,
-               reasoning_filter, research, retrieval, untrusted, verification)
+               handoff as matter_handoff, packs as legal_packs, reasoning_filter,
+               research, retrieval, stage_gate, untrusted, verification)
 from .state import HITL_OUTCOME, MatterState
 
 logger = logging.getLogger("mia.agents.graph")
@@ -855,7 +857,8 @@ class MatterGraphBuilder:
                          exc_info=True)
             return list(agent_keys)
         return [k for k in agent_keys
-                if (available.get(k) or {}).get("installed", True)]
+                if (available.get(k) or {}).get("installed", True)
+                and (available.get(k) or {}).get("invocation_ready", True)]
 
     async def _propose_agent(self, clean_message: str,
                              agent_keys: list[str]) -> Optional[tuple[str, str]]:
@@ -1347,6 +1350,11 @@ class MatterGraphBuilder:
         # especialistas (los del asunto y el del proyecto) al componer su prompt. Ver el
         # bloque de _turn_jurisdictions.
         juris = await self._turn_jurisdictions(state)
+        try:
+            await matter_handoff.check_reopen(
+                state["tenant_id"], state["matter_id"], docs)
+        except matter_handoff.HandoffBroken as exc:
+            md["handoff_broken"] = str(exc)
         return {"documents": docs, "knowledge": knowledge, "metadata": md,
                 "delegation_request": plan, "jurisdictions": juris}
 
@@ -1355,6 +1363,27 @@ class MatterGraphBuilder:
         msg = _last_user_message(state)
         docs = state.get("documents") or []
         md = dict(state.get("metadata") or {})
+        if md.get("handoff_broken"):
+            md.update(stage="facts", facts="", facts_pack_ok=False,
+                      facts_pack_error=str(md.get("handoff_broken")))
+            return {"metadata": md}
+        try:
+            cached, missing = await matter_handoff.cached_facts_for_documents(
+                state["tenant_id"], state["matter_id"], docs)
+        except Exception:  # noqa: BLE001 — cache fallida = extraer de nuevo
+            cached, missing = [], list(range(len(docs or [])))
+        if cached and not missing:
+            raw = {"hechos": cached, "conteo_declarado": len(cached)}
+            try:
+                pack = legal_packs.FactPack.model_validate(raw)
+                md.update(
+                    stage="facts",
+                    facts="\n".join(f"- {h.texto} {h.locator}" for h in pack.hechos),
+                    facts_pack=pack.model_dump(), facts_pack_ok=True)
+                md.pop("facts_pack_error", None)
+                return {"metadata": md}
+            except (TypeError, ValueError):
+                pass
 
         def _messages(doc_list: list) -> list[dict]:
             # CP-S1: cada documento va SELLADO (<<<DOC n>>>) — el texto de un
@@ -1368,7 +1397,9 @@ class MatterGraphBuilder:
                         {"documents": doc_list,
                          "knowledge": state.get("knowledge") or []}),
                     persona_voice=_persona_voice(state))},
-                {"role": "user", "content": f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"},
+                {"role": "user", "content": (
+                    f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}\n\n"
+                    + legal_packs.FACT_PACK_INSTRUCTION)},
             ]
 
         def _shrink() -> list[dict]:
@@ -1379,6 +1410,20 @@ class MatterGraphBuilder:
             _messages(docs), task="legal_facts", state=state, md=md, shrink=_shrink, node="facts",
             model=_persona_alias(state))
         md.update(stage="facts", facts=facts)
+        try:
+            pack = legal_packs.parse_fact_pack(facts, num_documents=max(1, len(docs)))
+            md["facts_pack"] = pack.model_dump()
+            md["facts_pack_ok"] = True
+            md.pop("facts_pack_error", None)
+        except (legal_packs.PackError, TypeError, ValueError) as exc:
+            md["facts_pack_ok"] = False
+            md["facts_pack_error"] = str(exc)
+            md.pop("facts_pack", None)
+        try:
+            await matter_handoff.store_document_facts(
+                state["tenant_id"], state["matter_id"], docs, md.get("facts_pack"))
+        except Exception:  # noqa: BLE001 — cache best-effort
+            logger.debug("facts: no se persistió el pack por hash", exc_info=True)
         _accum_usage(md, usage)
         return {"metadata": md}
 
@@ -1506,6 +1551,10 @@ class MatterGraphBuilder:
         # citas) y quedan en la traza; las jurisdicciones usadas, por transparencia.
         md["research_sources"] = sources
         md["research_jurisdictions"] = jurisdictions
+        source_pack = legal_packs.source_pack_from_research(sources)
+        md["source_pack"] = source_pack.model_dump()
+        md["source_pack_ok"] = True
+        md.pop("source_pack_error", None)
         _accum_usage(md, usage)
         return {"metadata": md}
 
@@ -1605,6 +1654,10 @@ class MatterGraphBuilder:
         md.update(stage="research", research=memo)
         md["research_sources"] = all_sources
         md["research_jurisdictions"] = jurisdictions
+        source_pack = legal_packs.source_pack_from_research(all_sources)
+        md["source_pack"] = source_pack.model_dump()
+        md["source_pack_ok"] = True
+        md.pop("source_pack_error", None)
         # Transparencia/trace: cuántos investigadores delegados aportaron y sobre qué
         # jurisdicciones (lo consume la Pantalla 2/3 y la traza; nunca jerga al abogado).
         md["research_delegation"] = {
@@ -1665,6 +1718,7 @@ class MatterGraphBuilder:
                          "investigación:\n" + research_memo)
             if know_section:
                 user += "\n\n" + know_section
+            user += "\n\n" + legal_packs.STRATEGY_PACK_INSTRUCTION
             return [
                 # L7 se calcula con los docs de ESTA pasada (el retry del shrink
                 # recorta docs — el conteo del contexto no debe quedar desfasado).
@@ -1708,6 +1762,16 @@ class MatterGraphBuilder:
             diagnosis = await self._verify_draft(
                 state, md, diagnosis, report_key="verification_diagnosis")
         md.update(stage="analysis", diagnosis=diagnosis)
+        try:
+            strategy = legal_packs.parse_strategy_pack(
+                diagnosis, source_pack=stage_gate.load_source_pack(md))
+            md["strategy_pack"] = strategy.model_dump()
+            md["strategy_pack_ok"] = True
+            md.pop("strategy_pack_error", None)
+        except (legal_packs.PackError, TypeError, ValueError) as exc:
+            md["strategy_pack_ok"] = False
+            md["strategy_pack_error"] = str(exc)
+            md.pop("strategy_pack", None)
         # CP6: cierre estructurado del diagnóstico (problema/normas/riesgo) para la
         # Pantalla 2. Best-effort: si el modelo no emitió el bloque, summary es None
         # y todo se comporta como antes (el diagnóstico en prosa sigue intacto).
@@ -1800,6 +1864,16 @@ class MatterGraphBuilder:
     # ── 5 · draft (especialista de REDACCIÓN) ───────────────────────────────
     async def draft_node(self, state: MatterState) -> dict:
         md_in = state.get("metadata") or {}
+        md = dict(md_in)
+        try:
+            stage_gate.require_upstream_for_draft(md)
+        except stage_gate.StageIncomplete as exc:
+            md["stage"] = "draft"
+            md["stage_failed"] = {"stage": exc.stage, "detail": exc.detail}
+            return {
+                "draft": stage_gate.lawyer_abort(exc.stage, exc.detail),
+                "hitl_status": "pending", "metadata": md,
+            }
         diagnosis = md_in.get("diagnosis", "")
         profile_txt = _render_profile(state.get("profile_snapshot"))
         # Principio A: si el asunto YA tiene dictamen de la Sala, el borrador lo ve. Sin
@@ -1823,7 +1897,14 @@ class MatterGraphBuilder:
             user_parts.append(f"El gate de calidad rechazó el borrador anterior:\n{gate_feedback}\n\nReescribe el borrador corrigiendo las citas y asegurando respaldo literal exacto.")
         else:
             user_parts.append("Redacta el borrador del escrito.")
-        md = dict(md_in)
+        chosen = legal_packs.seleccionados(
+            stage_gate.load_strategy_pack(md),
+            overrides=md.get("argument_selection") if isinstance(
+                md.get("argument_selection"), dict) else None)
+        user_parts.append(
+            "Desarrolla SOLO estos argumentos seleccionados (no los descartes):\n"
+            + "\n".join(f"- {a.id}: {a.tesis}" for a in chosen)
+        )
 
         def _messages(parts: list[str], index: str = pb_index) -> list[dict]:
             return [
@@ -2014,6 +2095,15 @@ class MatterGraphBuilder:
 
         annotated = await self._verify_draft(state, md, draft)
         report = md.get("verification") if isinstance(md.get("verification"), dict) else {}
+        if md.get("stage_failed"):
+            if isinstance(report, dict):
+                report["gate_llm"] = {
+                    "veredicto": "unavailable",
+                    "detalle": "No hay un escrito verificado que auditar: una etapa previa no cerró con producto.",
+                }
+                md["verification"] = report
+            md["stage"] = "verificador_citas"
+            return {"draft": annotated, "metadata": md}
 
         # F2 · SELLO como caché de verificación: si el borrador no trae NADA nuevo que
         # auditar — cero citas, o todas resueltas por sello (ya respaldadas Y aprobadas por
@@ -2048,14 +2138,29 @@ class MatterGraphBuilder:
             ensure_ascii=False, default=str)[:4000]
 
         try:
+            turn_budget.authorize_expensive(
+                md, "legal_verification",
+                authorized=bool(md.get("authorize_expensive_pass")))
+        except turn_budget.TurnBudgetExceeded as exc:
+            if isinstance(report, dict):
+                report["gate_llm"] = {"veredicto": "unavailable", "detalle": str(exc)}
+                md["verification"] = report
+            md["stage"] = "verificador_citas"
+            return {"draft": annotated, "metadata": md}
+
+        pack_txt = json.dumps(
+            legal_packs.compact_source_pack(stage_gate.load_source_pack(md)),
+            ensure_ascii=False)[:4000]
+        try:
             veredicto, usage = await self._llm([
-                {"role": "system", "content": prompt_builder.build_lean_system(
-                    state, "verificador_citas")},
+                {"role": "system", "content": prompt_builder.build_gate_system()},
                 {"role": "user", "content": (
-                    f"Borrador (ya anotado por el guardián determinista):\n{annotated}\n\n"
-                    f"Informe del guardián determinista (JSON):\n{resumen_muro}")},
+                    f"Borrador (ya anotado por el muro determinista):\n{annotated}\n\n"
+                    f"Pack de fuentes (referencia + hash de chunk):\n{pack_txt}\n\n"
+                    f"Informe del muro (JSON):\n{resumen_muro}")},
             ], task="legal_verification", state=state, md=md, node="verificador_citas",
                 model=_persona_alias(state))
+            turn_budget.record_expensive_call(md, "legal_verification")
             _accum_usage(md, usage)
             primera = (veredicto or "").strip().splitlines()[0].strip().upper() if veredicto else ""
             if isinstance(report, dict):
@@ -2226,6 +2331,10 @@ class MatterGraphBuilder:
             # transparencia asimétrica frente al borrador (revisión adversarial e0c1634).
             "verification_diagnosis": (state.get("metadata") or {}).get(
                 "verification_diagnosis"),
+            "argumentos": ((state.get("metadata") or {}).get("strategy_pack") or {}).get(
+                "argumentos") if isinstance((state.get("metadata") or {}).get("strategy_pack"), dict) else None,
+            "descartes": ((state.get("metadata") or {}).get("strategy_pack") or {}).get(
+                "descartes") if isinstance((state.get("metadata") or {}).get("strategy_pack"), dict) else None,
         })
         # --- de aquí en adelante solo corre TRAS reanudar con Command(resume=...) ---
         md = dict(state.get("metadata") or {})
@@ -2235,7 +2344,17 @@ class MatterGraphBuilder:
         # Un clic de aprobar tiene que referirse al MISMO texto mostrado por la
         # pantalla. Sin huella o con una huella vieja no hay aprobación válida.
         # Esto también protege reintentos/carreras y llamadas directas al grafo.
-        if dec in ("approved", "editing") and (decision or {}).get("draft_hash") != draft_hash:
+        supplied_hash = (decision or {}).get("draft_hash")
+        if dec in ("approved", "editing") and supplied_hash != draft_hash:
+            try:
+                await legal_ledger.record_gate(
+                    state["tenant_id"], state["matter_id"], draft_hash,
+                    gate="human_approval", passed=False,
+                    evidence={"motivo": "recibo-invalidado",
+                              "supplied": supplied_hash or ""},
+                )
+            except Exception:  # noqa: BLE001 — el rechazo ya es fail-closed
+                logger.exception("no se pudo registrar recibo-invalidado")
             decision = {"decision": "rejected", "feedback": "La versión a aprobar ya no coincide con el borrador revisado.",
                         "rejected_by_gate": "draft_hash"}
             dec = "rejected"
@@ -2280,6 +2399,8 @@ class MatterGraphBuilder:
                             "rejected_by_gate": "legal_ledger"}
         md["draft_hash"] = draft_hash
         md["hitl_decision"] = decision
+        if isinstance((decision or {}).get("argument_selection"), dict):
+            md["argument_selection"] = decision["argument_selection"]
         return {"hitl_status": status, "metadata": md}
 
     # ── 8 · finalize ─────────────────────────────────────────────────────────
@@ -2300,18 +2421,23 @@ class MatterGraphBuilder:
             report_md = dict(md)
             _ = await self._verify_draft(state, report_md, final)
             md["verification"] = report_md.get("verification") or {}
-            # La edición humana no se reescribe, pero SÍ pasa una nueva revisión
-            # independiente sobre ese texto exacto. Sin respuesta APTO no habrá final.
+            # Edición humana = autorización explícita de una segunda pasada cara.
+            md["authorize_expensive_pass"] = True
             try:
+                turn_budget.authorize_expensive(md, "legal_verification", authorized=True)
                 summary = json.dumps(md["verification"], ensure_ascii=False, default=str)[:4000]
+                pack_txt = json.dumps(
+                    legal_packs.compact_source_pack(stage_gate.load_source_pack(md)),
+                    ensure_ascii=False)[:4000]
                 verdict, usage = await self._llm([
-                    {"role": "system", "content": prompt_builder.build_lean_system(
-                        state, "verificador_citas")},
+                    {"role": "system", "content": prompt_builder.build_gate_system()},
                     {"role": "user", "content": (
                         f"Versión exacta editada por el abogado (no la reescribas):\n{final}\n\n"
-                        f"Informe del guardián determinista (JSON):\n{summary}")},
+                        f"Pack de fuentes (referencia + hash de chunk):\n{pack_txt}\n\n"
+                        f"Informe del muro (JSON):\n{summary}")},
                 ], task="legal_verification", state=state, md=md, node="verificador_citas",
                     model=_persona_alias(state))
+                turn_budget.record_expensive_call(md, "legal_verification")
                 _accum_usage(md, usage)
                 first = (verdict or "").strip().splitlines()[0].strip().upper()
                 md["verification"]["gate_llm"] = {
@@ -2391,6 +2517,22 @@ class MatterGraphBuilder:
             except Exception:  # noqa: BLE001 -- no se habilita un final sin ledger
                 logger.exception("no se pudo registrar el final jurídico; queda solo borrador")
                 md["final_ready"] = False
+
+        try:
+            await matter_handoff.save_handoff(
+                state["tenant_id"], state["matter_id"],
+                fact_pack=md.get("facts_pack") if isinstance(md.get("facts_pack"), dict) else None,
+                source_pack=md.get("source_pack") if isinstance(md.get("source_pack"), dict) else None,
+                strategy_pack=md.get("strategy_pack") if isinstance(md.get("strategy_pack"), dict) else None,
+                verification=md.get("verification") if isinstance(md.get("verification"), dict) else None,
+                documents=state.get("documents") or [],
+                decisions={"hitl": status, "argument_selection": md.get("argument_selection")},
+                reservas=list((md.get("verification") or {}).get("marcadas") or [])
+                if isinstance(md.get("verification"), dict) else [],
+                pendientes=list((md.get("stage_failed") and [md["stage_failed"]]) or []),
+            )
+        except Exception:  # noqa: BLE001 — el traspaso no bloquea el cierre
+            logger.debug("no se pudo guardar el traspaso del asunto", exc_info=True)
 
         outcome_efectivo = HITL_OUTCOME.get(status, "approved")
         if status in ("approved", "editing") and not md.get("final_ready"):

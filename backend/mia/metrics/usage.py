@@ -103,6 +103,16 @@ def current_scope() -> tuple[str, str | None, str] | None:
 
 
 # ── Costo ───────────────────────────────────────────────────────────────────────
+def cost_status_for(alias: str) -> str:
+    """``medido`` | ``estimado`` | ``no_medida``. Las suscripciones no se fingen como USD 0."""
+    name = (alias or "").strip()
+    if name in FREE_ALIASES or name.startswith("cli-") or name == "mia-local":
+        return "no_medida"
+    if name not in PRICES_PER_MTOK:
+        return "estimado"
+    return "medido"
+
+
 def cost_usd(alias: str, prompt_tokens: int, completion_tokens: int) -> float:
     """Costo en USD de una llamada según la tabla de precios del alias."""
     rates = PRICES_PER_MTOK.get(alias)
@@ -232,6 +242,7 @@ def record(alias: str, task: str | None, usage: Any,
             "stop_reason": (str(stop_reason)[:32] if stop_reason else None),
             # F0.1: atribución por nodo del grafo (None = llamada fuera del grafo).
             "node": ((_node.get() or "")[:64] or None),
+            "cost_status": cost_status_for(str(alias)),
         }
         with _lock:
             if len(_buffer) >= MAX_BUFFER:
@@ -261,11 +272,12 @@ _INSERT_SQL = (
     "INSERT INTO turn_usage (tenant_id, matter_id, task, model, effective_model, effort, "
     "quality_escalation, prompt_tokens, "
     "completion_tokens, total_tokens, cost_usd, source, cache_read_tokens, "
-    "cache_creation_tokens, stop_reason, node) VALUES "
+    "cache_creation_tokens, stop_reason, node, cost_status) VALUES "
     "(%(tenant_id)s::uuid, %(matter_id)s::uuid, %(task)s, %(model)s, %(effective_model)s, "
     "%(effort)s, %(quality_escalation)s, %(prompt_tokens)s, "
     "%(completion_tokens)s, %(total_tokens)s, %(cost_usd)s, %(source)s, "
-    "%(cache_read_tokens)s, %(cache_creation_tokens)s, %(stop_reason)s, %(node)s)"
+    "%(cache_read_tokens)s, %(cache_creation_tokens)s, %(stop_reason)s, %(node)s, "
+    "%(cost_status)s)"
 )
 
 

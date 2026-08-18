@@ -95,9 +95,31 @@ def _assert_unique_prefixes(migrations: list[Path]) -> None:
         )
 
 
+def _lf_bytes(data: bytes) -> bytes:
+    """Normaliza saltos de línea a LF. Git en Windows puede materializar CRLF."""
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def migration_sha256(path: Path) -> str:
-    """Hash estable del archivo exacto que se aplicará a PostgreSQL."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """SHA-256 canónico del SQL (LF). Independiente de CRLF vs LF en disco.
+
+    El ledger de instalaciones viejas puede haber registrado el hash CRLF o el
+    LF del mismo archivo: ``apply_migrations`` acepta ambos y, si hace falta,
+    reescribe el registro al canónico. No reejecuta el SQL. Un cambio de
+    *contenido* sigue bloqueando (crea una migración nueva).
+    """
+    return _digest(_lf_bytes(path.read_bytes()))
+
+
+def _line_ending_aliases(data: bytes) -> set[str]:
+    """Hashes que identifican el mismo SQL con distinta convención de newline."""
+    lf = _lf_bytes(data)
+    crlf = lf.replace(b"\n", b"\r\n")
+    return {_digest(data), _digest(lf), _digest(crlf)}
 
 
 def _super_kw(host: str, port: str | int, dbname: str, password: str) -> dict:
@@ -175,7 +197,10 @@ def apply_migrations(
     transacción. Si el SQL falla o el proceso se corta, ese archivo queda sin
     aplicar y el siguiente arranque puede reintentarlo. Un advisory lock evita
     dos migradores simultáneos. Los archivos ya aplicados deben conservar el
-    mismo SHA-256; si cambian, se bloquea el arranque en vez de improvisar.
+    mismo SQL; el SHA-256 canónico es LF. Un checkout Windows (CRLF) contra un
+    ledger Linux (LF), o al revés, se acepta y se reescribe el registro al
+    canónico — nunca se reejecuta el SQL ni se tocan datos. Si el *contenido*
+    cambió, se bloquea el arranque: crea una migración nueva.
 
     Compatibilidad: instalaciones anteriores no tienen ledger. En la primera
     adopción se vuelven a ejecutar los SQL históricos (todos son idempotentes,
@@ -206,15 +231,20 @@ def apply_migrations(
             # los checksums históricos y construye la lista pendiente. Así una
             # inconsistencia tardía no aparece después de aplicar otra migración.
             pending: list[tuple[Path, str, str]] = []
+            heals: list[tuple[str, str, str]] = []
             for path in migrations:
-                digest = migration_sha256(path)
+                raw = path.read_bytes()
+                digest = _digest(_lf_bytes(raw))
                 previous = recorded.get(path.name)
                 if previous is not None:
-                    if previous != digest:
+                    if previous not in _line_ending_aliases(raw):
                         raise MigrationChecksumError(
                             f"La actualización histórica {path.name} cambió después "
                             "de aplicarse. Crea una migración nueva; no modifiques la anterior."
                         )
+                    if previous != digest:
+                        # Mismo SQL, otro newline. Reescribir el registro; no reejecutar.
+                        heals.append((path.name, digest, previous))
                 else:
                     migration_sql = path.read_text(encoding="utf-8")
                     if "CONCURRENTLY" in migration_sql.upper():
@@ -227,12 +257,19 @@ def apply_migrations(
             # El backup/verificación sucede bajo el MISMO advisory lock y antes
             # de la primera mutación. El callback usa pg_dump en otra conexión;
             # no intenta adquirir este candado y por tanto no se auto-bloquea.
+            # Curar checksums de newline no muta el esquema: no dispara backup.
             if pending and before_first_pending is not None:
                 before_first_pending()
 
             # Incluso sin pendientes, una instalación nueva termina con ledger;
             # cuando sí hay pendientes esto ocurre solo DESPUÉS del backup.
             c.execute(_MIGRATIONS_TABLE_SQL)
+            for filename, digest, previous in heals:
+                c.execute(
+                    "UPDATE public.mia_schema_migrations SET sha256 = %s "
+                    "WHERE filename = %s AND sha256 = %s",
+                    (digest, filename, previous),
+                )
             c.commit()
 
             for path, digest, migration_sql in pending:

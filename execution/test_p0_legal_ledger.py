@@ -82,6 +82,8 @@ def main() -> int:
     check("el último recibo decide y permite FAIL a PASS posterior",
           "PARTITION BY gate_name ORDER BY created_at DESC, id DESC" in ledger_source)
     check("cada exportación final queda registrada", "legal_export_events" in ledger_source)
+    check("las salidas finales tienen lector (no write-only)", "def list_exports" in ledger_source)
+    check("un hash distinto invalida el recibo HITL", "recibo-invalidado" in graph)
     check("los sellos nacen solo después de final_ready",
           'and md.get("final_ready")' in graph
           and "seal_from_approved_report" in graph)

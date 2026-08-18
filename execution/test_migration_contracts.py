@@ -4,8 +4,9 @@ Dos propiedades, ambas con mutación posible:
   1 · VOCABULARIO ACUMULADO: la ÚLTIMA migración que define cada CHECK enumerado
       contiene el vocabulario completo del esquema vigente (regla 2026-08-12:
       una migración reejecutable no recorta tipos añadidos después).
-  2 · INMUTABILIDAD: ninguna migración listada en config/migration_shas.json
-      cambia después de registrada. El ledger de db_bootstrap es fail-closed
+      2 · INMUTABILIDAD: ninguna migración listada en config/migration_shas.json
+      cambia después de registrada. El SHA es canónico LF (CRLF de un checkout
+      Windows no cuenta como cambio). El ledger de db_bootstrap es fail-closed
       (MigrationChecksumError) y una edición "inofensiva" de un SQL histórico
       bloquea el arranque de TODA instalación existente al actualizar (P0
       encontrado 2026-08-14: el commit 05c8f8c editó 010/027/040/049).

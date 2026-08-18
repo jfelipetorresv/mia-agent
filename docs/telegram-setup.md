@@ -46,18 +46,25 @@ compartas a nadie** — quien la tenga puede controlar el bot.
 
 ## Paso 5 · Enciende el puente
 
-1. Asegúrate de que Mia esté corriendo (el arranque de siempre).
-2. Abre una ventana de PowerShell nueva y ejecuta:
+Con `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_CHAT_ID`, `MIA_BRIDGE_EMAIL` y
+`MIA_BRIDGE_PASSWORD` en el `.env`, el puente arranca solo junto al API
+(`python -m mia.api.run`). No hace falta un proceso aparte.
 
-   ```
-   & "D:\Codex\Mia-Super Agent\mia\scripts\start_telegram.ps1"
-   ```
+Si el token está pero falta el chat o el correo, el API avisa en el log y
+sigue; el puente no arranca a medias.
 
-   (Copia el comando completo, incluidas las comillas — la carpeta
-   tiene un espacio en el nombre y sin comillas no funciona.)
+El script `scripts/start_telegram.ps1` sigue existiendo por si quieres
+lanzarlo a mano (`python -m mia.channels.telegram_bridge`). Con Mia ya
+corriendo, abre el chat con tu bot y salúdalo.
 
-3. Cuando diga "Puente de Telegram activo", abre el chat con tu bot en
-   Telegram y salúdalo. Mia te responde ahí mismo.
+Variables:
+
+| Variable | Qué es |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Clave de BotFather. Sin ella, el puente no arranca (opt-in). |
+| `TELEGRAM_ALLOWED_CHAT_ID` | Tu número de chat (solo tú). |
+| `MIA_BRIDGE_EMAIL` / `MIA_BRIDGE_PASSWORD` | Login JWT al API, igual que la web. |
+| `MIA_API_URL` | Default `http://127.0.0.1:8000`. |
 
 ---
 

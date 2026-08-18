@@ -264,7 +264,9 @@ export default function ConnectedSystemsSection() {
   if (!systems?.length) {
     return (
       <p className="text-sm text-muted-foreground">
-        No hay sistemas disponibles para conectar en este momento.
+        No hay sistemas externos conectables en esta versión. Mia trabaja con el expediente
+        y el corpus del despacho; un gestor documental o una consulta judicial se ofrecerán
+        aquí cuando exista un servidor real, no antes.
       </p>
     );
   }
@@ -274,7 +276,7 @@ export default function ConnectedSystemsSection() {
       <div>
         <h3 className="text-sm font-semibold tracking-tight">Sistemas conectados</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Conecta los sistemas del despacho para que Mia consulte documentos y estados de procesos.
+          Conecta los sistemas del despacho cuando Mia tenga un servidor real para ellos.
           Todo nace apagado: tú decides cuándo conectar y puedes desconectar o borrar credenciales cuando quieras.
         </p>
       </div>

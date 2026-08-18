@@ -520,7 +520,12 @@ async def get_draft(matter_id: str, request: Request):
             "diagnosis_summary": md.get("diagnosis_summary"),
             # CP9: informe del especialista de verificación de citas (None en
             # borradores de turnos anteriores a CP9).
-            "verification": md.get("verification")}
+            "verification": md.get("verification"),
+            "argumentos": (md.get("strategy_pack") or {}).get("argumentos")
+            if isinstance(md.get("strategy_pack"), dict) else None,
+            "descartes": (md.get("strategy_pack") or {}).get("descartes")
+            if isinstance(md.get("strategy_pack"), dict) else None,
+            "stage_failed": md.get("stage_failed")}
 
 
 @router.get("/matters/{matter_id}/historial")
@@ -654,6 +659,31 @@ async def download_final_docx(matter_id: str, request: Request):
                  f'attachment; filename="{safe[:60]}-final.docx"; '
                  f"filename*=UTF-8''{quote(title[:60], safe='')}-final.docx"},
     )
+
+
+@router.get("/matters/{matter_id}/exports")
+async def list_matter_exports(matter_id: str, request: Request):
+    """Auditoría de salidas finales de este asunto. No incluye el documento."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    try:
+        rows = await legal_ledger.list_exports(tid, matter_id=matter_id)
+    except Exception:  # noqa: BLE001 — tabla ausente: lista vacía, no 500
+        logger.warning("no se pudieron leer las salidas finales", exc_info=True)
+        rows = []
+    return {"exports": rows}
+
+
+@router.get("/exports")
+async def list_tenant_exports(request: Request):
+    """Auditoría de salidas finales del despacho (Configuración / Protección)."""
+    tid = _tenant(request)
+    try:
+        rows = await legal_ledger.list_exports(tid)
+    except Exception:  # noqa: BLE001
+        logger.warning("no se pudieron leer las salidas finales del despacho", exc_info=True)
+        rows = []
+    return {"exports": rows}
 
 
 @router.post("/matters/{matter_id}/delegation/aprobar")
@@ -2124,6 +2154,7 @@ class WarroomStartBody(BaseModel):
     frontend manda el Panelist completo; los campos extra (name/stance_label/focus) se ignoran."""
     panel: list[WarroomPanelSpec] = []
     question: str | None = None
+    autorizar_pasada_cara: bool = False
 
 
 # Tope defensivo de counsel por sesión (el motor degrada solo por presupuesto; esto acota el
@@ -2144,6 +2175,12 @@ async def warroom_start(matter_id: str, request: Request, body: WarroomStartBody
     tid = _tenant(request)
     await assert_owns_matter(tid, matter_id)
     await _assert_warroom_matter(tid, matter_id)
+    existing = await get_warroom_result(tid, matter_id)
+    if existing and not body.autorizar_pasada_cara:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta sala de estrategia ya corrió en este asunto. Confirma que "
+                   "quieres una segunda pasada cara para continuar.")
     if len(body.panel) < _WARROOM_MIN_PANEL:
         raise HTTPException(status_code=422,
                             detail="Suma al menos dos counsel para convocar la sala de estrategia.")
@@ -2153,8 +2190,9 @@ async def warroom_start(matter_id: str, request: Request, body: WarroomStartBody
     specs = [{"persona_id": p.persona_id, "stance": p.stance} for p in body.panel]
     panel_q = quote(json.dumps(specs, ensure_ascii=False))
     question_q = quote(body.question or "")
+    auth_q = "&autorizar=1" if body.autorizar_pasada_cara else ""
     return {"stream_url":
-            f"/api/matters/{matter_id}/warroom/stream?panel={panel_q}&question={question_q}"}
+            f"/api/matters/{matter_id}/warroom/stream?panel={panel_q}&question={question_q}{auth_q}"}
 
 
 def _warroom_sse(event: str, payload: dict) -> dict:
@@ -2167,7 +2205,8 @@ def _warroom_sse(event: str, payload: dict) -> dict:
 
 @router.get("/matters/{matter_id}/warroom/stream")
 async def warroom_stream(matter_id: str, request: Request,
-                         panel: str = Query(""), question: str = Query("")):
+                         panel: str = Query(""), question: str = Query(""),
+                         autorizar: int = Query(0)):
     """SSE de la Sala (calca stream_matter): arma el state con el retrieval del expediente,
     resuelve el panel, corre el motor y reenvía sus eventos ('thinking', 'counsel_turn',
     'conclusions_ready'). WarRoomError → evento 'error' en llano. Al terminar, persiste el
@@ -2175,6 +2214,12 @@ async def warroom_stream(matter_id: str, request: Request,
     tenant_id = _tenant(request)
     await assert_owns_matter(tenant_id, matter_id)
     await _assert_warroom_matter(tenant_id, matter_id)
+    existing = await get_warroom_result(tenant_id, matter_id)
+    if existing and not autorizar:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta sala de estrategia ya corrió en este asunto. Confirma que "
+                   "quieres una segunda pasada cara para continuar.")
 
     # CP-E1: tope de gasto del despacho ANTES de abrir el SSE (el turno es GET → el bloqueo
     # debe ser HTTP, no un evento). Fail-open: un fallo de lectura permite la sesión.

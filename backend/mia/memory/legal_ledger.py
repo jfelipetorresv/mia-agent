@@ -145,3 +145,31 @@ async def record_export(tenant_id: str, matter_id: str, artifact_hash: str, *,
             "VALUES (%s::uuid, %s::uuid, %s, %s, %s)",
             (tenant_id, matter_id, artifact_hash, export_format, actor),
         )
+
+
+async def list_exports(tenant_id: str, *, matter_id: str | None = None,
+                       limit: int = 50) -> list[dict[str, Any]]:
+    """Lectura de salidas finales. Nunca incluye el documento, solo la auditoría."""
+    cap = max(1, min(int(limit), 200))
+    async with pool.tenant_connection(tenant_id) as conn:
+        if matter_id:
+            rows = await (await conn.execute(
+                "SELECT matter_id, artifact_hash, export_format, actor, created_at "
+                "FROM legal_export_events WHERE matter_id = %s::uuid "
+                "ORDER BY created_at DESC LIMIT %s",
+                (matter_id, cap))).fetchall()
+        else:
+            rows = await (await conn.execute(
+                "SELECT matter_id, artifact_hash, export_format, actor, created_at "
+                "FROM legal_export_events ORDER BY created_at DESC LIMIT %s",
+                (cap,))).fetchall()
+    return [
+        {
+            "matter_id": str(row[0]),
+            "artifact_hash": str(row[1]),
+            "export_format": str(row[2]),
+            "actor": str(row[3]),
+            "created_at": row[4],
+        }
+        for row in rows
+    ]

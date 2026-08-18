@@ -17,7 +17,13 @@
     "execution/test_durable_learning.py",
     "execution/test_codex_production_provider.py",
     "execution/test_cambio_de_motor_aviso.py",
-    "execution/test_optional_capabilities.py"
+    "execution/test_optional_capabilities.py",
+    "execution/test_catalogo_barreras.py",
+    "execution/test_packs_preflight.py",
+    "execution/test_stage_gate.py",
+    "execution/test_suggestions_cron.py",
+    "execution/test_telegram_lifespan.py",
+    "execution/test_handoff.py"
   ],
   "full_glob": "execution/test_*.py",
   "full_requires_database": true,

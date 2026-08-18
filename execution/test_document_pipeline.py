@@ -170,7 +170,7 @@ async def run_gate() -> None:
     research.gather_sources = graph_mod.research.gather_sources  # (mismo módulo)
     real_resolve = research.resolve_jurisdictions
 
-    async def fake_resolve_fail(tenant_id):
+    async def fake_resolve_fail(tenant_id, matter_id=None):
         raise RuntimeError("DB caída")
     research.resolve_jurisdictions = fake_resolve_fail
     try:
@@ -228,7 +228,7 @@ async def run_gate() -> None:
           rep4["citas"] == 0)
 
     # verificador_citas_node dentro del grafo (patterns del pack doblados, sin DB)
-    async def fake_patterns(tenant_id):
+    async def fake_patterns(tenant_id, matter_id=None):
         return []
     real_patterns = research.citation_patterns_for
     research.citation_patterns_for = fake_patterns

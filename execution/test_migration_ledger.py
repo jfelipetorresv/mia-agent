@@ -98,6 +98,29 @@ try:
         check("archivo histórico alterado bloquea el arranque", checksum_blocked)
         m1.write_text(original, encoding="utf-8")
 
+        # Mismo SQL con otro newline (Windows CRLF vs ledger LF): se acepta y se
+        # reescribe el registro al SHA canónico. No es un cambio de contenido.
+        lf_bytes = original.replace("\r\n", "\n").encode("utf-8")
+        crlf_bytes = lf_bytes.replace(b"\n", b"\r\n")
+        newline_ok = True
+        try:
+            m1.write_bytes(crlf_bytes)
+            db_bootstrap.apply_migrations(host, port, db_name, password, [m1, m2])
+            m1.write_bytes(lf_bytes)
+            db_bootstrap.apply_migrations(host, port, db_name, password, [m1, m2])
+        except db_bootstrap.MigrationChecksumError:
+            newline_ok = False
+        check("CRLF vs LF del mismo SQL no bloquea el arranque", newline_ok)
+        with psycopg.connect(host=host, port=port, dbname=db_name,
+                             user="postgres", password=password) as conn:
+            healed = conn.execute(
+                "SELECT sha256 FROM mia_schema_migrations WHERE filename=%s",
+                (m1.name,),
+            ).fetchone()[0]
+        check("el ledger queda en el SHA canónico LF",
+              healed == db_bootstrap.migration_sha256(m1))
+        m1.write_text(original, encoding="utf-8")
+
         broken = folder / "903_gate_atomic.sql"
         broken.write_text(
             "CREATE TABLE gate_must_rollback (id integer);\nESTO NO ES SQL;\n",

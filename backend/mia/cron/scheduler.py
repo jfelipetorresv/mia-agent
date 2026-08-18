@@ -393,6 +393,43 @@ async def pending_review_notify() -> dict:
     return {"notified": len(rows)}
 
 
+async def generate_suggestions_all_tenants() -> dict:
+    """Propone automatizaciones (consent-first) para cada despacho. Nunca auto-activa.
+
+    Enumerar tenants es operación de sistema (misma salvedad RLS que Obsidian). La
+    escritura por tenant pasa por ``pool.tenant_connection``.
+    """
+    from .suggestions import generate_suggestions
+
+    out: dict[str, dict] = {}
+    for tenant_id in _enumerate_all_tenants("sugerencias"):
+        try:
+            proposed = await generate_suggestions(tenant_id)
+            out[tenant_id] = {"proposed": len(proposed)}
+        except Exception as e:  # noqa: BLE001 — un tenant no tumba a los demás
+            out[tenant_id] = {"error": str(e)}
+            logger.exception("sugerencias fallaron para tenant %s", tenant_id)
+    return out
+
+
+def _enumerate_all_tenants(job_label: str) -> list[str]:
+    import psycopg
+
+    pw = os.getenv("PG_PASSWORD", "")
+    if not pw:
+        logger.warning("PG_PASSWORD vacío: el job de %s no puede enumerar tenants", job_label)
+        return []
+    kw = dict(host=os.getenv("PG_HOST", "127.0.0.1"), port=os.getenv("PG_PORT", "5432"),
+              dbname=os.getenv("PG_DB", "mia"), user="postgres", password=pw)
+    try:
+        with psycopg.connect(autocommit=True, **kw) as c:
+            rows = c.execute("SELECT id FROM tenants").fetchall()
+    except Exception:  # noqa: BLE001
+        logger.exception("no se pudieron enumerar tenants para %s", job_label)
+        return []
+    return [str(r[0]) for r in rows]
+
+
 def build_scheduler() -> Scheduler:
     """Scheduler con los jobs del sistema (Obsidian 6h, Curator 168h, Feedback 24h)."""
     sched = Scheduler()
@@ -436,4 +473,8 @@ def build_scheduler() -> Scheduler:
     _mail = watch_engine.urgent_mail_watch()
     sched.register_job(_mail.name, lambda: watch_engine.run_watch(_mail),
                        interval_hours=_mail.interval_hours)
+    # Sugerencias consent-first: alimentan GET /api/automations/suggestions.
+    # Diarias; sin plazos procesales el generador es no-op (cero filas nuevas).
+    sched.register_job("generate_suggestions", generate_suggestions_all_tenants,
+                       interval_hours=24)
     return sched

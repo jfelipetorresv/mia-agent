@@ -20,6 +20,8 @@ type Agente = {
   nombre: string;
   instalado: boolean;
   habilitado: boolean;
+  listo?: boolean;
+  razon?: string;
 };
 
 type AgentsResponse = {
@@ -44,9 +46,10 @@ function agentIcon(id: string): ComponentType<{ className?: string }> {
 
 function estadoTexto(agente: Agente): string {
   if (agente.habilitado) {
-    return agente.instalado ? "Activado · listo para usar" : "Activado · no está instalado en este equipo";
+    return agente.listo ? "Activado · listo para usar" : "Activado · no está listo en este equipo";
   }
-  return agente.instalado ? "Desactivado" : "Desactivado · no está instalado en este equipo";
+  if (agente.listo) return "Desactivado";
+  return agente.razon || "Desactivado · no está listo en este equipo";
 }
 
 export default function AsistentesSection() {
@@ -171,17 +174,22 @@ export default function AsistentesSection() {
                     size="sm"
                     variant={agente.habilitado ? "outline" : "default"}
                     onClick={() => toggle(agente)}
-                    disabled={busy !== null}
+                    disabled={busy !== null || (!agente.habilitado && agente.listo === false)}
                   >
                     {busy === agente.id ? "Guardando…" : agente.habilitado ? "Desactivar" : "Activar"}
                   </Button>
                 }
               >
-                {!agente.instalado ? (
+                {!agente.listo ? (
+                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Badge variant="outline">No listo</Badge>
+                    {agente.razon || "Mia no pudo confirmar cómo invocarlo en este equipo."}
+                  </p>
+                ) : !agente.instalado ? (
                   <p className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Badge variant="outline">No instalado</Badge>
-                    Puedes activarlo igual para dejarlo listo; si lo nombras en el chat y no
-                    está disponible en este equipo, Mia te lo va a decir.
+                    No está en este equipo. Cuando el programa esté instalado, Mia
+                    confirmará cómo invocarlo y podrás activarlo.
                   </p>
                 ) : null}
               </ConnectorCard>

@@ -22,9 +22,10 @@ Nadie debe llamar a `invoke_result` sin haber pasado por `hub_gate.delegation_al
 §G: el abogado nunca ve marcas ("Hermes", "Claude Code"); ve un `display_name` en
 español. El `slug` (id público neutro) es lo que viaja en las URLs de settings.
 
-NOTA [VERIFICAR]: los flags de invocación de cada CLI (`build_args`) están SIN
-confirmar contra el `--help` real de cada herramienta; el gate mockea el subprocess,
-así que no se ejercitan. Confirmar antes de invocar en vivo (decisión D3).
+Los flags de invocación se confirman contra ``--help`` del binario SI está en PATH.
+Si el binario no está, o el help no muestra el flag que usamos, el conector queda
+``invocation_ready=False`` con una razón honesta — el mismo patrón que Codex cuando
+no está en el equipo. Nunca se deja un ``[VERIFICAR]`` en el catálogo.
 """
 from __future__ import annotations
 
@@ -67,7 +68,16 @@ def _subcmd(subcmd: str) -> Callable[[str], list[str]]:
     return lambda prompt: [subcmd, prompt]
 
 
-# Los 5 conectores del spec. build_args = [VERIFICAR] (no se ejercita en el gate).
+# Flags que cada conector debe exhibir en `--help` para considerarse listo.
+# Codex no usa -p: el prompt va por stdin (mismo aislamiento del proveedor productivo).
+_HELP_NEEDLES: dict[str, tuple[str, ...]] = {
+    "hermes": ("-p", "--print"),
+    "claude_code": ("-p", "--print"),
+    "antigravity": ("-p", "--print"),
+    "openclaw": ("-p", "--print"),
+    "codex": ("exec",),
+}
+
 CONNECTORS: dict[str, Connector] = {
     "hermes": Connector("hermes", "investigacion", "Asistente de investigación jurídica",
                         ("hermes",), "MIA_HERMES_BIN", _prompt_flag("-p")),
@@ -172,11 +182,14 @@ class AgentHub:
     """
 
     def __init__(self, *, runner=None, env: Optional[dict] = None,
-                 cwd: Optional[str] = None, timeout: int = DEFAULT_TIMEOUT) -> None:
+                 cwd: Optional[str] = None, timeout: int = DEFAULT_TIMEOUT,
+                 help_prober: Optional[Callable[[str], str]] = None) -> None:
         self._runner = runner or _default_runner
         self._env = env if env is not None else os.environ
         self._cwd = cwd
         self._timeout = timeout
+        self._help_prober = help_prober
+        self._help_cache: dict[str, str] = {}
         # CP-S3: ¿el runner acepta `env`? Se decide UNA vez por la firma (no con un
         # except en caliente que confundiría un TypeError legítimo con "no soporta env").
         try:
@@ -200,6 +213,47 @@ class AgentHub:
                 return found
         return None
 
+    def _read_help(self, binary: str) -> str:
+        """`--help` del binario, cacheado por ruta. Vacío si no se puede leer."""
+        cached = self._help_cache.get(binary)
+        if cached is not None:
+            return cached
+        text = ""
+        try:
+            if self._help_prober is not None:
+                text = self._help_prober(binary) or ""
+            elif os.path.isfile(binary):
+                proc = subprocess.run(
+                    [binary, "--help"], capture_output=True, text=True, timeout=8,
+                    shell=False)
+                text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        except Exception as e:  # noqa: BLE001 — un help fallido no tumba el catálogo
+            logger.info("no se pudo leer --help de %s: %s", binary, e)
+            text = ""
+        self._help_cache[binary] = text
+        return text
+
+    def invocation_status(self, key: str, binary: Optional[str]) -> tuple[bool, str]:
+        """(listo, razón). Sin binario o sin flag confirmado → no se habilita."""
+        c = CONNECTORS[key]
+        if not binary:
+            return False, (
+                f"«{c.display_name}» no está instalado en este equipo. Mia no confirma "
+                "cómo invocarlo hasta que el programa exista aquí.")
+        needles = _HELP_NEEDLES.get(key, ())
+        help_text = self._read_help(binary)
+        if not help_text.strip():
+            return False, (
+                f"«{c.display_name}» está en el equipo, pero Mia no pudo leer su "
+                "ayuda (--help). No se habilita hasta confirmar la invocación.")
+        blob = help_text.lower()
+        if needles and not any(n.lower() in blob for n in needles):
+            shown = ", ".join(needles)
+            return False, (
+                f"«{c.display_name}» está instalado, pero su ayuda no muestra los "
+                f"parámetros que Mia usaría ({shown}). No se habilita a ciegas.")
+        return True, ""
+
     def list_available(self) -> dict:
         """Estado de cada conector. NUNCA crashea (cada resolución va protegida)."""
         out: dict = {}
@@ -209,12 +263,20 @@ class AgentHub:
             except Exception as e:  # noqa: BLE001
                 logger.warning("resolver binario de %s falló: %s", key, e)
                 binary = None
+            try:
+                ready, razon = self.invocation_status(key, binary)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("confirmar invocación de %s falló: %s", key, e)
+                ready, razon = False, (
+                    f"«{c.display_name}» no se pudo confirmar en este equipo.")
             out[key] = {
                 "key": key,
                 "slug": c.slug,
                 "display_name": c.display_name,
                 "installed": binary is not None,
                 "binary": binary,
+                "invocation_ready": ready,
+                "razon": razon,
             }
         return out
 
@@ -230,10 +292,8 @@ class AgentHub:
         """Invoca un conector y devuelve el resultado ESTRUCTURADO.
         NUNCA lanza excepción al caller (graceful degradation).
 
-        D3 ([VERIFICAR]): los flags de `build_args` NO están confirmados contra el `--help`
-        real de cada CLI. Si un flag está mal, el CLI sale con código ≠ 0 (o revienta) — ese
-        camino termina AQUÍ, en STATUS_ERROR con un texto en llano para el abogado y el
-        stderr en el log. El turno del abogado nunca se rompe por un flag equivocado."""
+        Si un flag está mal, el CLI sale ≠ 0 y este camino termina en STATUS_ERROR;
+        el turno del abogado no se rompe."""
         c = CONNECTORS.get(key)
         if c is None:
             logger.warning("conector desconocido: %s (tenant=%s)", key, tenant_id)
@@ -288,8 +348,7 @@ class AgentHub:
             # CP-S1: el stderr es salida EXTERNA — saneado antes de tocarlo siquiera
             # (un CLI comprometido no fabrica instrucciones dentro del mensaje).
             safe_err = untrusted.sanitize_field(stderr, 300)
-            logger.warning("conector %s exit=%s stderr=%s (tenant=%s) — revisar D3 "
-                           "([VERIFICAR]: flags de build_args sin confirmar)",
+            logger.warning("conector %s exit=%s stderr=%s (tenant=%s)",
                            key, code, safe_err, tenant_id)
             return InvokeResult(STATUS_ERROR,
                                 f"«{c.display_name}» no pudo completar la tarea.",

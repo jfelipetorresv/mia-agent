@@ -41,6 +41,7 @@ from mia import config                                     # noqa: E402
 from mia.agent import llm                                  # noqa: E402
 from mia.agents import context_recovery as cr              # noqa: E402
 from mia.agents import graph as graph_mod                  # noqa: E402
+from mia.agents import packs as legal_packs                # noqa: E402
 from mia.agents import untrusted                           # noqa: E402
 from mia.agents.graph import MatterGraphBuilder            # noqa: E402
 from mia.memory.tokens import estimate_tokens              # noqa: E402
@@ -152,6 +153,20 @@ def make_state(docs: list[dict] | None = None, metadata: dict | None = None) -> 
     }
 
 
+def expediente_docs(user: str) -> str:
+    """Material de documentos del user prompt, sin la instrucción de packs.
+
+    El cupo de analysis recorta DOCUMENTOS (`shrink_documents`). STRATEGY_PACK_INSTRUCTION
+    se concatena después del expediente y no entra en ese cupo: medirla como expediente
+    inflaba ~100 tokens (1304 vs 1200) sin que el recorte hubiera violado su contrato.
+    """
+    after = user.split("Expediente:\n", 1)[1]
+    instr = legal_packs.STRATEGY_PACK_INSTRUCTION
+    if instr in after:
+        after = after.split(instr, 1)[0].rstrip()
+    return after
+
+
 def run(trace_dir: str) -> None:
     llm.time.sleep = lambda *_a, **_k: None  # reintentos instantáneos (no aplica a contexto)
     builder = MatterGraphBuilder(trace_capture=TraceCapture(trace_dir))
@@ -182,9 +197,11 @@ def run(trace_dir: str) -> None:
     # ninguno se descarta; lo que se recorta es el LARGO. No se debilita nada: se sustituye
     # por dos aserciones más exigentes —ninguna pieza de evidencia se pierde Y el contenido
     # sí se acortó de verdad— que el check anterior no podía distinguir.
-    docs_2 = user2.split("Expediente:\n", 1)[1]
+    docs_2 = expediente_docs(user2)
     check("a6 · ya no se descarta evidencia que CABE: los 8 extractos siguen presentes",
           all(f"[doc original {i}]" in user2 for i in range(8)))
+    check("a6d · el retry conserva la instrucción del strategy-pack (no se recorta)",
+          legal_packs.STRATEGY_PACK_INSTRUCTION in user2)
     check("a7b · pero el contenido sí se acortó (ningún documento entra íntegro)",
           all(d["content"] not in docs_2 for d in docs))
     budget_a = cr.budget_for("analysis", config.MIA_CONTEXT_WINDOW)
@@ -209,7 +226,7 @@ def run(trace_dir: str) -> None:
     saved_prepare = graph_mod._prepare_playbooks
     graph_mod._prepare_playbooks = fake_prepare
     try:
-        state_b = make_state(metadata={"diagnosis": diag})
+        state_b = make_state(metadata={"diagnosis": diag, **legal_packs.example_metadata_packs()})
         fc = install({"claude-sonnet": [context_exc(), ok_response("BORRADOR: contestación.")]})
         out_b = asyncio.run(builder.draft_node(state_b))
     finally:
@@ -412,7 +429,9 @@ def run(trace_dir: str) -> None:
     check("f1 · el turno completa tras el rescate con ampliaciones en el expediente",
           out_f["metadata"].get("diagnosis") == "DIAGNÓSTICO: con ampliación.")
     user_f = fc.messages_seen[1][1]["content"]
-    docs_f2 = user_f.split("Expediente:\n", 1)[1]
+    docs_f2 = expediente_docs(user_f)
+    check("f4b · el retry conserva la instrucción del strategy-pack",
+          legal_packs.STRATEGY_PACK_INSTRUCTION in user_f)
     vistos = [d["id"] for d in docs_f if f"{d['id']} ::" in docs_f2]
     ampl_vistas = sum(1 for i in vistos if i.startswith("AMPL"))
     check(f"f2 · tras el rescate el modelo SIGUE viendo lo que pidió "

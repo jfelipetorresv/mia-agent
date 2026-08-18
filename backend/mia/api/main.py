@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager, suppress
 
@@ -64,6 +65,8 @@ async def lifespan(app: FastAPI):
                 logging.getLogger("mia.metrics.usage").exception("flush periódico falló")
 
     usage_task = asyncio.create_task(_usage_flusher())
+    from ..channels.telegram_bridge import start_bridge_if_configured
+    start_bridge_if_configured()
     try:
         yield
     finally:
@@ -285,6 +288,27 @@ async def health():
         logging.getLogger("mia.api.health").exception("health check: la DB no respondió")
         info["status"] = "degraded"
         info["error"] = "db_unavailable"
+    caps = config.optional_capabilities()
+    try:
+        from ..ingest.document_derivation import anydoc_available
+        anydoc = bool(anydoc_available())
+    except Exception:  # noqa: BLE001 — una capacidad ausente no degrada /health
+        anydoc = False
+    telegram_token = bool((os.getenv("TELEGRAM_BOT_TOKEN") or "").strip())
+    info["capabilities"] = {
+        "ocr": caps.get("ocr") or {},
+        "voice": caps.get("voice") or {},
+        "anydoc": {
+            "available": anydoc,
+            "reason": ("" if anydoc else
+                       "La lectura de Word/Excel no está incluida en esta instalación."),
+        },
+        "telegram": {
+            "available": telegram_token,
+            "reason": ("" if telegram_token else
+                       "Sin TELEGRAM_BOT_TOKEN el puente no arranca (opt-in)."),
+        },
+    }
     return info
 
 

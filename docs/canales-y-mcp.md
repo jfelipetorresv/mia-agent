@@ -14,7 +14,9 @@ viven FUERA del núcleo** y con los permisos mínimos.
 Un **canal** es una vía para hablar con Mia: hoy el chat de la web y **Telegram**;
 mañana WhatsApp, correo, u otro. Todos siguen el mismo patrón **relay**:
 
-- El canal corre como un **proceso aparte** (no dentro del motor de Mia).
+- El canal corre **opt-in** con el API si hay `TELEGRAM_BOT_TOKEN` (hilo
+  daemon en el lifespan). También puede correrse a mano
+  (`python -m mia.channels.telegram_bridge`).
 - Guarda **sus** credenciales en **su propio entorno** (el token del bot de Telegram,
   por ejemplo) — el núcleo nunca las ve.
 - Habla con Mia **solo por el API HTTP**, autenticándose con usuario/clave para obtener
@@ -78,8 +80,10 @@ config hostil que ejecute comandos locales). Cada entrada nace apagada y declara
 - las variables que necesita, separando **secretas** (tokens) de **no secretas** (URLs);
 - la nota de **permisos mínimos** del token.
 
-Entradas actuales: **gestión documental del despacho** y **consulta de estados de
-procesos judiciales** (ambas de solo lectura/consulta).
+Entradas actuales de producto: **ninguna**. Se retiraron «gestión documental»
+(`server-filesystem` + token DMS que no se usaba) y «consulta de procesos»
+(`python -m mia_mcp_procesos`, módulo inexistente). No se inventa un scraper
+judicial ni un DMS. La pantalla de Conexiones lo dice en llano.
 
 ### El flujo seguro (`mcp/service.py::resolve_server`)
 

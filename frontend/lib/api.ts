@@ -252,8 +252,6 @@ export async function streamPost(
   await consumeSse(res, onEvent);
 }
 
-export const apiConfig = { hasToken: () => Boolean(getToken()) };
-
 /* ────────────────────────────────────────────────────────────────────────────
  * Clientes tipados de las fuentes que alimentan el Panel
  *
