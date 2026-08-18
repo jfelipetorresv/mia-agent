@@ -71,8 +71,19 @@ function Stop-ProcessTree([int]$ProcessId) {
     # Stop-Process solo mata al Python padre; npm/Next puede conservar abiertos los
     # archivos redirigidos y colgar el verificador para siempre. Recorremos únicamente
     # los descendientes del PID que acabamos de crear, de abajo hacia arriba.
-    $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcessId" |
-        Select-Object -ExpandProperty ProcessId)
+    if ($IsWindows) {
+        $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcessId" |
+            Select-Object -ExpandProperty ProcessId)
+    } else {
+        $children = @()
+        try {
+            $children = @(Get-Process -ErrorAction SilentlyContinue |
+                Where-Object { $_.Parent -and $_.Parent.Id -eq $ProcessId } |
+                Select-Object -ExpandProperty Id)
+        } catch {
+            $children = @()
+        }
+    }
     foreach ($child in $children) { Stop-ProcessTree -ProcessId ([int]$child) }
     Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
 }

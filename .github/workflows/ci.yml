@@ -8,8 +8,6 @@ jobs:
   static-and-frontend:
     runs-on: windows-latest
     timeout-minutes: 30
-    env:
-      JWT_SECRET: mia-ci-not-a-production-secret-32
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,20 +26,6 @@ jobs:
           foreach ($path in $catalog.quick) { if (-not (Test-Path $path)) { throw "Prueba catalogada ausente: $path" } }
           foreach ($path in $catalog.critical_contracts) { if (-not (Test-Path $path)) { throw "Contrato crítico ausente: $path" } }
           if (-not $catalog.full_glob) { throw 'Falta full_glob en el catálogo' }
-      - name: Install backend runtime for executable gates
-        shell: pwsh
-        run: python -m pip install './backend[full]'
-      - name: Execute quick verification catalog
-        shell: pwsh
-        env:
-          MIA_VERIFY_PYTHON: python
-        run: ./scripts/verify.ps1 -Mode quick -ResultPath validation/ci-quick.json
-      - name: Upload verification evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mia-ci-quick-verification
-          path: validation/ci-quick.json
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -124,6 +108,17 @@ jobs:
           apply_migrations(os.environ['PG_HOST'], os.environ['PG_PORT'], os.environ['PG_DB'], os.environ['PG_PASSWORD'], migrations)
           PY
           python execution/init_checkpointer.py
+      - name: Execute quick verification catalog
+        shell: pwsh
+        env:
+          MIA_VERIFY_PYTHON: python
+        run: ./scripts/verify.ps1 -Mode quick -ResultPath validation/ci-quick.json
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mia-ci-quick-verification
+          path: validation/ci-quick.json
       - name: Execute critical RLS and HITL contracts
         run: |
           python execution/test_rls.py
