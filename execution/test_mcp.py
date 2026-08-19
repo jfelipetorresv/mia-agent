@@ -35,8 +35,10 @@ Exit 0 = PASS · 1 = FAIL.        .venv\\Scripts\\python.exe execution\\test_mcp
 """
 import asyncio
 import os
+import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -485,6 +487,50 @@ async def mcp_live_checks() -> None:
 
 
 _DB_ENV_KEYS = ("PG_PASSWORD", "PG_HOST", "PG_PORT", "PG_DB", "DATABASE_URL", "JWT_SECRET")
+_TEST_KEY_WRAP = b"MIA-TEST-KEYWRAP-V1:"
+
+
+@contextmanager
+def _ci_local_key_backend():
+    """En Linux/CI no hay Windows DPAPI. El cifrado AES-GCM de secretos en DB
+    sigue real; solo el envoltorio de la llave local se stubbea. En Windows se
+    usa DPAPI de producto. No toca dpapi.py ni at_rest.py."""
+    tmp = tempfile.mkdtemp(prefix="mia-mcp-appdir-")
+    prev_app_dir = os.environ.get("MIA_APP_DIR")
+    os.environ["MIA_APP_DIR"] = tmp
+    patched = False
+    orig_protect = orig_unprotect = None
+    if os.name != "nt":
+        from mia.security import dpapi
+
+        orig_protect, orig_unprotect = dpapi.protect, dpapi.unprotect
+
+        def protect(data: bytes, *, description: str = "Mia") -> bytes:
+            _ = description
+            return _TEST_KEY_WRAP + data
+
+        def unprotect(data: bytes) -> bytes:
+            if not data.startswith(_TEST_KEY_WRAP):
+                raise dpapi.DPAPIError("envoltorio de prueba inválido")
+            return data[len(_TEST_KEY_WRAP):]
+
+        dpapi.protect = protect
+        dpapi.unprotect = unprotect
+        patched = True
+    try:
+        yield
+    finally:
+        if patched:
+            from mia.security import dpapi
+
+            dpapi.protect = orig_protect
+            dpapi.unprotect = orig_unprotect
+        if prev_app_dir is None:
+            os.environ.pop("MIA_APP_DIR", None)
+        else:
+            os.environ["MIA_APP_DIR"] = prev_app_dir
+        shutil.rmtree(tmp, ignore_errors=True)
+
 
 if __name__ == "__main__":
     # offline_checks pone claves FALSAS (e6-02). En local las recupera el .env;
@@ -498,8 +544,9 @@ if __name__ == "__main__":
             os.environ[key] = value
     load_dotenv(ROOT / ".env", override=True)
     if os.getenv("PG_PASSWORD"):
-        asyncio.run(db_checks())
-        asyncio.run(mcp_live_checks())
+        with _ci_local_key_backend():
+            asyncio.run(db_checks())
+            asyncio.run(mcp_live_checks())
     else:
         check("e6-db · SKIP (sin PG_PASSWORD): no se ejercitó la DB real", False)
         print("  [SKIP] mcp-live: requiere DB (PG_PASSWORD) para habilitar el servidor")
