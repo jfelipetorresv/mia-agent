@@ -242,6 +242,10 @@ struct Shared {
     maintenance: Mutex<Option<(SetupCfg, Option<String>)>>,
     /// Serializa exportación/confirmación/backup invocados desde la interfaz.
     maintenance_running: AtomicBool,
+    /// Origin exacto del frontend (p. ej. "http://localhost:3100"), retenido
+    /// para que el puente local `mia-shell` solo acepte peticiones de la
+    /// pantalla de MIA. None hasta que orchestrate lee la config → deny-all.
+    frontend_origin: Mutex<Option<String>>,
     /// Serializa un reinicio de litellm en curso (evita dos reinicios a la vez).
     restarting: AtomicBool,
 }
@@ -822,6 +826,18 @@ async fn orchestrate(app: AppHandle, cfg: OrchCfg, shared: &Shared) -> Result<()
         *shared.litellm.lock().unwrap() = Some((l.clone(), cfg.app_dir.clone()));
     }
     *shared.maintenance.lock().unwrap() = cfg.maintenance.clone().map(|m| (m, cfg.app_dir.clone()));
+
+    // Retener el Origin exacto del frontend para el puente `mia-shell`:
+    // mientras sea None el puente rechaza TODO (deny-all por defecto).
+    if let Ok(u) = tauri::Url::parse(&cfg.frontend.url) {
+        if let Some(host) = u.host_str() {
+            let origin = match u.port() {
+                Some(p) => format!("{}://{host}:{p}", u.scheme()),
+                None => format!("{}://{host}", u.scheme()),
+            };
+            *shared.frontend_origin.lock().unwrap() = Some(origin);
+        }
+    }
 
     let client = reqwest::Client::builder().no_proxy().build().map_err(|e| {
         log_line(&log_dir, &format!("ERROR técnico: cliente HTTP: {e}"));
@@ -1982,6 +1998,128 @@ async fn maintenance_stage_restore(
 }
 
 // ---------------------------------------------------------------------------
+// Puente local `mia-shell` (http://mia-shell.localhost, SOLO dentro del
+// webview de la cáscara).
+//
+// Por qué existe: la ventana principal navega a http://localhost:3100, que
+// para Tauri v2 es un ORIGEN REMOTO. Por diseño (hardening documentado en
+// desktop/README.md) los orígenes remotos NO reciben IPC: window.__TAURI__
+// no se inyecta y ninguna capability se les otorga. Por eso los botones de
+// "Protección de tus datos" no podían invocar los comandos de mantenimiento.
+//
+// Este protocolo custom es la vía soportada por Tauri para frontends
+// remotos: WebView2 intercepta las peticiones EN PROCESO — no se abre ningún
+// puerto TCP, ningún otro programa de la máquina (ni la LAN) puede
+// alcanzarlo, y NO se re-habilita el IPC remoto que el hardening cerró.
+// Defensas del handler:
+//   1) Origin exacto: solo el origin del frontend configurado (retenido en
+//      Shared.frontend_origin; None = deny-all). La cáscara solo navega a esa
+//      URL tras verificar la huella de identidad de MIA (identity.rs).
+//   2) Solo POST (y OPTIONS de preflight), rutas cerradas por match.
+//   3) Reutiliza los mismos comandos #[tauri::command], con su mismo guard
+//      de serialización (maintenance_running).
+// ---------------------------------------------------------------------------
+
+fn shell_response(status: u16, body: String, origin: &str) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .header("Access-Control-Allow-Origin", origin)
+        .header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        .header("Access-Control-Allow-Headers", "content-type")
+        .body(body.into_bytes())
+        .unwrap_or_else(|_| tauri::http::Response::new(Vec::new()))
+}
+
+async fn handle_shell_request(
+    app: AppHandle,
+    request: tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    let origin = request
+        .headers()
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let allowed = {
+        let shared = app.state::<Shared>();
+        let stored = shared.frontend_origin.lock().unwrap().clone();
+        !origin.is_empty() && stored.as_deref() == Some(origin.as_str())
+    };
+    if !allowed {
+        return shell_response(
+            403,
+            "{\"ok\":false,\"error\":\"origen no autorizado\"}".into(),
+            "null",
+        );
+    }
+    if request.method() == tauri::http::Method::OPTIONS {
+        return shell_response(204, String::new(), &origin);
+    }
+    if request.method() != tauri::http::Method::POST {
+        return shell_response(
+            405,
+            "{\"ok\":false,\"error\":\"método no permitido\"}".into(),
+            &origin,
+        );
+    }
+    let path = request.uri().path().to_string();
+    let body: serde_json::Value =
+        serde_json::from_slice(request.body()).unwrap_or(serde_json::Value::Null);
+
+    let result: Result<serde_json::Value, String> = match path.as_str() {
+        "/maintenance/status" => match maintenance_status(app.clone()).await {
+            Ok(raw) => serde_json::from_str(&raw)
+                .map_err(|_| "Mia no pudo leer el estado de protección.".to_string()),
+            Err(e) => Err(e),
+        },
+        "/maintenance/export-key" => maintenance_export_key(app.clone())
+            .await
+            .map(serde_json::Value::String),
+        "/maintenance/confirm-key" => maintenance_confirm_key(app.clone())
+            .await
+            .map(serde_json::Value::String),
+        "/maintenance/backup" => maintenance_create_backup(app.clone())
+            .await
+            .map(serde_json::Value::String),
+        "/maintenance/list-backups" => match maintenance_list_backups(app.clone()).await {
+            Ok(raw) => serde_json::from_str(&raw)
+                .map_err(|_| "Mia no pudo listar las copias de seguridad.".to_string()),
+            Err(e) => Err(e),
+        },
+        "/maintenance/stage-restore" => {
+            let source = body
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let confirm = body
+                .get("confirmDatabase")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if source.is_empty() || confirm.is_empty() {
+                Err("Faltan datos para preparar la recuperación.".into())
+            } else {
+                maintenance_stage_restore(app.clone(), source, confirm)
+                    .await
+                    .map(serde_json::Value::String)
+            }
+        }
+        "/restart-litellm" => restart_litellm(app.clone())
+            .await
+            .map(serde_json::Value::String),
+        _ => Err("Operación desconocida.".into()),
+    };
+
+    let payload = match result {
+        Ok(data) => serde_json::json!({ "ok": true, "data": data }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+    };
+    shell_response(200, payload.to_string(), &origin)
+}
+
+// ---------------------------------------------------------------------------
 // Entrada
 // ---------------------------------------------------------------------------
 
@@ -2000,6 +2138,15 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
+        // Puente local para la pantalla de MIA (origen remoto sin IPC por
+        // diseño): ver el bloque `mia-shell` arriba. Interceptado en proceso
+        // por WebView2 — no abre puertos ni re-habilita IPC remoto.
+        .register_asynchronous_uri_scheme_protocol("mia-shell", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(handle_shell_request(app, request).await);
+            });
+        })
         .setup(|app| {
             // Localizar y cargar la configuración.
             let cfg_path = find_config();
@@ -2020,6 +2167,7 @@ pub fn run() {
                 litellm: Mutex::new(None),
                 maintenance: Mutex::new(None),
                 maintenance_running: AtomicBool::new(false),
+                frontend_origin: Mutex::new(None),
                 restarting: AtomicBool::new(false),
             });
 

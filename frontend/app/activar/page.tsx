@@ -35,6 +35,7 @@ import {
   JOURNEY_STEPS,
 } from "@/app/_welcome";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { shellInvoke } from "@/lib/shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -437,13 +438,12 @@ export default function ActivarPage() {
         // reinicia el motor EN CALIENTE para que la clave quede activa de una vez
         // — así el abogado no tiene que "cerrar y reabrir". Solo se quita el aviso
         // si el motor de verdad se reinició ("reiniciado"); "no-aplica"/"en-curso"
-        // o un fallo conservan el aviso. En dev (navegador) __TAURI__ es undefined
-        // → nunca se invoca y el aviso se conserva.
+        // o un fallo conservan el aviso. En dev (navegador) el puente mia-shell
+        // no existe → shellInvoke falla y el aviso se conserva.
         let aviso = res.aviso;
-        const tauri = (window as unknown as { __TAURI__?: { core?: { invoke?: (cmd: string) => Promise<unknown> } } }).__TAURI__;
-        if (aviso && tauri?.core?.invoke) {
+        if (aviso) {
           try {
-            const r = await tauri.core.invoke("restart_litellm");
+            const r = await shellInvoke<string>("restart-litellm");
             if (r === "reiniciado") aviso = null;
           } catch {
             /* dev/navegador o fallo del reinicio: conserva el aviso "cierra y reabre" */

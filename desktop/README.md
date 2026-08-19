@@ -186,6 +186,20 @@ empírica** — queda para el E2E de Fase 4:
 > `withGlobalTauri` a nivel de ventana remota o una capability con `remote`
 > apuntando a `localhost:3100`, este paso debe volver a correr.
 
+**Puente `mia-shell` (2026-08-19):** consecuencia directa del gating
+anterior: la pantalla remota NO tiene `window.__TAURI__`, así que los
+controles de "Protección de tus datos" (y el reinicio en caliente del motor
+de modelos) no podían invocar los comandos de mantenimiento. La solución NO
+fue abrir IPC remoto (eso desharía el hardening), sino un protocolo custom
+`register_asynchronous_uri_scheme_protocol("mia-shell", …)` en `lib.rs`:
+WebView2 lo intercepta **en proceso** en `http://mia-shell.localhost` — no
+abre ningún puerto TCP, es inalcanzable desde fuera de la cáscara, y el
+handler exige que el header `Origin` sea exactamente el del frontend
+configurado (deny-all mientras la config no cargue). El frontend lo consume
+vía `frontend/lib/shell.ts`. El gating de IPC remoto sigue intacto:
+`window.__TAURI__ === undefined` en `localhost:3100` sigue siendo lo
+esperado y verificable.
+
 ### 3 · Validación de que 55432 es Postgres de verdad
 
 Antes: la adopción de la DB era solo "¿hay algo escuchando en el puerto?".

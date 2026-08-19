@@ -6,6 +6,7 @@ import { CheckCircle2, DatabaseBackup, Download, Loader2, ShieldCheck } from "lu
 import { Button } from "@/components/ui/button";
 import { SectionTitle, fmtHora } from "@/app/_components/PanelUI";
 import { apiGet } from "@/lib/api";
+import { shellInvoke } from "@/lib/shell";
 
 type ProtectionStatus = {
   recovery_key_created: boolean;
@@ -26,18 +27,6 @@ type ExportRow = {
   created_at: string;
 };
 
-type TauriCore = { invoke?: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
-
-async function invokeLocal<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const tauri = (
-    window as unknown as { __TAURI__?: { core?: TauriCore } }
-  ).__TAURI__;
-  if (!tauri?.core?.invoke) {
-    throw new Error("Este control está disponible en la aplicación de escritorio.");
-  }
-  return (await tauri.core.invoke(command, args)) as T;
-}
-
 export default function ProteccionDatosSection() {
   const [status, setStatus] = useState<ProtectionStatus | null>(null);
   const [busy, setBusy] = useState<"key" | "confirm" | "backup" | "restore" | null>(null);
@@ -51,8 +40,8 @@ export default function ProteccionDatosSection() {
 
   async function load() {
     try {
-      const raw = await invokeLocal<string>("maintenance_status");
-      setStatus(JSON.parse(raw) as ProtectionStatus);
+      const data = await shellInvoke<ProtectionStatus>("maintenance/status");
+      setStatus(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No pude comprobar la protección de tus datos.");
     }
@@ -70,7 +59,7 @@ export default function ProteccionDatosSection() {
     setError("");
     setMessage("");
     try {
-      const location = await invokeLocal<string>("maintenance_export_key");
+      const location = await shellInvoke<string>("maintenance/export-key");
       setAwaitingConfirmation(true);
       setMessage(`La llave quedó en ${location}. Cópiala también a un lugar privado distinto de este equipo.`);
     } catch {
@@ -84,7 +73,7 @@ export default function ProteccionDatosSection() {
     setBusy("confirm");
     setError("");
     try {
-      await invokeLocal("maintenance_confirm_key");
+      await shellInvoke("maintenance/confirm-key");
       window.dispatchEvent(new Event("mia:recovery-key-confirmed"));
       setAwaitingConfirmation(false);
       setMessage("Listo. Mia ya puede crear copias recuperables.");
@@ -101,7 +90,7 @@ export default function ProteccionDatosSection() {
     setError("");
     setMessage("");
     try {
-      await invokeLocal("maintenance_create_backup");
+      await shellInvoke("maintenance/backup");
       setMessage("La copia quedó creada y comprobada.");
       await load();
     } catch (err) {
@@ -115,8 +104,7 @@ export default function ProteccionDatosSection() {
     setError("");
     setMessage("");
     try {
-      const raw = await invokeLocal<string>("maintenance_list_backups");
-      const list = JSON.parse(raw) as BackupFile[];
+      const list = await shellInvoke<BackupFile[]>("maintenance/list-backups");
       setBackups(list);
       setRestoreSource(list[0]?.name || "");
     } catch (err) {
@@ -129,7 +117,7 @@ export default function ProteccionDatosSection() {
     setError("");
     setMessage("");
     try {
-      await invokeLocal("maintenance_stage_restore", {
+      await shellInvoke("maintenance/stage-restore", {
         source: restoreSource,
         confirmDatabase: restoreConfirm.trim(),
       });

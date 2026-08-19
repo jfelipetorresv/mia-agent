@@ -5,8 +5,9 @@ import { ShieldAlert } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { DESKTOP_ONLY_MESSAGE, shellInvoke } from "@/lib/shell";
+
 type ProtectionStatus = { recovery_key_saved: boolean };
-type TauriCore = { invoke?: (command: string) => Promise<unknown> };
 
 /** Aviso persistente: desaparece solo cuando la llave portable fue confirmada. */
 export default function ProtectionReminder() {
@@ -14,19 +15,12 @@ export default function ProtectionReminder() {
   const pathname = usePathname() || "/";
 
   useEffect(() => {
-    const tauri = (
-      window as unknown as { __TAURI__?: { core?: TauriCore } }
-    ).__TAURI__;
-    if (!tauri?.core?.invoke) return; // navegador: la protección es local al escritorio
-
-    tauri.core.invoke("maintenance_status")
-      .then((raw) => {
-        const status = (
-          typeof raw === "string" ? JSON.parse(raw) : raw
-        ) as ProtectionStatus;
-        setNeedsKey(!status.recovery_key_saved);
-      })
-      .catch(() => setNeedsKey(true));
+    shellInvoke<ProtectionStatus>("maintenance/status")
+      .then((status) => setNeedsKey(!status.recovery_key_saved))
+      // Navegador (dev): la protección es local al escritorio — sin aviso.
+      .catch((err) =>
+        setNeedsKey(!(err instanceof Error && err.message === DESKTOP_ONLY_MESSAGE)),
+      );
 
     const confirmed = () => setNeedsKey(false);
     window.addEventListener("mia:recovery-key-confirmed", confirmed);
