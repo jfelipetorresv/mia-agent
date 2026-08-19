@@ -68,6 +68,13 @@ def main() -> int:
     check("la API rechaza aprobar sin atestación humana", missing_attestation_rejected)
     check("la atestación válida queda ligada al hash",
           ApproveBody(draft_hash="a" * 64, attested=True).attested is True)
+    sel = ApproveBody(
+        draft_hash="a" * 64, attested=True,
+        argument_selection={"include": ["A1"], "exclude": ["A2"]})
+    check("ApproveBody acepta argument_selection (ids incluir/excluir)",
+          sel.argument_selection is not None
+          and sel.argument_selection.include == ["A1"]
+          and sel.argument_selection.exclude == ["A2"])
 
     sql = (ROOT / "backend/mia/db/migrations/052_legal_gate_receipts.sql").read_text(encoding="utf-8")
     check("recibos quedan ligados a artifact_hash", "artifact_hash" in sql and "passed boolean NOT NULL" in sql)

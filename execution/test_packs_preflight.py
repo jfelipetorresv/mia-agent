@@ -85,6 +85,33 @@ def main() -> int:
     packs.preflight_draft(fact_pack=pack, source_pack=src, strategy_pack=strat)
     check("preflight con los tres packs cierra", True)
 
+    empty = packs.source_pack_from_research([])
+    check("pack de fuentes vacío declara conteo 0", empty.conteo_declarado == 0 and empty.fuentes == [])
+    try:
+        packs.preflight_draft(fact_pack=pack, source_pack=empty, strategy_pack=strat)
+        empty_ok = True
+    except packs.PackError as exc:
+        empty_ok = False
+        check("preflight con pack vacío nombra el fallo (no finge cotejo)",
+              "vacío" in str(exc).lower() or "fuentes" in str(exc).lower())
+    check("preflight con 0 fuentes NO está OK", empty_ok is False)
+
+    try:
+        packs.parse_strategy_pack(strategy_blob, source_pack=empty)
+        strat_empty = True
+    except packs.PackError:
+        strat_empty = False
+    check("tesis sin pack de fuentes: PackError (no se salta el cotejo)", strat_empty is False)
+
+    packet = packs.render_distilled_packet(
+        sources=[{"referencia": "Ley 1", "pasaje": "caducidad a los 4 meses",
+                  "source_passage_hash": "b" * 64}],
+        documents=[{"id": "d1", "content": "El accidente ocurrió el 14 de marzo."}])
+    check("packet destilado trae locator [doc n] y hash, no un dump",
+          "[doc 1]" in packet and ("b" * 16) in packet
+          and "caducidad a los 4 meses" in packet
+          and len(packet) < 2000)
+
     md = packs.example_metadata_packs()
     check("example_metadata_packs alimenta tests de nodos posteriores",
           md["facts_pack_ok"] is True and md["strategy_pack_ok"] is True)

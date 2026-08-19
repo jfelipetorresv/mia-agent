@@ -63,7 +63,7 @@ from ...output.docx_export import draft_to_docx
 from ...policy import budget as policy_budget
 from ._common import assert_owns_matter, load_profile_snapshot, MAX_UPLOAD_BYTES, _is_uuid, sse
 from . import delegation as delegation_routes
-from .hitl import _resume
+from .hitl import _resume, ArgumentSelection
 from .stream import SSE_PING_SECONDS, StreamBody, stream_matter
 
 router = APIRouter(prefix="/api", tags=["ux"])
@@ -525,6 +525,8 @@ async def get_draft(matter_id: str, request: Request):
             if isinstance(md.get("strategy_pack"), dict) else None,
             "descartes": (md.get("strategy_pack") or {}).get("descartes")
             if isinstance(md.get("strategy_pack"), dict) else None,
+            "argument_selection": md.get("argument_selection")
+            if isinstance(md.get("argument_selection"), dict) else None,
             "stage_failed": md.get("stage_failed")}
 
 
@@ -596,6 +598,7 @@ class ApproveBody(BaseModel):
     draft_hash: str = Field(min_length=64, max_length=64)
     attested: Literal[True]
     edited_text: str | None = None
+    argument_selection: ArgumentSelection | None = None
 
 
 class RejectBody(BaseModel):
@@ -610,12 +613,16 @@ async def approve_draft(matter_id: str, request: Request, body: ApproveBody | No
         return await _resume(request, matter_id, {
             "decision": "editing", "edited_text": body.edited_text,
             "draft_hash": body.draft_hash, "attested": body.attested,
+            **({"argument_selection": body.argument_selection.model_dump()}
+               if body.argument_selection is not None else {}),
         })
     if body is None:
         raise HTTPException(status_code=422, detail="Falta la huella del borrador revisado.")
     return await _resume(request, matter_id,
                          {"decision": "approved", "draft_hash": body.draft_hash,
-                          "attested": body.attested})
+                          "attested": body.attested,
+                          **({"argument_selection": body.argument_selection.model_dump()}
+                             if body.argument_selection is not None else {})})
 
 
 @router.post("/matters/{matter_id}/draft/reject")

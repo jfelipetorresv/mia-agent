@@ -38,9 +38,15 @@ class EditBody(BaseModel):
     attested: Literal[True]
 
 
+class ArgumentSelection(BaseModel):
+    include: list[str] = Field(default_factory=list)
+    exclude: list[str] = Field(default_factory=list)
+
+
 class ApproveBody(BaseModel):
     draft_hash: str = Field(min_length=64, max_length=64)
     attested: Literal[True]
+    argument_selection: ArgumentSelection | None = None
 
 
 async def _require_current_draft_hash(tenant_id: str, matter_id: str, supplied: str):
@@ -151,7 +157,9 @@ async def approve(matter_id: str, request: Request, body: ApproveBody | None = N
         raise HTTPException(status_code=422, detail="Falta la constancia de revisión humana.")
     return await _resume(request, matter_id,
                          {"decision": "approved", "draft_hash": body.draft_hash,
-                          "attested": body.attested})
+                          "attested": body.attested,
+                          **({"argument_selection": body.argument_selection.model_dump()}
+                             if body.argument_selection is not None else {})})
 
 
 @router.post("/matters/{matter_id}/reject")

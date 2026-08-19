@@ -162,6 +162,63 @@ def source_pack_from_research(sources: list[dict] | None) -> SourcePack:
     return SourcePack(fuentes=fuentes, conteo_declarado=len(fuentes))
 
 
+PACKET_PASSAGE_CHARS = 280
+SOURCE_PACKET_HEADER = (
+    "Packet destilado de fuentes (hash + pasaje corto + locator). "
+    "No es la memoria de investigación ni el expediente completo:"
+)
+
+
+def render_distilled_packet(
+    sources: list[dict] | None = None,
+    source_pack: SourcePack | None = None,
+    documents: list | None = None,
+) -> str:
+    """Arma en Python el packet del nodo caro: hash + pasaje corto + locator.
+
+    ``[doc n]`` solo numera piezas del expediente (misma numeración que los
+    hechos). Las fichas del corpus llevan su referencia + hash, nunca un
+    ``[doc n]`` inventado que colisionaría con el expediente.
+    """
+    entries: list[str] = []
+    seen: set[str] = set()
+    for i, doc in enumerate(documents or [], 1):
+        raw = ""
+        if isinstance(doc, dict):
+            raw = str(doc.get("content") or doc.get("text") or "")
+        else:
+            raw = str(doc or "")
+        if not raw.strip():
+            continue
+        digest = document_hash(doc)
+        seen.add(digest)
+        passage = raw.strip()[:PACKET_PASSAGE_CHARS]
+        entries.append(f"[doc {i}] hash={digest}\n{passage}")
+    for src in sources or []:
+        if not isinstance(src, dict):
+            continue
+        ref = str(src.get("referencia") or "").strip()
+        if not ref:
+            continue
+        passage = str(src.get("pasaje") or src.get("titulo") or ref).strip()
+        digest = str(src.get("source_passage_hash") or src.get("chunk_hash") or "") or chunk_hash(passage)
+        if digest in seen:
+            continue
+        seen.add(digest)
+        entries.append(f"{ref} hash={digest}\n{passage[:PACKET_PASSAGE_CHARS]}")
+    if source_pack is not None:
+        for fuente in source_pack.fuentes:
+            if fuente.chunk_hash in seen:
+                continue
+            seen.add(fuente.chunk_hash)
+            title = (fuente.titulo or fuente.referencia).strip()
+            entries.append(
+                f"{fuente.referencia} hash={fuente.chunk_hash}\n{title[:PACKET_PASSAGE_CHARS]}")
+    if not entries:
+        return ""
+    return SOURCE_PACKET_HEADER + "\n" + "\n\n".join(entries)
+
+
 def parse_strategy_pack(prose: str, *, source_pack: SourcePack | None) -> StrategyPack:
     raw = _load_json_fence(prose, "STRATEGY_PACK")
     if raw is None:
@@ -171,22 +228,53 @@ def parse_strategy_pack(prose: str, *, source_pack: SourcePack | None) -> Strate
     except ValidationError as exc:
         raise PackError(f"pack de tesis inválido: {exc.errors()[0]['msg']}") from exc
     known = {f.referencia.lower() for f in (source_pack.fuentes if source_pack else [])}
-    if known:
-        for arg in pack.argumentos:
-            if not any(ref.lower() in known or any(ref.lower() in k for k in known)
-                       for ref in arg.fuente_refs):
-                raise PackError(
-                    f"la tesis «{arg.id}» no cita ninguna fuente del pack de investigación")
+    if not known:
+        raise PackError("no hay pack de fuentes: no se puede cotejar ninguna tesis")
+    for arg in pack.argumentos:
+        if not any(ref.lower() in known or any(ref.lower() in k for k in known)
+                   for ref in arg.fuente_refs):
+            raise PackError(
+                f"la tesis «{arg.id}» no cita ninguna fuente del pack de investigación")
     return pack
+
+
+def overrides_from_selection(raw: dict | None) -> dict[str, bool] | None:
+    """Normaliza include/exclude del HITL o un mapa id→bool a overrides de ``seleccionados``."""
+    if not isinstance(raw, dict) or not raw:
+        return None
+    if "include" in raw or "exclude" in raw:
+        out: dict[str, bool] = {}
+        for item in raw.get("include") or []:
+            key = str(item or "").strip()
+            if key:
+                out[key] = True
+        for item in raw.get("exclude") or []:
+            key = str(item or "").strip()
+            if key:
+                out[key] = False
+        return out or None
+    return {str(k): bool(v) for k, v in raw.items() if str(k).strip()}
 
 
 def seleccionados(pack: StrategyPack | None, *, overrides: dict[str, bool] | None = None) -> list[Argumento]:
     chosen: list[Argumento] = []
+    flags = overrides_from_selection(overrides) or overrides
     for arg in (pack.argumentos if pack else []):
-        flag = (overrides or {}).get(arg.id, arg.seleccionado)
+        flag = (flags or {}).get(arg.id, arg.seleccionado)
         if flag:
             chosen.append(arg)
     return chosen
+
+
+def selection_instruction(chosen: list[Argumento]) -> str:
+    """Instrucción de tesis seleccionadas + locators; el shrink de draft debe conservarla."""
+    if not chosen:
+        return "Desarrolla SOLO estos argumentos seleccionados (no los descartes): (ninguno)"
+    lines = ["Desarrolla SOLO estos argumentos seleccionados (no los descartes):"]
+    for arg in chosen:
+        locator = f" {arg.prueba}" if arg.prueba else ""
+        lines.append(f"- {arg.id}: {arg.tesis}{locator}")
+    return "\n".join(lines)
 
 
 def preflight_draft(*, fact_pack: FactPack | None, source_pack: SourcePack | None,
@@ -201,18 +289,20 @@ def preflight_draft(*, fact_pack: FactPack | None, source_pack: SourcePack | Non
         raise PackError("no hay pack de fuentes verificado")
     if source_pack.conteo_declarado != len(source_pack.fuentes):
         raise PackError("el pack de fuentes no cierra: conteo declarado ≠ real")
+    if not source_pack.fuentes or source_pack.conteo_declarado < 1:
+        raise PackError("no hay fuentes que cotejar: el pack de investigación está vacío")
     if strategy_pack is None:
         raise PackError("no hay matriz de argumentos verificada")
     chosen = seleccionados(strategy_pack, overrides=selection)
     if not chosen:
         raise PackError("no quedó ningún argumento seleccionado para redactar")
     known = {f.referencia.lower() for f in source_pack.fuentes}
-    if known:
-        for arg in chosen:
-            if not any(ref.lower() in known or any(ref.lower() in k for k in known)
-                       for ref in arg.fuente_refs):
-                raise PackError(
-                    f"la tesis seleccionada «{arg.id}» no cita una fuente del pack")
+    # Vacío ≠ «cotejo OK»: sin fuentes no se finge que las tesis estén ancladas.
+    for arg in chosen:
+        if not any(ref.lower() in known or any(ref.lower() in k for k in known)
+                   for ref in arg.fuente_refs):
+            raise PackError(
+                f"la tesis seleccionada «{arg.id}» no cita una fuente del pack")
 
 
 def compact_source_pack(pack: SourcePack | None) -> list[dict[str, str]]:

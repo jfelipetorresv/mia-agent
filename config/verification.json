@@ -23,7 +23,9 @@
     "execution/test_stage_gate.py",
     "execution/test_suggestions_cron.py",
     "execution/test_telegram_lifespan.py",
-    "execution/test_handoff.py"
+    "execution/test_handoff.py",
+    "execution/test_mcp.py",
+    "execution/test_agent_hub.py"
   ],
   "full_glob": "execution/test_*.py",
   "full_requires_database": true,

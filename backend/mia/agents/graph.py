@@ -2,9 +2,15 @@
 
 Flujo:   intake → facts → research → analysis → draft → verificador_citas
                                                              → hitl_checkpoint → finalize → END
-                                                                │
-                                                                └─ interrupt() es la PRIMERA
-                                                                   línea del nodo (decisión #10).
+                    │                         ▲                     │
+                    └─ handoff_broken ────────┘                     │
+                       (stage_abort → finalize;                     │
+                        sin research/draft/gate)                    │
+                                                                    └─ un re-draft HITL
+                                                                       autorizado (matriz),
+                                                                       no el bucle del gate.
+                                                                interrupt() es la PRIMERA
+                                                                línea del nodo (decisión #10).
 
 Nodos (async; los clientes LLM/embeddings son síncronos → se llaman vía
 asyncio.to_thread para no bloquear el event loop). CP9: cada nodo es un ESPECIALISTA
@@ -120,6 +126,70 @@ DELEGATION_NODE = "delegation"
 # navegador volvería a recibir el texto SIN las marcas [VERIFICAR] y el guardián sería
 # decorativo (no hay streaming token a token: el texto sale completo, una sola vez).
 PROJECT_VERIFICATION_NODE = "verificacion"
+STAGE_ABORT_NODE = "stage_abort"
+
+
+def _route_after_facts(state: MatterState) -> str:
+    """Handoff roto: no gastar research/analysis/draft/gate. Fail-closed."""
+    md = state.get("metadata") or {}
+    if md.get("handoff_broken"):
+        return "abort"
+    return "research"
+
+
+def _route_after_hitl(state: MatterState) -> str:
+    """Re-draft único autorizado si el abogado cambió la matriz en el HITL.
+
+    No es el bucle automático draft↔gate (F1.5, 66% del costo): una sola pasada
+    extra de redacción + verificador, y otra vez HITL. El flag one-shot vive en
+    metadata.selection_redraft_used.
+    """
+    md = state.get("metadata") or {}
+    if md.get("needs_selection_redraft"):
+        return "draft"
+    return "finalize"
+
+
+def _commit_research_sources(md: dict, sources: list | None) -> None:
+    """Pack + packet destilado. Cero fuentes ≠ preflight verde."""
+    src_list = [s for s in (sources or []) if isinstance(s, dict)]
+    md["research_sources"] = src_list
+    pack = legal_packs.source_pack_from_research(src_list)
+    md["source_pack"] = pack.model_dump()
+    md["source_packet"] = legal_packs.render_distilled_packet(sources=src_list, source_pack=pack)
+    if not pack.fuentes or pack.conteo_declarado < 1:
+        md["source_pack_ok"] = False
+        md["source_pack_error"] = (
+            "el corpus no arrojó fuentes verificables; no hay pack que cotejar")
+    else:
+        md["source_pack_ok"] = True
+        md.pop("source_pack_error", None)
+
+
+def _handoff_abort_metadata(md: dict, stage: str) -> dict:
+    detail = str(md.get("handoff_broken") or "el traspaso del asunto está roto")
+    md.update(stage=stage, stage_failed={"stage": "facts", "detail": detail})
+    if stage == "research":
+        md.update(research="", source_pack_ok=False, source_pack_error=detail)
+        md.pop("source_pack", None)
+        md["source_packet"] = ""
+    elif stage == "analysis":
+        md.update(diagnosis="", strategy_pack_ok=False, strategy_pack_error=detail)
+        md.pop("strategy_pack", None)
+    return md
+
+
+def _source_packet_for(md: dict, state: MatterState | None = None) -> str:
+    """Packet de fichas de investigación. El expediente ya va sellado aparte."""
+    stored = str((md or {}).get("source_packet") or "")
+    if stored.strip():
+        return stored
+    return legal_packs.render_distilled_packet(
+        sources=(md or {}).get("research_sources") if isinstance(
+            (md or {}).get("research_sources"), list) else None,
+        source_pack=stage_gate.load_source_pack(md),
+    )
+
 
 # Tipo del interrupt de delegación; viaja en el payload hasta el SSE para que la pantalla
 # sepa qué está pintando. Cada interrupt del grafo se AUTO-IDENTIFICA.
@@ -1355,6 +1425,13 @@ class MatterGraphBuilder:
                 state["tenant_id"], state["matter_id"], docs)
         except matter_handoff.HandoffBroken as exc:
             md["handoff_broken"] = str(exc)
+        else:
+            # save_handoff persiste la selección; al reabrir hay que recargarla.
+            ficha = await matter_handoff.load_handoff(
+                state["tenant_id"], state["matter_id"])
+            saved = matter_handoff.saved_argument_selection(ficha)
+            if saved and "argument_selection" not in md:
+                md["argument_selection"] = saved
         return {"documents": docs, "knowledge": knowledge, "metadata": md,
                 "delegation_request": plan, "jurisdictions": juris}
 
@@ -1433,6 +1510,8 @@ class MatterGraphBuilder:
         paralelo (+ verificación de citas por rama + síntesis); con una sola corre en un
         único paso, idéntico a antes de CP-E5. La decisión es transparente al abogado."""
         md = dict(state.get("metadata") or {})
+        if md.get("handoff_broken"):
+            return {"metadata": _handoff_abort_metadata(md, "research")}
         # Mismo ordenamiento que ya vieron hechos y el resto del turno: se lee del estado
         # (lo dejó el intake) en vez de volver a consultar la configuración del despacho.
         jurisdictions = await self._turn_jurisdictions(state)
@@ -1547,14 +1626,8 @@ class MatterGraphBuilder:
             _messages(facts), task="legal_research", state=state, md=md, shrink=_shrink, node="research",
             model=_persona_alias(state))
         md.update(stage="research", research=memo)
-        # Fuentes compactas: las consume el especialista de verificación (respaldo de
-        # citas) y quedan en la traza; las jurisdicciones usadas, por transparencia.
-        md["research_sources"] = sources
         md["research_jurisdictions"] = jurisdictions
-        source_pack = legal_packs.source_pack_from_research(sources)
-        md["source_pack"] = source_pack.model_dump()
-        md["source_pack_ok"] = True
-        md.pop("source_pack_error", None)
+        _commit_research_sources(md, sources)
         _accum_usage(md, usage)
         return {"metadata": md}
 
@@ -1652,12 +1725,8 @@ class MatterGraphBuilder:
             _accum_usage(md, usage)
 
         md.update(stage="research", research=memo)
-        md["research_sources"] = all_sources
         md["research_jurisdictions"] = jurisdictions
-        source_pack = legal_packs.source_pack_from_research(all_sources)
-        md["source_pack"] = source_pack.model_dump()
-        md["source_pack_ok"] = True
-        md.pop("source_pack_error", None)
+        _commit_research_sources(md, all_sources)
         # Transparencia/trace: cuántos investigadores delegados aportaron y sobre qué
         # jurisdicciones (lo consume la Pantalla 2/3 y la traza; nunca jerga al abogado).
         md["research_delegation"] = {
@@ -1688,6 +1757,9 @@ class MatterGraphBuilder:
 
     # ── 4 · analysis (CP9 · especialista de CRUCE) ───────────────────────────
     async def analysis_node(self, state: MatterState) -> dict:
+        md = dict(state.get("metadata") or {})
+        if md.get("handoff_broken"):
+            return {"metadata": _handoff_abort_metadata(md, "analysis")}
         msg = _last_user_message(state)
         docs = state.get("documents") or []
         # RELECTURA DIRIGIDA (sesión 53). La primera lectura se buscó con la PREGUNTA del
@@ -1698,9 +1770,8 @@ class MatterGraphBuilder:
         # consulta; ninguna llamada más al modelo.
         docs = await self._relectura_dirigida(state, docs)
         knowledge = state.get("knowledge") or []
-        md = dict(state.get("metadata") or {})
         facts = str(md.get("facts") or "")
-        research_memo = str(md.get("research") or "")
+        packet = _source_packet_for(md, state)
         # CP3 (Riesgo #16): sección de conocimiento del despacho, presupuesto ≤15% de la
         # ventana. Sin knowledge devuelve '' → el prompt queda byte a byte como hoy.
         know_txt = _render_knowledge(knowledge, config.MIA_CONTEXT_WINDOW)
@@ -1709,13 +1780,12 @@ class MatterGraphBuilder:
             # CP-S1: documentos sellados (<<<DOC n>>>) igual que en facts_node.
             ctx = untrusted.render_documents(doc_list)
             user = f"Consulta del abogado:\n{msg}\n\nExpediente:\n{ctx}"
-            # CP9: el cruce recibe el trabajo previo del equipo. Sin facts/research
-            # (p. ej. checkpoints de turnos viejos) el prompt queda como antes de CP9.
+            # CP9: el cruce recibe hechos + packet destilado (hash/pasaje/locator),
+            # no el volcado de prosa de investigación.
             if facts:
                 user += "\n\nHechos establecidos por el especialista de hechos:\n" + facts
-            if research_memo:
-                user += ("\n\nMemoria de investigación del especialista de "
-                         "investigación:\n" + research_memo)
+            if packet:
+                user += "\n\n" + packet
             if know_section:
                 user += "\n\n" + know_section
             user += "\n\n" + legal_packs.STRATEGY_PACK_INSTRUCTION
@@ -1891,20 +1961,22 @@ class MatterGraphBuilder:
         user_parts.append(profile_txt)
         if pb_active:
             user_parts.append(pb_active)
+        packet = _source_packet_for(md_in, state)
+        if packet:
+            user_parts.append(packet)
             
         gate_feedback = md_in.get("gate_feedback")
         if gate_feedback:
             user_parts.append(f"El gate de calidad rechazó el borrador anterior:\n{gate_feedback}\n\nReescribe el borrador corrigiendo las citas y asegurando respaldo literal exacto.")
         else:
             user_parts.append("Redacta el borrador del escrito.")
-        chosen = legal_packs.seleccionados(
-            stage_gate.load_strategy_pack(md),
-            overrides=md.get("argument_selection") if isinstance(
-                md.get("argument_selection"), dict) else None)
-        user_parts.append(
-            "Desarrolla SOLO estos argumentos seleccionados (no los descartes):\n"
-            + "\n".join(f"- {a.id}: {a.tesis}" for a in chosen)
-        )
+        selection_raw = md.get("argument_selection") if isinstance(
+            md.get("argument_selection"), dict) else None
+        strategy = stage_gate.load_strategy_pack(md)
+        chosen = legal_packs.seleccionados(strategy, overrides=selection_raw)
+        selected_instruction = legal_packs.selection_instruction(chosen)
+        user_parts.append(selected_instruction)
+        chosen_ids = {a.id for a in chosen}
 
         def _messages(parts: list[str], index: str = pb_index) -> list[dict]:
             return [
@@ -1921,12 +1993,17 @@ class MatterGraphBuilder:
             # Principio A: el dictamen de la Sala también se descarta aquí (no se
             # reconstruye en `parts`). Ante un prompt que no cabe, la prioridad es el
             # diagnóstico del turno; el dictamen es un enriquecimiento, no la evidencia.
+            # La instrucción de seleccionados + locators y el packet destilado SÍ se
+            # conservan: sin ellos el retry redactaría argumentos descartados.
             budget = context_recovery.budget_for("draft", config.MIA_CONTEXT_WINDOW)
             index_small = (pb_index + "\n" + context_recovery.PLAYBOOKS_TRIMMED_MARKER) \
                 if pb_index else ""
             diag_small = context_recovery.shrink_text(diagnosis, budget, protect_tail=True)
             parts = [f"Diagnóstico:\n{diag_small}", profile_txt]
+            if packet:
+                parts.append(packet)
             parts.append("Redacta el borrador del escrito.")
+            parts.append(selected_instruction)
             return _messages(parts, index=index_small)
 
         draft, usage = await self._llm(
@@ -1934,6 +2011,12 @@ class MatterGraphBuilder:
             model=_persona_alias(state))
         md["stage"] = "draft"
         md["activated_playbooks"] = activated
+        md["argument_selection_applied"] = {
+            "include": [a.id for a in chosen],
+            "exclude": [a.id for a in (strategy.argumentos if strategy else [])
+                        if a.id not in chosen_ids],
+        }
+        md.pop("needs_selection_redraft", None)
         # Transparencia (solo cuando SÍ se usó): que la traza y la pantalla puedan decir que
         # este borrador nació con la pasada adversarial de la Sala. Si no hubo dictamen, la
         # clave ni se escribe → la metadata queda idéntica a la de siempre.
@@ -2091,6 +2174,14 @@ class MatterGraphBuilder:
         Si el gate LLM falla (timeout, cuota), el turno sigue con el muro solo: el gate
         es complemento, jamás bloqueo del camino al abogado."""
         md = dict(state.get("metadata") or {})
+        if md.get("handoff_broken"):
+            detail = str(md["handoff_broken"])
+            md["stage"] = "verificador_citas"
+            md.setdefault("stage_failed", {"stage": "facts", "detail": detail})
+            return {
+                "draft": state.get("draft") or stage_gate.lawyer_abort("facts", detail),
+                "metadata": md,
+            }
         draft = state.get("draft") or ""
 
         annotated = await self._verify_draft(state, md, draft)
@@ -2399,8 +2490,27 @@ class MatterGraphBuilder:
                             "rejected_by_gate": "legal_ledger"}
         md["draft_hash"] = draft_hash
         md["hitl_decision"] = decision
-        if isinstance((decision or {}).get("argument_selection"), dict):
-            md["argument_selection"] = decision["argument_selection"]
+        incoming_sel = (decision or {}).get("argument_selection")
+        if isinstance(incoming_sel, dict):
+            md["argument_selection"] = incoming_sel
+        # Re-draft único autorizado: el abogado cambió la matriz en HITL. Una pasada
+        # extra de draft+verificador (authorize_expensive_pass) y otra vez HITL.
+        # No es el bucle automático draft↔gate de F1.5. Un segundo cambio en el
+        # mismo turno se persiste para el siguiente, sin más LLM.
+        if (dec == "approved"
+                and isinstance(incoming_sel, dict)
+                and not md.get("selection_redraft_used")):
+            pack = stage_gate.load_strategy_pack(md)
+            applied = md.get("argument_selection_applied") if isinstance(
+                md.get("argument_selection_applied"), dict) else None
+            new_ids = {a.id for a in legal_packs.seleccionados(pack, overrides=incoming_sel)}
+            applied_ids = {a.id for a in legal_packs.seleccionados(pack, overrides=applied)}
+            if new_ids != applied_ids:
+                md["authorize_expensive_pass"] = True
+                md["selection_redraft_used"] = True
+                md["needs_selection_redraft"] = True
+                return {"hitl_status": "pending", "metadata": md}
+        md["needs_selection_redraft"] = False
         return {"hitl_status": status, "metadata": md}
 
     # ── 8 · finalize ─────────────────────────────────────────────────────────
@@ -2672,6 +2782,19 @@ class MatterGraphBuilder:
             "metadata": md,
         }
 
+    async def stage_abort_node(self, state: MatterState) -> dict:
+        """Cierra el turno jurídico sin research/draft/gate cuando el traspaso está roto."""
+        md = dict(state.get("metadata") or {})
+        detail = str(md.get("handoff_broken") or md.get("facts_pack_error")
+                     or "el traspaso del asunto está roto.")
+        md["stage"] = "abort"
+        md["stage_failed"] = {"stage": "facts", "detail": detail}
+        return {
+            "draft": stage_gate.lawyer_abort("facts", detail),
+            "hitl_status": "rejected",
+            "metadata": md,
+        }
+
     # ── ensamblaje ───────────────────────────────────────────────────────────
     def build(self, checkpointer: Any):
         """Compila el grafo con el checkpointer (AsyncPostgresSaver en runtime)."""
@@ -2685,6 +2808,7 @@ class MatterGraphBuilder:
         g.add_node("verificador_citas", self.verificador_citas_node)
         g.add_node("hitl_checkpoint", self.hitl_checkpoint_node)
         g.add_node("finalize", self.finalize_node)
+        g.add_node(STAGE_ABORT_NODE, self.stage_abort_node)
 
         g.add_edge(START, "intake")
         # CP-HUB2: la delegación va JUSTO después de intake y ANTES del equipo de
@@ -2695,15 +2819,23 @@ class MatterGraphBuilder:
         # congelaría el turno entero.
         g.add_edge("intake", DELEGATION_NODE)
         g.add_edge(DELEGATION_NODE, "facts")
-        g.add_edge("facts", "research")
+        g.add_conditional_edges("facts", _route_after_facts, {
+            "research": "research",
+            "abort": STAGE_ABORT_NODE,
+        })
         g.add_edge("research", "analysis")
         g.add_edge("analysis", "draft")
         g.add_edge("draft", "verificador_citas")
-        # F1.5: el gate es de UNA pasada — sin ruta de vuelta a draft. El bucle
-        # draft↔gate costaba el 66 % del turno (baseline F0) y la decisión sobre un
-        # hallazgo es del abogado en el HITL, no del gate.
+        # F1.5: el gate es de UNA pasada — sin ruta de vuelta a draft por hallazgo del
+        # gate. El bucle automático draft↔gate costaba el 66 % del turno (baseline F0).
         g.add_edge("verificador_citas", "hitl_checkpoint")
-        g.add_edge("hitl_checkpoint", "finalize")
+        # Re-draft único si el abogado cambia la matriz en HITL (autorizado, one-shot).
+        # No reabre el bucle automático del gate.
+        g.add_conditional_edges("hitl_checkpoint", _route_after_hitl, {
+            "draft": "draft",
+            "finalize": "finalize",
+        })
+        g.add_edge(STAGE_ABORT_NODE, "finalize")
         # La cosecha ya NO es un nodo: finalize solo deja un trabajo durable. El clic
         # de Aprobar no paga la llamada al modelo y un reinicio no pierde la señal.
         g.add_edge("finalize", END)

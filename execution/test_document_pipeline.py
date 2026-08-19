@@ -179,18 +179,34 @@ async def run_gate() -> None:
         check("cp9-15 · sin corpus (DB caída) la investigación sigue con [VERIFICAR] (fail-soft)",
               out["metadata"].get("research") == "SALIDA-DOBLADA"
               and out["metadata"].get("research_sources") == []
+              and out["metadata"].get("source_pack_ok") is False
               and research.NO_SOURCES_NOTE in captured["last"][1]["content"])
     finally:
         research.resolve_jurisdictions = real_resolve
 
-    # analysis_node (cruce): recibe el trabajo previo del equipo
+    # analysis_node (cruce): hechos + packet destilado; no reinyecta la prosa de research
+    dump = "DUMP ENORME DE INVESTIGACIÓN " * 80
+    digest = "c" * 64
     st = dict(base_state)
-    st["metadata"] = {"facts": "1. Hecho probado.", "research": "Ley aplicable: X [VERIFICAR]."}
+    st["metadata"] = {
+        "facts": "1. Hecho probado.",
+        "research": dump,
+        "source_packet": (
+            "Packet destilado de fuentes (hash + pasaje corto + locator). "
+            "No es la memoria de investigación ni el expediente completo:\n"
+            f"Ley 640 de 2001 hash={digest}\ncaducidad a los cuatro meses"),
+        "research_sources": [{
+            "referencia": "Ley 640 de 2001", "pasaje": "caducidad a los cuatro meses",
+            "source_passage_hash": digest,
+        }],
+    }
     out = await builder.analysis_node(st)
     user_an = captured["last"][1]["content"]
-    check("cp9-16 · el cruce recibe hechos + memoria de investigación en su prompt",
-          "1. Hecho probado." in user_an and "Ley aplicable: X" in user_an
-          and "especialista de hechos" in user_an)
+    check("cp9-16 · el cruce recibe hechos + packet (hash/locator), no el dump de research",
+          "1. Hecho probado." in user_an
+          and digest in user_an
+          and "especialista de hechos" in user_an
+          and dump not in user_an)
     st = dict(base_state); st["metadata"] = {}
     await builder.analysis_node(st)
     check("cp9-17 · sin facts/research (checkpoint viejo) el prompt del cruce queda como antes",

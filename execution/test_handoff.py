@@ -46,6 +46,14 @@ def main() -> int:
     finally:
         matter_handoff.load_handoff = original  # type: ignore[assignment]
 
+    sel = matter_handoff.saved_argument_selection({
+        "decisiones": {"hitl": "approved", "argument_selection": {"include": ["A1"], "exclude": ["A2"]}},
+    })
+    check("el traspaso recarga la selección HITL",
+          sel == {"include": ["A1"], "exclude": ["A2"]})
+    check("sin ficha no hay selección que recargar",
+          matter_handoff.saved_argument_selection(None) is None)
+
     if FAILED:
         print("FAIL:", ", ".join(FAILED))
         return 1

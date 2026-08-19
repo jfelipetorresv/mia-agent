@@ -40,7 +40,10 @@ def facts_ok(md: dict[str, Any] | None) -> bool:
 
 
 def research_ok(md: dict[str, Any] | None) -> bool:
-    return bool((md or {}).get("source_pack_ok")) and isinstance((md or {}).get("source_pack"), dict)
+    if not bool((md or {}).get("source_pack_ok")) or not isinstance((md or {}).get("source_pack"), dict):
+        return False
+    pack = load_source_pack(md)
+    return pack is not None and len(pack.fuentes) > 0
 
 
 def analysis_ok(md: dict[str, Any] | None) -> bool:

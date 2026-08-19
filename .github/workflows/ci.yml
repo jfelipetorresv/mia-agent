@@ -129,3 +129,5 @@ jobs:
           python execution/test_citation_seals.py
           python execution/test_document_derivation.py
           python execution/test_cors_contract.py
+          python execution/test_mcp.py
+          python execution/test_agent_hub.py

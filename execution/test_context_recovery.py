@@ -254,6 +254,9 @@ def run(trace_dir: str) -> None:
     check("b7 · el diagnóstico sí se recortó (marcador de sección en el 2º prompt)",
           cr.TEXT_CUT_MARKER in user2)
     check("b8 · el perfil del despacho se conserva", "Defendemos aseguradoras." in user2)
+    check("b9 · el retry conserva la instrucción de seleccionados + locators",
+          "Desarrolla SOLO estos argumentos seleccionados" in user2
+          and "A1:" in user2 and "[doc 1]" in user2)
 
     # === c · doble fallo: 2ª llamada también CONTEXT_TOO_LONG → propaga y UNA compresión ===
     shrink_calls = {"n": 0}

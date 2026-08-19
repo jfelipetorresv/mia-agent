@@ -253,6 +253,7 @@ async def gather_sources(
         body = _clip(n.get("summary") or n.get("full_text"))
         compact.append({"tipo": "norma", "referencia": ref,
                         "titulo": _clip(n.get("title"), 200),
+                        "pasaje": _clip(body, 280),
                         "source_passage_hash": hashlib.sha256(body.encode("utf-8")).hexdigest()})
         # CP-S1: sello vía el módulo de cuarentena (mismo formato; suma el
         # anti-escape del contenido y el saneo de la referencia).
@@ -264,6 +265,7 @@ async def gather_sources(
         body = _clip(r.get("ratio_decidendi") or r.get("obiter_dicta"))
         compact.append({"tipo": "providencia", "referencia": ref,
                         "titulo": _clip(r.get("topic"), 200),
+                        "pasaje": _clip(body, 280),
                         "source_passage_hash": hashlib.sha256(body.encode("utf-8")).hexdigest()})
         blocks.append(untrusted.fence_block(
             "FUENTE", f"{_clip(r.get('topic'), 200)}\n{body}", index=i, source=ref))

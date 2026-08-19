@@ -659,7 +659,8 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
     ),
     # Bloque A (evolución de producto): "Proyecto" = espacio de trabajo libre estilo
     # Cowork, sin diagnóstico formal ni borrador con aprobación HITL — eso es de los
-    # Asuntos. El grafo de proyecto (build_project_graph) es START → intake → work → END.
+    # Asuntos. El grafo de proyecto (build_project_graph) es
+    # START → intake → delegation → work → verificacion → END.
     "work": (
         "## Tarea de este turno — PROYECTO\n"
         "Estás trabajando dentro de un PROYECTO del despacho: un espacio de trabajo "

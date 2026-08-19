@@ -25,12 +25,29 @@ import { cardVariants } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { COUNTRY_NAME_BY_CODE } from "@/app/_components/CountrySelector";
 
+type Argumento = {
+  id?: string;
+  tesis?: string;
+  seleccionado?: boolean;
+  fuente_refs?: string[];
+  contraparte?: string;
+  prueba?: string;
+};
+
+type Descarte = {
+  tesis?: string;
+  motivo?: string;
+};
+
 type DraftResponse = {
   draft: string;
   verification?: Verification | null;
   draft_hash: string;
   final_ready: boolean;
   final_status?: string;
+  argumentos?: Argumento[] | null;
+  descartes?: Descarte[] | null;
+  argument_selection?: { include?: string[]; exclude?: string[] } | Record<string, boolean> | null;
 };
 
 // El resaltado de [VERIFICAR…] —la señal de "esto lo confirmas tú"— vive en
@@ -169,6 +186,89 @@ async function resumeDraft(path: string, body: unknown): Promise<LearningReceipt
   return receipt;
 }
 
+function initialSelection(
+  argumentos: Argumento[] | null | undefined,
+  saved: DraftResponse["argument_selection"],
+): Record<string, boolean> {
+  const flags: Record<string, boolean> = {};
+  for (const arg of argumentos || []) {
+    if (!arg.id) continue;
+    flags[arg.id] = arg.seleccionado !== false;
+  }
+  if (saved && typeof saved === "object") {
+    if ("include" in saved || "exclude" in saved) {
+      for (const id of saved.include || []) flags[id] = true;
+      for (const id of saved.exclude || []) flags[id] = false;
+    } else {
+      for (const [id, on] of Object.entries(saved as Record<string, boolean>)) {
+        flags[id] = Boolean(on);
+      }
+    }
+  }
+  return flags;
+}
+
+function ArgumentMatrix({
+  argumentos,
+  descartes,
+  selected,
+  onToggle,
+}: {
+  argumentos: Argumento[];
+  descartes: Descarte[];
+  selected: Record<string, boolean>;
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <section
+      aria-label="Matriz de argumentos"
+      className="mb-block rounded-lg border border-border bg-card/60 px-5 py-4"
+    >
+      <p className="text-section">Argumentos de este escrito</p>
+      <p className="mt-1 text-meta text-muted-foreground">
+        Marca los que deben entrar al borrador. Un cambio pide una sola reescritura
+        de los seleccionados y vuelve a esta revisión; no relanza el ciclo automático
+        de calidad.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {argumentos.map((arg) => {
+          if (!arg.id) return null;
+          const on = selected[arg.id] !== false;
+          return (
+            <li key={arg.id} className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                id={`arg-${arg.id}`}
+                checked={on}
+                onChange={() => onToggle(arg.id as string)}
+                className="mt-1 h-4 w-4 shrink-0 rounded border-input text-primary accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Label htmlFor={`arg-${arg.id}`} className="cursor-pointer font-normal">
+                <span className="text-meta text-muted-foreground">{arg.id}</span>
+                {" — "}
+                {arg.tesis || "Tesis sin texto"}
+              </Label>
+            </li>
+          );
+        })}
+      </ul>
+      {descartes.length > 0 ? (
+        <div className="mt-4 border-t border-border pt-3">
+          <p className="text-label text-muted-foreground">Descartes (no se desarrollan)</p>
+          <ul className="mt-2 space-y-1 text-body text-muted-foreground">
+            {descartes.map((d, i) => (
+              <li key={`${d.tesis || "d"}-${i}`}>
+                {d.tesis}
+                {d.motivo ? ` — ${d.motivo}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export default function RevisarPage({ params }: { params: Promise<{ id: string }> }) {
   const matterId = use(params).id;
   const router = useRouter();
@@ -191,6 +291,9 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
   const [rejectError, setRejectError] = useState("");
   const [showCelebration, setShowCelebration] = useState(false);
   const [learningMessage, setLearningMessage] = useState("Tu decisión quedó guardada.");
+  const [argumentos, setArgumentos] = useState<Argumento[]>([]);
+  const [descartes, setDescartes] = useState<Descarte[]>([]);
+  const [argSelected, setArgSelected] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     apiGet<{ jurisdictions?: string[] }>(`/api/matters/${matterId}`)
@@ -203,6 +306,11 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
         setVerification(d.verification || null);
         setDraftHash(d.draft_hash || "");
         setFinalReady(Boolean(d.final_ready));
+        const args = Array.isArray(d.argumentos) ? d.argumentos : [];
+        const drops = Array.isArray(d.descartes) ? d.descartes : [];
+        setArgumentos(args);
+        setDescartes(drops);
+        setArgSelected(initialSelection(args, d.argument_selection));
       })
       .catch(() => {
         router.push(`/asuntos/${matterId}?sin_borrador=true`);
@@ -224,6 +332,17 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
   // ignoraría el texto vacío y aprobaría la propuesta ORIGINAL en silencio —
   // divergencia entre lo que se ve y lo que se aprueba. Se bloquea con aviso.
   const versionVacia = text.trim() === "" && text !== draft;
+  const argIds = argumentos.map((a) => a.id).filter((id): id is string => Boolean(id));
+  const hasMatrix = argIds.length > 0;
+  const noneSelected = hasMatrix && argIds.every((id) => argSelected[id] === false);
+
+  function argumentSelectionPayload() {
+    if (!hasMatrix) return undefined;
+    return {
+      include: argIds.filter((id) => argSelected[id] !== false),
+      exclude: argIds.filter((id) => argSelected[id] === false),
+    };
+  }
 
   // La celebración navega con un setTimeout: si el abogado sale de la pantalla
   // antes de que dispare, hay que limpiarlo para no navegar tras el desmontaje.
@@ -235,15 +354,17 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
   }, []);
 
   async function approve() {
-    if (busy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada) return;
+    if (busy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada || noneSelected) return;
     setBusy(true);
     setActionMsg("");
     try {
       const receipt = await resumeDraft(
         `/api/matters/${matterId}/draft/approve`,
         text !== draft
-          ? { edited_text: text, draft_hash: draftHash, attested: true }
-          : { draft_hash: draftHash, attested: true },
+          ? { edited_text: text, draft_hash: draftHash, attested: true,
+              ...(argumentSelectionPayload() ? { argument_selection: argumentSelectionPayload() } : {}) }
+          : { draft_hash: draftHash, attested: true,
+              ...(argumentSelectionPayload() ? { argument_selection: argumentSelectionPayload() } : {}) },
       );
       setFinalReady(Boolean(receipt.final_ready));
       if (!receipt.final_ready) {
@@ -376,6 +497,14 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
       <div className="flex-1 overflow-auto px-6 py-10 md:px-8">
         <div className="mx-auto max-w-3xl animate-slide-up" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
           <EscalamientoBanner categorias={detonadores} />
+          {hasMatrix ? (
+            <ArgumentMatrix
+              argumentos={argumentos}
+              descartes={descartes}
+              selected={argSelected}
+              onToggle={(id) => setArgSelected((prev) => ({ ...prev, [id]: prev[id] === false }))}
+            />
+          ) : null}
           {editing ? (
             <div className="grid gap-block md:grid-cols-2">
               <div>
@@ -471,7 +600,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
             variant="cta"
             size="lg"
             onClick={approve}
-            disabled={busy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada}
+            disabled={busy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada || noneSelected}
             className="gap-2"
           >
             <Check className="h-4 w-4" />
@@ -501,6 +630,11 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
         {gateCitasPendiente ? (
           <p className="mt-2 text-center text-meta text-muted-foreground">
             Confirma primero que verificaste las citas marcadas.
+          </p>
+        ) : null}
+        {noneSelected ? (
+          <p className="mt-2 text-center text-meta text-warning">
+            Marca al menos un argumento para redactar, o restaura la propuesta de Mia.
           </p>
         ) : null}
         {versionVacia ? (

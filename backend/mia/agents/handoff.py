@@ -109,6 +109,17 @@ async def check_reopen(tenant_id: str, matter_id: str, documents: list | None) -
             "turno nuevo sin apoyarte en ese inventario.")
 
 
+def saved_argument_selection(ficha: dict[str, Any] | None) -> dict[str, Any] | None:
+    """La selección HITL persistida en el traspaso, o None si no hay."""
+    if not isinstance(ficha, dict):
+        return None
+    decisions = ficha.get("decisiones")
+    if not isinstance(decisions, dict):
+        return None
+    raw = decisions.get("argument_selection")
+    return raw if isinstance(raw, dict) and raw else None
+
+
 async def cached_facts_for_documents(
     tenant_id: str, matter_id: str, documents: list | None,
 ) -> tuple[list[dict], list[int]]:
