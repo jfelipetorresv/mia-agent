@@ -29,14 +29,25 @@ if (-not (Test-Path $SpecFile)) {
 # subir (o bajar) versiones de dependencias que la app YA usa fijadas en
 # backend/pyproject.toml (p. ej. si pyinstaller alguna vez declara un rango
 # compartido con fastapi/starlette/etc.), degradando el venv de la app en
-# silencio. Instalamos pyinstaller con --no-deps y sus TRES dependencias
-# reales (altgraph, pefile, pywin32-ctypes) con pines explícitos propios —
-# nunca dejamos que pip resuelva versiones libres para nada que toque el
-# venv de la app.
+# silencio. Instalamos pyinstaller con --no-deps y sus CUATRO dependencias
+# reales (altgraph, pefile, pywin32-ctypes, pyinstaller-hooks-contrib) con
+# pines explícitos propios — nunca dejamos que pip resuelva versiones libres
+# para nada que toque el venv de la app.
+#
+# CRITICO — pyinstaller-hooks-contrib (fix F4): la lista original omitía esta
+# dependencia REAL de pyinstaller. Sin ella no existe hook-cryptography.py,
+# PyInstaller no recolecta _cffi_backend (dependencia oculta del binding Rust
+# de cryptography, invisible al análisis estático), el primer import de
+# cryptography falla dentro de un try/except silencioso y el reintento de
+# PyJWT revienta con "PyO3 modules compiled for CPython 3.8 or older may only
+# be initialized once per interpreter process" (el guard de PyO3 enmascara el
+# ModuleNotFoundError real de _cffi_backend). hooks-contrib es solo
+# infraestructura de build: no toca ningún pin de la app (gate 12/12 verde).
 $PyInstallerVersion   = '6.21.0'
 $AltgraphVersion      = '0.17.5'
 $PefileVersion        = '2024.8.26'
 $PywinCtypesVersion   = '0.2.3'
+$HooksContribVersion  = '2026.6'
 
 if (-not (Test-Path $VenvPyInstaller)) {
     Write-Host "pyinstaller no esta en el venv de la app. Instalando (--no-deps, sin tocar otros pins)..." -ForegroundColor Yellow
@@ -48,7 +59,8 @@ if (-not (Test-Path $VenvPyInstaller)) {
         "pyinstaller==$PyInstallerVersion" `
         "altgraph==$AltgraphVersion" `
         "pefile==$PefileVersion" `
-        "pywin32-ctypes==$PywinCtypesVersion"
+        "pywin32-ctypes==$PywinCtypesVersion" `
+        "pyinstaller-hooks-contrib==$HooksContribVersion"
     if ($LASTEXITCODE -ne 0) {
         throw "Fallo la instalacion de pyinstaller (--no-deps) en el venv de la app."
     }
@@ -67,6 +79,25 @@ if (-not (Test-Path $VenvPyInstaller)) {
         throw "check_env_pins.py fallo tras instalar pyinstaller -- el venv de la app quedo alterado (Riesgo #32). Build ABORTADO antes de compilar. Revisa el venv (recrearlo si hace falta) y vuelve a intentar."
     }
     Write-Host "Pins del venv OK (9/9). Continuando con el build." -ForegroundColor Green
+}
+
+# GATE DURO (fix F4 · PyO3/_cffi_backend): aunque pyinstaller.exe ya exista,
+# el venv puede haber quedado del estado viejo SIN pyinstaller-hooks-contrib
+# (la lista --no-deps original lo omitia). Sin hooks-contrib el build "sale
+# bien" pero el exe revienta en runtime con el error de PyO3 al importar
+# cryptography. Verificamos SIEMPRE y auto-reparamos con pin explicito.
+$VenvPythonCheck = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+& $VenvPythonCheck -c "import _pyinstaller_hooks_contrib" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "pyinstaller-hooks-contrib ausente en el venv (estado viejo). Instalando pin $HooksContribVersion..." -ForegroundColor Yellow
+    & $VenvPythonCheck -m pip install --quiet --no-deps "pyinstaller-hooks-contrib==$HooksContribVersion"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Fallo la instalacion de pyinstaller-hooks-contrib (--no-deps). Sin ella el bundle de cryptography queda roto (PyO3). Build ABORTADO."
+    }
+    & $VenvPythonCheck (Join-Path $RepoRoot 'execution\check_env_pins.py')
+    if ($LASTEXITCODE -ne 0) {
+        throw "check_env_pins.py fallo tras instalar pyinstaller-hooks-contrib (Riesgo #32). Build ABORTADO."
+    }
 }
 
 Write-Host "Repo:        $RepoRoot" -ForegroundColor Cyan
