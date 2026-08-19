@@ -335,6 +335,16 @@
       radial-gradient(1100px 600px at 50% -10%, hsl(var(--primary) / 0.18), transparent 60%),
       radial-gradient(700px 500px at 85% 8%, hsl(var(--cta) / 0.1), transparent 55%);
   }
+  /* Viñeta del lienzo de bienvenida: asienta el centro del paso. Antes vivía como
+     rgba(0,0,0,0.55) cableado en WelcomeShell, que solo tenía sentido cuando esa
+     pantalla se forzaba a negro; al pasar la bienvenida al tema del usuario, ese
+     negro fijo ensuciaba el tema claro. Aquí cada tema pone su propia intensidad. */
+  .bg-vignette-welcome {
+    background-image: radial-gradient(120% 80% at 50% 40%, transparent 60%, hsl(var(--primary) / 0.07) 100%);
+  }
+  .dark .bg-vignette-welcome {
+    background-image: radial-gradient(120% 80% at 50% 40%, transparent 55%, rgb(0 0 0 / 0.55) 100%);
+  }
   /* Titular con degradado de marca (usar solo en saludos/hero): foreground→teal en
      claro; teal→verde CTA en dark (mismo espíritu que el splash de escritorio). */
   .text-gradient-brand {

@@ -29,11 +29,15 @@ const WIDTH: Record<NonNullable<WelcomeShellProps["width"]>, string> = {
 /**
  * Lienzo de pantalla completa para TODA la primera vez del abogado.
  *
- * Look: intencionalmente oscuro/cinematográfico (#060606) — se fuerza el scope
- * `dark` para que tokens y aurora resuelvan en su versión oscura AUNQUE el tema
- * del usuario sea claro. Sobre el negro: `.bg-aurora` + dos blobs radiales
- * (teal y verde CTA) en deriva LENTA y continua (loop infinito, suave). Arriba
- * el wordmark MIA "respirando". Centro: el paso. Sobre el paso: el progreso.
+ * Look: sigue el tema del usuario (claro/oscuro/sistema). Antes se forzaba el
+ * scope `dark` + fondo #060606 aquí, así que la primera vez del abogado salía
+ * negra AUNQUE hubiera elegido claro — y el resto de la app sí era clara. Esa
+ * incoherencia era la queja #1 de Pipe (2026-08-19): el diseño claro aprobado
+ * no se veía nunca en la bienvenida. Ahora el lienzo usa `bg-background` y los
+ * tokens resuelven en la versión que el abogado eligió, en ambos temas.
+ * Sobre el lienzo: `.bg-aurora` + dos blobs radiales (teal y verde CTA) en
+ * deriva LENTA y continua (loop infinito, suave). Arriba el wordmark MIA
+ * "respirando". Centro: el paso. Sobre el paso: el progreso.
  *
  * Todo el movimiento es transform/opacity y respeta prefers-reduced-motion
  * (blobs estáticos). Premium, calmado, con profundidad; nunca saturado.
@@ -49,8 +53,8 @@ export default function WelcomeShell({
   const reduce = useReducedMotion();
 
   return (
-    <div className="dark relative min-h-screen w-full overflow-hidden bg-[#060606] text-foreground">
-      {/* Lavado radial base de marca (versión oscura). */}
+    <div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground">
+      {/* Lavado radial base de marca. */}
       <div aria-hidden className="pointer-events-none absolute inset-0 bg-aurora" />
 
       {/* Blob teal — deriva amplia y muy lenta. */}
@@ -79,12 +83,8 @@ export default function WelcomeShell({
         transition={reduce ? undefined : { duration: 34, ease: "easeInOut", repeat: Infinity }}
       />
 
-      {/* Viñeta sutil para asentar el centro y dar profundidad. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{ backgroundImage: "radial-gradient(120% 80% at 50% 40%, transparent 55%, rgba(0,0,0,0.55) 100%)" }}
-      />
+      {/* Viñeta sutil para asentar el centro y dar profundidad (por tema). */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-vignette-welcome" />
 
       {/* Contenido. */}
       <div className={cn("relative z-10 flex min-h-screen flex-col items-center px-6 py-10 sm:py-12", className)}>
