@@ -484,11 +484,18 @@ async def mcp_live_checks() -> None:
         _shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+_DB_ENV_KEYS = ("PG_PASSWORD", "PG_HOST", "PG_PORT", "PG_DB", "DATABASE_URL", "JWT_SECRET")
+
 if __name__ == "__main__":
+    # offline_checks pone claves FALSAS (e6-02). En local las recupera el .env;
+    # en CI no hay .env y el pool se quedaba reintentando 180 s con 'clavedb'.
+    saved_db_env = {key: os.environ.get(key) for key in _DB_ENV_KEYS}
     asyncio.run(offline_checks())
-    # offline_checks deja claves FALSAS en el entorno (prueba de no-filtración e6-02).
-    # Recargar las reales del .env antes de tocar la DB: con pg_hba scram (DB portable)
-    # la clave falsa rompe la autenticación de _sb() y el pool queda huérfano reintentando.
+    for key, value in saved_db_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
     load_dotenv(ROOT / ".env", override=True)
     if os.getenv("PG_PASSWORD"):
         asyncio.run(db_checks())

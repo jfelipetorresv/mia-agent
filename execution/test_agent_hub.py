@@ -138,7 +138,8 @@ def test_space_path_and_failures():
     os.makedirs(spdir, exist_ok=True)
     binp = os.path.join(spdir, "fakeagent.exe")
     open(binp, "w").close()
-    project_with_space = str(ROOT)  # "...\Mia-Super Agent\mia"
+    # cwd con espacio propio del test: ROOT en CI Ubuntu no tiene espacios.
+    project_with_space = spdir
 
     captured = {}
 

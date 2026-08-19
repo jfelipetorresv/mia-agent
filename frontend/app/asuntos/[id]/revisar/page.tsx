@@ -196,9 +196,15 @@ function initialSelection(
     flags[arg.id] = arg.seleccionado !== false;
   }
   if (saved && typeof saved === "object") {
-    if ("include" in saved || "exclude" in saved) {
-      for (const id of saved.include || []) flags[id] = true;
-      for (const id of saved.exclude || []) flags[id] = false;
+    const include = "include" in saved ? (saved as { include?: unknown }).include : undefined;
+    const exclude = "exclude" in saved ? (saved as { exclude?: unknown }).exclude : undefined;
+    if (Array.isArray(include) || Array.isArray(exclude)) {
+      for (const id of (Array.isArray(include) ? include : [])) {
+        if (typeof id === "string") flags[id] = true;
+      }
+      for (const id of (Array.isArray(exclude) ? exclude : [])) {
+        if (typeof id === "string") flags[id] = false;
+      }
     } else {
       for (const [id, on] of Object.entries(saved as Record<string, boolean>)) {
         flags[id] = Boolean(on);
