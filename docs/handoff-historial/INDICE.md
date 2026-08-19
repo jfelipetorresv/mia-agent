@@ -3,6 +3,7 @@
 > Entradas archivadas del HANDOFF.md, de la más reciente a la más antigua.
 > En HANDOFF.md viven solo la entrada vigente y la anterior.
 
+- [CIERRE — 2026-08-14 (tarde) · Auditoría adversarial integral (4 P0)](067-cierre-2026-08-14-auditoria-adversarial.md)
 - [CIERRE — 2026-08-14 · Jurisdicción, proveedores y evaluación](066-cierre-2026-08-14-jurisdiccion-proveedores-evaluacion.md)
 - [CIERRE — 2026-08-12 (sesión 57) · Auditoría integral del harness aplicada a Mia](065-cierre-2026-08-12-sesion-57-auditoria-integral-harness.md)
 - [CIERRE — 2026-08-08 (sesión 56) · Circuit-breaker de la suscripción + approve medido](064-cierre-2026-08-08-sesion-56-circuit-breaker-approve-medido.md)
