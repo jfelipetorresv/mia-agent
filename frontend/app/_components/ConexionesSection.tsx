@@ -5,8 +5,8 @@
 // voz, calendario y correo, motor de IA y memoria ampliada (avanzado).
 
 import { useEffect, useState } from "react";
-import { Layers, Mail, Mic, NotebookPen, Settings2 } from "lucide-react";
-import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { BookOpen, Layers, Mail, Mic, NotebookPen, Settings2 } from "lucide-react";
+import { ApiError, apiGet, apiSend, plainMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,9 +15,32 @@ import ConnectedSystemsSection from "@/app/_components/ConnectedSystemsSection";
 import MailboxSectionLoader from "@/app/_components/MailboxSectionLoader";
 import FolderPicker from "@/app/_components/FolderPicker";
 
-type MotorPolicy = { politica: string; nombre: string; opciones: { id: string; nombre: string }[] };
+type MotorPolicy = {
+  politica: string;
+  nombre: string;
+  opciones: { id: string; nombre: string }[];
+  // CP-NLM: estado de la consulta a NotebookLM (presente desde el backend actual).
+  allow_notebooklm?: boolean;
+  notebooklm_notebook?: string;
+  notebooklm_disponible?: boolean;
+  // Capacidades comprobables de la instalación (auditoría 2026-08-14: viajaban del
+  // backend y ninguna pantalla las leía — la lista ofrecía Codex aunque no estuviera).
+  capabilities?: {
+    codex?: { installed?: boolean; blocked_reason?: string };
+  };
+};
 
 type ObsidianStatus = { installed: boolean; vault_configured: boolean; vault_path?: string | null; message: string };
+
+// CP-NLM · estado de instalación/conexión del CLI de NotebookLM
+type NbStatus = {
+  estado: "no_instalado" | "instalando" | "instalado_sin_conectar" | "conectando" | "conectado" | "error";
+  instalado: boolean;
+  autenticado: boolean;
+  listo: boolean;
+  mensaje: string;
+  progreso: { fase: string; porcentaje: number | null } | null;
+};
 
 type SpeechProgress = {
   fase: string;
@@ -30,6 +53,16 @@ type SpeechStatus = {
   listo: boolean;
   mensaje: string;
   progreso: SpeechProgress | null;
+};
+
+type CapItem = { available?: boolean; reason?: string };
+type HealthCaps = {
+  capabilities?: {
+    ocr?: CapItem;
+    voice?: CapItem;
+    anydoc?: CapItem;
+    telegram?: CapItem;
+  };
 };
 
 type Connectors = {
@@ -59,14 +92,36 @@ export default function ConexionesSection({
   const [speechConfirm, setSpeechConfirm] = useState(false);
   const [speechBusy, setSpeechBusy] = useState(false);
   const [speechMsg, setSpeechMsg] = useState("");
+  // CP-NLM · consulta a NotebookLM
+  const [nbNotebook, setNbNotebook] = useState("");
+  const [nbBusy, setNbBusy] = useState(false);
+  const [nbMsg, setNbMsg] = useState("");
+  const [nbStatus, setNbStatus] = useState<NbStatus | null>(null);
+  const [nbList, setNbList] = useState<{ id: string; titulo: string }[]>([]);
+  const [nbInstallConfirm, setNbInstallConfirm] = useState(false);
+  const [caps, setCaps] = useState<HealthCaps["capabilities"] | null>(null);
 
   useEffect(() => {
     apiGet<MotorPolicy>("/settings/model-policy")
-      .then(setPolicy)
+      .then((p) => {
+        setPolicy(p);
+        setNbNotebook(p.notebooklm_notebook || "");
+      })
       .catch(() => setPolicyMsg("No se pudo cargar el motor de IA. Recarga la página."));
     apiGet<ObsidianStatus>("/api/obsidian/status").then(setObsidian).catch(() => setObsidian(null));
     apiGet<SpeechStatus>("/api/speech/status").then(setSpeech).catch(() => setSpeech(null));
+    apiGet<HealthCaps>("/health")
+      .then((h) => setCaps(h.capabilities || null))
+      .catch(() => setCaps(null));
+    refreshNbStatus();
   }, []);
+
+  // CP-NLM: mientras NotebookLM instala o conecta, refresca solo cada 2.5 s.
+  useEffect(() => {
+    if (nbStatus?.estado !== "instalando" && nbStatus?.estado !== "conectando") return;
+    const t = setInterval(refreshNbStatus, 2500);
+    return () => clearInterval(t);
+  }, [nbStatus?.estado]);
 
   // Mientras el componente de voz descarga, la tarjeta se refresca sola cada 2 s
   // (SOLO durante la descarga; el intervalo se limpia al terminar).
@@ -95,8 +150,91 @@ export default function ConexionesSection({
       const res = await apiSend<MotorPolicy>("PUT", "/settings/model-policy", { politica: id });
       setPolicy(res);
       setPolicyMsg(`Listo: Mia trabajará con "${res.nombre}".`);
+    } catch (e) {
+      // El 409 del backend explica en llano POR QUÉ no se puede (p. ej. Codex sin
+      // iniciar en este equipo); tragarlo invitaba a reintentar sin arreglo posible.
+      setPolicyMsg(plainMessage(e, "No se pudo cambiar el motor. Intenta de nuevo."));
+    }
+  }
+
+  // CP-NLM: refresca el estado de instalación/conexión; si ya está conectado, trae la
+  // lista de notebooks para el selector.
+  async function refreshNbStatus() {
+    try {
+      const st = await apiGet<NbStatus>("/api/notebooklm/status");
+      setNbStatus(st);
+      if (st.estado === "conectado") {
+        apiGet<{ notebooks: { id: string; titulo: string }[] }>("/api/notebooklm/notebooks")
+          .then((r) => setNbList(r.notebooks || []))
+          .catch(() => {});
+      }
     } catch {
-      setPolicyMsg("No se pudo cambiar el motor. Intenta de nuevo.");
+      setNbStatus(null);
+    }
+  }
+
+  async function installNb() {
+    setNbBusy(true);
+    setNbMsg("");
+    try {
+      await apiSend("POST", "/api/notebooklm/install", { confirmar: true });
+      await refreshNbStatus();
+    } catch {
+      setNbMsg("No se pudo iniciar la instalación. Intenta de nuevo.");
+    } finally {
+      setNbBusy(false);
+      setNbInstallConfirm(false);
+    }
+  }
+
+  async function connectNb() {
+    setNbBusy(true);
+    setNbMsg("");
+    try {
+      await apiSend("POST", "/api/notebooklm/connect", {});
+      await refreshNbStatus();
+    } catch {
+      setNbMsg("No se pudo abrir el inicio de sesión. Intenta de nuevo.");
+    } finally {
+      setNbBusy(false);
+    }
+  }
+
+  async function confirmConnectNb() {
+    setNbBusy(true);
+    try {
+      await apiSend("POST", "/api/notebooklm/connect/confirm", {});
+      await refreshNbStatus();
+    } catch {
+      setNbMsg("No se pudo confirmar. Intenta de nuevo.");
+    } finally {
+      setNbBusy(false);
+    }
+  }
+
+  // CP-NLM: guarda el opt-in de NotebookLM + el notebook. Envía SIEMPRE la política
+  // actual (el PUT la exige) junto a los campos de NotebookLM, en una sola escritura.
+  async function saveNotebookLM(enabled: boolean) {
+    if (!policy) return;
+    setNbBusy(true);
+    setNbMsg("");
+    try {
+      const res = await apiSend<MotorPolicy>("PUT", "/settings/model-policy", {
+        politica: policy.politica,
+        allow_notebooklm: enabled,
+        notebooklm_notebook: nbNotebook.trim(),
+      });
+      setPolicy(res);
+      setNbNotebook(res.notebooklm_notebook || "");
+      setNbMsg(
+        enabled
+          ? "Activado. Mia podrá consultar tu NotebookLM durante la investigación."
+          : "Desactivado. Mia no consultará tu NotebookLM.",
+      );
+    } catch {
+      setNbMsg("No se pudo guardar. Intenta de nuevo.");
+    } finally {
+      setNbBusy(false);
     }
   }
 
@@ -167,6 +305,20 @@ export default function ConexionesSection({
 
   return (
     <div className="space-y-4">
+      {caps ? (
+        <ConnectorCard
+          icon={Layers}
+          title="Capacidades de esta instalación"
+          subtitle="Lo que este equipo puede hacer, sin promesas de módulos ausentes"
+        >
+          <ul className="space-y-1 text-sm text-muted-foreground">
+            <li>Lectura óptica: {caps.ocr?.available ? "disponible" : (caps.ocr?.reason || "no incluida")}</li>
+            <li>Dictado por voz: {caps.voice?.available ? "disponible" : (caps.voice?.reason || "no incluido")}</li>
+            <li>Word/Excel: {caps.anydoc?.available ? "disponible" : (caps.anydoc?.reason || "no incluido")}</li>
+            <li>Telegram: {caps.telegram?.available ? "puente listo (opt-in)" : (caps.telegram?.reason || "sin configurar")}</li>
+          </ul>
+        </ConnectorCard>
+      ) : null}
       {/* Espacio de notas (Obsidian) */}
       <ConnectorCard
         icon={NotebookPen}
@@ -319,12 +471,179 @@ export default function ConexionesSection({
           aria-label="Motor de IA"
           className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {(policy?.opciones || []).map((o) => (
-            <option key={o.id} value={o.id}>{o.nombre}</option>
-          ))}
+          {(policy?.opciones || []).map((o) => {
+            const codexBlocked = o.id === "codex" && policy?.capabilities?.codex?.installed === false;
+            return (
+              <option key={o.id} value={o.id} disabled={codexBlocked}>
+                {o.nombre}{codexBlocked ? " (no disponible en este equipo)" : ""}
+              </option>
+            );
+          })}
         </select>
+        {policy?.capabilities?.codex?.installed === false && policy?.capabilities?.codex?.blocked_reason ? (
+          <p className="mt-2 text-sm text-muted-foreground">{policy.capabilities.codex.blocked_reason}</p>
+        ) : null}
         {policyMsg ? <p className="mt-2 text-sm text-muted-foreground">{policyMsg}</p> : null}
       </ConnectorCard>
+
+      {/* Consultar mi NotebookLM (CP-NLM) */}
+      {(() => {
+        const disponible = policy ? policy.notebooklm_disponible !== false : true;
+        const enabled = Boolean(policy?.allow_notebooklm);
+        const estado = nbStatus?.estado;
+        const conectado = estado === "conectado";
+        return (
+          <ConnectorCard
+            icon={BookOpen}
+            title="Consultar mi NotebookLM"
+            active={enabled && conectado && disponible}
+            subtitle={
+              !disponible
+                ? "No disponible con el motor “Todo en mi equipo”"
+                : conectado
+                  ? enabled
+                    ? "Activo · Mia consulta tu NotebookLM al investigar"
+                    : "Conectado · falta activarlo"
+                  : "Sin configurar"
+            }
+          >
+            <p className="mb-3 text-sm text-muted-foreground">
+              Deja que Mia consulte lo que tú cargaste en tu propio NotebookLM mientras
+              investiga un asunto.
+            </p>
+            <div
+              role="note"
+              className="mb-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning"
+            >
+              Ten en cuenta: cada pregunta que Mia le haga a NotebookLM <strong>viaja a
+              Google</strong>. Úsalo solo si te queda claro. Lo que traiga NotebookLM entra
+              como pista sin verificar, no como fuente citada.
+            </div>
+
+            {!disponible ? (
+              <p className="text-sm text-muted-foreground">
+                Está desactivado porque tu motor de IA es “Todo en mi equipo” (nada sale de
+                tu computador). Cambia el motor de IA arriba si quieres usar esta función.
+              </p>
+            ) : estado === "instalando" ? (
+              <div className="mb-1">
+                <div
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={nbStatus?.progreso?.porcentaje ?? undefined}
+                  aria-label="Avance de la instalación de NotebookLM"
+                  className="h-2 w-full overflow-hidden rounded-full bg-muted"
+                >
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${nbStatus?.progreso?.porcentaje ?? 10}%` }}
+                  />
+                </div>
+                <p className="mt-1.5 text-sm text-muted-foreground">{nbStatus?.mensaje}</p>
+              </div>
+            ) : !nbStatus?.instalado ? (
+              // No instalado (o error de instalación): botón instalar, consent-first.
+              <>
+                <p className="mb-3 text-sm text-muted-foreground">{nbStatus?.mensaje}</p>
+                {nbInstallConfirm ? (
+                  <div
+                    role="alertdialog"
+                    aria-label="Confirmar instalación de NotebookLM"
+                    className="rounded-lg border border-warning/30 bg-warning/10 p-3 animate-fade-in"
+                  >
+                    <p className="text-sm text-warning">
+                      Esta acción descarga e instala NotebookLM (unos cientos de MB) en este
+                      equipo. ¿Quieres continuar?
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <Button size="sm" onClick={installNb} disabled={nbBusy}>
+                        {nbBusy ? "Instalando…" : "Sí, instalar"}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setNbInstallConfirm(false)} disabled={nbBusy}>
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setNbInstallConfirm(true)} disabled={nbBusy}>
+                    Instalar NotebookLM
+                  </Button>
+                )}
+              </>
+            ) : estado === "conectando" ? (
+              // Login en curso: se abrió el navegador; el abogado confirma al terminar.
+              <>
+                <p className="mb-3 text-sm text-muted-foreground">{nbStatus?.mensaje}</p>
+                <Button size="sm" onClick={confirmConnectNb} disabled={nbBusy}>
+                  {nbBusy ? "Guardando…" : "Ya inicié sesión"}
+                </Button>
+              </>
+            ) : !nbStatus?.autenticado ? (
+              // Instalado sin conectar (o error de login): botón conectar cuenta.
+              <>
+                <p className="mb-3 text-sm text-muted-foreground">{nbStatus?.mensaje}</p>
+                <Button variant="outline" size="sm" onClick={connectNb} disabled={nbBusy}>
+                  Conectar mi cuenta de Google
+                </Button>
+              </>
+            ) : (
+              // Conectado: elegir notebook + activar.
+              <>
+                <Label htmlFor="nb-notebook" className="mb-1.5 block text-sm text-muted-foreground">
+                  Notebook a consultar
+                </Label>
+                <div className="mb-3 flex items-center gap-2">
+                  {nbList.length > 0 ? (
+                    <select
+                      id="nb-notebook"
+                      value={nbNotebook}
+                      onChange={(e) => setNbNotebook(e.target.value)}
+                      aria-label="Notebook a consultar"
+                      className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <option value="">— Elige un notebook —</option>
+                      {nbList.map((n) => (
+                        <option key={n.id} value={n.id}>{n.titulo}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input
+                      id="nb-notebook"
+                      value={nbNotebook}
+                      onChange={(e) => setNbNotebook(e.target.value)}
+                      placeholder="Pega aquí el id de tu notebook"
+                      disabled={nbBusy}
+                    />
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => saveNotebookLM(enabled)}
+                    disabled={nbBusy}
+                  >
+                    Guardar
+                  </Button>
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={enabled}
+                    disabled={nbBusy}
+                    onChange={(e) => saveNotebookLM(e.target.checked)}
+                    aria-label="Permitir que Mia consulte mi NotebookLM"
+                  />
+                  Permitir que Mia consulte mi NotebookLM
+                </label>
+              </>
+            )}
+            {nbMsg ? <p className="mt-2 text-sm text-muted-foreground">{nbMsg}</p> : null}
+          </ConnectorCard>
+        );
+      })()}
 
       {/* Memoria ampliada (avanzado) — plegada: casi nadie la necesita el día 1. */}
       <details className="group rounded-xl border border-border bg-card shadow-sm">
@@ -356,8 +675,8 @@ export default function ConexionesSection({
             <Input
               value={pineconeIndex}
               onChange={(e) => setPineconeIndex(e.target.value)}
-              placeholder="Nombre del índice"
-              aria-label="Nombre del índice"
+              placeholder="Nombre de tu colección de documentos"
+              aria-label="Nombre de tu colección de documentos"
             />
             <Button onClick={connectPinecone}>Conectar</Button>
           </div>

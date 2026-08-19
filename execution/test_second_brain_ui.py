@@ -121,6 +121,13 @@ def run_frontend_checks() -> None:
     check("frontend CP7: selector 'Motor de IA' consume /settings/model-policy (PUT al cambiar)",
           "Motor de IA" in conexiones_src and "/settings/model-policy" in conexiones_src
           and "Modelo preferido" not in conexiones_src)
+    # Regresión (hallazgo de Cursor, capa 3): el router de settings se registra SIN
+    # prefijo (api/main.py), así que la ruta real es "/settings/model-policy". La
+    # bienvenida llamaba "/api/settings/model-policy" → 404 tragado por un catch
+    # vacío: el abogado creía haber fijado su motor y Mia seguía con otro.
+    activar = (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8")
+    check("frontend: la bienvenida fija el motor con la ruta REAL (sin prefijo /api)",
+          "/settings/model-policy" in activar and "/api/settings/model-policy" not in activar)
     # B4: "Guías y documentos" + "Lo que Mia sabe hacer" se fusionaron en un solo
     # subtab ("Guías y habilidades", sentence case como el resto de tabs de esta
     # página: "Mi despacho", "Criterios aprendidos") que muestra la métrica GEPA.
@@ -202,9 +209,14 @@ def main() -> int:
                       r.status_code == 200 and isinstance(r.json(), list))
                 r = client.get("/settings/model-policy", headers=auth)
                 pol = r.json() if r.status_code == 200 else {}
-                check("GET /settings/model-policy trae política + 3 opciones con nombre",
+                # El test fijaba 3 opciones; la sesión 47 sumó OpenRouter como motor
+                # propio/respaldo y quedaron 4 (_POLICY_LABELS en routes/settings.py).
+                # Se comprueba contra la fuente, no contra un número escrito a mano,
+                # para que sumar un motor no vuelva a dar un falso rojo.
+                from mia.api.routes.settings import _POLICY_LABELS
+                check("GET /settings/model-policy trae política + todas las opciones con nombre",
                       r.status_code == 200 and pol.get("politica")
-                      and len(pol.get("opciones", [])) == 3
+                      and len(pol.get("opciones", [])) == len(_POLICY_LABELS)
                       and all("nombre" in o for o in pol["opciones"]))
                 r = client.put("/settings/model-policy", headers=auth, json={"politica": "soberano"})
                 check("PUT /settings/model-policy persiste el cambio (el selector escribe)",

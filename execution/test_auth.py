@@ -127,6 +127,15 @@ def run_checks(client) -> None:
         check("token expirado -> 401",
               client.get("/api/auth/me", headers={"Authorization": f"Bearer {expired}"}).status_code == 401)
 
+        # Riesgo #72: el tenant_id se usa aguas abajo como nombre de carpeta en disco (SOUL, wiki,
+        # trazas). Un JWT bien firmado pero con un tenant_id que NO es UUID canónico se rechaza en
+        # el borde, para que el aislamiento no dependa de sanear ese nombre.
+        forjado = jwt.encode(
+            {"tenant_id": "../otro-despacho", "email": email_a, "exp": int(time.time()) + 3600},
+            config.JWT_SECRET, algorithm=config.JWT_ALG)
+        check("token con tenant_id no-UUID -> 401 (Riesgo #72)",
+              client.get("/api/auth/me", headers={"Authorization": f"Bearer {forjado}"}).status_code == 401)
+
         rb = client.post("/api/auth/register", json={
             "email": email_b,
             "password": password,
@@ -144,11 +153,11 @@ def run_checks(client) -> None:
         api_ts = (ROOT / "frontend" / "lib" / "api.ts").read_text(encoding="utf-8")
         sidebar = (ROOT / "frontend" / "app" / "_components" / "Sidebar.tsx").read_text(encoding="utf-8")
         env_local = (ROOT / "frontend" / ".env.local").read_text(encoding="utf-8")
-        check("register redirect a /onboarding", 'router.replace("/onboarding")' in register_page)
+        check("register inicia el viaje de activación", 'router.replace("/activar")' in register_page)
         check("logout limpia token", "clearToken()" in sidebar and 'router.replace("/login")' in sidebar)
         check("frontend lee token desde localStorage", "localStorage.getItem(\"mia_token\")" in api_ts)
         check("login y register tienen formularios reales",
-              "Ingresar" in login_page and "Crear cuenta" in register_page)
+              'as="form"' in login_page and 'as="form"' in register_page)
         check("NEXT_PUBLIC_DEV_TOKEN eliminado", "NEXT_PUBLIC_DEV_TOKEN" not in env_local)
     finally:
         cleanup([email_a, email_b])

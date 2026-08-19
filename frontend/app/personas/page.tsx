@@ -10,6 +10,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import GuideInterviewWizard from "@/app/_components/GuideInterviewWizard";
+import { PageShell } from "@/app/_components/PageShell";
+import { SectionTitle } from "@/app/_components/SectionTitle";
+import { Card, cardVariants } from "@/components/ui/card";
+import { staggerStyle } from "@/lib/motion";
+import { cn } from "@/lib/utils";
 
 // Tope de guías que un agente puede priorizar (debe coincidir con MAX_LINKED_PLAYBOOKS del backend).
 const MAX_LINKED_GUIDES = 8;
@@ -221,26 +226,21 @@ export default function PersonasPage() {
 
   if (!loaded) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4 px-6 py-10 md:px-8">
+      <PageShell className="space-y-4">
         <Skeleton className="h-9 w-64" />
-        <Skeleton className="h-28 w-full rounded-xl" />
-        <Skeleton className="h-28 w-full rounded-xl" />
-        <Skeleton className="h-28 w-full rounded-xl" />
-      </div>
+        <Skeleton className="h-28 w-full rounded-lg" />
+        <Skeleton className="h-28 w-full rounded-lg" />
+        <Skeleton className="h-28 w-full rounded-lg" />
+      </PageShell>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 px-6 py-10 md:px-8">
-      <div className="flex flex-wrap items-start justify-between gap-4 animate-slide-up">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Agentes jurídicos</h1>
-          <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-            Roles especializados que invocas en el chat — por ejemplo «actúa como litigante» o «revisa las citas».
-            Cada agente colorea el tono de Mia en ese turno y puede priorizar tus guías; nada se activa solo.
-          </p>
-        </div>
-        {!creating && !editing ? (
+    <PageShell
+      title="Agentes jurídicos"
+      subtitle="Roles especializados que invocas en el chat — por ejemplo «actúa como litigante» o «revisa las citas». Cada agente colorea el tono de Mia en esa conversación y puede priorizar tus guías; nada se activa solo."
+      actions={
+        !creating && !editing ? (
           <div className="flex shrink-0 flex-wrap gap-2">
             <Button variant="outline" onClick={() => setWizardOpen(true)} className="gap-2">
               <Sparkles className="h-4 w-4" />
@@ -251,9 +251,10 @@ export default function PersonasPage() {
               Nuevo agente
             </Button>
           </div>
-        ) : null}
-      </div>
-
+        ) : null
+      }
+      className="space-y-8"
+    >
       <GuideInterviewWizard
         open={wizardOpen}
         onOpenChange={setWizardOpen}
@@ -261,9 +262,9 @@ export default function PersonasPage() {
         onDraftReady={onMiaDraftReady}
       />
 
-      {loadErr ? <p role="alert" className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{loadErr}</p> : null}
+      {loadErr ? <p role="alert" className="rounded-md bg-warning/10 px-3 py-2 text-body text-warning">{loadErr}</p> : null}
       {formMsg && !creating && !editing ? (
-        <p role="alert" className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{formMsg}</p>
+        <p role="alert" className="rounded-md bg-warning/10 px-3 py-2 text-body text-warning">{formMsg}</p>
       ) : null}
 
       {creating || editing ? (
@@ -281,12 +282,12 @@ export default function PersonasPage() {
       ) : null}
 
       {personas.length === 0 && !loadErr ? (
-        <div className="animate-slide-up rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+        <Card variant="dashed" className="animate-slide-up px-6 py-16 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Drama className="h-6 w-6" />
           </div>
-          <h2 className="text-lg font-medium">Aún no hay agentes configurados</h2>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+          <h2 className="text-title">Aún no hay agentes configurados</h2>
+          <p className="mx-auto mt-2 max-w-sm text-body text-muted-foreground">
             Un agente es un rol que Mia adopta cuando se lo pides en el chat:
             un litigante agresivo, un revisor de citas escéptico, un conciliador.
             Crea el primero o recarga para ver los de fábrica.
@@ -295,19 +296,22 @@ export default function PersonasPage() {
             <Plus className="h-4 w-4" />
             Nuevo agente
           </Button>
-        </div>
+        </Card>
       ) : (
         <ul className="space-y-3">
           {personas.map((p, i) => (
             <li
               key={p.id}
-              className="animate-slide-up rounded-xl border border-border bg-card px-5 py-4 shadow-sm transition-all duration-200 hover:border-primary/25"
-              style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}
+              className={cn(
+                cardVariants(),
+                "animate-slide-up px-5 py-4 transition-colors duration-200 hover:border-primary/25",
+              )}
+              style={staggerStyle(i)}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex min-w-0 gap-3.5">
                   <div
-                    className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                    className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
                       p.enabled ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
                     }`}
                   >
@@ -315,8 +319,8 @@ export default function PersonasPage() {
                   </div>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{p.name}</span>
-                      {p.title ? <span className="text-sm text-muted-foreground">· {p.title}</span> : null}
+                      <span className="text-section">{p.name}</span>
+                      {p.title ? <span className="text-body text-muted-foreground">· {p.title}</span> : null}
                       {!p.enabled ? <Badge variant="secondary">Deshabilitado</Badge> : null}
                       {p.model_tier === "local" ? (
                         <Badge variant="secondary" className="gap-1 bg-success/15 text-success">
@@ -325,16 +329,16 @@ export default function PersonasPage() {
                         </Badge>
                       ) : null}
                     </div>
-                    <p className="mt-1.5 text-sm text-muted-foreground line-clamp-2">
+                    <p className="mt-1.5 text-body text-muted-foreground line-clamp-2">
                       {p.description || p.role_prompt}
                     </p>
                     {p.summon_phrases?.length ? (
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        <span className="text-xs text-muted-foreground">Invócalo con:</span>
+                        <span className="text-meta text-muted-foreground">Invócalo con:</span>
                         {p.summon_phrases.map((f) => (
                           <span
                             key={f}
-                            className="rounded-full bg-accent px-2 py-0.5 text-xs text-accent-foreground"
+                            className="rounded-full bg-accent px-2 py-0.5 text-meta text-accent-foreground"
                           >
                             «{f}»
                           </span>
@@ -363,7 +367,7 @@ export default function PersonasPage() {
           ))}
         </ul>
       )}
-    </div>
+    </PageShell>
   );
 }
 
@@ -389,10 +393,10 @@ function PersonaFormPanel({
   notice: string;
 }) {
   return (
-    <div className="animate-slide-up rounded-xl border border-primary/25 bg-card p-6 shadow-md">
-      <h2 className="mb-5 text-lg font-semibold tracking-tight">{title}</h2>
+    <Card variant="raised" className="animate-slide-up border-primary/25 p-6">
+      <SectionTitle title={title} className="mb-5" />
       {notice ? (
-        <p className="mb-5 flex items-start gap-2 rounded-md bg-primary/10 px-3 py-2 text-sm text-primary">
+        <p className="mb-5 flex items-start gap-2 rounded-md bg-primary/10 px-3 py-2 text-body text-primary">
           <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
           {notice}
         </p>
@@ -428,12 +432,12 @@ function PersonaFormPanel({
             id="motor-tier"
             value={form.model_tier}
             onChange={(e) => setForm({ ...form, model_tier: e.target.value as "estandar" | "local" })}
-            className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-body outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
           >
             <option value="estandar">El motor del despacho</option>
             <option value="local">Siempre el motor local — más privado</option>
           </select>
-          <p className="text-xs text-muted-foreground">{motorLabel(form.model_tier)}</p>
+          <p className="text-meta text-muted-foreground">{motorLabel(form.model_tier)}</p>
         </div>
         <GuidesLinkField
           guides={guides}
@@ -450,7 +454,7 @@ function PersonaFormPanel({
             className="resize-y"
           />
         </div>
-        <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <label className="flex cursor-pointer items-center gap-2 text-body">
           <input
             type="checkbox"
             checked={form.enabled}
@@ -461,7 +465,7 @@ function PersonaFormPanel({
         </label>
       </div>
       {msg ? (
-        <p role="alert" className="mt-4 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{msg}</p>
+        <p role="alert" className="mt-4 rounded-md bg-warning/10 px-3 py-2 text-body text-warning">{msg}</p>
       ) : null}
       <div className="mt-5 flex gap-2">
         <Button onClick={onSave} disabled={busy}>
@@ -471,7 +475,7 @@ function PersonaFormPanel({
           Cancelar
         </Button>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -500,13 +504,13 @@ function GuidesLinkField({
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <Label>Guías vinculadas</Label>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-meta nums text-muted-foreground">
           {selected.length} de {MAX_LINKED_GUIDES}
         </span>
       </div>
-      <p className="text-xs text-muted-foreground">Este agente prioriza estas guías cuando trabaja.</p>
+      <p className="text-meta text-muted-foreground">Este agente prioriza estas guías cuando trabaja.</p>
       {visibles.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-dashed border-border px-3 py-3 text-body text-muted-foreground">
           Todavía no tienes guías activas en el despacho. Crea guías en Conocimiento y podrás vincularlas aquí.
         </p>
       ) : (
@@ -518,7 +522,7 @@ function GuidesLinkField({
             return (
               <label
                 key={g.id}
-                className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent ${
+                className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-body transition-colors hover:bg-accent ${
                   disabled ? "cursor-not-allowed opacity-50" : ""
                 }`}
               >
@@ -531,7 +535,7 @@ function GuidesLinkField({
                 />
                 <span className="min-w-0 truncate">{g.title}</span>
                 {archivada && (
-                  <Badge variant="outline" className="ml-auto shrink-0 text-[10px]">
+                  <Badge variant="outline" className="ml-auto shrink-0 text-meta">
                     Archivada — ya no se usa
                   </Badge>
                 )}
@@ -541,7 +545,7 @@ function GuidesLinkField({
         </div>
       )}
       {atMax ? (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-meta text-muted-foreground">
           Llegaste al máximo de {MAX_LINKED_GUIDES} guías. Quita alguna para vincular otra.
         </p>
       ) : null}
@@ -593,7 +597,7 @@ function ChipsField({ label, value, onChange }: { label: string; value: string[]
             }
           }}
           placeholder="Escribe y presiona Enter"
-          className="min-w-[120px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
+          className="min-w-[120px] flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
         />
       </div>
     </div>

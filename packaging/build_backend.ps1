@@ -6,7 +6,12 @@
 # Limpia dist/ y build/ previos (build no incremental, reproducible), corre
 # mia-backend.spec y reporta tamano final. Salida: packaging/dist/mia-backend/.
 #
-# Uso:  powershell -File packaging\build_backend.ps1
+# Uso:  powershell -File packaging\build_backend.ps1 -Profile core
+param(
+    [ValidateSet('core', 'ocr', 'voice', 'full')]
+    [string]$Profile = 'core'
+)
+
 $ErrorActionPreference = 'Stop'
 
 $PackagingDir = $PSScriptRoot
@@ -67,15 +72,32 @@ if (-not (Test-Path $VenvPyInstaller)) {
 Write-Host "Repo:        $RepoRoot" -ForegroundColor Cyan
 Write-Host "PyInstaller: $VenvPyInstaller" -ForegroundColor Cyan
 Write-Host "Spec:        $SpecFile" -ForegroundColor Cyan
+Write-Host "Perfil:      $Profile" -ForegroundColor Cyan
 
-if (Test-Path $DistPath) {
-    Write-Host "Limpiando dist/ previo..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $DistPath
+# Borrado robusto (sesion 52): el arbol de PyInstaller contiene rutas que
+# superan MAX_PATH (p.ej. _internal\PIL\...), y ahi Remove-Item falla con
+# "No se puede encontrar una parte de la ruta de acceso" y ABORTA el build
+# entero por $ErrorActionPreference='Stop'. robocopy /MIR contra una carpeta
+# vacia si maneja rutas largas; se usa como vaciado previo y luego se quita
+# el directorio ya vacio.
+function Remove-TreeRobusto([string]$path) {
+    if (-not (Test-Path $path)) { return }
+    Write-Host "Limpiando $path ..." -ForegroundColor Yellow
+    $empty = Join-Path ([System.IO.Path]::GetTempPath()) 'mia_empty_dir'
+    if (-not (Test-Path $empty)) { New-Item -ItemType Directory -Path $empty | Out-Null }
+    $null = robocopy $empty $path /MIR /NFL /NDL /NJH /NJS /NP /R:1 /W:1
+    $global:LASTEXITCODE = 0
+    Remove-Item -Recurse -Force $path -ErrorAction SilentlyContinue
+    if (Test-Path $path) { throw "No se pudo limpiar $path (queda contenido). Cierra procesos que lo esten usando." }
 }
-if (Test-Path $WorkPath) {
-    Write-Host "Limpiando build/ previo..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $WorkPath
-}
+
+# Se limpia SOLO lo que este build produce (sesion 52). $DistPath es
+# packaging/dist COMPLETO, compartido con los payloads de litellm y frontend:
+# borrarlo entero dejaba el arbol inservible para `build_installer -SkipPayloads`
+# (los otros dos payloads desaparecian sin aviso). build_litellm y build_frontend
+# ya limpian solo su subcarpeta; este ahora hace lo mismo.
+Remove-TreeRobusto (Join-Path $DistPath 'mia-backend')
+Remove-TreeRobusto (Join-Path $WorkPath 'mia-backend')
 
 $start = Get-Date
 # PyInstaller escribe su log INFO/WARNING a stderr. En PowerShell 5.1, con
@@ -84,10 +106,17 @@ $start = Get-Date
 # de inmediato. Bajamos la preferencia solo para esta llamada nativa y
 # restauramos despues; el resultado real se valida con $LASTEXITCODE.
 $prevEap = $ErrorActionPreference
+$previousProfile = $env:MIA_BUNDLE_PROFILE
 $ErrorActionPreference = 'Continue'
-& $VenvPyInstaller $SpecFile --distpath $DistPath --workpath $WorkPath --noconfirm
-$exitCode = $LASTEXITCODE
-$ErrorActionPreference = $prevEap
+try {
+    $env:MIA_BUNDLE_PROFILE = $Profile
+    & $VenvPyInstaller $SpecFile --distpath $DistPath --workpath $WorkPath --noconfirm
+    $exitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $prevEap
+    if ($null -eq $previousProfile) { Remove-Item Env:MIA_BUNDLE_PROFILE -ErrorAction SilentlyContinue }
+    else { $env:MIA_BUNDLE_PROFILE = $previousProfile }
+}
 $elapsed = (Get-Date) - $start
 
 if ($exitCode -ne 0) {
@@ -109,31 +138,66 @@ Write-Host "Salida:      $exeDir" -ForegroundColor Green
 Write-Host "Tamano:      $sizeMB MB" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
-# Smoke OCR post-build (fix Fase 1 · capa 2 · m4) — OPCIONAL, no HALT.
+# Verificacion de componentes opcionales y contenido prohibido.
 # ---------------------------------------------------------------------------
-# entry_backend.py (--ocr-smoke-test) instancia RapidOCR() REAL desde el
-# bundle recien compilado, sin levantar el servidor. Esto es "barato" (unos
-# segundos, ya que el modelo ya esta en disco dentro de dist\mia-backend\) y
-# atrapa el caso mas comun de corrupcion: modelos .onnx faltantes o truncados
-# tras el empaquetado. Es un WARNING, no un HALT: una falla aqui no aborta el
-# build (el resto del bundle puede ser perfectamente utilizable sin OCR), pero
-# SI debe investigarse antes de distribuir el instalador.
-#
-# TODO explicito (no cubierto por este smoke, ni prometido en el entry): el
-# unico gate REAL de que el OCR funciona end-to-end es subir un PDF escaneado
-# de verdad a traves de la API y confirmar que el texto extraido es correcto.
-# Ese E2E vive documentado como pendiente para Fase 4 (validacion de la
-# instalacion completa) — no se implementa aqui.
-Write-Host ""
-Write-Host "Smoke OCR post-build (opcional): instanciando RapidOCR() desde el bundle..." -ForegroundColor Cyan
-$prevEap2 = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-$ocrSmokeOutput = & $exePath --ocr-smoke-test 2>&1
-$ocrSmokeExit = $LASTEXITCODE
-$ErrorActionPreference = $prevEap2
-Write-Host "  $ocrSmokeOutput"
-if ($ocrSmokeExit -ne 0) {
-    Write-Host "  ADVERTENCIA: el smoke de OCR post-build FALLO (exit $ocrSmokeExit). Los .onnx del bundle podrian estar incompletos o corruptos -- investigar antes de distribuir el instalador. El build NO se aborta por esto (ver TODO de Fase 4 E2E arriba)." -ForegroundColor Yellow
-} else {
-    Write-Host "  Smoke OCR post-build: PASS (RapidOCR instancio correctamente desde el bundle)." -ForegroundColor Green
+function Assert-NoForbiddenSegments([string]$Root) {
+    $forbidden = @('__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', 'tests', 'test', 'docs', 'harness', '.git')
+    $bad = @(Get-ChildItem -LiteralPath $Root -Recurse -Directory | Where-Object { $forbidden -contains $_.Name.ToLowerInvariant() })
+    if ($bad.Count -gt 0) { throw "El bundle contiene carpetas no distribuibles:`n  $($bad.FullName -join "`n  ")" }
 }
+Assert-NoForbiddenSegments $exeDir
+
+$withOcr = $Profile -in @('ocr', 'full')
+$withVoice = $Profile -in @('voice', 'full')
+$allPaths = @(Get-ChildItem -LiteralPath $exeDir -Recurse | ForEach-Object { $_.FullName.ToLowerInvariant() })
+
+if (-not $withOcr -and @($allPaths | Where-Object { $_ -match '[\\/](rapidocr_onnxruntime|onnxruntime|cv2)([\\/]|$)' }).Count -gt 0) {
+    throw 'El perfil core/voice contiene binarios OCR que debian estar excluidos.'
+}
+if (-not $withVoice -and @($allPaths | Where-Object { $_ -match '[\\/](sherpa_onnx|av|av\.libs)([\\/]|$)' }).Count -gt 0) {
+    throw 'El perfil core/ocr contiene binarios de voz que debian estar excluidos.'
+}
+
+function Invoke-RequiredSmoke([string]$Flag, [string]$Name) {
+    $previousEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & $exePath $Flag 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousEap
+    }
+    Write-Host "  $output"
+    if ($code -ne 0) { throw "$Name esta incluido pero su smoke test fallo (exit $code)." }
+    Write-Host "  ${Name}: PASS" -ForegroundColor Green
+}
+
+if ($withOcr) {
+    Write-Host 'Validando componente OCR incluido...' -ForegroundColor Cyan
+    Invoke-RequiredSmoke '--ocr-smoke-test' 'OCR'
+} else {
+    Write-Host 'OCR no incluido: los PDF con texto siguen disponibles; los escaneados requieren perfil ocr/full.' -ForegroundColor Yellow
+}
+if ($withVoice) {
+    Write-Host 'Validando componente de voz incluido...' -ForegroundColor Cyan
+    Invoke-RequiredSmoke '--voice-smoke-test' 'Voz'
+} else {
+    Write-Host 'Voz no incluida en este perfil.' -ForegroundColor Yellow
+}
+
+$sourceCommit = (& git -C $RepoRoot rev-parse HEAD).Trim()
+$sourceDirty = @(& git -C $RepoRoot status --porcelain --untracked-files=all).Count -gt 0
+$files = @(Get-ChildItem -LiteralPath $exeDir -Recurse -File)
+$manifest = [ordered]@{
+    schema_version = 1
+    profile = $Profile
+    capabilities = [ordered]@{ ocr = [bool]$withOcr; voice = [bool]$withVoice }
+    source_commit = $sourceCommit
+    source_dirty = [bool]$sourceDirty
+    payload_bytes_excluding_manifest = [long](($files | Measure-Object -Property Length -Sum).Sum)
+    files_excluding_manifest = $files.Count
+    built_at_utc = [DateTime]::UtcNow.ToString('o')
+}
+$manifestPath = Join-Path $exeDir 'mia-component-manifest.json'
+$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+Write-Host "Componentes: $manifestPath" -ForegroundColor Green

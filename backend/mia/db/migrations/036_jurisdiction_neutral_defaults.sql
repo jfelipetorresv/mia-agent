@@ -1,0 +1,45 @@
+-- Mia · 036_jurisdiction_neutral_defaults.sql · el default de jurisdicción deja de ser un país
+--
+-- REGLA DE PRODUCTO (Decisión #24): MIA es AGNÓSTICA DE JURISDICCIÓN. No es colombiana: se
+-- adapta al despacho que la instala (Colombia, México, España…). La jurisdicción se resuelve
+-- por despacho vía packs (`backend/mia/jurisdiction/packs/`), con 'generic' como modo neutro.
+--
+-- DEFECTO QUE CIERRA: tres columnas `jurisdiction` tenían un país cableado como DEFAULT —
+-- `legal_norms` y `jurisprudence` con 'co' (011, líneas 21 y 39; antes 'colombia' en 003) y
+-- `firm_profiles` con 'colombia' (007, línea 15). Cualquier INSERT que omitiera la columna
+-- marcaba la fila como COLOMBIANA. Escenario real de daño: un despacho español ingiere una
+-- norma o una sentencia sin jurisdicción explícita → queda 'co' en la base; como las
+-- búsquedas filtran por jurisdicción (Decisión #25), ese material DESAPARECE de sus
+-- resultados y CONTAMINA los de un despacho colombiano. Es contaminación silenciosa del
+-- conocimiento del despacho: nada falla, el dato simplemente miente.
+-- (`firm_profiles`: `api/routes/auth.py` inserta (tenant_id, name) sin jurisdicción, así que
+-- HOY todo despacho nuevo nace con el perfil marcado 'colombia' sea de donde sea.)
+--
+-- ARREGLO: el default pasa a 'generic' (el código neutro de `jurisdiction.pack.GENERIC_CODE`).
+-- Marcar 'generic' deja el material SIN adscripción; marcar 'co' AFIRMA una autoridad
+-- jurídica falsa. Ante la duda, no se afirma. La defensa real vive en el código
+-- (`rag/sat_graph.py::_resolve_jurisdiction` ya resuelve explícita → pack del tenant →
+-- 'generic', y nunca manda 'co'); este default es la red de seguridad de la capa DB para
+-- cualquier INSERT que omita la columna.
+--
+-- NO se hace DROP DEFAULT: las tres columnas son NOT NULL y un INSERT que omita la columna
+-- pasaría de "dato equivocado" a "error de runtime" en un camino de escritura del abogado.
+-- El default neutro es correcto Y no rompe a nadie.
+--
+-- CERO RE-MARCADO — el despacho fundador (colombiano) NO se toca: sus filas ya están en la
+-- base marcadas 'co'/'colombia' y siguen encontrándose igual. Un DEFAULT solo aplica a
+-- INSERTs futuros que OMITAN la columna; no reescribe ni una fila existente. Por eso esta
+-- migración no lleva UPDATE alguno: es puramente aditiva.
+--
+-- Claves/índices: las UNIQUE de 011 (uq_legal_norms_jur_number_body_eff,
+-- uq_jurisprudence_jur_decision_court) y los ON CONFLICT de `sat_graph.py` incluyen
+-- `jurisdiction`, pero NO dependen del DEFAULT — leen el valor efectivo de la fila, que
+-- ahora siempre llega explícito desde el código. Los índices idx_*_jurisdiction siguen
+-- válidos (un DEFAULT no participa en un índice).
+--
+-- Migración por `postgres` (mia_app NO tiene ALTER). Idempotente: SET DEFAULT es
+-- declarativo — re-ejecutarla deja exactamente el mismo estado.
+
+ALTER TABLE legal_norms   ALTER COLUMN jurisdiction SET DEFAULT 'generic';
+ALTER TABLE jurisprudence ALTER COLUMN jurisdiction SET DEFAULT 'generic';
+ALTER TABLE firm_profiles ALTER COLUMN jurisdiction SET DEFAULT 'generic';

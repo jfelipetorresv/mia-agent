@@ -14,9 +14,11 @@ Política del catálogo (deliberadamente conservadora para un producto legal):
 - Permisos MÍNIMOS: cada entrada recomienda el alcance del token (solo lectura, solo
   las carpetas del despacho…). Mia pide lo menos que necesita.
 
-El `command`/`args` de cada entrada es una PLANTILLA de transporte que el admin
-confirma al activar (igual que los flags de los CLIs externos quedan `[VERIFICAR]`
-hasta ejecutarse en vivo). La maquinaria de seguridad que los procesa sí es real.
+El catálogo de PRODUCTO está vacío a propósito (2026-08): las dos entradas anteriores
+prometían backends que no existían (`server-filesystem` + token DMS sin usar;
+`python -m mia_mcp_procesos` sin módulo). No se inventa un scraper judicial ni un DMS.
+El descriptor de laboratorio (`lab_filesystem_descriptor`) existe SOLO para gates de
+stdio; no se lista al abogado.
 """
 from __future__ import annotations
 
@@ -73,41 +75,26 @@ def _descriptor(slug, display_name, description, command, args, env_specs,
     )
 
 
-# ── entradas curadas (todas nacen deshabilitadas) ────────────────────────────
-CATALOG: dict[str, MCPServerDescriptor] = {
-    "gestion-documental": _descriptor(
-        slug="gestion-documental",
-        display_name="Gestión documental del despacho",
-        description=("Deja que Mia consulte los documentos del despacho en tu sistema "
-                     "de gestión documental para responder con base en ellos."),
+def lab_filesystem_descriptor() -> MCPServerDescriptor:
+    """Servidor de archivos para gates de stdio. NO forma parte del catálogo de producto."""
+    return _descriptor(
+        slug="lab-filesystem",
+        display_name="Laboratorio de archivos (solo pruebas)",
+        description="Descriptor de laboratorio para verificar el transporte stdio. No se ofrece al despacho.",
         command="npx",
         args=("-y", "@modelcontextprotocol/server-filesystem", "${DMS_ROOT}"),
         env_specs=(
-            MCPEnvSpec("DMS_ROOT", "Carpeta o URL base de la gestión documental",
-                       secret_key=None, required=True),
-            MCPEnvSpec("DMS_API_TOKEN", "Token de acceso (solo lectura)",
+            MCPEnvSpec("DMS_ROOT", "Carpeta de prueba", secret_key=None, required=True),
+            MCPEnvSpec("DMS_API_TOKEN", "Token de laboratorio (no lo usa el servidor de archivos)",
                        secret_key="dms_api_token", required=True),
         ),
-        permissions_note=("Usa un token de SOLO LECTURA, limitado a las carpetas del "
-                          "despacho. Mia nunca necesita permiso de escritura para consultar."),
-    ),
-    "consulta-procesos": _descriptor(
-        slug="consulta-procesos",
-        display_name="Consulta de estados de procesos judiciales",
-        description=("Deja que Mia consulte el estado de un proceso en el sistema de la "
-                     "Rama Judicial o el proveedor que uses, para traerte las novedades."),
-        command="python",
-        args=("-m", "mia_mcp_procesos"),
-        env_specs=(
-            MCPEnvSpec("PROCESOS_API_BASE", "URL del servicio de consulta",
-                       secret_key=None, required=True),
-            MCPEnvSpec("PROCESOS_API_TOKEN", "Token de consulta (solo lectura)",
-                       secret_key="procesos_api_token", required=True),
-        ),
-        permissions_note=("Token de SOLO CONSULTA. Mia lee estados de procesos; nunca "
-                          "radica, responde ni modifica nada en el sistema judicial."),
-    ),
-}
+        permissions_note=("Solo lectura. Este descriptor no se muestra en la pantalla del "
+                          "abogado; existe para gates de integración."),
+    )
+
+
+# Catálogo de producto: vacío hasta que exista un servidor DMS / judicial REAL.
+CATALOG: dict[str, MCPServerDescriptor] = {}
 
 
 def list_catalog() -> list[MCPServerDescriptor]:

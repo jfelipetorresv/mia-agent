@@ -55,7 +55,8 @@ _SYSTEM = (
     "Si un hito depende de un término, descríbelo en palabras y marca is_procedural=true.\n"
     "- No inventes hechos del expediente que no estén en el objetivo. Mantente en pasos de "
     "trabajo, no en afirmaciones jurídicas de fondo.\n"
-    "- Español de Colombia, lenguaje del oficio, sin jerga técnica de software."
+    "- Español llano en registro jurídico (no fijes país ni jurisdicción), lenguaje del "
+    "oficio, sin jerga técnica de software."
 )
 
 

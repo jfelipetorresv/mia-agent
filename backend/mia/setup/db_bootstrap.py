@@ -13,11 +13,15 @@ app_dir). Todas son idempotentes — se pueden re-ejecutar sin efecto adicional.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 import sys
 from pathlib import Path
+from typing import Callable
 
-import psycopg
-from psycopg import sql
+# psycopg se importa dentro de las funciones que tocan Postgres. El SHA-256
+# de migraciones (gate estático / --sellar) no debe exigir el driver: CI lo
+# corre antes de `pip install './backend[full]'`.
 
 # GRANT dinámico: cubre cualquier tabla 'checkpoint%' que cree LangGraph (idéntico
 # al de execution/init_checkpointer.py original).
@@ -31,6 +35,92 @@ BEGIN
   END LOOP;
 END $$;
 """
+
+_MIGRATIONS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS public.mia_schema_migrations (
+  filename    text PRIMARY KEY,
+  sha256      text NOT NULL,
+  applied_at  timestamptz NOT NULL DEFAULT now()
+)
+"""
+
+# Candado de sesión: impide que dos arranques intenten actualizar el mismo
+# esquema a la vez. El valor es propio de Mia y estable entre versiones.
+_MIGRATION_LOCK_KEY = 0x4D49414D494752  # "MIAMIGR"
+
+
+class MigrationChecksumError(RuntimeError):
+    """Una migración aplicada cambió de contenido.
+
+    Alterar un archivo histórico vuelve imposible saber qué estructura tiene una
+    instalación existente. La salida segura es crear una migración nueva, no
+    volver a ejecutar silenciosamente la anterior.
+    """
+
+
+class MigrationPrefixCollisionError(RuntimeError):
+    """Dos migraciones comparten el mismo número de prefijo (p. ej. dos `038_`).
+
+    El orden del ledger y el checksum del gate F0 dependen de que el prefijo
+    numérico sea único y monótono. Dos archivos con el mismo prefijo hacen que el
+    orden dependa del resto del nombre (frágil) y que un agente que trabaje en
+    paralelo pise el número de otro. La salida segura es renumerar una de las dos
+    antes de aplicar nada. Regla: el número se reserva al EMPEZAR, no al escribir.
+    """
+
+
+_MIGRATION_PREFIX_RE = re.compile(r"^(\d+)_")
+
+
+def _assert_unique_prefixes(migrations: list[Path]) -> None:
+    """Falla si dos migraciones comparten el prefijo numérico.
+
+    Preflight barato y determinista: corre antes de tocar el esquema para que la
+    colisión (incidente real de la sesión 48: dos `038`) se detecte como error
+    con explicación en vez de romper el orden del ledger a mitad de camino.
+    """
+    by_prefix: dict[str, list[str]] = {}
+    for path in migrations:
+        match = _MIGRATION_PREFIX_RE.match(path.name)
+        if match is None:
+            continue  # archivos sin prefijo numérico no participan del orden
+        by_prefix.setdefault(match.group(1), []).append(path.name)
+    colisiones = {p: names for p, names in by_prefix.items() if len(names) > 1}
+    if colisiones:
+        detalle = "; ".join(
+            f"{prefix}: {', '.join(sorted(names))}" for prefix, names in sorted(colisiones.items())
+        )
+        raise MigrationPrefixCollisionError(
+            "Números de migración duplicados — renumera una de cada par antes de "
+            f"aplicar ({detalle})."
+        )
+
+
+def _lf_bytes(data: bytes) -> bytes:
+    """Normaliza saltos de línea a LF. Git en Windows puede materializar CRLF."""
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def migration_sha256(path: Path) -> str:
+    """SHA-256 canónico del SQL (LF). Independiente de CRLF vs LF en disco.
+
+    El ledger de instalaciones viejas puede haber registrado el hash CRLF o el
+    LF del mismo archivo: ``apply_migrations`` acepta ambos y, si hace falta,
+    reescribe el registro al canónico. No reejecuta el SQL. Un cambio de
+    *contenido* sigue bloqueando (crea una migración nueva).
+    """
+    return _digest(_lf_bytes(path.read_bytes()))
+
+
+def _line_ending_aliases(data: bytes) -> set[str]:
+    """Hashes que identifican el mismo SQL con distinta convención de newline."""
+    lf = _lf_bytes(data)
+    crlf = lf.replace(b"\n", b"\r\n")
+    return {_digest(data), _digest(lf), _digest(crlf)}
 
 
 def _super_kw(host: str, port: str | int, dbname: str, password: str) -> dict:
@@ -48,6 +138,9 @@ def ensure_app_role_and_database(
     decide cómo formatear el mensaje de progreso (execution/*.py imprime
     "[OK] ...", first_run.py imprime "MIA-SETUP: ...").
     """
+    import psycopg
+    from psycopg import sql
+
     with psycopg.connect(autocommit=True, **_super_kw(host, port, "postgres", super_pw)) as c:
         verb = "ALTER" if c.execute(
             "SELECT 1 FROM pg_roles WHERE rolname='mia_app'"
@@ -72,6 +165,8 @@ def apply_extensions_and_schema(
 ) -> dict:
     """Extensiones (vector, pgcrypto) + schema.sql, como superusuario. Devuelve
     diagnóstico (encoding, tablas, policies, versión de pgvector)."""
+    import psycopg
+
     with psycopg.connect(autocommit=True, **_super_kw(host, port, db, super_pw)) as c:
         c.execute("CREATE EXTENSION IF NOT EXISTS vector")
         c.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
@@ -94,21 +189,125 @@ def apply_extensions_and_schema(
 
 
 def apply_migrations(
-    host: str, port: str | int, db: str, super_pw: str, migrations: list[Path]
+    host: str,
+    port: str | int,
+    db: str,
+    super_pw: str,
+    migrations: list[Path],
+    *,
+    before_first_pending: Callable[[], None] | None = None,
 ) -> list[str]:
-    """Aplica cada .sql de `migrations`, EN ORDEN, en una sola conexión autocommit
-    como superusuario (mia_app no tiene CREATE). Cada archivo ya es idempotente
-    (CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE) — no hay tabla de control,
-    se re-ejecutan todas siempre (mismo patrón que los init_XXX.py existentes)."""
+    """Aplica solo migraciones pendientes, de forma reanudable y verificable.
+
+    Cada archivo SQL y su registro en ``mia_schema_migrations`` viven en UNA
+    transacción. Si el SQL falla o el proceso se corta, ese archivo queda sin
+    aplicar y el siguiente arranque puede reintentarlo. Un advisory lock evita
+    dos migradores simultáneos. Los archivos ya aplicados deben conservar el
+    mismo SQL; el SHA-256 canónico es LF. Un checkout Windows (CRLF) contra un
+    ledger Linux (LF), o al revés, se acepta y se reescribe el registro al
+    canónico — nunca se reejecuta el SQL ni se tocan datos. Si el *contenido*
+    cambió, se bloquea el arranque: crea una migración nueva.
+
+    Compatibilidad: instalaciones anteriores no tienen ledger. En la primera
+    adopción se vuelven a ejecutar los SQL históricos (todos son idempotentes,
+    que era también el contrato anterior) y quedan registrados.
+    """
+    # Defensa en profundidad: paths.migration_paths() ya ordena, pero este
+    # helper también lo garantiza para cualquier llamador futuro.
+    import psycopg
+
+    migrations = sorted(migrations, key=lambda path: path.name)
+    # Antes de tocar nada: dos migraciones con el mismo prefijo numérico rompen
+    # el orden del ledger (incidente real de la sesión 48: dos `038`).
+    _assert_unique_prefixes(migrations)
     applied: list[str] = []
-    with psycopg.connect(autocommit=True, **_super_kw(host, port, db, super_pw)) as c:
-        for path in migrations:
-            c.execute(path.read_text(encoding="utf-8"))
-            applied.append(path.name)
+    with psycopg.connect(**_super_kw(host, port, db, super_pw)) as c:
+        c.execute("SELECT pg_advisory_lock(%s)", (_MIGRATION_LOCK_KEY,))
+        try:
+            ledger_exists = c.execute(
+                "SELECT to_regclass('public.mia_schema_migrations')"
+            ).fetchone()[0]
+            if ledger_exists:
+                rows = c.execute(
+                    "SELECT filename, sha256 FROM public.mia_schema_migrations"
+                ).fetchall()
+                recorded = {str(row[0]): str(row[1]) for row in rows}
+            else:
+                recorded = {}
+
+            # Preflight COMPLETO antes de tocar el esquema: primero valida todos
+            # los checksums históricos y construye la lista pendiente. Así una
+            # inconsistencia tardía no aparece después de aplicar otra migración.
+            pending: list[tuple[Path, str, str]] = []
+            heals: list[tuple[str, str, str]] = []
+            for path in migrations:
+                raw = path.read_bytes()
+                digest = _digest(_lf_bytes(raw))
+                previous = recorded.get(path.name)
+                if previous is not None:
+                    if previous not in _line_ending_aliases(raw):
+                        raise MigrationChecksumError(
+                            f"La actualización histórica {path.name} cambió después "
+                            "de aplicarse. Crea una migración nueva; no modifiques la anterior."
+                        )
+                    if previous != digest:
+                        # Mismo SQL, otro newline. Reescribir el registro; no reejecutar.
+                        heals.append((path.name, digest, previous))
+                else:
+                    migration_sql = path.read_text(encoding="utf-8")
+                    if "CONCURRENTLY" in migration_sql.upper():
+                        raise ValueError(
+                            f"{path.name}: CONCURRENTLY no es compatible con "
+                            "el modelo atómico de una transacción por archivo."
+                        )
+                    pending.append((path, digest, migration_sql))
+
+            # El backup/verificación sucede bajo el MISMO advisory lock y antes
+            # de la primera mutación. El callback usa pg_dump en otra conexión;
+            # no intenta adquirir este candado y por tanto no se auto-bloquea.
+            # Curar checksums de newline no muta el esquema: no dispara backup.
+            if pending and before_first_pending is not None:
+                before_first_pending()
+
+            # Incluso sin pendientes, una instalación nueva termina con ledger;
+            # cuando sí hay pendientes esto ocurre solo DESPUÉS del backup.
+            c.execute(_MIGRATIONS_TABLE_SQL)
+            for filename, digest, previous in heals:
+                c.execute(
+                    "UPDATE public.mia_schema_migrations SET sha256 = %s "
+                    "WHERE filename = %s AND sha256 = %s",
+                    (digest, filename, previous),
+                )
+            c.commit()
+
+            for path, digest, migration_sql in pending:
+                try:
+                    c.execute(migration_sql)
+                    c.execute(
+                        "INSERT INTO public.mia_schema_migrations (filename, sha256) "
+                        "VALUES (%s, %s)",
+                        (path.name, digest),
+                    )
+                    c.commit()
+                except Exception:
+                    c.rollback()
+                    raise
+                applied.append(path.name)
+        finally:
+            # El unlock explícito facilita pruebas/reutilización de conexiones;
+            # PostgreSQL también lo liberaría al cerrar la sesión. Un error
+            # de unlock nunca debe ocultar la causa original de una migración.
+            try:
+                c.rollback()
+                c.execute("SELECT pg_advisory_unlock(%s)", (_MIGRATION_LOCK_KEY,))
+                c.commit()
+            except Exception:
+                c.rollback()
     return applied
 
 
 async def _setup_checkpointer_async(host: str, port: str | int, db: str, super_pw: str) -> list[str]:
+    import psycopg
     from psycopg.rows import dict_row
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 

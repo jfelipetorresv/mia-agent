@@ -13,7 +13,7 @@ código. Orden de lectura completo al retomar el proyecto:
 
 1. `mia/CLAUDE.md` — constitución del proyecto (decisiones ya tomadas, no re-discutir).
 2. La memoria persistente de Claude Code (se carga sola al abrir sesión en
-   `D:\Codex\Mia-Super Agent`) — estado por checkpoint y protocolo entre sesiones.
+   `D:\Inteligencia Artificial\Mia-Super Agent`) — estado por checkpoint y protocolo entre sesiones.
 3. `mia/memory/session-summaries.md` — SOLO la última entrada.
 4. `mia/HANDOFF.md` — el checkpoint más reciente y qué le falta al frontend (Cursor).
 5. `mia/docs/plan-ejecucion-olas.md` — el roadmap ejecutable (5 olas, 16 checkpoints).
@@ -30,9 +30,27 @@ persistente de Claude Code + `git log` + `memory/progress.md`, en ese orden.
 ## La visión que no se negocia
 
 - **Qué es Mia:** un agente legal cognitivo que aprende la metodología de CADA despacho,
-  comercializable a firmas del Civil Law hispanoamericano. "Terminado" = un abogado sin
+  comercializable a firmas de CUALQUIER jurisdicción. "Terminado" = un abogado sin
   background técnico abre Mia, sube un expediente, pregunta, y recibe diagnóstico
-  verificado + borrador para aprobar en 10 minutos.
+  verificado (sin afirmaciones sin respaldo) + un borrador de calidad para aprobar. El
+  tiempo se MIDE y se reporta (p50/p95); no es una puerta de aprobación — decisión de
+  Pipe 2026-07-21: "no tienen que ser 10 minutos. puede ser más si el resultado es
+  brutal y de calidad". El respaldo de citas sigue siendo el único criterio que aprueba
+  o reprueba.
+- **Agnóstica de jurisdicción (REGLA DURA — para los tres agentes: Claude, Codex,
+  Antigravity):** Mia NO es colombiana ni de ninguna jurisdicción fija. Se adapta a la
+  persona/firma que la instala y a cómo quiera operarla: un despacho en México la adapta a
+  México, uno en Colombia a Colombia, uno en España a España. La jurisdicción se resuelve
+  POR DESPACHO (packs de `jurisdiction/`, default `generic`) — NUNCA se asume Colombia por
+  defecto. Colombia es solo la jurisdicción con la que Pipe validará el diseño cuando el
+  producto esté completo (un test, no el alcance). Todo default rígido a Colombia en código,
+  SQL o prompts (p. ej. `COALESCE(jurisdiction,'colombia')`, "Español de Colombia",
+  anonimizador o voz colombianos por defecto) es un BUG de framing a corregir hacia lo
+  configurable/`generic`. No describir ni construir Mia como producto de una jurisdicción.
+- **Conectores curados, adaptables por despacho:** Mia puede conectarse a distintos sistemas
+  (NotebookLM del despacho, y a futuro fuentes judiciales/registrales de la jurisdicción que
+  sea) CON reglas de juego claras y lista curada (estar en el catálogo = aprobado, patrón
+  `mcp/`), no como puerta abierta a "conectar a lo que sea". Cada firma conecta SUS fuentes.
 - **El usuario es un abogado, no un técnico.** Cero jerga en el frontend: no "HITL", no
   "vault", no "tenant", no "pgvector". El abogado ve "asunto", "revisar borrador",
   "Mia está investigando". Todo mensaje de error llega en lenguaje llano.
@@ -61,7 +79,7 @@ cualquier checkpoint.
 
 1. **Rama feature** por checkpoint.
 2. **Construir leyendo los repos de referencia EN DISCO** (`hermes-ref/`,
-   `claudeos-ref/`, `jarvis-ref/`, en `D:\Codex\Mia-Super Agent\`), no de memoria del
+   `claudeos-ref/`, en `D:\Inteligencia Artificial\Mia-Super Agent\`), no de memoria del
    modelo. Cada checkpoint del plan de olas trae sus archivos de referencia exactos.
 3. **Capa 1 — automatizada:** gate nuevo del checkpoint + regresión COMPLETA
    (`scripts/run_tests.ps1`; `test_rls` es HALT). Si hay frontend, `npm run build` verde.
@@ -144,7 +162,7 @@ subir sus guías de trabajo reales, corpus jurídico real (activa las citas "res
 ## Trampas conocidas de este entorno (te van a morder si no las sabes)
 
 - **Windows-first, Modo B nativo.** PowerShell, no bash de Linux. La ruta del proyecto
-  tiene ESPACIOS: siempre `"D:\Codex\Mia-Super Agent\mia"` entre comillas.
+  tiene ESPACIOS: siempre `"D:\Inteligencia Artificial\Mia-Super Agent\mia"` entre comillas.
 - **`git commit -F archivo`** siempre: el clasificador de permisos rompe con mensajes de
   commit que contienen rutas tipo endpoint (`/api/...`) o heredocs.
 - **`npm run build` con el dev server corriendo PISA la caché `.next`** (página en
@@ -160,8 +178,11 @@ subir sus guías de trabajo reales, corpus jurídico real (activa las citas "res
   entradas VIEJAS de `memory/session-summaries.md` y `memory/progress.md` tienen
   mojibake (UTF-8 leído como Windows-1252) — el contenido reciente está sano, pero un
   grep sobre el histórico puede fallar por eso.
-- **`call_llm(task="compression")` = claude-haiku SIEMPRE** (decisión documentada; no
-  "mejorar" a sonnet).
+- **`call_llm(task="compression")` está BLOQUEADA** a la cadena barata/local de la
+  política activa del despacho — ningún call-site la puede cambiar (un `model=` explícito
+  se ignora, `_LOCKED_TASKS` en `agent/llm.py`). El modelo concreto lo fija la política:
+  'suscripcion' = `cli-claude-haiku`, 'nube' = `claude-haiku`, 'soberano' = `mia-local`.
+  No "mejorar" a sonnet ni tocar el bloqueo sin documentar en `memory/decisions.md`.
 
 ---
 

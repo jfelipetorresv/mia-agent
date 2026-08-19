@@ -1,0 +1,6 @@
+{
+  "_nota_damage_control": "Los hooks damage-control (bloqueo de rm -rf/find -delete/dd/mkfs, git push --force/-f, git reset --hard, git clean -fd, DROP/TRUNCATE/DELETE sin WHERE, terraform destroy, etc., mas proteccion de .env/*.env/*.key contra escritura y borrado) ya estan declarados GLOBALMENTE en C:/Users/USER/.claude/settings.json (hooks.PreToolUse para Bash/Edit/Write -> C:/Users/USER/.claude/hooks/damage-control/{bash-tool-guard,edit-tool-guard,write-tool-guard}.py, mas hooks.PostToolUse Bash -> bash-output-validator.py) y patterns.yaml en esa misma carpeta. Esos hooks NO estan acotados por directorio: cubren cualquier sesion de Claude Code, incluida este repo, sin que este proyecto declare nada propio. Verificado en la sesion que escribio este archivo (existencia de C:/Users/USER/.claude/hooks/damage-control/*.py y patterns.yaml confirmada, y su registro en el settings.json global confirmado). Decision: NO duplicar la logica aqui -- este archivo documenta la reutilizacion, no la repite. Detalle en specs/todo/00-f0-preflight.md.",
+  "permissions": {
+    "additionalDirectories": []
+  }
+}

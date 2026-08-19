@@ -4,9 +4,6 @@ const nextConfig = {
   // subconjunto mínimo de node_modules, para empaquetar el frontend sin exigir `npm install`
   // completo en la máquina del abogado. No afecta `next dev` (solo cambia la salida de `next build`).
   output: "standalone",
-  // El gate verifica la COMPILACIÓN de TypeScript (corrección estructural). ESLint queda fuera
-  // del build para que reglas de estilo no lo tumben; el type-check de TS sigue activo.
-  eslint: { ignoreDuringBuilds: true },
   // Cabeceras de seguridad en TODAS las páginas (auditoría 2026-07):
   // - frame-ancestors/X-Frame-Options: nadie puede embeber la app en un iframe
   //   (clickjacking sobre los botones Aprobar/Rechazar).

@@ -11,8 +11,10 @@ import { apiGet, apiSend, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CountrySelector, COUNTRY_NAME_BY_CODE } from "./CountrySelector";
+import { TOOL_OPTIONS } from "./toolOptions";
 
 type AnswerValue =
   | string
@@ -29,21 +31,15 @@ type FullProfile = {
   completed: boolean;
 };
 
-type JurisdictionOption = { code: string; name: string; verified: boolean };
+// TOOL_OPTIONS vive en ./toolOptions.ts — compartida con onboarding/page.tsx (p18): el
+// abogado edita después de la entrevista con exactamente las mismas opciones, desde la
+// MISMA fuente (C2: una sola lista, para que las dos pantallas nunca se contradigan).
 
-// Copiado de onboarding/page.tsx (p18 — misma curaduría y descripciones): el abogado
-// edita después de la entrevista con exactamente las mismas opciones.
-const TOOL_OPTIONS: { name: string; description: string; comingSoon?: boolean }[] = [
-  { name: "Correo", description: "Mia vigila tus correos urgentes y te avisa." },
-  { name: "Calendario", description: "Mia te recuerda tus eventos y audiencias próximas." },
-  { name: "Gestor documental", description: "Mia consulta los documentos del despacho para responder." },
-  { name: "Mensajería (Telegram)", description: "Habla con Mia desde tu celular, por texto o por voz." },
-  {
-    name: "Carpetas en la nube (OneDrive/Google Drive)",
-    description: "Mia conoce las carpetas donde guardas tu trabajo.",
-  },
-  { name: "Notas del despacho", description: "Mia guarda y consulta tus notas.", comingSoon: true },
-];
+// Modo general: el código que ya usa el resolutor cuando no hay paquete jurídico para una
+// jurisdicción (no es un país). Mismo valor y mismo criterio que onboarding/page.tsx — se
+// manda cuando el despacho SOLO tiene países escritos a mano, para que su elección quede
+// registrada como decisión suya y no como "nunca configuró nada".
+const GENERIC_JURISDICTION = "generic";
 
 // ── Conversores tolerantes (mismo criterio que onboarding/page.tsx) ─────────────────
 function asNamePair(value: AnswerValue): { firm: string; lawyer: string } {
@@ -62,6 +58,10 @@ function asLocationPair(value: AnswerValue): { country: string; city: string } {
   return { country: typeof value === "string" ? value : "", city: "" };
 }
 
+function asText(value: AnswerValue): string {
+  return typeof value === "string" ? value : "";
+}
+
 function asList(value: AnswerValue): string[] {
   if (Array.isArray(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -73,13 +73,23 @@ function asList(value: AnswerValue): string[] {
 export default function MiDespachoSection() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [packCodes, setPackCodes] = useState<Set<string>>(new Set());
 
   const [firm, setFirm] = useState({ firm: "", lawyer: "" });
   const [location, setLocation] = useState({ country: "", city: "" });
   const [countryCodes, setCountryCodes] = useState<string[]>([]);
+  // Países escritos a mano (los que no están en la lista de casillas). Espejo exacto del
+  // paso de país del onboarding: si esta pantalla no los ofreciera, un despacho fuera de
+  // la lista podría darse de alta y luego perder su jurisdicción al editar el perfil.
+  const [otherCountries, setOtherCountries] = useState<string[]>([]);
   const [practiceAreas, setPracticeAreas] = useState<string[]>([]);
   const [clientType, setClientType] = useState<string[]>([]);
+  // Criterio (rediseño 2026-07-20): lo que la entrevista ahora sí pregunta. Si esta
+  // pantalla no lo reflejara, el abogado no podría corregir lo único que de verdad
+  // cambia cómo trabaja Mia — y las dos pantallas se contradirían.
+  const [revisoSiempre, setRevisoSiempre] = useState<string[]>([]);
+  const [decideSolo, setDecideSolo] = useState<string[]>([]);
+  const [nunca, setNunca] = useState<string[]>([]);
+  const [terminado, setTerminado] = useState("");
   const [tools, setTools] = useState<string[]>([]);
   const [tpNumber, setTpNumber] = useState("");
   const [preferredSources, setPreferredSources] = useState<string[]>([]);
@@ -93,22 +103,26 @@ export default function MiDespachoSection() {
   useEffect(() => {
     (async () => {
       try {
-        const [full, jd] = await Promise.all([
-          apiGet<FullProfile>("/api/profile/full"),
-          apiGet<{ jurisdictions: JurisdictionOption[] }>("/api/jurisdictions").catch(
-            () => ({ jurisdictions: [] as JurisdictionOption[] }),
-          ),
-        ]);
+        const full = await apiGet<FullProfile>("/api/profile/full");
         const r = full.responses || {};
         setFirm(asNamePair(r["identity.name"]));
         setLocation(asLocationPair(r["identity.location"]));
         setPracticeAreas(asList(r["jurisdiction.practice_areas"]));
         setClientType(asList(r["jurisdiction.client_type"]));
+        setRevisoSiempre(asList(r["autonomia.reviso_siempre"]));
+        setDecideSolo(asList(r["autonomia.decide_solo"]));
+        setNunca(asList(r["nunca"]));
+        setTerminado(asText(r["terminado"]));
         setTools(asList(r["memory.tools_that_survived"]));
-        setCountryCodes(full.jurisdictions || []);
+        const codes = (full.jurisdictions || []).filter((c) => c !== GENERIC_JURISDICTION);
+        setCountryCodes(codes);
+        // `jurisdiction.base` guarda los NOMBRES de todas las jurisdicciones del despacho.
+        // Los que no corresponden a una casilla marcada son los escritos a mano: se
+        // recuperan para que el abogado los vea y pueda cambiarlos, no para adivinarlos.
+        const fromCodes = new Set(codes.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c));
+        setOtherCountries(asList(r["jurisdiction.base"]).filter((n) => !fromCodes.has(n)));
         setTpNumber(full.extras?.tp_number || "");
         setPreferredSources(full.extras?.preferred_sources || []);
-        setPackCodes(new Set((jd.jurisdictions ?? []).map((j) => j.code)));
       } catch {
         setLoadError("No se pudo cargar tu perfil. Recarga la página.");
       } finally {
@@ -130,19 +144,31 @@ export default function MiDespachoSection() {
         "identity.location": { country: location.country, city: location.city },
         "jurisdiction.practice_areas": practiceAreas,
         "jurisdiction.client_type": clientType,
+        "autonomia.reviso_siempre": revisoSiempre,
+        "autonomia.decide_solo": decideSolo,
+        nunca,
+        terminado,
         "memory.tools_that_survived": tools,
       };
       // Mismo auto-llenado que onboarding/page.tsx finish(): la jurisdicción elegida
-      // también rellena `jurisdiction.base` con los NOMBRES (para el SOUL.md/resumen).
-      const countryNames = countryCodes.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c);
+      // también rellena `jurisdiction.base` con los NOMBRES (para el SOUL.md/resumen), y
+      // los países escritos a mano viajan por ahí — no tienen código de paquete.
+      const countryNames = [...countryCodes.map((c) => COUNTRY_NAME_BY_CODE[c] ?? c), ...otherCountries];
       if (countryNames.length > 0) responses["jurisdiction.base"] = countryNames;
+      // Sin ningún código pero con países escritos: modo general explícito.
+      const jurisdictions =
+        countryCodes.length > 0
+          ? countryCodes
+          : otherCountries.length > 0
+            ? [GENERIC_JURISDICTION]
+            : [];
 
       const res = await apiSend<{ ok: boolean; summary: string; warning?: string }>(
         "PUT",
         "/api/profile/full",
         {
           responses,
-          jurisdictions: countryCodes,
+          jurisdictions,
           extras: { tp_number: tpNumber, preferred_sources: preferredSources },
         },
       );
@@ -186,7 +212,7 @@ export default function MiDespachoSection() {
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
         <h3 className="text-sm font-semibold">Identidad</h3>
-        <TextField label="Nombre del despacho" value={firm.firm} onChange={(v) => setFirm({ ...firm, firm: v })} />
+        <TextField label="Nombre de la firma u organización" value={firm.firm} onChange={(v) => setFirm({ ...firm, firm: v })} />
         <TextField
           label="Tu nombre (abogado principal)"
           value={firm.lawyer}
@@ -203,9 +229,33 @@ export default function MiDespachoSection() {
         <p className="text-xs text-muted-foreground">
           Esto le dice a Mia qué normas y jurisprudencia usar. Puedes elegir más de un país.
         </p>
-        <CountrySelector packCodes={packCodes} value={countryCodes} onChange={setCountryCodes} />
+        <CountrySelector value={countryCodes} onChange={setCountryCodes} />
+        <ChipsField
+          label="¿Trabajas con las reglas de otro país? Escríbelo aquí"
+          value={otherCountries}
+          onChange={setOtherCountries}
+        />
         <ChipsField label="Áreas de práctica" value={practiceAreas} onChange={setPracticeAreas} />
         <ChipsField label="Tipo de cliente" value={clientType} onChange={setClientType} />
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-sm font-semibold">Cómo quieres que trabaje</h3>
+        <p className="text-xs text-muted-foreground">
+          Es lo que más cambia mi forma de trabajar. Cámbialo cuando cambie tu criterio.
+        </p>
+        <ChipsField label="Reviso siempre contigo antes de que salga" value={revisoSiempre} onChange={setRevisoSiempre} />
+        <ChipsField label="Puedo resolverlo sin preguntarte" value={decideSolo} onChange={setDecideSolo} />
+        <ChipsField label="Nunca debo hacer esto" value={nunca} onChange={setNunca} />
+        <div className="space-y-1.5">
+          <Label htmlFor="despacho-terminado">Un escrito está listo cuando…</Label>
+          <Textarea
+            id="despacho-terminado"
+            value={terminado}
+            onChange={(e) => setTerminado(e.target.value)}
+            rows={3}
+          />
+        </div>
       </section>
 
       <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
@@ -235,7 +285,7 @@ export default function MiDespachoSection() {
       {summary ? (
         <details className="rounded-xl border border-border bg-card/60">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
-            Así entendí a tu despacho
+            Así entendí a tu firma u organización
           </summary>
           <div className="whitespace-pre-wrap border-t border-border px-4 py-3 text-sm leading-relaxed text-muted-foreground">
             {summary}

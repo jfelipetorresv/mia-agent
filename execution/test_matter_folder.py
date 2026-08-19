@@ -32,6 +32,7 @@ import random
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import psycopg
@@ -53,6 +54,7 @@ except Exception:
 
 import init_local_folders                              # noqa: E402  (migración 016)
 import init_matter_folders                             # noqa: E402  (migración 025)
+import init_durable_jobs                              # noqa: E402  (migración 034)
 from mia import config, embeddings                     # noqa: E402
 from mia.db import pool                                # noqa: E402
 from mia.connectors import local_folders as lf         # noqa: E402
@@ -346,14 +348,32 @@ def api_checks(tid: str, matter_id: str, folder: Path) -> None:
               rd.status_code == 200 and rd.json().get("status") == "unlinked")
         visible.append(rd.text)
 
-        # el estado refleja la ingesta (la sync corre en segundo plano; se drena con GETs)
+        # El estado refleja la ingesta, que corre EN SEGUNDO PLANO: POST /folder solo encola
+        # un trabajo durable y el trabajador (jobs/durable.DurableWorker) lo reclama con
+        # POLL_SECONDS = 1.0s. Este bucle tiene que darle tiempo de RELOJ al trabajador.
+        # Presupuesto MEDIDO: el bucle anterior cortaba a las 100 vueltas × 0.05 s = 5 s como
+        # máximo. La convergencia REAL de esta ingesta, medida en esta máquina, fue de 15.5 s
+        # con las tres suites de carpetas corriendo seguidas (y de ~1–2 s con este gate solo
+        # y la DB caliente). Ahí está la "intermitencia" que arrastró este gate varias
+        # sesiones: en solitario cabía en 5 s y pasaba; encadenado no cabía y fallaba. El
+        # código de producción nunca estuvo mal; el presupuesto del test sí.
+        # El corte pasa a ser por RELOJ: 60 s, ~3.9x sobre el peor caso observado (15.5 s).
+        # Solo se agota si algo está roto de verdad, así que no vuelve lento el gate en verde.
+        deadline = time.monotonic() + 60.0
+        t0 = time.monotonic()
         files_indexed = 0
-        for _ in range(100):
+        elapsed = 0.0
+        while True:
             r = client.get(f"/api/matters/{matter_id}/folder", headers=auth)
             files_indexed = r.json().get("files_indexed", 0)
+            elapsed = time.monotonic() - t0
             if files_indexed >= 2:
                 break
-        check("GET /folder -> linked con files_indexed de la carpeta (md+txt)",
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        check(f"GET /folder -> linked con files_indexed de la carpeta (md+txt) "
+              f"(convergió en {elapsed:.1f}s)",
               r.status_code == 200 and r.json().get("linked") is True and files_indexed >= 2)
         visible.append(r.text)
 
@@ -391,8 +411,15 @@ def api_checks(tid: str, matter_id: str, folder: Path) -> None:
             docs_despues = c.execute(
                 "SELECT count(*) FROM documents WHERE matter_id=%s::uuid AND origin='folder'",
                 (matter_id,)).fetchone()[0]
+        # Dos afirmaciones DISTINTAS, separadas a propósito (ninguna se relaja: antes eran un
+        # solo check con las dos condiciones en un `and`). Fundirlas hacía que una ingesta que
+        # no había terminado (docs_folder < 2) se reportara como "los documentos NO se
+        # conservan", acusando a la desvinculación de una pérdida de datos que nunca ocurrió.
+        # Ese diagnóstico equivocado es el que arrastró este gate varias sesiones.
+        check("desvincular: la carpeta había traído sus documentos (precondición de la prueba)",
+              docs_folder >= 2)
         check("DELETE /folder: los documentos ya traídos SE CONSERVAN",
-              docs_despues == docs_folder and docs_folder >= 2)
+              docs_despues == docs_folder)
 
     # §G — sin jerga técnica en lo que ve el abogado
     blob = " ".join(visible).lower()
@@ -411,6 +438,7 @@ def main() -> int:
 
     init_local_folders.apply()    # idempotente: tablas de la allowlist (016)
     init_matter_folders.apply()   # idempotente: columnas del expediente vinculado (025)
+    init_durable_jobs.apply()     # idempotente: revisiones recuperables (034)
 
     (ROOT / ".tmp").mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="matterfolder_", dir=str(ROOT / ".tmp")))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager, suppress
 
@@ -17,11 +18,13 @@ from .. import config
 from ..cron import build_scheduler
 from ..db import pool
 from ..security import install_redacting_logging
+from ..setup import paths
 from .middleware import TenantContextMiddleware
-from .routes import (assistant, auth, automations, curator, folders, gold_cases, guides, hitl,
-                     learning, mailbox, matter_folders, matter_mail, matter_sources, mcp,
-                     missions, personas, policy, remote_drive, settings, setup, sources, speech,
-                     stream, traces, ux, value, welcome)
+from .routes import (assistant, atajos, auth, automations, citas_quemadas, curator, delegation,
+                     documents_review, folders, gold_cases, guides, hitl, learning, mailbox,
+                     matter_folders, matter_mail, matter_sources, mcp, missions, notebooklm,
+                     personas, playbook_health, policy, remote_drive, sessions, settings, setup,
+                     sources, speech, stream, traces, ux, value, welcome)
 
 # CP-S2: redacción de credenciales en logs desde el import del entrypoint —
 # nada que se loguee durante el arranque debe salir sin pasar por el redactor.
@@ -42,6 +45,13 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     scheduler_task = asyncio.create_task(scheduler.start())
 
+    # Trabajos largos recuperables (PostgreSQL local, sin Redis/nube).
+    from ..jobs import DurableWorker
+
+    durable_worker = DurableWorker(concurrency=2)
+    app.state.durable_worker = durable_worker
+    durable_task = asyncio.create_task(durable_worker.start())
+
     # CP-V1 (Ola 4): flusher periódico del uso real del LLM (metrics/usage bufferiza
     # en memoria desde call_llm; aquí se persiste a turn_usage cada 15s y al apagar).
     from ..metrics import usage as usage_metrics
@@ -55,9 +65,15 @@ async def lifespan(app: FastAPI):
                 logging.getLogger("mia.metrics.usage").exception("flush periódico falló")
 
     usage_task = asyncio.create_task(_usage_flusher())
+    from ..channels.telegram_bridge import start_bridge_if_configured
+    start_bridge_if_configured()
     try:
         yield
     finally:
+        await durable_worker.stop()
+        durable_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await durable_task
         scheduler.stop()
         scheduler_task.cancel()
         with suppress(asyncio.CancelledError):
@@ -132,7 +148,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -144,6 +160,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(auth.router)
 app.include_router(stream.router)
 app.include_router(hitl.router)
+# CP-HUB2: respuesta del abogado a una propuesta de ayudante externo (la otra pausa del
+# turno). Va junto a hitl: es el mismo mecanismo (Command(resume=...) + SSE) sobre la otra
+# decisión que Mia no puede tomar sola.
+app.include_router(delegation.router)
 # Router de ajustes del Agent Hub (Módulo 1e).
 app.include_router(settings.router)
 # Superficie /api/* de las 5 pantallas (Fase 3 backend, decisión #20).
@@ -171,6 +191,10 @@ app.include_router(matter_mail.router)
 # en una sola vista → GET /api/matters/{id}/sources. El router ya trae su propio prefijo
 # /api, se monta sin prefijo extra (igual que matter_folders/matter_mail).
 app.include_router(matter_sources.router)
+# Fase 1 · "Documentos por confirmar": lista y confirmación campo por campo de la metadata que el
+# clasificador dejó como duda (metadata_sugerida) → /api/matters/{id}/documents/pending|confirm.
+# El router ya trae su propio prefijo /api, se monta sin prefijo extra (igual que matter_mail).
+app.include_router(documents_review.router)
 # Fase 3 · ONEDRIVE REMOTO SELECTIVO: navegar/registrar/sincronizar carpetas → /api/drive/*.
 # El router ya trae su propio prefijo /api/drive, se monta sin prefijo extra.
 app.include_router(remote_drive.router)
@@ -186,6 +210,8 @@ app.include_router(automations.router, prefix="/api")
 app.include_router(value.router, prefix="/api")
 # CP-Z1 (Ola 3) · dictado local (Silero VAD + Parakeet v3, 100% en el servidor del despacho).
 app.include_router(speech.router, prefix="/api")
+# CP-NLM · instalar/conectar NotebookLM desde Conexiones (la consulta viva pasa por su gate).
+app.include_router(notebooklm.router, prefix="/api")
 app.include_router(policy.router, prefix="/api")
 app.include_router(personas.router, prefix="/api")
 # CP-E5 (Ola 5) · tablero de misión por expediente (objetivo grande → hitos visibles).
@@ -197,8 +223,15 @@ app.include_router(sources.router, prefix="/api")
 # F3 (bienvenida + activación) · estado de la primera vez y llaves mínimas de
 # instalación (búsqueda documental / respaldo del motor) → /api/welcome/*.
 app.include_router(welcome.router, prefix="/api")
+# Banco de citas quemadas (#46.2): el prefix ya viene en el router.
+app.include_router(citas_quemadas.router)
 # Banco de oro (gold-set de calidad por-despacho) · captura anonimizada + rúbrica → /api/gold-cases/*.
 app.include_router(gold_cases.router, prefix="/api")
+app.include_router(playbook_health.router)
+app.include_router(atajos.router, prefix="/api")
+# /daily y /cierre del expediente (Piezas 4c/4d/4e). El router ya trae su prefijo /api,
+# se monta sin prefijo extra (igual que matter_sources).
+app.include_router(sessions.router)
 
 
 @app.get("/health")
@@ -209,6 +242,9 @@ async def health():
         "pgvector": None,
         "embed_model": config.EMBED_MODEL,
         "embed_dim": config.EMBED_DIM,
+        # No depende de la conexión: cuántas migraciones trae ESTE bundle instalado
+        # (setup.paths ya sabe resolver dev vs. onedir de PyInstaller).
+        "migrations_expected": len(paths.migration_paths()),
     }
     try:
         async with pool.get_pool().connection() as conn:
@@ -217,12 +253,62 @@ async def health():
             )).fetchone()
             info["db"] = True
             info["pgvector"] = row[0] if row else None
+            # META D: cuántas migraciones quedaron aplicadas de verdad en el ledger
+            # (requiere el GRANT SELECT de 043_grant_migrations_ledger_read.sql;
+            # mia_app antes no podía leer public.mia_schema_migrations) y si el
+            # checkpointer de LangGraph (tablas 'checkpoint%') ya existe. El instalador
+            # compara esto contra migrations_expected para detectar una actualización
+            # a medias en vez de marcar 'ready' con el esquema incompleto.
+            migrations_row = await (await conn.execute(
+                "SELECT count(*) FROM public.mia_schema_migrations"
+            )).fetchone()
+            info["migrations_applied"] = migrations_row[0] if migrations_row else 0
+            checkpointer_row = await (await conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' "
+                "AND tablename LIKE 'checkpoint%')"
+            )).fetchone()
+            info["checkpointer"] = bool(checkpointer_row[0]) if checkpointer_row else False
+            # Fase 1 · verificación ESTRUCTURAL de la migración 045 (procedencia documental).
+            # migrations_applied==expected NO basta: ADD COLUMN IF NOT EXISTS pudo quedar
+            # registrado en el ledger aunque falte alguna columna. Se afirma la FORMA real de
+            # 045 (6 columnas: chunks.procedencia/folio_ancla + documents.tipo/parte/
+            # folio_radicado/fecha_documento) para que el instalador no marque 'ready' con el
+            # esquema a medias. information_schema no requiere GRANT extra (a diferencia del
+            # ledger, que dependió de 043).
+            prov_row = await (await conn.execute(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' "
+                "AND ((table_name='chunks' AND column_name IN ('procedencia','folio_ancla')) "
+                "OR (table_name='documents' AND column_name IN "
+                "('tipo','parte','folio_radicado','fecha_documento')))"
+            )).fetchone()
+            info["provenance_ready"] = bool(prov_row and prov_row[0] == 6)
     except Exception:  # noqa: BLE001 — el /health reporta el fallo, no lo propaga
         # Auditoría 2026-07: el detalle del error (que puede traer host/usuario de la
         # conexión) va SOLO al log (ya redactado); /health es público y responde genérico.
         logging.getLogger("mia.api.health").exception("health check: la DB no respondió")
         info["status"] = "degraded"
         info["error"] = "db_unavailable"
+    caps = config.optional_capabilities()
+    try:
+        from ..ingest.document_derivation import anydoc_available
+        anydoc = bool(anydoc_available())
+    except Exception:  # noqa: BLE001 — una capacidad ausente no degrada /health
+        anydoc = False
+    telegram_token = bool((os.getenv("TELEGRAM_BOT_TOKEN") or "").strip())
+    info["capabilities"] = {
+        "ocr": caps.get("ocr") or {},
+        "voice": caps.get("voice") or {},
+        "anydoc": {
+            "available": anydoc,
+            "reason": ("" if anydoc else
+                       "La lectura de Word/Excel no está incluida en esta instalación."),
+        },
+        "telegram": {
+            "available": telegram_token,
+            "reason": ("" if telegram_token else
+                       "Sin TELEGRAM_BOT_TOKEN el puente no arranca (opt-in)."),
+        },
+    }
     return info
 
 

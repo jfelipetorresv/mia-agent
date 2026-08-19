@@ -145,6 +145,7 @@ def ensure_seed_env(app_dir: Path, pg_port: int) -> tuple[Path, bool]:
         f"LITELLM_API_KEY={litellm_key}",
         f"LITELLM_MASTER_KEY={litellm_key}",
         "MIA_CORS_ORIGINS=http://localhost:3100,http://127.0.0.1:3100",
+        "MIA_API_HOST=127.0.0.1",
         "VOYAGE_API_KEY=",
         # MIA_ENV=prod (sub-tarea 7 del contrato): esta instancia corre en el
         # equipo real del abogado, no en un entorno de desarrollo compartido.
@@ -152,6 +153,8 @@ def ensure_seed_env(app_dir: Path, pg_port: int) -> tuple[Path, bool]:
         # `secure=True`, JWT exige `exp` — y auth.py SIEMPRE firma `exp`
         # (routes/auth.py:150-152), así que este endurecimiento no rompe el login.
         "MIA_ENV=prod",
+        # Las marcas de membresía Codex NO se guardan: Tauri las inyecta solo en
+        # el proceso local que inicia. Un bootstrap de servidor no puede heredarlas.
         "",
     ]
     _atomic_write_text(env_path, "\n".join(lines))
@@ -285,6 +288,18 @@ def stop_own_postgres(pg_bin: Path, pg_data: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # La cascara Tauri lee este stdout con fs::read_to_string (UTF-8 estricto)
+    # para mostrarle al abogado la ULTIMA LINEA como motivo del fallo. En
+    # Windows, sin esto, Python decide la codificacion segun el locale de la
+    # maquina (cp1252 en un Windows en espanol): los acentos del mensaje
+    # saldrian en bytes que Rust no puede leer y el abogado se quedaria sin
+    # motivo. Se fija explicitamente para no depender de la maquina destino.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass  # fail-soft: nunca impedir el primer arranque por esto
+
     parser = argparse.ArgumentParser(prog="mia-backend --first-run")
     parser.add_argument("--pg-bin", required=True)
     parser.add_argument("--pg-data", required=True)

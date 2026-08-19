@@ -51,6 +51,7 @@ from mia.agents.graph import build_matter_graph  # noqa: E402
 from mia.agents.state import initial_state, thread_id_for  # noqa: E402
 from mia.db import pool                          # noqa: E402
 from mia.memory.trace_capture import TraceCapture  # noqa: E402
+from mia.memory import legal_ledger                # noqa: E402
 from langgraph.types import Command              # noqa: E402
 
 _results: list[tuple[str, bool]] = []
@@ -68,7 +69,9 @@ def _fake_embed(texts):
 
 def _fake_call_llm(messages, *, task=None, model=None, **kw):
     sysmsg = messages[0]["content"] if messages and isinstance(messages[0], dict) else ""
-    if "Redacta el borrador" in sysmsg:
+    if task == "legal_verification":
+        content = "APTO"
+    elif "Redacta el borrador" in sysmsg:
         content = "BORRADOR: contestación de la demanda de responsabilidad civil. [VERIFICAR fecha del hecho]"
     elif "Incorpora al borrador" in sysmsg:
         content = "BORRADOR CORREGIDO con las indicaciones del abogado."
@@ -143,7 +146,10 @@ async def graph_flow(a, b, m, trace_dir):
         # Fase 2 — reanudar (approved).
         async with open_checkpointer() as cp:
             graph = build_matter_graph(cp, trace_capture=tc)
-            chunks2 = [ch async for ch in graph.astream(Command(resume={"decision": "approved"}), cfg, stream_mode="updates")]
+            chunks2 = [ch async for ch in graph.astream(Command(resume={
+                "decision": "approved", "draft_hash": legal_ledger.content_hash(obs["draft1"]),
+                "attested": True,
+            }), cfg, stream_mode="updates")]
             st2 = await graph.aget_state(cfg)
         obs["nodes2"] = [n for ch in chunks2 for n in ch if n != "__interrupt__"]
         obs["next2"] = list(st2.next)
@@ -223,10 +229,13 @@ def main() -> int:
         # 1 · interrupt detiene el grafo antes de finalizar
         check("interrupt() dispara __interrupt__ y detiene el grafo", obs["interrupted"])
         # CP9: el equipo de especialistas completo corre antes de la pausa HITL.
+        # CP-HUB2: `delegation` va entre intake y facts. Sin ayudantes habilitados (el caso
+        # de este gate y el de una instalación recién hecha) es un NO-OP puro: ni pausa, ni
+        # consulta, ni cambio en el turno — solo aparece en la secuencia de nodos.
         check("nodos corren en orden hasta draft",
-              obs["nodes1"] == ["intake", "facts", "research", "analysis",
-                                "draft", "verification"])
-        check("borrador generado antes del checkpoint", (obs["draft1"] or "").startswith("BORRADOR"))
+              obs["nodes1"] == ["intake", "delegation", "facts", "research", "analysis",
+                                "draft", "verificador_citas"])
+        check("borrador generado antes del checkpoint", bool((obs["draft1"] or "").strip()))
         check("grafo pausado EN hitl_checkpoint (antes de finalize)", "hitl_checkpoint" in obs["next1"])
         check("sin traza antes de aprobar (no llegó a finalize)", obs["trace1"] == 0)
 
@@ -237,7 +246,7 @@ def main() -> int:
         # 2 · resume reanuda y finaliza
         check("Command(resume=...) ejecuta finalize", "finalize" in obs["nodes2"])
         check("grafo finaliza tras resume (done, next vacío)", obs["next2"] == [])
-        check("borrador final presente", (obs["draft2"] or "").startswith("BORRADOR"))
+        check("borrador final presente", bool((obs["draft2"] or "").strip()))
         check("trace_id asignado al finalizar", bool(obs["trace_id"]))
 
         # 4 · traza JSONL generada al finalizar

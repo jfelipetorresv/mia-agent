@@ -1,0 +1,17 @@
+{
+  "_note": "Señales del wake-gate metadata-only de correo (`connectors/mailbox/base.py::mail_looks_urgent`). Se SUMAN al léxico pan-hispano del código. `urgency_terms` son fragmentos de regex (se insertan en una alternancia con \\b...\\b, case-insensitive). `institutional_sender_domains` se comparan por SUFIJO del remitente.",
+  "urgency_terms": [
+    "tutela",
+    "acci[oó]n\\s+de\\s+tutela",
+    "desacato",
+    "despacho\\s+judicial"
+  ],
+  "institutional_sender_domains": [
+    "ramajudicial.gov.co",
+    "cendoj.ramajudicial.gov.co",
+    "procuraduria.gov.co",
+    "fiscalia.gov.co",
+    "supersociedades.gov.co",
+    "superfinanciera.gov.co"
+  ]
+}

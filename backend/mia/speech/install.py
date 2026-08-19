@@ -9,19 +9,20 @@ confirmación explícita (consent-first, patrón "Instalar Obsidian").
 
 Es Python stdlib puro (urllib + tarfile + shutil): a diferencia del instalador
 de Obsidian (que instala software en el HOST con winget y por eso se limita a
-Modo B), esto solo escribe pesos en el data-dir propio de Mia → funciona igual
-en Modo A (Docker/Linux) y Modo B (Windows nativo). NO lo "arregles" agregando
-PowerShell o deshabilitándolo en Modo A.
+Windows nativo), esto solo escribe pesos en el data-dir propio de Mia → no
+depende de Windows: si algún día hubiera un despliegue en Docker/Linux,
+funcionaría igual sin cambios. NO lo "arregles" agregando PowerShell ni
+deshabilitándolo pensando en un despliegue multi-worker que hoy no existe.
 
 Estado: el DISCO es la fuente de verdad de instalado/no instalado
 (`missing_components()` mira los mismos archivos que `engine.available()`).
 La memoria del proceso solo guarda lo transitorio — la descarga viva — que de
 todas formas muere con el proceso: persistirla en DB mentiría tras un reinicio
 ("descargando" eterno). Mismo criterio que `_clip_hits` (routes/speech.py) y
-`_detect_cache` (routes/setup.py): Modo B corre 1 worker. Limitación declarada
-para Modo A multi-worker: el polling del progreso puede caer en un worker sin
-la descarga (verá "no instalado" mientras otro descarga); mitigación futura =
-estado en Postgres.
+`_detect_cache` (routes/setup.py): hoy corre 1 worker. Limitación declarada
+si algún día hubiera un despliegue multi-worker: el polling del progreso
+podría caer en un worker sin la descarga (verá "no instalado" mientras otro
+descarga); mitigación futura = estado en Postgres.
 """
 from __future__ import annotations
 

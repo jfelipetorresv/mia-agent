@@ -12,21 +12,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { renderInline } from "@/components/MiaMarkdown";
 import type { DebateTurn, TesisViable, WarRoomResult } from "./warroom-types";
 
-// Mismo resaltado que revisar/page.tsx (renderDraft): [VERIFICAR…] es la señal
-// de "esto lo confirmas tú" en cualquier texto que Mia redacte.
+// Mismo resaltado que el borrador (revisar/page.tsx): [VERIFICAR…] es la señal
+// de "esto lo confirmas tú" en cualquier texto que Mia redacte. La función es
+// compartida (MiaMarkdown) justamente para que nunca vuelva a divergir.
 function renderMarked(text: string) {
-  const parts = text.split(/(\[VERIFICAR[^\]]*\])/g);
-  return parts.map((p, i) =>
-    p.startsWith("[VERIFICAR") ? (
-      <mark key={i} title="Verificar antes de presentar" className="rounded bg-warning/20 px-1 font-sans text-sm font-medium text-warning">
-        {p}
-      </mark>
-    ) : (
-      <span key={i}>{p}</span>
-    ),
-  );
+  return renderInline(text, "sala");
 }
 
 const TESIS_BADGE: Record<TesisViable, { variant: "success" | "warning" | "destructive"; label: string }> = {

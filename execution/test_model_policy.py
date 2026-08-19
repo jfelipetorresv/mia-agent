@@ -3,7 +3,7 @@ Mia · test_model_policy.py — gate de CP2 (política de modelo por tenant + pr
 
 Verifica OFFLINE (sin red, sin proxy, sin CLI real: subprocess y shutil.which van MOCKEADOS):
 
-  1. política 'suscripcion' → la cadena de main empieza con cli-claude (CLI de la suscripción).
+  1. políticas 'suscripcion' y 'codex' → proveedor explícito, sin cambio silencioso de motor.
   2. política 'soberano' → TODO va a mia-local.
   3. política 'nube' → claude-sonnet primero y compression=claude-haiku (decisión #7 restaurada).
   4. compression sigue BLOQUEADA ante un model explícito en las 3 políticas.
@@ -127,19 +127,75 @@ def run() -> None:
     def _sus():
         check("1a · [suscripcion] main empieza con cli-claude",
               llm.resolve_fallback_chain("main")[0] == "cli-claude")
-        check("1b · [suscripcion] main → cli-claude→claude-sonnet→mia-local",
-              llm.resolve_fallback_chain("main") == ["cli-claude", "claude-sonnet", "mia-local"])
-        check("1c · [suscripcion] curator = cadena de main",
+        check("1b · [suscripcion] main no cambia a API/local sin que el abogado lo elija",
+              llm.resolve_fallback_chain("main") == ["cli-claude"])
+        check("1c · [suscripcion] curator conserva respaldo explícito no jurídico",
               llm.resolve_fallback_chain("curator") == ["cli-claude", "claude-sonnet", "mia-local"])
         check("1d · [suscripcion] auxiliares → cli-claude-haiku→mia-local",
               all(llm.resolve_fallback_chain(t) == ["cli-claude-haiku", "mia-local"] for t in _AUX))
         check("1e · [suscripcion] compression → cli-claude-haiku→claude-haiku (red barata si el CLI falla)",
               llm.resolve_fallback_chain("compression") == ["cli-claude-haiku", "claude-haiku"])
+        check("1f · [suscripcion] funciones jurídicas no cambian a API/local sin consentimiento",
+              all(llm.resolve_fallback_chain(t) == ["cli-claude"]
+                  for t in llm.LEGAL_TASKS))
     with_policy("suscripcion", _sus)
+
+    # === 1g · política adaptativa: escalamiento determinista y telemetría efectiva ===
+    def _adaptive():
+        # Decisión de Pipe 2026-08-14: el más inteligente PIENSA Y ORQUESTA (main y
+        # legal_analysis en Opus primero, degradando dentro de la misma suscripción);
+        # la ejecución dirigida va en Sonnet y lo mecánico en Haiku.
+        check("1g · [quality_adaptive] Opus piensa/orquesta; Sonnet ejecuta; Haiku lo mecánico",
+              llm.resolve_fallback_chain("main") == [llm.CLI_OPUS_ALIAS, llm.CLI_SONNET_ALIAS]
+              and llm.resolve_fallback_chain("legal_analysis")
+              == [llm.CLI_OPUS_ALIAS, llm.CLI_SONNET_ALIAS]
+              and llm.resolve_fallback_chain("legal_draft") == [llm.CLI_SONNET_ALIAS]
+              and llm.resolve_fallback_chain("legal_verification") == [llm.CLI_SONNET_ALIAS]
+              and llm.resolve_fallback_chain("verification")[0] == llm.CLI_HAIKU_ALIAS)
+        check("1g-bis · la degradación del pensador queda dentro de la suscripción (cli-*)",
+              all(a.startswith("cli-") for a in llm.resolve_fallback_chain("main")))
+        check("1h · Max solo existe para escalamiento excepcional; caso ordinario conserva xhigh",
+              llm._cli_effort(llm.CLI_OPUS_ALIAS, "legal_draft") == "xhigh"
+              and llm._cli_effort(llm.CLI_OPUS_ALIAS, "legal_draft", "exceptional") == "max")
+        normal = [{"role": "user", "content": "análisis puntual"}]
+        huge = [{"role": "user", "content": "x" * llm._EXCEPTIONAL_LEGAL_CONTEXT_CHARS}]
+        check("1i · gate determinista: solo expediente jurídico extenso activa excepción",
+              llm._automatic_quality_escalation("legal_draft", normal) == "standard"
+              and llm._automatic_quality_escalation("legal_draft", huge) == "exceptional"
+              and llm._automatic_quality_escalation("main", huge) == "standard")
+
+        captured: dict[str, object] = {}
+        saved_call = subscription_llm.call_cli
+        try:
+            def _cli(messages, model_hint=None, timeout=0, effort=None):
+                captured.update(model_hint=model_hint, effort=effort, messages=messages)
+                return ok_response("respuesta excepcional")
+            subscription_llm.call_cli = _cli
+            install({})
+            response = llm.call_llm(huge, task="legal_draft")
+            check("1j · el gate sí llega al CLI: Opus + --effort max (no capacidad muerta)",
+                  response.choices[0].message.content == "respuesta excepcional"
+                  and captured.get("model_hint") == "opus" and captured.get("effort") == "max")
+        finally:
+            subscription_llm.call_cli = saved_call
+    with_policy("quality_adaptive", _adaptive)
+
+    from mia.metrics import usage as usage_metrics
+    check("1k · aliases adaptativos de suscripción tienen costo marginal cero (sin tarifa ficticia)",
+          all(usage_metrics.estimated_call_cost(alias, MSG, 1000, task="legal_draft") == 0.0
+              and usage_metrics.cost_usd(alias, 1000, 1000) == 0.0
+              for alias in (llm.CLI_OPUS_ALIAS, llm.CLI_SONNET_ALIAS, llm.CLI_HAIKU_ALIAS)))
+
+    # === 1l · Codex productivo es una política explícita, no eval/fallback ===
+    def _codex():
+        tasks = ("main", *llm.LEGAL_TASKS, "curator", "compression", *_AUX)
+        check("1l · [codex] todas las tareas quedan en cli-codex, sin Claude/API/local",
+              all(llm.resolve_fallback_chain(t) == [llm.CLI_CODEX_ALIAS] for t in tasks))
+    with_policy("codex", _codex)
 
     # === 2 · política 'soberano' → todo mia-local ===
     def _sob():
-        tasks = ("main", "curator", "compression", *_AUX)
+        tasks = ("main", *llm.LEGAL_TASKS, "curator", "compression", *_AUX)
         check("2a · [soberano] TODAS las tareas → mia-local",
               all(llm.resolve_fallback_chain(t) == ["mia-local"] for t in tasks))
     with_policy("soberano", _sob)
@@ -152,10 +208,14 @@ def run() -> None:
               llm.resolve_fallback_chain("compression") == ["claude-haiku"])
         check("3c · [nube] auxiliares → claude-haiku→mia-local",
               all(llm.resolve_fallback_chain(t) == ["claude-haiku", "mia-local"] for t in _AUX))
+        check("3d · [nube] funciones jurídicas nunca degradan silenciosamente a local",
+              all(llm.resolve_fallback_chain(t) == ["claude-sonnet"]
+                  for t in llm.LEGAL_TASKS))
     with_policy("nube", _nub)
 
     # === 4 · compression BLOQUEADA ante model explícito en las 3 políticas ===
     expected_locked = {"suscripcion": ["cli-claude-haiku", "claude-haiku"],
+                       "codex": [llm.CLI_CODEX_ALIAS],
                        "nube": ["claude-haiku"], "soberano": ["mia-local"]}
     for pol, exp in expected_locked.items():
         with_policy(pol, lambda pol=pol, exp=exp: check(
@@ -178,32 +238,40 @@ def run() -> None:
         check("5c · se clasifica MODEL_UNAVAILABLE (salto inmediato, sin reintentos)",
               kind is LLMErrorKind.MODEL_UNAVAILABLE and should_fallback(kind))
 
-        fc = install({"claude-sonnet": [ok_response("desde sonnet")]})
+        fc = install({})
 
         def _call():
-            resp = llm.call_llm(MSG, task="main")
-            check("5d · call_llm (suscripcion, CLI ausente) → responde el siguiente proveedor",
-                  resp.choices[0].message.content == "desde sonnet")
-            check("5e · claude-sonnet se llamó exactamente una vez", fc.count("claude-sonnet") == 1)
+            failed = None
+            try:
+                llm.call_llm(MSG, task="main")
+            except Exception as exc:  # expected: selected subscription has no silent substitute
+                failed = exc
+            check("5d · call_llm (suscripcion, CLI ausente) falla claro sin tocar API/local",
+                  isinstance(failed, llm.LLMError) and "cli-claude" in str(failed))
+            check("5e · no se llamó claude-sonnet", fc.count("claude-sonnet") == 0)
         with_policy("suscripcion", _call)
     finally:
         restore_cli(saved)
 
     # 5f · blindaje BatBadBut (CVE-2024-24576): un `claude` que resuelve a .cmd/.ps1
     # pasaría por cmd.exe al ejecutarse con lista de args → se trata como NO disponible.
-    saved = patch_cli(run_fn=lambda *a, **k: _FakeProc(CLI_OK_JSON), which="C:\\fake\\claude.cmd")
-    try:
-        exc = None
+    # La superficie es Windows (`os.name == "nt"` en subscription_llm._resolve_exe).
+    if sys.platform == "win32":
+        saved = patch_cli(run_fn=lambda *a, **k: _FakeProc(CLI_OK_JSON), which="C:\\fake\\claude.cmd")
         try:
-            subscription_llm.call_cli(MSG)
-        except Exception as e:  # noqa: BLE001
-            exc = e
-        check("5f · which→claude.cmd (no .exe) → SubscriptionCLIUnavailable (BatBadBut)",
-              isinstance(exc, subscription_llm.SubscriptionCLIUnavailable))
-        check("5g · is_available() == False con which→.cmd",
-              subscription_llm.is_available() is False)
-    finally:
-        restore_cli(saved)
+            exc = None
+            try:
+                subscription_llm.call_cli(MSG)
+            except Exception as e:  # noqa: BLE001
+                exc = e
+            check("5f · which→claude.cmd (no .exe) → SubscriptionCLIUnavailable (BatBadBut)",
+                  isinstance(exc, subscription_llm.SubscriptionCLIUnavailable))
+            check("5g · is_available() == False con which→.cmd",
+                  subscription_llm.is_available() is False)
+        finally:
+            restore_cli(saved)
+    else:
+        print("  [SKIP] 5f/5g BatBadBut: cmd.exe solo existe en Windows")
 
     # === 6 · parse correcto del JSON real del CLI ===
     captured: dict = {}
@@ -304,18 +372,98 @@ def run() -> None:
     finally:
         restore_cli(saved)
 
-    # integración: CLI que falla (is_error) → la cadena avanza hasta claude-sonnet
+    # integración: CLI que falla → la política de suscripción falla claro, sin cobrar API
     saved = patch_cli(lambda *a, **k: _FakeProc(CLI_ERR_JSON, returncode=1))
     try:
-        fc = install({"claude-sonnet": [ok_response("rescate en nube")]})
+        fc = install({})
 
         def _call():
-            resp = llm.call_llm(MSG, task="main")
-            check("7e · call_llm (suscripcion, CLI en error) → salta y responde claude-sonnet",
-                  resp.choices[0].message.content == "rescate en nube")
+            failed = None
+            try:
+                llm.call_llm(MSG, task="main")
+            except Exception as exc:  # expected
+                failed = exc
+            check("7e · call_llm (suscripcion, CLI en error) no cambia a API sin autorización",
+                  isinstance(failed, llm.LLMError) and fc.count("claude-sonnet") == 0)
         with_policy("suscripcion", _call)
     finally:
         restore_cli(saved)
+
+    # === R5-3 · presupuesto POR INTENTO (regresión del R4-CRÍTICO, Codex ronda 4) ===
+    # El dinero se reserva/liquida DENTRO de `_invoke_metered`, una vez por POST físico. Estos
+    # checks fijan con VALORES CONOCIDOS los tres modos que el bug de Codex evadía (reservar UNA
+    # vez por alias y liquidar con el usage del ÚLTIMO intento — o a 0):
+    #   (a) N fallos que SÍ llegaron al proveedor → N estimaciones cobradas (no una sola, no 0);
+    #   (b) fallos previos a un éxito → CADA intento liquida (no solo el último);
+    #   (c) un éxito SIN usage legible → cobra la ESTIMACIÓN (NUNCA 0 — el bug histórico exacto).
+    # Todo OFFLINE con el cliente falso (FakeCompletions); reserva/liquidación MOCKEADAS para
+    # capturar los importes sin tocar la DB. Mutación (liquidar siempre 0.0, el bug de Codex):
+    # al menos un check → ROJO (verificado editando `_invoke_metered` y restaurando).
+    from mia.policy import budget as policy_budget
+
+    MSG53 = [{"role": "user", "content": "x" * 4000}]
+    # estimated_call_cost('claude-sonnet', MSG53, max_tokens=2000, task='main') → payload fijo:
+    EST = 0.033045   # 1015 prompt-tok × 3.00 + 2000 compl-tok × 15.00, por Mtok
+
+    def _ok_usage():
+        # éxito con usage conocido: 1.0M prompt + 0.2M completion, SIN caché → 6.00 plano.
+        return SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=200_000,
+                                  total_tokens=1_200_000,
+                                  cache_read_input_tokens=0, cache_creation_input_tokens=0),
+            choices=[SimpleNamespace(finish_reason="stop",
+                                     message=SimpleNamespace(content="ok"))])
+
+    def _ok_no_usage():
+        return SimpleNamespace(
+            usage=None,
+            choices=[SimpleNamespace(finish_reason="stop",
+                                     message=SimpleNamespace(content="ok"))])
+
+    class _Boom500(Exception):
+        status_code = 500   # llegó al proveedor (INCIERTO → se cobra); 500 → SERVER_ERROR (reintenta)
+
+    def _settlements_for(outcomes: list) -> list[float]:
+        """call_llm(model=claude-sonnet, max_tokens=2000) con un guion de intentos; devuelve las
+        liquidaciones capturadas (una por POST físico). model explícito → cadena de un alias."""
+        settled: list[float] = []
+        install({"claude-sonnet": outcomes})
+        orig_reserve = policy_budget.reserve_call_sync
+        orig_finish = policy_budget.finish_call_sync
+        tok = usage_metrics.set_usage_scope("00000000-0000-0000-0000-000000000000", None, "api")
+        try:
+            policy_budget.reserve_call_sync = lambda tenant, est, **kw: "hold-r53"
+            policy_budget.finish_call_sync = (
+                lambda tenant, hold, actual: settled.append(round(actual, 6)))
+            try:
+                llm.call_llm(MSG53, task="main", model="claude-sonnet", max_tokens=2000)
+            except Exception:  # noqa: BLE001 — (a) agota la cadena y lanza; irrelevante aquí
+                pass
+        finally:
+            policy_budget.reserve_call_sync = orig_reserve
+            policy_budget.finish_call_sync = orig_finish
+            usage_metrics.reset_usage_scope(tok)
+            usage_metrics.drain()   # limpia el buffer de record() de los éxitos
+        return settled
+
+    def _approx(got: list[float], exp: list[float]) -> bool:
+        return len(got) == len(exp) and all(abs(g - e) < 1e-9 for g, e in zip(got, exp))
+
+    a53 = _settlements_for([_Boom500(), _Boom500(), _Boom500(), _Boom500()])
+    check(f"R5-3(a) · 4 fallos que llegaron al proveedor → 4 estimaciones cobradas "
+          f"(liquidaciones={a53}, suma={round(sum(a53), 6)} == 0.13218 = 4×{EST}); "
+          f"mutación liquidar 0.0 en la vía de fallo → suma 0 → ROJO",
+          _approx(a53, [EST, EST, EST, EST]) and abs(sum(a53) - 0.13218) < 1e-9)
+
+    b53 = _settlements_for([_Boom500(), _Boom500(), _Boom500(), _ok_usage()])
+    check(f"R5-3(b) · 3 fallos + éxito → 4 liquidaciones [est,est,est,6.00], no solo la última "
+          f"({b53}); mutación liquidar 0.0 en el éxito → la 4ª cae a 0.0 → ROJO",
+          _approx(b53, [EST, EST, EST, 6.0]))
+
+    c53 = _settlements_for([_ok_no_usage()])
+    check(f"R5-3(c) · éxito SIN usage legible → cobra la ESTIMACIÓN, nunca 0 "
+          f"({c53} == [{EST}]); mutación liquidar 0.0 → 0.0 → ROJO (bug histórico de Codex)",
+          _approx(c53, [EST]) and EST > 0)
 
     # === 8 · ContextVar: set / get / reset / inválida ===
     default = llm._default_policy()
@@ -360,6 +508,50 @@ def run() -> None:
     finally:
         pool_mod.tenant_connection = saved_tc
 
+    # === 10 · capacidad honesta: ausencia de Claude/Codex no se oculta a la UI ===
+    from mia.api.routes import settings
+    from mia.agent import codex_subscription_llm
+    saved_available = subscription_llm.is_available
+    saved_codex_available = codex_subscription_llm.is_available
+    saved_list_available = settings._hub.list_available
+    try:
+        subscription_llm.is_available = lambda: False
+        codex_subscription_llm.is_available = lambda: False
+        settings._hub.list_available = lambda: {"codex": {"installed": False}}
+        capabilities = settings._model_capabilities()
+        check("10a · capabilities expone Claude y Codex ausentes sin prometer disponibilidad",
+              capabilities["claude_code"]["installed"] is False
+              and capabilities["codex"]["installed"] is False
+              and capabilities["claude_code"]["max_is_exceptional"] is True)
+        check("10b · efforts usa la interfaz pública, incluida la capacidad Max excepcional",
+              tuple(capabilities["claude_code"]["available_efforts"])
+              == subscription_llm.supported_efforts())
+        activation = (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8")
+        # 10b-bis (decisión de Pipe 2026-08-14): el default del backend dice lo MISMO que
+        # la pantalla de activación — un tenant que nunca guarda queda en la política que
+        # la pantalla le mostró seleccionada. Cubre config, el fallback de llm y la UI.
+        from mia import config as _config
+        check("10b-bis · default backend = default UI = quality_adaptive",
+              _config.MIA_MODEL_POLICY == "quality_adaptive"
+              and llm._default_policy() == "quality_adaptive"
+              and 'useState<Politica>("quality_adaptive")'
+              in (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8"))
+        # 10c-bis (auditoría 2026-08-14): `capabilities` dejó de ser payload huérfano —
+        # Ajustes deshabilita Codex cuando no está instalado y muestra blocked_reason.
+        conexiones = (ROOT / "frontend" / "app" / "_components" /
+                      "ConexionesSection.tsx").read_text(encoding="utf-8")
+        check("10c-bis · Ajustes lee capabilities: Codex no disponible se deshabilita con razón",
+              "capabilities?.codex?.installed === false" in conexiones
+              and "blocked_reason" in conexiones)
+        check("10c · UI expone Codex como motor explícito y no promete cambio silencioso",
+              "Codex en este equipo" in activation
+              and "No funciona en servidores ni cambia a Claude, nube ni otro motor" in activation
+              and "Requiere un plan Max" not in activation)
+    finally:
+        subscription_llm.is_available = saved_available
+        codex_subscription_llm.is_available = saved_codex_available
+        settings._hub.list_available = saved_list_available
+
 
 def main() -> int:
     print("== CP2 · política de modelo por tenant + proveedor CLI de suscripción ==")
@@ -372,7 +564,7 @@ def main() -> int:
     total = len(_results)
     print(f"\n{passed}/{total} checks PASS")
     if passed == total:
-        print("model policy OK — CP2 verificado (3 políticas + CLI + ContextVar + tenant_settings).")
+        print("model policy OK — políticas + CLI + ContextVar + tenant_settings verificados.")
         return 0
     print("model policy FAIL — HALT: no avanzar (CLAUDE.md §G).")
     return 1

@@ -1,6 +1,6 @@
 # Mia — decisions.md
 # Decisiones arquitectónicas con razonamiento completo
-# Última actualización: 2026-06-14
+# Última actualización: 2026-07-20 (sesión 50)
 # (Estas decisiones NO se re-discuten — ver CLAUDE.md sección D)
 
 ---
@@ -31,7 +31,10 @@ de infraestructura sin justificación para la escala actual.
 ## 5 · 2026-06-01 — Windows como plataforma de desarrollo principal
 **Decisión:** desarrollo en Windows, Modo B (nativo).
 **Razonamiento:** la laptop del fundador necesita acceso libre a Obsidian y
-documentos. Modo A (Docker + WSL2) queda reservado para producción.
+documentos. Modo A (Docker + WSL2) quedó reservado para producción.
+**Estado (2026-07):** Modo A nunca se implementó — 0 Dockerfile/docker-compose
+en el repo. Queda fuera de alcance de v1; se conserva esta decisión histórica
+como registro, no como capacidad disponible.
 
 ## 6 · 2026-06-01 — Core propio (no fork de Hermes)
 **Decisión:** core propio adoptando patrones MIT de Hermes.
@@ -558,3 +561,418 @@ sandbox). (5) El error de vault sin configurar llega al abogado en lenguaje llan
 configure."); el detalle técnico queda solo en el log (`VaultConfigError`). Gates:
 test_vault_write ampliado a 34/34 (junction REAL con mklink /J + stems reservados) ·
 test_wiki_manager 18/18 · test_dreams 16/16 · test_obsidian_sync 22/22 sin regresión.
+
+## #33 — 2026-07-16 · Anonimizador: "enmascarar todo, siempre" (decisión de Pipe)
+
+**Decisión.** El anonimizador aplica SIEMPRE los patrones de **todos los packs instalados** + la
+base universal + los respaldos por rol, **sin mirar la jurisdicción del despacho**. `jurisdictions`
+desaparece de su API pública (un llamador viejo revienta con TypeError en vez de que se le ignore
+en silencio).
+
+**Razonamiento.** El anonimizador es un gate de confidencialidad: si falla, se filtran datos de
+clientes reales. **El secreto profesional manda sobre la precisión del análisis.** Se acepta
+sobre-enmascarar; no se acepta filtrar un dato por ser de otro país — un despacho colombiano recibe
+clientes españoles, y el pack 'co' cubriendo el rol suprimía el respaldo que atrapaba el DNI (fuga
+preexistente, confirmada ejecutando). Filtrar la cédula de un cliente es irreversible; enmascarar de
+más solo estorba.
+
+**Efecto aceptado y dicho:** `artículos 1494-1495` se enmascara como teléfono. Se prefiere ese ruido
+a un dato del cliente en claro.
+
+**Corolario estructural.** Los respaldos por rol (DOCUMENTO/TELEFONO) **no son suprimibles por
+configuración**: antes, un pack podía apagar la red pan-hispana con solo declarar un `role` — bastaba
+un typo, sin malicia, y salían cédulas y DNI en crudo. Un gate de seguridad que un archivo de datos
+puede desactivar no es un gate.
+
+## #34 — 2026-07-17 · Delegación: "MIA decide y me pregunta" (decisión de Pipe)
+
+**Decisión.** MIA puede **decidir por sí misma** que necesita un ayudante externo y **proponerlo** al
+abogado. Tres modos por despacho (`tenant_settings.config->>'delegation_mode'`): **preguntar**
+(default) · **autonomo** · **solo_si_lo_pido**.
+
+**Razonamiento.** El diseño original (CP-HUB) solo permitía delegar cuando el abogado nombraba al
+ayudante en su propio mensaje: el acto de pedirlo ES el consentimiento. Pipe lo rechazó — *"parte del
+encanto de MIA es que puede determinar si necesita agentes o subagentes"*. Un asistente que solo
+obedece órdenes literales no es un asistente.
+
+**Por qué ahora es aceptable darle la decisión al modelo.** Porque **el modelo ya no abre la puerta**:
+entre su decisión y la salida de datos está el abogado aprobando el texto exacto (interrupt HITL en
+`graph.py::delegation_node`). Pero "el humano aprueba" NO se acepta como control único —un control que
+depende de leer con atención cada vez se degrada a la décima propuesta—, así que hay tres límites
+**estructurales** que hacen que, incluso con un proponente 100% controlado por una inyección indirecta
+desde un documento del expediente, no haya nada que exfiltrar:
+1. **El proponente no ve el expediente.** Solo el mensaje limpio del abogado y el catálogo de
+   ayudantes. No se le pide discreción: no puede filtrar lo que nunca leyó.
+2. **El texto propuesto no es canal de salida libre.** Saneado y recortado; una línea corta y legible
+   no es buen sitio donde esconder un expediente — y, sobre todo, ES legible.
+3. **El ayudante sale de un catálogo cerrado** (ya filtrado por `hub_gate.allowed_agents`): slug
+   inventado, texto libre o JSON roto → None. Nunca se construye un destino con lo que dijo el modelo.
+La propuesta llega a la pantalla **etiquetada** como contenido generado por MIA y potencialmente
+influido por un documento, para que el abogado la lea con la desconfianza correcta.
+
+**Lo que NO cambia.** La política manda sobre el toggle: con 'soberano' no se delega aunque el
+ayudante esté habilitado, y la política se lee con `model_policy_for_strict` (LANZA si la DB falla —
+un error de infraestructura jamás abre la salida).
+
+## #35 — 2026-07-17 · Todo el dinero en dólares (decisión de Pipe)
+
+**Decisión.** El valor y el gasto se muestran **siempre en dólares**, para cualquier despacho. Se
+rechazó la moneda por jurisdicción.
+
+**Razonamiento.** El gasto de MIA ocurre en USD (es lo que cobran los proveedores de modelo). La
+tarifa del abogado está en su moneda. Mostrar la tarifa en pesos junto a un gasto en USD obliga a una
+de dos cosas: **mentir en el "valor neto"** (restar magnitudes de monedas distintas) o **inventar una
+tasa de cambio** que nadie mantiene y que envejece mal. Ambas convierten una cifra útil en una cifra
+falsa. Una sola moneda, la real del gasto, es honesta aunque sea incómoda.
+
+**Efecto.** Confirma el comportamiento actual: no hubo cambio de código. Queda registrado para que no
+se re-abra cada vez que se toca el agnosticismo de jurisdicción.
+
+## #36 — 2026-07-17 · Los 8 principios: destilar los skills y el vault de Pipe, sin clonar nada suyo
+
+**Decisión.** MIA incorpora ocho principios de oficio destilados de dos sistemas de Pipe —sus skills
+de firma (cómo analiza) y su vault personal (cómo recuerda)—. **Ninguno se clonó:** lo colombiano y lo
+propio de Lexia se descartó por diseño; solo entró lo que un abogado de Madrid o de Ciudad de México
+reconocería como oficio.
+
+**Razonamiento.** El hallazgo que ordenó el trabajo: **MIA estaba construida para NO MENTIR, no para
+ARGUMENTAR BIEN** — todos los gates eran de veracidad y ninguno de sustancia— y **aprendía de Pipe sin
+volver a leer nunca lo aprendido** (el wiki era de solo escritura). Un sistema que no miente pero no
+argumenta no sirve; uno que aprende y no recuerda, tampoco.
+
+**Lo que se descartó explícitamente:**
+- **Correr la Sala de estrategia en cada turno:** ~9 llamadas contra las 4 del turno → triplicaría la
+  factura del despacho. En su lugar se reusa el dictamen ya pagado y persistido por asunto (coste
+  real: 0 llamadas nuevas, 1 SELECT indexado).
+- **Clonar el criterio jurídico colombiano de Pipe:** violaría la regla dura (MIA no es de ningún
+  país). Los roles del argumento son funcionales, sin una sola jurisdicción.
+- **Truncar el SOUL al llegar al tope:** rechaza en vez de truncar — cortar la identidad del despacho
+  en silencio es peor que fallar ruidosamente.
+
+**Corolarios que quedan como regla.**
+- **Ningún escritor automático sin freno sobre la capa 1.** `dreams` escribía reglas en SOUL —
+  inyectado entero y con autoridad de sistema— sin HITL, sin tope y sin versionado. Ahora propone y el
+  abogado aprueba, con versionado espejo de `playbook_versions`.
+- **La confianza no es un trinquete.** Un rechazo pesa el doble que una aprobación (rechazar cuesta un
+  acto deliberado; aprobar es el default) y nunca llega a 1.0. Lo aprendido con confianza inflada no
+  se lee hasta recompilarse: es lo que evita leer basura con autoridad el día 1.
+- **La instrucción directa del abogado se aplica sin re-preguntar** (regla dura: su input es
+  fidedigno). El escepticismo aplica a lo que MIA infiere, no a lo que él ordena.
+- **Un test puede estar protegiendo un defecto.** El comportamiento peligroso de `dreams` estaba
+  fijado por un test que exigía justo eso ("Nudges actualiza SOUL"); hubo que invertirlo. Un gate
+  verde no prueba que el diseño sea correcto: prueba que no ha cambiado.
+
+## #37 — 2026-07-20 · Cuánto lee Mia del expediente se DERIVA, no se cablea
+
+**Decisión.** Muere el literal `top_k=8`. En cada turno el tamaño de lectura se calcula a partir de
+tres señales: cuánto material hay indexado, cuánto cabe en el presupuesto REAL del nodo que lo va a
+consumir, y qué tan exigente es la pregunta (heurística determinista, sin modelo). Piso inviolable
+en 8 fragmentos; el techo lo pone el presupuesto, no un número escrito a mano.
+
+**Razonamiento.** Con 743.600 caracteres indexados, Mia leía 8 fragmentos: el **1,3 % del material**.
+El diagnóstico de Pipe —"no revisa bien la información"— no era un fallo de análisis: es que casi no
+leía. El presupuesto real del nodo más exigente admite ~480.000 caracteres. El cuello de botella era
+un literal, no la arquitectura.
+
+**Los dos números que se calibraron, y por qué esos.**
+- **Cobertura 0.22.** Con 0.35 (valor de fábrica del diseño) el gasto de IA por turno se multiplicaba
+  **entre 11 y 20 veces**; se le presentó a Pipe antes de fijarlo, no como default. Se probó **0.15** y
+  rompía la promesa que custodia el gate `a1`: en un expediente grande Mia debe leer una **fracción
+  real** del material, no una muestra simbólica. 0.22 (~7×) es el punto que conserva la promesa sin el
+  gasto. **Es provisional y así está escrito en `backend/mia/config.py`.**
+- **`MAX_TOP_K` deliberadamente holgado.** Un techo que muerde siempre aplasta la adaptabilidad y
+  devuelve el producto a lo que se acaba de quitar: un número fijo. El riel existe para acotar el daño
+  en el caso extremo, no para gobernar el caso normal.
+
+**Trampa cerrada que habría arruinado el cambio en silencio.** `hnsw.ef_search` nunca se fijaba: con
+el valor de fábrica de pgvector (40), subir los candidatos por encima de ~40 **degrada el recall sin
+avisar**. Se habría entregado "Mia lee más" mientras leía peor. Ahora se fija en la misma transacción.
+
+## #38 — 2026-07-20 · Lectura agéntica: que el modelo PIDA el material que le falta (decisión de Pipe)
+
+**Decisión de Pipe**, textual, ante el coste de la lectura adaptativa:
+
+> *"no se puede establecer como funciona Claude code o codex? al fin y al cabo su motor será uno de ellos"*
+
+**Es superior a las tres opciones que se le ofrecieron.** En vez de calcular de antemano cuánto leer
+—una adivinanza fijada antes de mirar el material—, la búsqueda se expone como HERRAMIENTA y el modelo
+pide ampliaciones hasta tener lo suficiente. Una pregunta trivial cuesta poco, una difícil lee lo que
+necesite, y nadie tiene que acertar una proporción.
+
+**Estado: andamiaje construido y APAGADO POR DEFECTO.** Con la bandera apagada el comportamiento es
+idéntico al actual, verificado de forma independiente haciendo explotar a propósito las tres piezas del
+bucle: el turno apagado no las roza.
+
+**Lo que garantiza el diseño, medido — y lo que NO.**
+
+| Escenario | Fragmentos | Coste relativo |
+|---|---|---|
+| fácil · clásico | 55 | 13.410 |
+| fácil · agéntico | 8 | 3.154 |
+| fácil · PEOR caso (modelo que amplía siempre) | 128 | 50.125 |
+| difícil · clásico | 128 | 30.936 |
+| difícil · agéntico | 32 | 14.244 |
+
+Con un modelo que se conforma: **4,3× más barato** en la fácil, 2,2× en la difícil. Con uno que amplía
+siempre: **3,7× más CARO** que la fácil clásica. **Lo que el diseño garantiza no es un ahorro universal:
+es que el tamaño de la lectura deje de ser una adivinanza, y que el daño esté acotado** — nunca lee más
+que el riel clásico (128), nunca rebasa su presupuesto.
+
+**Detalles de forma que son decisión, no accidente.**
+- **Se implementa imitando `mcp/turn.py`**, que ya hace un sub-turno de herramientas en este producto,
+  en vez de inventar otro patrón.
+- **Todo lo recuperado —inicial y cada ampliación— pasa por el mismo sellado de contenido no confiable.**
+  No hay puerta trasera.
+- **4 rondas de 30 y no 10 de 12**, que dan el mismo techo aritmético: en cada ronda se reenvía la
+  conversación entera, así que el coste crece con el **cuadrado** de las rondas. Con 10×12 el presupuesto
+  corta antes del techo — un techo que solo existiría en la multiplicación. Por eso el gate lo mide
+  CORRIENDO el bucle, no multiplicando constantes.
+- **El techo se subió hasta IGUALAR el riel clásico (128).** La versión anterior leía 44 y lo llamaba
+  ahorro, justo cuando su comentario recomendaba encenderla en los asuntos grandes: riesgo de calidad
+  disfrazado de ahorro. La bandera ya no cambia cuánto se puede llegar a leer, solo **cuándo se pide**.
+
+**SIN PROBAR (y es lo que decide si sirve):** que un modelo REAL sepa decir "suficiente". Por eso nace
+apagada. Además, en la política por defecto ('suscripcion') el bucle no aporta nada: la cadena arranca
+por un alias que descarta las herramientas.
+
+## #39 — 2026-07-20 · El texto de un proyecto se EMITE después de verificarse
+
+**Decisión.** Al cablear el guardián de citas al grafo de proyectos se **movió el punto de emisión del
+evento SSE**: el texto sale a la pantalla DESPUÉS de pasar por el nodo verificador. Y se quitan
+`messages` e `history` de `work_node` para que el checkpoint y el turno siguiente conserven el texto
+**verificado**, no el crudo.
+
+**Razonamiento.** El grafo de proyectos era `intake → delegación → work → fin`: un proyecto podía
+afirmar normas y jurisprudencia sin una sola marca `[VERIFICAR]`, protegido únicamente por una
+instrucción de prompt — que es una sugerencia al modelo, no un control. Comprobado en vivo: cinco citas
+de articulado concreto salieron sin marcar. **Añadir el nodo verificador sin mover el punto de emisión
+lo habría dejado decorativo**: verificando un texto que el abogado ya tenía delante.
+
+**Corolario general:** un control que actúa después de la entrega no es un control. Cuando se inserta un
+guardián en un flujo que ya emite, hay que mover la emisión, no solo insertar el guardián.
+
+## #40 — 2026-07-20 · Marcar de más es inofensivo; respaldar de más destruye el producto
+
+**Decisión.** Ante cualquier duda, el sistema marca `[VERIFICAR]`. Nunca declara "Con respaldo" sobre
+una coincidencia que no sea exacta.
+
+**Razonamiento — el defecto que lo obligó (PREEXISTENTE, ya vivo en el flujo de asuntos).** El cotejo de
+respaldo era substring bidireccional y no respetaba fronteras numéricas: con *"Decreto 1082 de 2015"* en
+el expediente, un *"Decreto 108"* **inventado por el modelo** salía marcado **"Con respaldo"**, con visto
+verde y **atribuido a un archivo y un folio reales**. Igual con *"Ley 143"* dentro de *"Ley 1437 de 2011"*
+y *"Sentencia C-35"* dentro de *"C-355 de 2006"*. Es la regla dura del producto al revés. **Cierre:**
+comparación por piezas con igualdad exacta de cada una y tolerancia solo a conectores.
+
+**Es una regla de diseño, no un arreglo puntual.** Se aplicó dos veces el mismo día, en frentes que no se
+tocan: al decidir el cotejo de respaldo, y al **recortar la promesa del selector de países** (#42) — donde
+lo que no se puede sostener se deja de prometer en vez de prometerse con matices.
+
+**Lección de método que va con ella:** el test que decía cubrir este caso solo ejercitaba la dirección ya
+blindada. **Un test verde no prueba lo que su título anuncia.** Lo encontró un verificador adversarial
+ejecutando una sonda, no leyendo el código.
+
+## #41 — 2026-07-20 · El selector de países conserva los 21 y marca solo en POSITIVO
+
+**Decisión.** El paso de país del alta consulta `GET /api/jurisdictions` y **marca en positivo** los
+ordenamientos con material real instalado. Se conserva la lista completa de 21 en orden alfabético. Los
+no preparados **no llevan sello negativo**.
+
+**Razonamiento — el defecto, visto en una captura, no leyendo código.** Las 21 casillas estaban cableadas
+a mano y no consultaban nada. Un despacho chileno marcaba Chile, creía que MIA traía el derecho chileno
+cargado, y no había nada. Riesgo comercial directo: es lo que quema a un primer cliente de otro país.
+
+**Las dos alternativas y por qué se descartaron:**
+- **Ordenar primero los preparados** convierte el producto en colombiano de facto, y el gate ya prohíbe
+  destacar ningún país (regla dura: MIA no es de ningún país).
+- **Reducir la lista a lo instalado** dejaría **una sola casilla**, que grita exactamente lo mismo.
+
+**El encuadre correcto: la lista de 21 no es un catálogo de capacidades, es un autocompletar.** El defecto
+no era tener 21 casillas: era que se veían idénticas y no consultaban nada. El peso de la honestidad lo
+lleva una frase que reacciona a lo que se acaba de marcar. Sellar en negativo los no preparados
+convertiría el alta en una pantalla de disculpas.
+
+**Barreras ejecutables, no solo texto (8 checks nuevos):** que el selector consulte el endpoint; que la
+marca **no** sea un literal cableado (compara los códigos del archivo contra las opciones — escribir un
+Set a mano lo pone rojo); fail-soft comprobado abortando el endpoint en vivo; y la correspondencia inversa
+(todo paquete instalado debe tener su casilla).
+
+## #42 — 2026-07-20 · La promesa del selector se recorta a lo defendible: fuentes oficiales y forma de citar
+
+**Decisión.** Elegir país promete **solo dos cosas**: las fuentes oficiales de ese ordenamiento y su forma
+de citar. Se retiró todo lo demás del encargo original.
+
+**Razonamiento — se leyó el paquete antes de prometerlo, y dos de las tres promesas no se sostenían.**
+- **Festivos judiciales: NO.** `holidays.json` está marcado incompleto (faltan los trasladables y los de
+  base pascual) y **el resolutor de plazos ni siquiera está cableado a esos datos**. Prometerlo sería una
+  mentira con **consecuencia procesal**. `term_catalog` tiene dos entradas y `recess` está vacío.
+- **Formatos de identificación: NO, y no por incompletos.** No son un beneficio de elegir país, porque
+  **el anonimizador aplica todos los paquetes siempre** (decisión #33: secreto profesional sobre
+  precisión). Prometerlo describiría mal cómo funciona el producto.
+
+**Lo más valioso del cambio fue recortar la promesa, no construir la marca.** El razonamiento queda
+escrito en el propio componente —qué SÍ y qué NO se puede prometer, y bajo qué condición se podría
+ampliar— y hay una prohibición ejecutable de volver a prometer festivos, plazos o cálculo.
+
+## #43 — 2026-07-23 · El estándar de litigio del fundador entra al prompt core, DESTILADO y por rol funcional
+
+**Decisión de Pipe**: su manual privado de metodología de litigio (56 reglas) se adopta como estándar
+de calidad de escritos de MIA, "sin llevarse referencias mías o de Lexia" y sin corpus ni normas de un
+país. **Cómo se implementó**: lo universal del oficio fue a la capa L2 `METHODOLOGY` (cacheada, todos
+los especialistas) — postura ante el escrito de litigio, anatomía del argumento actualizada de 5 capas
+a SEIS ELEMENTOS (se sumaron el planteamiento exacto de lo controvertido y la consecuencia jurídica
+como elementos propios), catálogo de movimientos de confrontación (admisión, mejor versión, dilema,
+acto propio, petición de principio, silencio), arquitectura del escrito (tesis por argumento,
+autonomía, orden por la cadena lógica de la institución, subsidiariedad rotulada, peticiones espejo,
+hecho adverso, síntesis), exhaustividad-antes-de-selección y la pasada del adversario. Lo operativo
+del momento fue a L8: `facts` (admisiones literales VERBATIM separadas de las tácitas-como-inferencia;
+aritmética recomputada), `analysis` (descartes con motivo), `draft` (apertura con tesis, cierre con
+consecuencia, párrafo=idea, hogar único de transcripciones, sin muletillas ni meta-lenguaje).
+
+**Qué quedó FUERA a propósito**: identidad y firma del fundador, formato tipográfico, fases operativas
+(el grafo ya las encarna), verificación en capas (MIA ya la tiene determinista) y todo ejemplo o
+figura de un país. El estilo por despacho sigue llegando por SOUL/`## aprendido`; la citación, por
+packs de jurisdicción.
+
+**La verificación adversarial independiente encontró los 2 MAYORES que el autor no vio, ambos de
+ALCANCE**: (1) el registro adversarial era incondicional y gobernaba también trabajo consultivo
+(conceptos, contratos, nodo `work`) → se antepuso condición de alcance ("cuando el encargo es
+adversarial…; en trabajo no adversarial, el mismo rigor sin construir adversario"); (2) el elemento 2º
+("fuente normativa transcrita") empujaba a citar articulado bajo jurisdicción desconocida, contra la
+regla imperativa de L3 → se condicionó a "cuando el ordenamiento esté declarado". Más 4 menores
+corregidos (secundarios breves-pero-autónomos, admisión tácita≠verbatim, "radicar"→"presentar el
+escrito", comentario sin procedencia). Gates: jurisdiction_agnostic 104/104 · prompt_builder 46/46 ·
+gates_no_ciegos 9/9 · rls 19/19 · env_pins 12/12.
+
+**Deuda declarada**: el estándar es hoy INSTRUCCIÓN (prompt), no GATE — `substance_signal` sigue
+informativo. Promoverlo a rúbrica calibrada del banco es candidato natural del resto de F2, decisión
+de prioridades que corresponde a la Sesión Pipe A.
+
+## #44 — 2026-07-24 · Cinco skills más del fundador entran como PRINCIPIOS (no réplicas)
+
+**Decisión de Pipe** ("no repliques lo mío, pero como principios podemos poner esas skills, menos
+profundas que las mías"). Qué se destiló y a dónde:
+
+1. **council-legal → Sala de estrategia** (`warroom_panelist`/`warroom_moderator` en prompt_builder):
+   franqueza total (señalar debilidades es lealtad, no deslealtad), vacíos declarados como preguntas,
+   réplicas concentradas en los desacuerdos MAYORES, y el moderador RESUELVE en vez de promediar —
+   toma posición con las razones que ya dieron los panelistas y deja constancia del desacuerdo DENTRO
+   de los campos del dictamen (la prosa fuera del bloque se descarta — hallazgo del verificador). La
+   sala asesora; la decisión es del abogado.
+2. **cosechar-aprendizaje → `## aprendido`** (aprendido.py): vectores de cosecha obligatorios
+   ('Funciona:'/'Evitar:'/'Lección:'), preferencia por Evitar/Lección cuando la semilla es una
+   corrección — pero solo si el patrón se repetirá (una preferencia de un solo caso no se cosecha) —
+   y la frontera dura "la tesis de método viaja; el caso, jamás". `_dedup_key` quita el vector antes
+   de deduplicar (mismo patrón bajo dos vectores sigue siendo uno).
+3. **checklist-control-calidad → nodo draft**: pasada final de auto-verificación antes de entregar
+   (argumentos no enunciativos, consecuencia concreta, aritmética recomputada — con la regla de no
+   adivinar entre cifras divergentes del expediente: volver al [doc n] y avisar —, sin
+   contradicciones internas, orden anunciado=desarrollado, peticiones apoyadas, cero placeholders).
+   Se adaptó a "corrige y declara, nunca calles" — sin bloqueo, porque el bloqueo en MIA es del HITL.
+4. **creador-estandar-calidad → entrevista de guías** (interviewer.py): caso especial ESTÁNDAR DE
+   CALIDAD — ficha de 5 partes (estructura obligatoria, defectos tipificados sí/no, registro por
+   etapa, ejemplares que calibran forma pero NUNCA autorizan citas, checklist final); calidad =
+   estructura + defectos, no puntaje. Sin campo nuevo en DB: el estándar es un playbook y ya llega al
+   redactor por L9/draft; el "solo el abogado aprueba" ya lo garantiza el flujo Guardar (HITL por
+   construcción).
+5. **convo-review → nada que construir**: la capacidad ya existe en infraestructura — cada turno se
+   indexa en `traces` con FTS cross-asunto (`/api/traces/search`). Candidato futuro declarado: que el
+   agente consulte las trazas espontáneamente al retomar un asunto ("¿recuerdas...?").
+
+**Verificación**: adversarial independiente (Opus fresco) — 0 MAYORES, 4 menores corregidos + 1
+transversal (prosa del moderador descartada). Suites: jurisdiction_agnostic 104/104 ·
+prompt_builder 46/46 · gates_no_ciegos 9/9 · aprendido 34/34 · guide_interview · warroom — todas PASS.
+
+## #45 — 2026-07-27 · Sesión Pipe A (parte 1): las tres decisiones de medición
+
+Decididas por Pipe en vivo, en el orden en que el paquete las presentaba. Ninguna cambia lo que
+MIA hace; las tres cambian cómo se mide o cómo se rotula.
+
+1. **N-1 · La regla del muro es «no afirmar sin respaldo», no «no escribir el número».**
+   Pipe: mencionar el número de una norma para advertir que no se reconoce es comportamiento
+   CORRECTO. El detector de fuga deja de contar la mención acompañada de negación explícita en la
+   misma oración. Consecuencia inmediata: la única «fuga» de las 60 corridas era falso positivo →
+   **fuga real 0/60** en ambos motores, y la métrica pasa a medir daño (afirmar sin respaldo) en
+   vez de coincidencias de texto. Razón de fondo: el número venía del propio expediente y el
+   abogado que lee la frase queda ADVERTIDO, no engañado. Habilita que la fuga pueda ser gate
+   algún día sin bloquear el mejor comportamiento posible.
+2. **M-1 · Recalibrar YA el detector de abstención + declarar el corte de la serie.**
+   Pipe eligió la opción que el paquete NO recomendaba (recomendaba renombrar y recalibrar en el
+   próximo re-baseline pagado): ampliar `ABSTENTION_PHRASES` a cómo MIA redacta hoy sus negativas
+   tras #43-#44, y **declarar el corte** en lugar de re-correr el baseline. Las cifras de
+   abstención anteriores al corte quedan marcadas como NO comparables; no se gasta cuota en
+   re-medir historia.
+3. **M-2 · Dos líneas separadas en el panel.** «Turnos completados» (la máquina respondió sin
+   caerse) y, en los casos de `RISK_CASES`, «Se negó correctamente» al lado. Se elimina la
+   etiqueta «Éxito de tarea», que inducía a leer «acertó» donde solo decía «no se cayó».
+
+## #46 — 2026-07-27 · Cuatro principios del harness LLOS de Pipe entran a MIA (graduados)
+
+Pipe pidió analizar `D:\Lexia Abogados SAS\lexia-litigio-os-harness` (su propio taller, con
+barreras ejecutables por retrospectiva) y portar principios «sin ser tan exacto y fuerte».
+El principio de fondo del harness es «**lo que no tiene barrera, vuelve**»: toda lección se
+convierte en check que corre, o se marca solo como documentada.
+
+**Traducción, no copia.** El harness es el taller de Pipe: una barrera de más solo le molesta a
+él. MIA va a manos de otros despachos, donde una barrera mal afinada bloquea trabajo bueno y se
+siente como que MIA no sirve (ver `feedback-mia-foco-capacidad-no-seguridad`: nunca volverla
+rígida). De ahí la decisión de dureza.
+
+**Los cuatro aprobados:**
+
+1. **Afirmaciones negativas verificadas** (de R57 + su corolario de la 6.ª corrida real: el
+   extractor forense dijo «el informe no menciona al garante» y el memorando nombraba a Mundial
+   con NIT y póliza en cuatro lugares). Es el talón expuesto de MIA: sus MEJORES salidas de hoy
+   son negativas («el expediente no contiene norma citable»), y las produce leyendo fragmentos,
+   no el documento completo — misma causa, mismo error. Regla: toda afirmación negativa sobre el
+   contenido de un documento («no menciona / no contiene / no analiza») se verifica por búsqueda
+   directa sobre el documento COMPLETO antes de escribirse; si no se puede confirmar, se escribe
+   con reserva. Corolario portado: **el argumento estrecho y verdadero vale más que el amplio y
+   falso**.
+2. **Banco de citas quemadas del despacho** (de `check-citas-quemadas.py`). Cuando el abogado
+   marca una cita como falsa, queda quemada PARA SIEMPRE en su instalación y MIA no la vuelve a
+   emitir. **Única de las cuatro que nace como muro duro**: no admite falso positivo (la cita
+   está en la lista o no está). Agnóstica de jurisdicción por construcción — cada despacho llena
+   su propio banco. Portar también la lección de redacción del original: al documentar una cita
+   quemada hay que usar los marcadores canónicos, o el propio check dispara falso positivo.
+3. **Ninguna lección sin barrera** (de la cadencia obligatoria del harness). Regla de trabajo
+   nuestra, no del producto: toda lección de retrospectiva nombra su barrera ejecutable (test,
+   check, gate) o se marca «documentada», no «aplicada». Cierra la deuda declarada en #43: el
+   estándar de litigio hoy es INSTRUCCIÓN y no algo verificado.
+4. **Contaminación entre expedientes** (de `check-partes-docx.py`: 5 de 16 escritos históricos
+   del despacho traían aseguradoras de OTRO caso). En MIA no es solo defecto de calidad: es el
+   dato de un cliente apareciendo en el escrito de otro — riesgo de secreto profesional, y hoy
+   nada lo vigila.
+
+**Decisión de dureza (transversal):** cada barrera nueva **nace como AVISO** al abogado y solo
+sube a MURO cuando se mida que no produce falsos positivos. Es la lección de N-1 aplicada antes
+de cometerla a escala: un detector que cuenta apariciones de texto reprobaba al turno que se
+comportó mejor. Excepción única: el banco de citas quemadas, que es muro desde el día uno.
+
+**No se portó** (deliberadamente): puerta única y grafo modular del plugin (arquitectura de
+skills, no aplica), y la dureza global del harness. Sí se retiene como lección de ingeniería su
+`check-barreras-unificado.py`: los guards que lanzan cientos de procesos se cuelgan bajo carga de
+antivirus justo cuando más se necesitan — los gates de MIA corren en UNA pasada, no en cascada.
+
+## #47 — 2026-07-27 · Sesión Pipe A (parte 2): las 4 decisiones originales del paquete
+
+1. **Los casos de RIESGO entran al examen por defecto.** El banco mide cada versión también
+   contra las trampas (expediente vacío, norma que no sostiene lo pedido, citas abreviadas), no
+   solo contra casos normales. Cuesta más tiempo y cuota por examen; el beneficio es que un
+   retroceso de disciplina se detecta el mismo día y no en manos de un abogado.
+2. **F2 se CIERRA.** Con N-1 aplicada: 0 citas sin respaldo y **fuga real 0/60** en los dos
+   motores. El ítem 2 de la spec (fuga al 100% de ocurrencias con falsos positivos medidos) se
+   cierra con el falso positivo de «Ley 4137» documentado como primer caso de prueba del detector
+   corregido. NO se endurece el detector antes de avanzar y NO se amplía la referencia en nube
+   (los USD 22,6 restantes quedan disponibles, sin gastar). El trabajo pasa a producto + las 4
+   barreras de #46.
+3. **Se disparan LOS DOS trámites de terceros**: Azure Trusted Signing (firma de Windows — sin
+   ella el abogado ve «aplicación no reconocida» al abrir) y el registro de apps OAuth
+   (Google/Microsoft, para Gmail/Outlook/OneDrive). Ambos son gestión de Pipe y de alta latencia;
+   se piden ya para que la espera no sea el cuello de botella de la entrega.
+4. **«Modo A» (Docker/servidor) queda FUERA de la v1.** La v1 se entrega solo como programa de
+   escritorio de doble clic. El modo servidor se anota como posible después; se deja de fingir
+   que está en alcance (no existe ni un Dockerfile).
+
+**Pendiente ÚNICO de la Sesión A**: la lectura de calidad de las 6 salidas del paquete
+(`docs/f1-paquete-decision-pipe.md`) + el ejemplar de revisión humana `f2sond_entail_g`. Es
+juicio jurídico de Pipe; ningún agente lo sustituye. No bloquea el trabajo de máquina.

@@ -49,7 +49,7 @@ export default function ThemeToggle({ compact = false }: { compact?: boolean }) 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size={compact ? "icon" : "sm"} className={cn(!compact && "w-full justify-start gap-2")}>
+        <Button variant="ghost" size={compact ? "icon" : "sm"} className={cn(!compact && "w-full justify-start gap-2 text-muted-foreground")}>
           {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
           {!compact && <span>Apariencia</span>}
           <span className="sr-only">Cambiar apariencia</span>

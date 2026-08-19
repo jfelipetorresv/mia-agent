@@ -15,8 +15,7 @@ main + push → resumen de negocio ≤4 líneas. Alto impacto (algo que cambie a
 lo que ve el cliente de forma sustantiva) → comparación A/B en vivo antes de mergear. Usar
 `git commit -F archivo` (el clasificador de permisos rompe con rutas tipo endpoint en el mensaje).
 
-Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref/`,
-`jarvis-ref/OpenJarvis-main/`.
+Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref/`.
 
 ---
 
@@ -152,12 +151,12 @@ Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref
 - **Qué:** dictado local para el abogado. Dos caminos según respuesta de Pipe:
   - **Rápido (recomendado para arrancar):** usar Lexter como app de dictado a nivel de SO — el
     abogado dicta en el chat/campos de Mia hoy mismo, sin desarrollo. Se documenta y se prueba.
-  - **Integrado:** portar el motor de Lexter (Silero VAD + STT ONNX + DirectML) o el patrón
-    registry de OpenJarvis a `backend/mia/speech/` con endpoint FastAPI + botón de micrófono en
+  - **Integrado:** portar el motor de Lexter (Silero VAD + STT ONNX + DirectML)
+    a `backend/mia/speech/` con endpoint FastAPI + botón de micrófono en
     Next.js. Motor local; candado de privacidad por tenant.
-- **Referencia:** Lexter (activo de Pipe, base Handy) + OpenJarvis `src/openjarvis/speech/`
-  (registry + `_discovery.py` local-first + `SpeechConfig`), endpoint `/v1/speech/transcribe`
-  (`server/api_routes.py` ~L748), frontend `hooks/useSpeech.ts` + `components/Chat/MicButton.tsx`.
+- **Referencia:** Lexter (activo de Pipe, base Handy; registry + discovery local-first +
+  `SpeechConfig`), endpoint `/v1/speech/transcribe`, frontend `hooks/useSpeech.ts` +
+  `components/Chat/MicButton.tsx`.
 - **Gate:** `test_speech_stt.py` (incluye candado de privacidad por tenant).
 - **Valor alto · esfuerzo bajo** (Lexter ya resuelve el motor).
 
@@ -165,7 +164,7 @@ Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref
 - **Qué:** voz de salida local (Kokoro/Piper, validar español) y sintetizar por frases
   conforme Mia genera el texto (sensación de tiempo real). Barge-in básico = cancelar stream +
   parar audio cuando el micrófono detecta voz.
-- **Referencia OpenJarvis:** `speech/tts.py`, `kokoro_tts.py`, `server/stream_bridge.py`
+- **Referencia:** `speech/tts.py`, `kokoro_tts.py`, `server/stream_bridge.py`
   (EventBus→cola→SSE — LangGraph ya es async, más fácil), `tools/text_to_speech.py`.
 - **Gate:** `test_speech_tts.py`.
 - **Valor medio-alto · esfuerzo medio.**
@@ -173,8 +172,8 @@ Repos de referencia en `D:\Codex\Mia-Super Agent\`: `hermes-ref/`, `claudeos-ref
 ### CP-Z3 · (Opcional) Overlay de escritorio omnipresente
 - **Qué:** ventana flotante con atajo global desde cualquier app (el "ClaudeClaw" real), como
   **cliente delgado** que apunta al backend de Mia por HTTPS + token de tenant (NO el
-  localhost-sin-auth de OpenJarvis).
-- **Referencia OpenJarvis:** `frontend/src-tauri/src/lib.rs` (`native_overlay`, `global_shortcut`),
+  localhost-sin-auth de la referencia).
+- **Referencia:** `frontend/src-tauri/src/lib.rs` (`native_overlay`, `global_shortcut`),
   `src/overlay.html`. Nota: overlay nativo pulido solo en macOS; en Windows viable con Tauri
   estándar.
 - **Valor medio · esfuerzo medio-alto. Opcional / al final de la ola.**

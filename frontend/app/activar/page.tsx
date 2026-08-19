@@ -40,14 +40,14 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 // ── Contratos backend (welcome) ────────────────────────────────────────────
-type Politica = "suscripcion" | "nube" | "soberano" | "openrouter";
+type Politica = "quality_adaptive" | "suscripcion" | "codex" | "nube" | "soberano" | "openrouter";
 
 interface WelcomeStatus {
   instalado: boolean;
   hay_usuario: boolean;
   faltan_llaves: { busqueda: boolean; respaldo: boolean; openrouter: boolean };
   onboarding_completo: boolean;
-  motor_detectado: { claude: boolean; ollama: boolean };
+  motor_detectado: { claude: boolean; codex: boolean; ollama: boolean };
   politica: Politica;
 }
 
@@ -334,7 +334,7 @@ export default function ActivarPage() {
   const [subStep, setSubStep] = React.useState(0);
   const [direction, setDirection] = React.useState(1);
 
-  const [politica, setPolitica] = React.useState<Politica>("suscripcion");
+  const [politica, setPolitica] = React.useState<Politica>("quality_adaptive");
   const busqueda = useKeyValidation("busqueda");
   const respaldo = useKeyValidation("respaldo");
   const openrouter = useKeyValidation("openrouter");
@@ -364,7 +364,7 @@ export default function ActivarPage() {
           return;
         }
         setStatus(s);
-        setPolitica(s.politica ?? "suscripcion");
+        setPolitica(s.politica ?? "quality_adaptive");
         setPhase("activar");
       } catch {
         if (cancel) return;
@@ -406,13 +406,19 @@ export default function ActivarPage() {
       // de OpenRouter (el PUT es el único lugar que persiste ambas cosas juntas).
       if (politica !== status.politica || conectoOpenrouter) {
         try {
-          await apiSend("PUT", "/api/settings/model-policy", {
+          await apiSend("PUT", "/settings/model-policy", {
             politica,
             ...(conectoOpenrouter ? { allow_openrouter: true } : {}),
           });
-        } catch {
-          // Fail-soft (§G): si esto falla, no rompe el asistente — las llaves de
-          // abajo se guardan igual; el abogado puede activar el respaldo después.
+        } catch (err) {
+          // NO fail-soft: si la elección de motor no se persiste, seguir mostraría
+          // "listo" y el abogado creería que Mia trabaja con el motor que eligió
+          // cuando sigue con otro. Se detiene aquí con un motivo en llano; puede
+          // reintentar sin perder lo que ya escribió.
+          setSaveError(
+            plainMessage(err, "No pude guardar tu elección de motor. Inténtalo de nuevo."),
+          );
+          return;
         }
       }
 
@@ -568,7 +574,7 @@ export default function ActivarPage() {
           onKeyDown={(e) => {
             // El orden DEBE coincidir con el orden visual de las tarjetas (abajo):
             // las flechas mueven el foco por índice de DOM.
-            const order: Politica[] = ["suscripcion", "nube", "openrouter", "soberano"];
+            const order: Politica[] = ["quality_adaptive", "suscripcion", "codex", "nube", "openrouter", "soberano"];
             const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
             const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
             if (!forward && !backward) return;
@@ -583,13 +589,40 @@ export default function ActivarPage() {
         >
           <EngineCard
             icon={Sparkles}
-            title="Mi suscripción"
+            title="Calidad jurídica adaptativa"
             badge="Recomendado"
-            description="Razono usando la suscripción que ya tienes. Es lo más simple y lo que te recomiendo."
+            // Honestidad del aviso: el cambio de motor se informa AL CERRAR el turno (así
+            // está construido el SSE aviso_de_costo); prometer "antes" sería falso.
+            // Decisión de Pipe 2026-08-14: el más inteligente piensa y orquesta; la
+            // ejecución se asigna por tarea. §G: sin nombres de modelo en el copy.
+            description="El motor más capaz piensa y dirige tu asunto, y asigna cada tarea al ejecutor adecuado: profundidad donde se decide, agilidad donde se ejecuta. Si una capacidad no está disponible, Mia falla claro o te informa cada cambio de motor y su costo al terminar el turno."
+            detected={status.motor_detectado.claude}
+            detectedLabel="Ya detecté Claude Code en este equipo."
+            selected={politica === "quality_adaptive"}
+            onSelect={() => setPolitica("quality_adaptive")}
+          />
+          <EngineCard
+            icon={Sparkles}
+            title="Mi suscripción"
+            // La recomendación del plan Max va AQUÍ, en la instalación, y no solo cuando ya
+            // pasó (decisión de Pipe, sesión 52). Medido con un expediente real de 174
+            // páginas: una suscripción normal no alcanzó a responderlo y el trabajo se
+            // resolvió con crédito de pago. Mejor que el abogado lo sepa al elegir el motor
+            // que enterarse por un cargo. En llano y sin cifras que no podemos sostener.
+            description="Usa directamente la configuración habitual de tu suscripción. Con un plan Max, un expediente extenso cabe en lo que ya pagas, sin costo extra; en planes inferiores no cabe y genera cobros de crédito adicionales. Si una capacidad no está disponible, Mia te lo mostrará y usará el respaldo que hayas autorizado."
             detected={status.motor_detectado.claude}
             detectedLabel="Ya la detecté lista en este equipo."
             selected={politica === "suscripcion"}
             onSelect={() => setPolitica("suscripcion")}
+          />
+          <EngineCard
+            icon={Sparkles}
+            title="Codex en este equipo"
+            description="Usa tu membresía de Codex como motor jurídico principal en este computador. No funciona en servidores ni cambia a Claude, nube ni otro motor sin que tú cambies esta selección."
+            detected={status.motor_detectado.codex}
+            detectedLabel="Detecté Codex local; la primera solicitud comprobará tu sesión y fallará claro si no está iniciada."
+            selected={politica === "codex"}
+            onSelect={() => setPolitica("codex")}
           />
           <EngineCard
             icon={Cloud}

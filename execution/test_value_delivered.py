@@ -58,8 +58,17 @@ def offline_checks() -> None:
           um.cost_usd("cli-claude", 9_999_999, 9_999_999) == 0.0
           and um.cost_usd("cli-claude-haiku", 1, 1) == 0.0
           and um.cost_usd("mia-local", 1, 1) == 0.0)
-    check("v-04 · alias desconocido → costo 0 (no inventa precios)",
-          um.cost_usd("modelo-fantasma", 1_000_000, 1_000_000) == 0.0)
+    # v-04 · un alias SIN precio en la tabla se cobra a tarifa conservadora de Sonnet, no a 0.
+    # El gate fijaba "costo 0 (no inventa precios)", pero f147fb9 (control atómico del gasto)
+    # lo cambió a propósito y con razón: con 0, el gasto de un motor desconocido no se cuenta,
+    # el tope mensual del despacho no frena y el abogado cree que no gastó. Sobreestimar es la
+    # falla SEGURA cuando hay dinero de por medio; subestimar no lo es. Queda el warning que
+    # avisa del alias sin precio.
+    check("v-04 · alias desconocido → tarifa conservadora de Sonnet (el tope no se burla)",
+          abs(um.cost_usd("modelo-fantasma", 1_000_000, 1_000_000)
+              - sum(um.UNKNOWN_ALIAS_RATES)) < 1e-9)
+    check("v-04b · los aliases gratis siguen costando 0 (no los toca la tarifa conservadora)",
+          um.cost_usd("mia-local", 1_000_000, 1_000_000) == 0.0)
 
     # ── B · buffer y scope ───────────────────────────────────────────────────
     um.drain()

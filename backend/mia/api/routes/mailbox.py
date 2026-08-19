@@ -130,6 +130,10 @@ async def status(request: Request):
             # ¿Esta conexión ya otorgó permiso de archivos de OneDrive? Lo consume la UI para
             # ofrecer "Añadir permiso de archivos" en una cuenta Microsoft YA conectada (M3).
             "archivos": ("Files.Read" in by_provider[p]["scopes"]) if p in by_provider else False,
+            # Honestidad de UI (F3): la app OAuth de la instalación puede no estar registrada
+            # todavía. La UI solo ofrece "Conectar" cuando de verdad se puede — el mismo
+            # criterio con el que POST /connect responde 503.
+            "disponible": all(config.mailbox_oauth_client(p)),
         }
         for p in PROVIDERS
     ]
@@ -250,14 +254,20 @@ async def set_content_analysis(request: Request):
     except Exception:  # noqa: BLE001
         body = None
     activar = bool((body or {}).get("activar")) if isinstance(body, dict) else False
+    patch = {"allow_content_analysis": activar}
     async with pool.tenant_connection(tenant_id) as conn:
+        # jsonb_set con path anidado NO crea el objeto intermedio 'mailbox' si falta
+        # (tenants nacen con config='{}'). Se fusiona el padre 'mailbox' entero (||),
+        # mismo patrón que budget.py / value.py.
         await conn.execute(
-            "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+            "INSERT INTO tenant_settings (tenant_id, config) "
+            "VALUES (%s::uuid, jsonb_build_object('mailbox', %s::jsonb)) "
             "ON CONFLICT (tenant_id) DO UPDATE SET "
-            "config = jsonb_set(COALESCE(tenant_settings.config, '{}'::jsonb), "
-            "  '{mailbox,allow_content_analysis}', %s::jsonb, true), updated_at = now()",
-            (tenant_id, Json({"mailbox": {"allow_content_analysis": activar}}),
-             "true" if activar else "false"),
+            "config = jsonb_set("
+            "  COALESCE(tenant_settings.config, '{}'::jsonb), '{mailbox}', "
+            "  COALESCE(tenant_settings.config->'mailbox', '{}'::jsonb) || %s::jsonb, true), "
+            "updated_at = now()",
+            (tenant_id, Json(patch), Json(patch)),
         )
     return {"analisis_contenido": activar}
 

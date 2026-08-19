@@ -29,7 +29,6 @@ sin jerga técnica ("expediente", "carpeta vinculada", nunca "tenant"/"sync"/"ch
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -37,7 +36,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...connectors.local_folders import (
-    LocalFolderSync,
     disable_source,
     get_matter_source,
     get_matter_sources,
@@ -45,6 +43,7 @@ from ...connectors.local_folders import (
     source_last_sync,
 )
 from ...db import pool
+from ...jobs import enqueue_job, latest_job
 from ._common import assert_owns_matter
 
 router = APIRouter(prefix="/api", tags=["matter_folders"])
@@ -57,18 +56,8 @@ SYNC_THROTTLE_SECONDS = 60
 # despacho vincule decenas de carpetas por error y sature el escaneo/ingesta).
 MAX_FOLDERS_PER_MATTER = 10
 
-# Referencias vivas a las sincronizaciones en segundo plano (sin esto asyncio puede
-# recolectarlas a mitad de camino — mismo patrón que hitl._BACKGROUND_TASKS). Se
-# auto-limpian al terminar. `_PENDING_RETRY` recuerda cuántos archivos quedaron
-# pendientes (bloqueados, p. ej. abiertos en Word) en la última corrida de CADA fuente
-# (ya está keyeado por source_id — sirve tal cual para la superficie plural).
-_BACKGROUND_TASKS: set[asyncio.Task] = set()
-_PENDING_RETRY: dict[str, int] = {}
-# Candado por fuente: dos sincronizaciones simultáneas de la MISMA carpeta duplicarían
-# el expediente (documents no tiene UNIQUE por ruta — el borra-y-reinserta de cada sync
-# asume que corre solo). Se marca SINCRÓNICAMENTE antes de crear la tarea (sin ventana
-# de carrera en el event loop) y se libera en el finally de la corrida.
-_SYNCS_IN_FLIGHT: set[str] = set()
+# Las revisiones se encolan en PostgreSQL: sobreviven cierres y el índice único
+# parcial evita duplicar la misma fuente mientras está pendiente o en curso.
 
 
 def _tenant(request: Request) -> str:
@@ -78,29 +67,28 @@ def _tenant(request: Request) -> str:
     return tid
 
 
-async def _run_sync(tenant_id: str, source: dict) -> None:
-    """Sincroniza UNA carpeta vinculada en segundo plano y recuerda sus pendientes."""
-    try:
-        stats = await LocalFolderSync().sync_source(tenant_id, source)
-        _PENDING_RETRY[str(source["id"])] = int(stats.get("pending", 0))
-    except Exception:  # noqa: BLE001 — un fallo de fondo no debe propagarse a ningún request
-        logger.exception("sync de expediente vinculado falló (fuente=%s)", source.get("id"))
-    finally:
-        _SYNCS_IN_FLIGHT.discard(str(source["id"]))
-
-
-def _spawn_sync(tenant_id: str, source: dict) -> bool:
-    """Lanza la sincronización de una fuente SI no hay otra en vuelo. Devuelve False si
-    ya había una corriendo (el caller responde 'ya estoy revisando'). El marcado es
-    sincrónico: no hay await entre la comprobación y el add."""
+async def _run_sync(tenant_id: str, source: dict) -> bool:
+    """Guarda una revisión durable y devuelve si creó una fila nueva."""
     sid = str(source["id"])
-    if sid in _SYNCS_IN_FLIGHT:
-        return False
-    _SYNCS_IN_FLIGHT.add(sid)
-    task = asyncio.create_task(_run_sync(tenant_id, source))
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
-    return True
+    _job_id, created = await enqueue_job(
+        tenant_id,
+        "matter_folder_sync",
+        {"source_id": sid, "matter_id": str(source["matter_id"])},
+        f"matter-folder:{sid}",
+    )
+    return created
+
+
+async def _spawn_sync(tenant_id: str, source: dict) -> bool:
+    """False significa que la misma fuente ya estaba en cola o en curso."""
+    return await _run_sync(tenant_id, source)
+
+
+async def _pending_retry(tenant_id: str, source_id: str) -> int:
+    job = await latest_job(
+        tenant_id, "matter_folder_sync", f"matter-folder:{source_id}"
+    )
+    return int(((job or {}).get("result") or {}).get("pending", 0))
 
 
 async def _get_source_for_matter(tid: str, matter_id: str, source_id: str) -> dict | None:
@@ -138,7 +126,7 @@ async def list_matter_folders(matter_id: str, request: Request):
             "label": source["label"],
             "last_sync": last_sync.isoformat() if last_sync else None,
             "files_indexed": files_indexed,
-            "pending_retry": _PENDING_RETRY.get(source["id"], 0),
+            "pending_retry": await _pending_retry(tid, source["id"]),
         })
     return {"folders": out}
 
@@ -168,7 +156,7 @@ async def link_matter_folder(matter_id: str, body: LinkFolderBody, request: Requ
             status_code=502,
             detail="No pude vincular la carpeta en este momento. Intenta de nuevo en unos minutos.",
         )
-    _spawn_sync(tid, source)
+    await _spawn_sync(tid, source)
     return {
         "status": "linked",
         "id": source["id"],
@@ -193,7 +181,7 @@ async def sync_matter_folder(matter_id: str, source_id: str, request: Request):
         if elapsed < SYNC_THROTTLE_SECONDS:
             return {"status": "up_to_date",
                     "message": "Esa carpeta ya está al día; la revisé hace un momento."}
-    if not _spawn_sync(tid, source):
+    if not await _spawn_sync(tid, source):
         return {"status": "in_progress",
                 "message": "Ya estoy revisando esa carpeta; dame un momento."}
     return {"status": "started",
@@ -210,7 +198,6 @@ async def unlink_matter_folder(matter_id: str, source_id: str, request: Request)
     if source is None:
         raise HTTPException(status_code=404, detail="No encontré esa carpeta en este expediente.")
     await disable_source(tid, source_id)
-    _PENDING_RETRY.pop(source_id, None)
     return {"status": "unlinked",
             "message": ("Desvinculé la carpeta. Los documentos que ya había traído siguen "
                         "en tu expediente.")}
@@ -249,7 +236,7 @@ async def folder_status(matter_id: str, request: Request):
         "path": source["path"],
         "last_sync": last_sync.isoformat() if last_sync else None,
         "files_indexed": files_indexed,
-        "pending_retry": _PENDING_RETRY.get(str(source["id"]), 0),
+        "pending_retry": await _pending_retry(tid, str(source["id"])),
     }
 
 
@@ -272,7 +259,7 @@ async def folder_sync(matter_id: str, request: Request):
             if elapsed < SYNC_THROTTLE_SECONDS:
                 continue
         all_up_to_date = False
-        if _spawn_sync(tid, source):
+        if await _spawn_sync(tid, source):
             started = True
     if started:
         return {"status": "started",
@@ -297,7 +284,6 @@ async def unlink_folder(matter_id: str, request: Request):
         raise HTTPException(status_code=404,
                             detail="Este expediente no tiene una carpeta vinculada.")
     await disable_source(tid, source["id"])
-    _PENDING_RETRY.pop(str(source["id"]), None)
     return {"status": "unlinked",
             "message": ("Desvinculé la carpeta. Los documentos que ya había traído siguen "
                         "en tu expediente.")}

@@ -3,6 +3,7 @@ Mia · test_onboarding_horizontal.py — gate de onboarding horizontal + pulido 
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -21,6 +22,14 @@ def check(name: str, ok: bool) -> None:
     print(("  [OK]   " if ok else "  [FAIL] ") + name)
 
 
+def sin_comentarios(src: str) -> str:
+    """El código fuente sin comentarios de línea — o sea, aproximadamente lo que el
+    abogado PUEDE llegar a ver. Los checks de promesas y de jerga se hacen sobre esto:
+    un comentario puede (y debe) nombrar los datos provisionales para explicar por qué
+    NO se prometen; lo que no puede es que esa palabra llegue a la pantalla."""
+    return "\n".join(re.sub(r"(?<!:)//.*", "", line) for line in src.split("\n"))
+
+
 def main() -> int:
     print("== Onboarding horizontal ==")
     onboarding = (ROOT / "frontend" / "app" / "onboarding" / "page.tsx").read_text(encoding="utf-8")
@@ -30,6 +39,9 @@ def main() -> int:
     # ConexionesSection.tsx). `onboarding_surface` es lo que antes vivía todo inline.
     country_selector = (ROOT / "frontend" / "app" / "_components" / "CountrySelector.tsx").read_text(encoding="utf-8")
     onboarding_surface = onboarding + country_selector
+    # "Mi despacho" edita la MISMA fuente que la entrevista: si la entrevista deja escribir
+    # un país fuera de la lista y esta pantalla no, el abogado lo pierde al editar.
+    despacho = (ROOT / "frontend" / "app" / "_components" / "MiDespachoSection.tsx").read_text(encoding="utf-8")
     sidebar = (ROOT / "frontend" / "app" / "_components" / "Sidebar.tsx").read_text(encoding="utf-8")
     workspace = (ROOT / "frontend" / "app" / "asuntos" / "[id]" / "page.tsx").read_text(encoding="utf-8")
     globals_css = (ROOT / "frontend" / "app" / "globals.css").read_text(encoding="utf-8")
@@ -47,18 +59,76 @@ def main() -> int:
     )
     check("onboarding sin opciones jurídicas hardcodeadas (fuera de la lista de países)",
           not any(x in onboarding for x in forbidden))
-    check("pregunta ÚNICA de país: multi-select de 21 países, Colombia primero, con insignia de paquete",
+    # Contrato 2026-07-20: UNA sola pregunta de país, sin país destacado. La lista sigue
+    # en orden alfabético (nadie va "primero" — regla dura: Mia no es de ningún país; la
+    # versión anterior de este check exigía Colombia arriba y contradecía esa regla).
+    paises = re.findall(r'name:\s*"([^"]+)"', country_selector)
+    check("pregunta ÚNICA de país, en orden alfabético y sin ningún país destacado",
           "COUNTRY_OPTIONS" in onboarding_surface and '"p5"' not in onboarding
-          and onboarding_surface.index('name: "Colombia"') < onboarding_surface.index('name: "Argentina"')
-          and "Conocimiento jurídico profundo" in onboarding_surface
+          and len(paises) >= 20 and paises == sorted(paises)
           and onboarding.count("¿Con las reglas jurídicas de qué país trabaja tu despacho?") == 1)
     check("la selección de país auto-llena jurisdiction.base (nombres) además de jurisdictions (códigos)",
           'soulResponses["jurisdiction.base"]' in onboarding and "COUNTRY_NAME_BY_CODE" in onboarding)
-    check("P6/P7/P18 son tags libres", all(f'"{x}"' in onboarding for x in ("p6", "p7", "p18")) and "TAG_IDS" in onboarding)
-    check("P8/P9 son texto libre", all(f'"{x}"' in onboarding for x in ("p8", "p9")) and "TEXT_IDS" in onboarding and "p8:" not in onboarding and "p9:" not in onboarding)
-    check("P10/P11/P14/P17 removidas del wizard (voz/límites/ritmo)",
-          not any(f'"{x}"' in onboarding for x in ("p10", "p11", "p14", "p17")))
-    check("barra de progreso thin", "h-1 w-full" in onboarding)
+
+    # ── LA LISTA NO PROMETE SOLA (defecto corregido 2026-07-20) ───────────────────────
+    # Las 21 casillas se veían idénticas y no consultaban nada: un despacho chileno marcaba
+    # "Chile" creyendo que Mia traía el derecho chileno adentro, cuando el único paquete
+    # instalado es 'co'. La lista de 21 es una comodidad para no escribir el país a mano,
+    # NO un catálogo de capacidades. Estos cuatro checks impiden que vuelva a serlo.
+    selector_visible = sin_comentarios(country_selector)
+    check("el selector consulta la verdad al servidor (GET /api/jurisdictions), no la supone",
+          "/api/jurisdictions" in selector_visible)
+    # La marca se DERIVA de la respuesta. Si alguien vuelve a cablear qué países van
+    # marcados, aparecerá un código de país de dos letras fuera de COUNTRY_OPTIONS.
+    codigos_lista = set(re.findall(r'code:\s*"([a-z]{2})"', country_selector))
+    codigos_sueltos = set(re.findall(r'"([a-z]{2})"', country_selector))
+    check("la marca de país preparado NO es un literal cableado (se deriva de la respuesta)",
+          codigos_sueltos == codigos_lista and "prepared" in selector_visible
+          and "COUNTRY_OPTIONS" in country_selector)
+    # Fail-soft: un fallo de red no puede dejar a nadie sin poder darse de alta (ese
+    # bloqueante ya se cometió una vez). apiGetSoft nunca lanza, y el estado "unknown"
+    # existe para callar en vez de afirmar que no hay material para ningún país.
+    check("si la consulta falla, el paso sigue y no se afirma nada (fail-soft)",
+          "apiGetSoft" in selector_visible and '"unknown"' in selector_visible
+          and '"/api/jurisdictions", null' in selector_visible)
+    # Lo prometido tiene que caber en lo que el paquete 'co' trae DE VERDAD: fuentes
+    # oficiales (corpus_sources), forma de citar (citation_style) y marcadores de
+    # documento. Festivos y términos son PROVISIONALES (`_complete: false`) y el
+    # resolutor de plazos ni siquiera está cableado a ellos: prometerlos sería mentira
+    # con consecuencia procesal. Y nada de jerga técnica en pantalla (§G).
+    promesas_prohibidas = ("festivo", "plazo", "término procesal", "vencimiento",
+                           "calcul", "jurisprudencia de tu país")
+    check("no promete festivos ni cálculo de plazos (esos datos son provisionales)",
+          not any(x in selector_visible.lower() for x in promesas_prohibidas))
+    check("el texto del país no usa jerga técnica (paquete/pack/corpus/instalado)",
+          not any(x in selector_visible.lower()
+                  for x in ("pack", "corpus", "instalad", "paquete", "jurisdiction pack")))
+    # LA SALIDA. Sin esto, un despacho de un país que no está entre las casillas no puede
+    # terminar el alta — cierra mercados enteros y choca de frente con la regla dura del
+    # producto. Se exige la vía completa: campo libre + que baste para avanzar + que el
+    # dato llegue al perfil + modo general cuando no hay ningún código de paquete.
+    check("un país FUERA de la lista tiene salida y no bloquea el alta",
+          "JURISDICTION_OTHER_FIELD" in onboarding
+          and "asList(answers[JURISDICTION_OTHER_FIELD]).length > 0" in onboarding
+          and "GENERIC_JURISDICTION" in onboarding
+          and "...otros" in onboarding)
+    check("«Mi despacho» también deja editar un país fuera de la lista",
+          "otherCountries" in despacho and "GENERIC_JURISDICTION" in despacho)
+    # El cuestionario vigente: p6 (a quién defiende / en qué asuntos) y p20/p21 (autonomía,
+    # líneas rojas) son chips libres; p22 (estándar de cierre) es texto libre.
+    check("P6/P20/P21 son tags libres y P22 texto libre",
+          all(f'"{x}"' in onboarding for x in ("p6", "p20", "p21", "p22"))
+          and "TAG_IDS" in onboarding and "TEXT_IDS" in onboarding)
+    # p19 (modo profundo) es la excepción: se nombra SOLO para filtrarlo si el backend
+    # todavía lo enviara (Riesgo #27 — no se ofrece lo que no está implementado).
+    check("las preguntas retiradas NO volvieron al wizard (P3/P4/P5/P7-P18)",
+          not any(f'"{x}"' in onboarding for x in
+                  ("p3", "p4", "p5", "p7", "p8", "p9", "p10", "p11", "p12", "p13",
+                   "p14", "p15", "p16", "p17", "p18")))
+    check("el modo profundo (p19) solo aparece para quedar OCULTO del wizard",
+          'HIDDEN_QUESTION_IDS = new Set(["p19"])' in onboarding
+          and onboarding.count('"p19"') == 1)
+    check("barra de progreso thin", "h-0.5 w-full" in onboarding)
     check("pregunta centrada", "text-center text-2xl" in onboarding)
     # Los 3 checks siguientes se actualizaron al design system del pase wow
     # (2026-07, aprobado por Pipe): tokens HSL de shadcn en vez de hex crudos.

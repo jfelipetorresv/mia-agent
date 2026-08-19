@@ -147,7 +147,7 @@ class ProfileManager:
                     "  (tenant_id, name, lawyer_name, tp_number, jurisdiction, practice_areas, "
                     "   voice_adjectives, banned_words, preferred_sources, hard_nos, rhythm, tools) "
                     "VALUES (%(t)s::uuid, %(name)s, %(lawyer_name)s, %(tp_number)s, "
-                    "  COALESCE(%(jurisdiction)s,'colombia'), %(practice_areas)s, "
+                    "  COALESCE(%(jurisdiction)s,'generic'), %(practice_areas)s, "
                     "  %(voice_adjectives)s, %(banned_words)s, %(preferred_sources)s, "
                     "  %(hard_nos)s, %(rhythm)s, %(tools)s) "
                     "ON CONFLICT (tenant_id) DO UPDATE SET "

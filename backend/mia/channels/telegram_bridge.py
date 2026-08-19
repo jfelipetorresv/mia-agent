@@ -422,6 +422,45 @@ def run_bot(settings: BridgeSettings) -> int:
     return 0
 
 
+_bridge_thread = None  # threading.Thread | None — un puente por proceso
+
+
+def start_bridge_if_configured(env: dict[str, str] | None = None) -> str:
+    """Arranca el puente en un hilo daemon si hay token. Nunca tumba el API.
+
+    Opt-in: sin ``TELEGRAM_BOT_TOKEN`` no hace nada (`skipped`). Si el token está
+    pero faltan chat/correo/clave, avisa y no arranca (`incomplete`). El hilo es
+    daemon: muere con el proceso del API.
+    """
+    global _bridge_thread
+    import threading
+
+    env_map = env if env is not None else dict(os.environ)
+    if not (env_map.get("TELEGRAM_BOT_TOKEN") or "").strip():
+        logger.info("Telegram: sin TELEGRAM_BOT_TOKEN; el puente no arranca (opt-in).")
+        return "skipped"
+    if _bridge_thread is not None and _bridge_thread.is_alive():
+        return "running"
+    try:
+        settings = load_settings(env_map)
+    except BridgeConfigError as exc:
+        logger.warning("Telegram configurado a medias; el puente no arranca. %s",
+                       str(exc).splitlines()[0])
+        return "incomplete"
+
+    def _run() -> None:
+        try:
+            run_bot(settings)
+        except Exception:  # noqa: BLE001 — el puente no tumba el API
+            logger.exception("el puente de Telegram se detuvo")
+
+    _bridge_thread = threading.Thread(
+        target=_run, name="mia-telegram-bridge", daemon=True)
+    _bridge_thread.start()
+    logger.info("Puente de Telegram arrancado junto al API (opt-in).")
+    return "started"
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"

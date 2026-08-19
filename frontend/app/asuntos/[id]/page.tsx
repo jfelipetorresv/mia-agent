@@ -1,30 +1,63 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, use, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
+  CheckCircle2,
   ChevronRight,
+  ClipboardCheck,
   FileText,
+  Download,
+  Globe2,
+  Moon,
   Paperclip,
   Scale,
   Send,
   Sparkles,
+  Sunrise,
   Swords,
+  X,
 } from "lucide-react";
-import { apiGet, apiSend, apiUpload, streamTurn } from "@/lib/api";
+import { apiDownload, apiGet, apiSend, apiUpload, streamPost, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
 import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
 import CitationReview, { type Verification } from "../../_components/CitationReview";
 import FuentesPanel from "../../_components/FuentesPanel";
+import AvisoDeCosto, {
+  recogerAvisoDeCosto,
+  type AvisoDeCostoData,
+} from "../../_components/AvisoDeCosto";
 import GuideInterviewWizard from "../../_components/GuideInterviewWizard";
 import SalaEstrategiaDialog from "./_components/SalaEstrategiaDialog";
 import SalaEstrategiaResult from "./_components/SalaEstrategiaResult";
+import DiarioDialog from "./_components/DiarioDialog";
+import CierreDialog, { type CierreResult } from "./_components/CierreDialog";
+import DocumentosPorConfirmarDialog from "./_components/DocumentosPorConfirmarDialog";
 import type { DebateTurn, Panelist, WarRoomResult } from "./_components/warroom-types";
 import { Button } from "@/components/ui/button";
+import MiaMarkdown from "@/components/MiaMarkdown";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { COUNTRY_NAME_BY_CODE } from "@/app/_components/CountrySelector";
+
+type DelegationProposal = {
+  agente?: string;
+  nombre?: string;
+  texto?: string;
+  huella?: string;
+  aviso?: string;
+};
 
 // GET /api/matters/{id}/warroom devuelve, según el contrato, el último
 // WarRoomResult "plano" o `{ result: null }` cuando aún no hay uno — se
@@ -48,27 +81,57 @@ type MissionsSummary = { count: number; milestonesDone: number; milestonesTotal:
 function fmtDate(s?: string): string {
   if (!s) return "";
   try {
-    return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+    return new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short" });
   } catch {
     return "";
   }
 }
 
-export default function WorkspacePage({ params }: { params: { id: string } }) {
+// useSearchParams() exige un límite <Suspense> en App Router (si no, rompe el
+// prerender). El contenido real vive en WorkspacePageContent; este export solo
+// monta el límite.
+export default function WorkspacePage({ params }: { params: Promise<{ id: string }> }) {
+  const resolved = use(params);
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[100dvh] items-center justify-center text-sm text-muted-foreground">
+          Cargando…
+        </div>
+      }
+    >
+      <WorkspacePageContent params={resolved} />
+    </Suspense>
+  );
+}
+
+function WorkspacePageContent({ params }: { params: { id: string } }) {
   const matterId = params.id;
   const router = useRouter();
-  const [matter, setMatter] = useState<{ name?: string } | null>(null);
+  const searchParams = useSearchParams();
+  const [matter, setMatter] = useState<{ name?: string; jurisdictions?: string[]; jurisdictions_effective?: string[] } | null>(null);
+  const [organizationJurisdictions, setOrganizationJurisdictions] = useState<string[]>([]);
+  const [jurisdictionBusy, setJurisdictionBusy] = useState(false);
+  const [jurisdictionError, setJurisdictionError] = useState("");
   const [docs, setDocs] = useState<Doc[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
+  // Aviso de costo del turno: se pinta cuando la suscripción no alcanzó y hubo que pagar
+  // crédito. Lo cierra el abogado; no desaparece solo.
+  const [avisoCosto, setAvisoCosto] = useState<AvisoDeCostoData | null>(null);
   const [hasDraft, setHasDraft] = useState(false);
+  const [delegation, setDelegation] = useState<DelegationProposal | null>(null);
+  const [delegationRemember, setDelegationRemember] = useState(false);
+  const [delegationBusy, setDelegationBusy] = useState(false);
   // B3: "Convierte lo que hicimos aquí en una guía" — solo visible cuando el
   // desenlace real del borrador fue APROBADO. `awaiting_review=false` por sí solo NO
   // alcanza como señal: el grafo también llega a END (deja de estar pausado) cuando el
   // abogado RECHAZA o EDITA el borrador, así que se usa el desenlace explícito
   // (hitl_outcome) que expone GET /matters/{id}/draft, no un proxy.
   const [draftApproved, setDraftApproved] = useState(false);
+  const [finalReady, setFinalReady] = useState(false);
+  const [finalDownloading, setFinalDownloading] = useState(false);
   const [guideWizardOpen, setGuideWizardOpen] = useState(false);
   const [diagnosis, setDiagnosis] = useState("");
   // CP7: cierre estructurado del diagnostico (problema/normas/riesgo) cuando el
@@ -87,6 +150,34 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   // lo ya escrito; los avisos ("no se escuchó voz") van en ámbar bajo el input.
   const [dictationNotice, setDictationNotice] = useState("");
 
+  // Avisos en llano cuando se llega desde /revisar con una señal en la URL
+  // (§G: nada de "sin_borrador=true" visible). Se leen una sola vez y se
+  // limpia el query para que un refresco de la página no repita el aviso.
+  const [notice, setNotice] = useState<{ type: "warning" | "success"; text: string } | null>(null);
+  useEffect(() => {
+    const sinBorrador = searchParams.get("sin_borrador") === "true";
+    const confirmed = searchParams.get("confirmed") === "true";
+    if (sinBorrador) {
+      setNotice({
+        type: "warning",
+        text: "Ese borrador ya no está disponible para revisión. Puede que ya se haya resuelto o que se haya reemplazado por uno nuevo — pídele a Mia que lo retome si lo necesitas.",
+      });
+    } else if (confirmed) {
+      setNotice({ type: "success", text: "El borrador quedó aprobado. Mia guardó tu decisión." });
+    }
+    if (sinBorrador || confirmed) {
+      router.replace(`/asuntos/${matterId}`, { scroll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // Aviso de costo dejado en depósito por la pantalla de revisión (cerrar el borrador
+  // también puede acabar en crédito de pago, y esa pantalla vuelve aquí enseguida).
+  useEffect(() => {
+    const pendiente = recogerAvisoDeCosto();
+    if (pendiente) setAvisoCosto(pendiente);
+  }, []);
+
   // Fase 3.1(B) · Plan de trabajo (aside): contador liviano para el header de la card.
   const [missionsSummary, setMissionsSummary] = useState<MissionsSummary | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
@@ -103,6 +194,27 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   const [warroomResult, setWarroomResult] = useState<WarRoomResult | null>(null);
   const [convertingToDraft, setConvertingToDraft] = useState(false);
 
+  // Pieza 4 · sesión de trabajo del expediente (botones, nunca comandos §G):
+  // "Arrancar el día" (/daily) y "Cerrar por hoy" (/cierre). El cierre destila
+  // lo que el abogado decidió en la conversación; por eso necesita el hilo
+  // visible. Se dispara MANUAL (botón) y AUTOMÁTICO al llenarse el contexto (~65%,
+  // gateado en el backend) para no perder contexto — decisión de Pipe.
+  const [diarioOpen, setDiarioOpen] = useState(false);
+  const [cierreOpen, setCierreOpen] = useState(false);
+  const [cierreBusy, setCierreBusy] = useState(false);
+  const [cierreResult, setCierreResult] = useState<CierreResult | null>(null);
+  // "Documentos por confirmar": la DUDA del clasificador de ingesta. La lista vive en
+  // su propio diálogo (no se reusa la revisión del borrador); aquí solo llevamos un
+  // contador liviano para el acceso/indicador y para refrescarlo al confirmar.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  // Espejo siempre-fresco del hilo: send()/runChatStream capturan `messages` del
+  // render y quedan obsoletos tras el streaming; el cierre lee este ref.
+  const messagesRef = useRef<Msg[]>([]);
+  // El cierre-auto dispara UNA vez al cruzar el umbral, para no re-destilar (coste
+  // LLM) en cada turno posterior; el abogado siempre puede cerrar a mano después.
+  const autoCierreDoneRef = useRef(false);
+
   const dictation = useDictation(
     (text) => {
       setDictationNotice("");
@@ -110,6 +222,12 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     },
     (notice) => setDictationNotice(notice),
   );
+
+  // Mantén el espejo del hilo al día para que el cierre destile SIEMPRE la
+  // conversación más reciente (los closures de send/runChatStream se congelan).
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   async function loadDocs() {
     try {
@@ -119,9 +237,31 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     }
   }
 
+  // Contador de "Documentos por confirmar": cuántos documentos del asunto tienen
+  // un dato que Mia dejó como duda. Solo cuenta para el indicador — la lista real la
+  // carga el diálogo cuando se abre. Fail-soft: si falla, se asume 0 (no molesta).
+  async function loadPendingCount() {
+    try {
+      const res = await apiGet<{ documentos?: unknown[] }>(
+        `/api/matters/${matterId}/documents/pending`,
+      );
+      setPendingCount((res.documentos || []).length);
+    } catch {
+      setPendingCount(0);
+    }
+  }
+
   useEffect(() => {
-    apiGet<{ name?: string }>(`/api/matters/${matterId}`).then(setMatter).catch(() => {});
+    apiGet<{ name?: string; jurisdictions?: string[]; jurisdictions_effective?: string[] }>(`/api/matters/${matterId}`)
+      .then(setMatter)
+      .catch(() => {});
+    apiGet<{ jurisdictions?: string[] }>("/api/profile/full")
+      .then((profile) => setOrganizationJurisdictions(
+        (profile.jurisdictions || []).filter(Boolean),
+      ))
+      .catch(() => setOrganizationJurisdictions([]));
     loadDocs();
+    loadPendingCount();
     // Contador liviano del plan de trabajo: decide si la card empieza expandida.
     apiGet<{ missions: Array<{ progress?: { done?: number; total?: number } }> }>(
       `/api/missions?matter_id=${encodeURIComponent(matterId)}`,
@@ -145,6 +285,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       hitl_outcome?: "approved" | "rejected" | "edited" | null;
       diagnosis_summary?: DiagnosisSummary | null;
       verification?: Verification | null;
+      final_ready?: boolean;
     }>(`/api/matters/${matterId}/draft`)
       .then((d) => {
         if (d.diagnosis) setDiagnosis(d.diagnosis);
@@ -152,6 +293,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         if (d.verification) setVerification(d.verification);
         if (d.awaiting_review) setHasDraft(true);
         setDraftApproved(Boolean(d.draft) && d.hitl_outcome === "approved");
+        setFinalReady(Boolean(d.final_ready));
       })
       .catch(() => {
         /* sin borrador todavia */
@@ -168,6 +310,15 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       })
       .catch(() => {
         /* sin sala de estrategia todavia */
+      });
+    // Repinta el hilo de la conversacion tras un F5: los turnos viven guardados,
+    // pero la pantalla no los pedia y se perdian al recargar.
+    apiGet<{ mensajes?: Msg[] }>(`/api/matters/${matterId}/historial`)
+      .then((h) => {
+        if (h.mensajes && h.mensajes.length) setMessages(h.mensajes);
+      })
+      .catch(() => {
+        /* hilo nuevo, sin turnos previos */
       });
     return () => {
       streamAbortRef.current?.abort();
@@ -200,6 +351,9 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       }
     }
     await loadDocs();
+    // Un documento recién subido puede quedar con dudas de ficha cuando termine su
+    // clasificación (asíncrona); refrescamos el contador para que el indicador aparezca.
+    void loadPendingCount();
     // El duplicado es informativo, no un error (§G): se anuncia en el mismo resumen.
     const parts: string[] = [];
     if (added > 0) parts.push(`${added} ${added === 1 ? "documento agregado" : "documentos agregados"}`);
@@ -225,11 +379,38 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       diagnosis?: string;
       diagnosis_summary?: DiagnosisSummary | null;
       verification?: Verification | null;
+      propuesta?: DelegationProposal;
+      sugerencia?: string;
+      veces?: number;
     };
-    if (event === "thinking") setStatus(payload.message || "Mia esta analizando...");
-    else if (event === "draft_ready") setStatus("Mia esta redactando...");
+    if (event === "aviso_de_costo") {
+      // El turno se resolvió con crédito de pago porque la suscripción no alcanzó. El
+      // backend arma el texto; aquí solo se muestra hasta que el abogado lo cierre.
+      setAvisoCosto({
+        message: payload.message || "",
+        sugerencia: payload.sugerencia,
+        veces: payload.veces,
+      });
+    } else if (event === "thinking") setStatus(payload.message || "Mia está analizando...");
+    else if (event === "draft_ready") setStatus("Mia está redactando...");
     else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
-    else if (event === "awaiting_review") {
+    else if (event === "awaiting_delegation") {
+      setStatus(payload.message || "Mia propone pedirle ayuda a un asistente externo.");
+      setDelegation(payload.propuesta || {});
+      setDelegationRemember(false);
+      setMessages((m) => {
+        const copy = [...m];
+        const nombre = payload.propuesta?.nombre || "un asistente externo";
+        copy[copy.length - 1] = {
+          role: "mia",
+          text:
+            payload.message ||
+            `Mia propone pedirle ayuda a ${nombre}. Revisa el texto antes de autorizar.`,
+        };
+        return copy;
+      });
+    } else if (event === "awaiting_review") {
+      setDelegation(null);
       setStatus("Tienes un borrador listo");
       setHasDraft(true);
       if (payload.diagnosis) setDiagnosis(payload.diagnosis);
@@ -239,33 +420,68 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         const copy = [...m];
         copy[copy.length - 1] = {
           role: "mia",
-          text: payload.draft || "He preparado un borrador para tu revision.",
+          text: payload.draft || "He preparado un borrador para tu revisión.",
         };
         return copy;
       });
     }
   }
 
-  async function runChatStream(stream_url: string) {
+  async function runChatStream(stream_url: string, message: string) {
     setStreaming(true);
     streamAbortRef.current?.abort();
     const controller = new AbortController();
     streamAbortRef.current = controller;
     try {
-      await streamTurn(stream_url, handleChatEvent, controller.signal);
+      await streamPost(stream_url, { message }, handleChatEvent, controller.signal);
     } catch {
       setStatus("No se pudo completar la consulta.");
     } finally {
+      setStreaming(false);
+      // Cierre-auto tras el turno: diferido para que el último mensaje ya esté en
+      // el ref (setMessages del streaming se aplica en el próximo render). El
+      // backend gatea por llenado (~65%); si no aplica, es una llamada barata.
+      setTimeout(() => {
+        void maybeAutoCierre();
+      }, 0);
+    }
+  }
+
+  async function respondDelegation(aprobar: boolean) {
+    if (!delegation || delegationBusy || streaming) return;
+    if (aprobar && !delegation.huella) {
+      setStatus("No se pudo confirmar la propuesta. Intenta de nuevo.");
+      return;
+    }
+    setDelegationBusy(true);
+    setStreaming(true);
+    setStatus(aprobar ? "Mia está retomando el trabajo…" : "Mia continúa sin el ayudante…");
+    streamAbortRef.current?.abort();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    try {
+      const path = aprobar
+        ? `/api/matters/${matterId}/delegation/aprobar`
+        : `/api/matters/${matterId}/delegation/descartar`;
+      const body = aprobar
+        ? { huella: delegation.huella, recordar: delegationRemember }
+        : {};
+      setDelegation(null);
+      await streamPost(path, body, handleChatEvent, controller.signal);
+    } catch {
+      setStatus("No se pudo responder a la propuesta. Intenta de nuevo.");
+    } finally {
+      setDelegationBusy(false);
       setStreaming(false);
     }
   }
 
   async function send() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || delegation) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", text }, { role: "mia", text: "" }]);
-    setStatus("Mia esta analizando...");
+    setStatus("Mia está analizando...");
     setHasDraft(false);
     try {
       const { stream_url } = await apiSend<{ stream_url: string }>(
@@ -273,7 +489,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         `/api/matters/${matterId}/chat`,
         { message: text },
       );
-      await runChatStream(stream_url);
+      await runChatStream(stream_url, text);
     } catch {
       setStatus("No se pudo completar la consulta.");
     }
@@ -294,7 +510,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       setWarroomDebate([]);
       setWarroomResult(null);
       setWarroomError("");
-      setWarroomStatus("Mia esta reuniendo la sala de estrategia...");
+      setWarroomStatus("Mia está reuniendo la sala de estrategia...");
       setWarroomStreaming(true);
       await streamTurn(stream_url, (event, data) => {
         const payload = data as {
@@ -307,7 +523,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           result?: WarRoomResult;
         };
         if (event === "thinking") {
-          setWarroomStatus(payload.message || "Mia esta trabajando...");
+          setWarroomStatus(payload.message || "Mia está trabajando...");
         } else if (event === "counsel_turn") {
           setWarroomDebate((d) => [
             ...d,
@@ -342,21 +558,135 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
   // arranca el flujo de redacción normal — el borrador resultante pasa por el
   // mismo gate de citas que cualquier otro (revisar/page.tsx).
   async function convertWarroomToDraft() {
-    if (convertingToDraft || streaming) return;
+    if (convertingToDraft || streaming || delegation) return;
     setConvertingToDraft(true);
-    setStatus("Mia esta preparando tu borrador...");
+    setStatus("Mia está preparando tu borrador...");
     setHasDraft(false);
     setMessages((m) => [...m, { role: "mia", text: "" }]);
     try {
-      const { stream_url } = await apiSend<{ stream_url: string }>(
+      const { stream_url, message } = await apiSend<{ stream_url: string; message: string }>(
         "POST",
         `/api/matters/${matterId}/warroom/to-draft`,
       );
-      await runChatStream(stream_url);
+      await runChatStream(stream_url, message);
     } catch {
       setStatus("No se pudo preparar el borrador. Intenta de nuevo.");
     } finally {
       setConvertingToDraft(false);
+    }
+  }
+
+  // Hilo visible en el formato que espera /cierre ({role, content}); el backend
+  // destila SOLO los mensajes del abogado (role "user"). Se leen del ref para
+  // tomar la conversación más reciente, no la del render que abrió el closure.
+  function cierrePayload(): Array<{ role: string; content: string }> {
+    return messagesRef.current
+      .filter((m) => m.text.trim())
+      .map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.text }));
+  }
+
+  // "Cerrar por hoy" (manual): destila lo que el abogado decidió y lo guarda en el
+  // expediente. Muestra en un diálogo qué se guardó (o por qué no había nada).
+  async function runCierre() {
+    if (cierreBusy || streaming) return;
+    setCierreResult(null);
+    setCierreOpen(true);
+    setCierreBusy(true);
+    try {
+      const res = await apiSend<CierreResult>("POST", `/api/matters/${matterId}/cierre`, {
+        messages: cierrePayload(),
+      });
+      setCierreResult(res);
+      // Un cierre a mano que sí guardó cuenta como cierre de la sesión: no lo
+      // repitas automáticamente después.
+      if (res.written) autoCierreDoneRef.current = true;
+    } catch {
+      setCierreResult({
+        written: false,
+        reason: "fallo_escritura",
+        durables: [],
+        pendientes: [],
+      });
+    } finally {
+      setCierreBusy(false);
+    }
+  }
+
+  // Cierre AUTOMÁTICO: se llama tras cada turno; el backend decide si la ventana
+  // llegó a ~65% (gate) y solo entonces destila. Silencioso salvo cuando guarda
+  // algo — ahí avisa en llano y no vuelve a dispararse (una vez por sesión).
+  // TODO(pieza-4e): el gate del backend mide contra MIA_CONTEXT_WINDOW; el
+  // frontend no conoce la ventana efectiva del modelo, así que no envía
+  // `context_window` (usa el default del backend). Si en el futuro se quiere que
+  // el umbral refleje el presupuesto real de la conversación, pasar aquí un
+  // context_window medido — no inventar uno.
+  async function maybeAutoCierre() {
+    if (autoCierreDoneRef.current) return;
+    const payload = cierrePayload();
+    if (payload.length === 0) return;
+    try {
+      const res = await apiSend<{ triggered?: boolean; written?: boolean }>(
+        "POST",
+        `/api/matters/${matterId}/cierre`,
+        { messages: payload, auto: true },
+      );
+      if (res.triggered) {
+        // Disparó el destilado (corrió el LLM): no re-destilar en turnos siguientes.
+        autoCierreDoneRef.current = true;
+        if (res.written) {
+          setNotice({
+            type: "success",
+            text:
+              "La conversación se hizo larga, así que guardé por ti en el expediente lo que " +
+              "decidiste hasta aquí. Puedes seguir sin perder el hilo.",
+          });
+        }
+      }
+    } catch {
+      /* el cierre-auto nunca molesta al abogado: si falla, se ignora en silencio */
+    }
+  }
+
+  async function toggleJurisdiction(code: string) {
+    if (!matter || jurisdictionBusy) return;
+    // Con [] (hereda de la firma) el punto de partida son las jurisdicciones EFECTIVAS:
+    // antes el primer clic estrechaba en silencio el asunto a una sola.
+    const current = matter.jurisdictions?.length
+      ? matter.jurisdictions
+      : matter.jurisdictions_effective || [];
+    const next = current.includes(code)
+      ? current.filter((item) => item !== code)
+      : [...current, code];
+    // El asunto siempre conserva al menos un contexto activo. No se infiere un país.
+    if (next.length === 0) {
+      setJurisdictionError("El asunto debe conservar al menos una jurisdicción activa.");
+      return;
+    }
+    setJurisdictionBusy(true);
+    setJurisdictionError("");
+    try {
+      const result = await apiSend<{ jurisdictions: string[] }>(
+        "PUT",
+        `/api/matters/${matterId}/jurisdictions`,
+        { jurisdictions: next },
+      );
+      setMatter((previous) => previous ? { ...previous, jurisdictions: result.jurisdictions, jurisdictions_effective: result.jurisdictions.length ? result.jurisdictions : previous.jurisdictions_effective } : previous);
+    } catch {
+      setJurisdictionError("No pude cambiar el contexto jurídico. Intenta de nuevo.");
+    } finally {
+      setJurisdictionBusy(false);
+    }
+  }
+
+  async function downloadFinal() {
+    if (finalDownloading) return;
+    setFinalDownloading(true);
+    try {
+      await apiDownload(`/api/matters/${matterId}/final.docx`, "documento-final-verificado.docx");
+    } catch {
+      setNotice({ type: "warning", text: "No pude descargar el documento final. Intenta de nuevo." });
+    } finally {
+      setFinalDownloading(false);
     }
   }
 
@@ -407,7 +737,14 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
               autocontenido que carga y refresca su propia lista. */}
           <FuentesPanel matterId={matterId} kind="asunto" onChanged={loadDocs} />
 
-          <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" multiple onChange={onUpload} className="hidden" />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.docm,.odt,.rtf,.ppt,.pptx,.pptm,.pps,.ppsx,.xls,.xlsx,.xlsm,.xlsb,.ods,.odp,.epub,.csv,.txt,.md"
+            multiple
+            onChange={onUpload}
+            className="hidden"
+          />
           <Button
             variant="outline"
             onClick={() => fileRef.current?.click()}
@@ -453,6 +790,67 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
       {/* Consulta: espacio único de conversación (el plan vive en el aside derecho) */}
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex-1 space-y-5 overflow-auto px-6 py-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/80 px-4 py-3 shadow-sm">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Globe2 className="h-4 w-4 shrink-0 text-primary" />
+              <span className="text-xs font-medium text-muted-foreground">Contexto jurídico</span>
+              {(matter?.jurisdictions?.length ? matter.jurisdictions : matter?.jurisdictions_effective?.length ? matter.jurisdictions_effective : ["generic"]).map((code) => (
+                <span key={code} className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                  {COUNTRY_NAME_BY_CODE[code] || "General"}
+                </span>
+              ))}
+            </div>
+            {organizationJurisdictions.length > 1 ? (
+              <details className="relative">
+                <summary className="cursor-pointer list-none rounded-lg px-2 py-1 text-xs font-medium text-primary hover:bg-primary/5">
+                  Cambiar
+                </summary>
+                <div className="absolute right-0 z-20 mt-2 min-w-56 space-y-2 rounded-xl border border-border bg-card p-3 shadow-lg">
+                  <p className="text-xs text-muted-foreground">
+                    Mia concentrará la investigación y las verificaciones en lo que marques.
+                  </p>
+                  {organizationJurisdictions.map((code) => (
+                    <label key={code} className="flex cursor-pointer items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={((matter?.jurisdictions?.length ? matter.jurisdictions : matter?.jurisdictions_effective) || []).includes(code)}
+                        onChange={() => void toggleJurisdiction(code)}
+                        disabled={jurisdictionBusy}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      {COUNTRY_NAME_BY_CODE[code] || "General"}
+                    </label>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+            {jurisdictionError ? <p role="alert" className="w-full text-xs text-warning">{jurisdictionError}</p> : null}
+          </div>
+          {notice ? (
+            <div
+              role={notice.type === "warning" ? "alert" : "status"}
+              className={cn(
+                "flex items-start gap-3 rounded-xl border px-5 py-4 animate-slide-up",
+                notice.type === "warning"
+                  ? "border-warning/30 bg-warning/5 text-warning"
+                  : "border-success/30 bg-success/10 text-success",
+              )}
+            >
+              {notice.type === "warning" ? (
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              ) : (
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+              )}
+              <p className="flex-1 text-sm">{notice.text}</p>
+              <button
+                onClick={() => setNotice(null)}
+                aria-label="Cerrar aviso"
+                className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
           {messages.length === 0 ? (
             <div className="mt-20 text-center animate-slide-up">
               <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -481,10 +879,14 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                   className={
                     m.role === "user"
                       ? "max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
-                      : "max-w-[75%] whitespace-pre-wrap pt-1 font-serif text-[15px] leading-relaxed text-foreground"
+                      : "max-w-[75%] pt-1 font-serif text-[15px] leading-relaxed text-foreground"
                   }
                 >
-                  {m.text || <ThinkingDots />}
+                  {m.text ? (
+                    m.role === "mia" ? <MiaMarkdown text={m.text} /> : m.text
+                  ) : (
+                    <ThinkingDots />
+                  )}
                 </div>
               </div>
             ))
@@ -501,9 +903,43 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
           />
         </div>
         <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
-          <div className="mb-2 flex min-h-5 items-center justify-between text-sm">
-            <span className="text-muted-foreground">{status}</span>
-            <div className="flex items-center gap-2">
+          <AvisoDeCosto aviso={avisoCosto} onDismiss={() => setAvisoCosto(null)} />
+          <div className="mb-2 flex min-h-5 min-w-0 items-center justify-between gap-3 text-sm">
+            <span className="shrink-0 text-muted-foreground">{status}</span>
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+              {pendingCount > 0 ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmOpen(true)}
+                  className="gap-1.5 border-primary/40 text-primary animate-slide-up hover:bg-primary/5"
+                >
+                  <ClipboardCheck className="h-3.5 w-3.5" />
+                  Documentos por confirmar
+                  <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-semibold text-primary-foreground">
+                    {pendingCount}
+                  </span>
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDiarioOpen(true)}
+                className="gap-1.5"
+              >
+                <Sunrise className="h-3.5 w-3.5" />
+                Arrancar el día
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={runCierre}
+                disabled={streaming || cierreBusy || messages.length === 0}
+                className="gap-1.5"
+              >
+                <Moon className="h-3.5 w-3.5" />
+                Cerrar por hoy
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -534,6 +970,18 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                 >
                   <FileText className="h-3.5 w-3.5" />
                   Revisar borrador
+                </Button>
+              ) : null}
+              {finalReady ? (
+                <Button
+                  variant="cta"
+                  size="sm"
+                  onClick={downloadFinal}
+                  disabled={finalDownloading}
+                  className="gap-1.5 animate-slide-up"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  {finalDownloading ? "Preparando…" : "Descargar final verificado"}
                 </Button>
               ) : null}
             </div>
@@ -644,6 +1092,71 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
         starting={warroomStarting}
         onStart={startWarroom}
       />
+
+      <DiarioDialog open={diarioOpen} onOpenChange={setDiarioOpen} matterId={matterId} />
+
+      <DocumentosPorConfirmarDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        matterId={matterId}
+        onChanged={loadPendingCount}
+      />
+
+      <CierreDialog
+        open={cierreOpen}
+        onOpenChange={setCierreOpen}
+        busy={cierreBusy}
+        result={cierreResult}
+      />
+
+      <Dialog
+        open={Boolean(delegation)}
+        onOpenChange={() => {
+          /* Debe elegir Autorizar o Descartar: cerrar sin decidir dejaría el asunto en 409. */
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {delegation?.nombre
+                ? `¿Autorizar a ${delegation.nombre}?`
+                : "¿Autorizar al asistente externo?"}
+            </DialogTitle>
+            <DialogDescription>
+              {delegation?.aviso ||
+                "Esto es una propuesta para que la revises, no algo que Mia ya hizo. Solo saldrá el texto de abajo."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm whitespace-pre-wrap">
+            {delegation?.texto || "(Sin texto propuesto)"}
+          </div>
+          <label className="flex items-start gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={delegationRemember}
+              onChange={(e) => setDelegationRemember(e.target.checked)}
+              disabled={delegationBusy || streaming}
+            />
+            <span>No volver a preguntarme por este ayudante en este asunto</span>
+          </label>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              disabled={delegationBusy || streaming}
+              onClick={() => respondDelegation(false)}
+            >
+              Descartar
+            </Button>
+            <Button
+              disabled={delegationBusy || streaming || !delegation?.huella}
+              onClick={() => respondDelegation(true)}
+            >
+              Autorizar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -33,6 +33,7 @@ import init_dream_prescriptions  # noqa: E402
 import init_dreams  # noqa: E402
 import init_feedback  # noqa: E402
 import init_playbooks  # noqa: E402
+import init_soul_versions  # noqa: E402
 import init_turn_usage  # noqa: E402
 from mia import config  # noqa: E402
 from mia.agent import llm  # noqa: E402
@@ -42,6 +43,7 @@ from mia.memory import prescriptions as rx  # noqa: E402
 from mia.memory.dreams import Dreams  # noqa: E402
 from mia.memory.gepa import GEPALoop  # noqa: E402
 from mia.memory.trace_capture import TraceCapture  # noqa: E402
+from mia.memory import wiki_manager as wm  # noqa: E402
 from mia.memory.wiki_manager import WikiManager  # noqa: E402
 
 PG = dict(
@@ -124,6 +126,16 @@ def weekly_reports(tenant_id: str) -> int:
     with psycopg.connect(autocommit=True, **PG) as c:
         return c.execute(
             "SELECT count(*) FROM feedback_proposals WHERE tenant_id=%s::uuid AND proposal_type='weekly_report'",
+            (tenant_id,),
+        ).fetchone()[0]
+
+
+def soul_rule_proposals(tenant_id: str) -> int:
+    """Propuestas de ajuste a la identidad que Dreams dejó pendientes (nunca las aplica)."""
+    with psycopg.connect(autocommit=True, **PG) as c:
+        return c.execute(
+            "SELECT count(*) FROM feedback_proposals WHERE tenant_id=%s::uuid "
+            "AND proposal_type='soul_rule' AND status='pending'",
             (tenant_id,),
         ).fetchone()[0]
 
@@ -240,11 +252,35 @@ async def run_checks() -> None:
             check("Métricas quedan en tenant_settings", tenant_metrics(tenant)["matters_worked"] >= 5)
             check("Wiki update compila conceptos aprobados", "Concepto Dream" in result["wiki"]["concepts_updated"])
             check("Rechazos quedan registrados en wiki", (await wiki.get_concept(tenant, "Patrones rechazados")) is not None)
+            # Riesgo #69: no basta con que el archivo EXISTA — antes tenía confidence=0.10 fija y
+            # sin wiki_schema, así que el LECTOR (notes_for_query) lo descartaba y NUNCA llegaba
+            # al modelo. Verifica el contrato del lector y que el lazo quede cerrado.
+            _rech = await wiki.get_concept(tenant, "Patrones rechazados")
+            _meta_rech, _ = wm._parse_frontmatter(_rech)
+            check("Rechazos cumplen el esquema del lector (wiki_schema>=2)",
+                  int(_meta_rech.get("wiki_schema") or 0) >= wm.WIKI_SCHEMA_VERSION)
+            # Con varios rechazos acumulados, la confianza supera el umbral y el concepto SÍ entra
+            # al turno (un rechazo aislado no: podría ser ruido — por eso sube con el volumen).
+            for _i in range(3):
+                await dreams._record_rejection(tenant, {
+                    "matter_id": f"rej-{_i}",
+                    "output": f"tesis descartada marcador-zeta-{_i}",
+                    "draft_final": f"no reutilizar el enfoque marcador-zeta {_i}",
+                })
+            _notas = await wiki.notes_for_query(tenant, "marcador-zeta enfoque")
+            check("Rechazos acumulados SÍ llegan al modelo (notes_for_query los devuelve)",
+                  any(str(n.get("id", "")).startswith("wiki:patrones_rechazados") for n in _notas))
             check("GEPA corre desde Dreams", {"new_skills_proposed", "skills_evolved", "skills_pruned", "top_skills"}.issubset(result["gepa"].keys()))
             check("Lint archiva concepto stale/orphan", (Path(tmp) / "wiki" / tenant / "concepts" / "archived" / "concepto_antiguo.md").exists())
             check("Pruning archiva skill viejo", playbook_status(old_skill) == "archived")
-            soul = (Path(tmp) / f"soul_{tenant}.md").read_text(encoding="utf-8")
-            check("Nudges actualiza SOUL", "Preferencias aprendidas por Mia" in soul)
+            # La identidad es sagrada: ningún agente la escribe solo. Antes este gate
+            # exigía lo contrario ("Nudges actualiza SOUL") — Dreams appendeaba reglas al
+            # SOUL.md sin aprobación, sin tope y sin historial, sobre la capa 1 del prompt.
+            # Hoy PROPONE y el abogado decide (gate completo: test_soul_guard.py).
+            check("Nudges NO escribe el SOUL (no existe archivo de identidad)",
+                  not (Path(tmp) / f"soul_{tenant}.md").exists())
+            check("Nudges deja la preferencia como propuesta para el abogado",
+                  soul_rule_proposals(tenant) >= 1)
             check("Weekly report queda como propuesta", weekly_reports(tenant) >= 1)
             check("Reporte semanal es legible", "Dreams Test" in result["report"] and "Tasa de aprobación" in result["report"])
 
@@ -413,6 +449,7 @@ async def async_main() -> int:
     init_dreams.apply()
     init_turn_usage.apply()
     init_dream_prescriptions.apply()
+    init_soul_versions.apply()   # tipo de propuesta 'soul_rule' (038)
     await pool.open_pool()
     try:
         await run_checks()

@@ -1,0 +1,29 @@
+{
+  "schema_version": "mia-windows-sandbox-diagnostic/v1",
+  "observed_at": "2026-08-14T20:41:51.5764807Z",
+  "outcome": "blocked",
+  "certified": false,
+  "blocker": "sandbox_closed_without_result",
+  "guest_started": false,
+  "result_json_created": false,
+  "model_or_secret_activity": "none",
+  "host_preflight": {
+    "windows_sandbox_exe": true,
+    "hypervisor_present": true,
+    "vmcompute": "Running",
+    "cmservice": "Running",
+    "feature_state_query": "requires_elevation"
+  },
+  "release_selection": {
+    "source": "mia-release-manifest.json",
+    "current_setup": "Mia_0.3.0_x64-setup.exe",
+    "current_version": "0.3.0",
+    "current_sha256": "cd8a9a22653df1f341f94d3ce3b1224af3419edbf9254ceffcb91c93805df867",
+    "commit": "bafbb638a932afd9012f14880089a89645211c8c",
+    "legacy_setup": "Mia_0.2.0_x64-setup.exe",
+    "legacy_version": "0.2.0",
+    "upgrade_decision": "upgrade_allowed"
+  },
+  "product_blockers": [],
+  "note": "El setup 0.3.0 y el contrato de restore/upgrade superaron el preflight y 23 pruebas offline. WindowsSandbox.exe cerró con código 0 sin crear result.json; por ello no se certificó ningún paso ejecutado dentro de la VM."
+}

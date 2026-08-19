@@ -15,8 +15,8 @@ lecciones OBLIGATORIAS que este spec preserva:
      solo como cliente del proxy externo: mia/embeddings.py llama
      litellm.embedding() directo para voyage-law-2) y necesita sus JSON de
      precios y tokenizers en tiempo de ejecución.
-  3. collect_all('rapidocr_onnxruntime') — sin esto el motor de OCR degrada
-     a None EN SILENCIO (no hay excepción visible, solo un feature apagado).
+  3. collect_all('rapidocr_onnxruntime') solo para perfiles ocr/full; el perfil
+     core conserva PyMuPDF para PDF textual y declara que no lee escaneos.
   4. hiddenimports de tiktoken_ext — tiktoken usa un registro de plugins
      (entry points) que el análisis estático de PyInstaller no detecta.
   5. pathex apunta a backend/ (no al repo completo) para que 'mia' se
@@ -32,16 +32,15 @@ lecciones OBLIGATORIAS que este spec preserva:
      exige EXACTAMENTE 2 llamadas collect_*() reales (litellm + rapidocr) —
      agregar una tercera rompería ese gate.
 
-FUERA del bundle (decisión de Pipe 2026-07-10): los pesos de voz
-(sherpa-onnx / Parakeet TDT / Silero VAD / Piper TTS) NO se incluyen. Viven en
+FUERA del bundle en todos los perfiles: los pesos de voz
+(Parakeet TDT / Silero VAD / Piper TTS) NO se incluyen. Viven en
 mia-data/models/speech/ (carpeta de datos de INSTANCIA, gitignored) y se
 instalan aparte con scripts/download_speech_models.ps1 o el Panel de control
 (backend/mia/speech/install.py). backend/mia/speech/engine.py los busca en
 config.PROJECT_ROOT/mia-data/models/speech — nunca en una ruta empaquetable
-por PyInstaller. Por eso este .spec NO tiene collect_all('sherpa_onnx') ni
-collect_data_files('sherpa_onnx'): solo se empaqueta el módulo Python de
-sherpa-onnx (código, pequeño) porque PyInstaller lo detecta como dependencia
-de backend/mia/speech/engine.py; los .onnx (cientos de MB) jamás entran aquí.
+por PyInstaller. El perfil voice/full permite empaquetar los runtimes
+sherpa-onnx y av detectados por PyInstaller; core/ocr los excluye. Los modelos
+.onnx (cientos de MB) jamás entran aquí.
 execution/test_packaging.py (gate en frío) verifica que este contrato no se
 rompa por accidente.
 """
@@ -59,9 +58,21 @@ REPO_ROOT = os.path.dirname(PACKAGING_DIR)
 BACKEND_DIR = os.path.join(REPO_ROOT, "backend")
 ENTRY_SCRIPT = os.path.join(PACKAGING_DIR, "entry_backend.py")
 
+PROFILE = os.environ.get("MIA_BUNDLE_PROFILE", "core").strip().lower()
+if PROFILE not in {"core", "ocr", "voice", "full"}:
+    raise ValueError(f"MIA_BUNDLE_PROFILE invalido: {PROFILE}")
+WITH_OCR = PROFILE in {"ocr", "full"}
+WITH_VOICE = PROFILE in {"voice", "full"}
+
 datas = []
 binaries = []
-hiddenimports = ["tiktoken_ext", "tiktoken_ext.openai_public"]
+hiddenimports = [
+    "tiktoken_ext",
+    "tiktoken_ext.openai_public",
+    # Backup cifrado F1: el hook oficial de PyInstaller cubre cryptography,
+    # y este hidden import deja explícito el binding nativo que debe viajar.
+    "cryptography.hazmat.bindings._rust",
+]
 
 # F2 (sesión 43): schema.sql + migrations/*.sql, para que mia.setup.first_run
 # los resuelva dentro del bundle (mia/db/... bajo sys._MEIPASS) igual que en
@@ -72,12 +83,25 @@ for _mig in sorted(os.listdir(os.path.join(DB_DIR, "migrations"))):
     if _mig.endswith(".sql"):
         datas.append((os.path.join(DB_DIR, "migrations", _mig), "mia/db/migrations"))
 
-datas += collect_data_files("litellm")
+datas += collect_data_files(
+    "litellm",
+    excludes=["**/tests/**", "**/test/**", "**/docs/**", "**/__pycache__/**"],
+)
 
-tmp_ret = collect_all("rapidocr_onnxruntime")
-datas += tmp_ret[0]
-binaries += tmp_ret[1]
-hiddenimports += tmp_ret[2]
+if WITH_OCR:
+    tmp_ret = collect_all("rapidocr_onnxruntime")
+    datas += tmp_ret[0]
+    binaries += tmp_ret[1]
+    hiddenimports += tmp_ret[2]
+
+excludes = [
+    "pytest", "_pytest", "unittest", "doctest", "pydoc", "IPython", "jupyter",
+    "notebook", "sphinx", "mkdocs",
+]
+if not WITH_OCR:
+    excludes += ["rapidocr_onnxruntime", "onnxruntime", "cv2", "PIL"]
+if not WITH_VOICE:
+    excludes += ["sherpa_onnx", "av"]
 
 # NO agregar aquí collect_all('sherpa_onnx') / collect_data_files('sherpa_onnx')
 # ni nada de 'parakeet' / 'piper' / 'silero' — ver nota "FUERA del bundle" arriba.
@@ -92,7 +116,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludes,
     noarchive=False,
     optimize=0,
 )

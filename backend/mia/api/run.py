@@ -7,9 +7,11 @@ import sys
 
 import uvicorn
 
+from .. import config
+
 
 def main() -> None:
-    host = os.getenv("MIA_API_HOST", "127.0.0.1")
+    host = config.MIA_API_HOST
     port = int(os.getenv("MIA_API_PORT", "8000"))
     reload = os.getenv("MIA_API_RELOAD", "0") == "1"
 
@@ -20,10 +22,10 @@ def main() -> None:
         # un SelectorEventLoop propio. (Con --reload uvicorn usa subprocess, cuyo
         # loop_factory ya devuelve SelectorEventLoop, por eso ese camino no aplica.)
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        config = uvicorn.Config(
+        uv_config = uvicorn.Config(
             "mia.api.main:app", host=host, port=port, reload=False, loop="none"
         )
-        server = uvicorn.Server(config)
+        server = uvicorn.Server(uv_config)
         asyncio.run(server.serve())
         return
 

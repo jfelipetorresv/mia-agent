@@ -74,6 +74,11 @@ LITELLM_SPEC = PACKAGING / "mia-litellm.spec"
 BUILD_INSTALLER = PACKAGING / "build_installer.ps1"
 ORCH_INSTALLER = PACKAGING / "orchestration.installer.json"
 TAURI_CONF = ROOT / "desktop" / "src-tauri" / "tauri.conf.json"
+TAURI_COMPACT_CONF = ROOT / "desktop" / "src-tauri" / "tauri.compact.conf.json"
+WEBVIEW_HOOK = ROOT / "desktop" / "src-tauri" / "windows" / "webview2-required.nsh"
+CARGO_TOML = ROOT / "desktop" / "src-tauri" / "Cargo.toml"
+FRONTEND_PACKAGE = ROOT / "frontend" / "package.json"
+DESKTOP_PACKAGE = ROOT / "desktop" / "package.json"
 
 _results: list[tuple[str, bool]] = []
 
@@ -144,6 +149,33 @@ def main() -> int:
     windows = bundle.get("windows", {}) if isinstance(bundle, dict) else {}
     nsis = windows.get("nsis", {}) if isinstance(windows, dict) else {}
     check("bundle.windows.nsis existe (installMode/compression)", isinstance(nsis, dict) and len(nsis) > 0)
+
+    compact = {}
+    try:
+        compact = json.loads(TAURI_COMPACT_CONF.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    compact_windows = compact.get("bundle", {}).get("windows", {}) if isinstance(compact, dict) else {}
+    compact_nsis = compact_windows.get("nsis", {}) if isinstance(compact_windows, dict) else {}
+    check(
+        "perfil compacto usa WebView2 del sistema sin descarga ni payload offline",
+        compact_windows.get("webviewInstallMode", {}).get("type") == "skip",
+    )
+    check(
+        "perfil compacto conecta un hook NSIS de preflight",
+        compact_nsis.get("installerHooks") == "./windows/webview2-required.nsh",
+    )
+    hook = WEBVIEW_HOOK.read_text(encoding="utf-8") if WEBVIEW_HOOK.is_file() else ""
+    check(
+        "preflight comprueba las claves oficiales de WebView2 y aborta si falta",
+        "F3017226-FE2A-4295-8BDF-00C3A9A7E4C5" in hook
+        and "NSIS_HOOK_PREINSTALL" in hook
+        and bool(re.search(r"^\s*Abort\s*$", hook, re.MULTILINE)),
+    )
+    check(
+        "preflight dirige al instalador Offline sin descarga silenciosa",
+        "Mia Offline" in hook and "no instalara una aplicacion incompleta" in hook,
+    )
 
     # --- 3 · EL renombrado orchestration.installer.json -> orchestration.json
     print("\n3 · el renombrado a orchestration.json (la cáscara lee ese nombre literal)")
@@ -218,9 +250,51 @@ def main() -> int:
     )
     check("build_installer.ps1 corre el bundler de Tauri", "tauri build" in bi)
     check(
+        "build_installer.ps1 ofrece perfiles Compact y Offline y registra cuál produjo",
+        "ValidateSet('Compact', 'Offline')" in bi
+        and "tauri.compact.conf.json" in bi
+        and "webview_profile" in bi,
+    )
+    check(
         "build_installer.ps1 recompila los 3 payloads (backend/litellm/frontend)",
         all(s in bi for s in ("build_backend.ps1", "build_litellm.ps1", "build_frontend.ps1")),
     )
+
+    # --- 6 · identidad reproducible del release ----------------------------
+    print("\n6 · versión única, checkout limpio y manifiesto verificable")
+    versions = [str(conf.get("version", ""))]
+    for package_path in (FRONTEND_PACKAGE, DESKTOP_PACKAGE):
+        try:
+            versions.append(str(json.loads(package_path.read_text(encoding="utf-8"))["version"]))
+        except Exception:
+            versions.append("")
+    cargo_raw = CARGO_TOML.read_text(encoding="utf-8") if CARGO_TOML.is_file() else ""
+    cargo_match = re.search(r'^version\s*=\s*"([^"]+)"', cargo_raw, re.MULTILINE)
+    versions.append(cargo_match.group(1) if cargo_match else "")
+    check("tauri/frontend/desktop/cargo declaran la misma versión no vacía",
+          bool(versions[0]) and len(set(versions)) == 1)
+    check("el release rechaza un checkout Git sucio", "status --porcelain" in bi)
+    check("el instalador esperado se resuelve por la versión exacta", "ExpectedSetupName" in bi)
+    check("un instalador viejo no puede pasar como producto de la corrida actual",
+          "BuildStartedUtc" in bi and "LastWriteTimeUtc" in bi)
+    check("el manifiesto registra commit, SHA-256, tamaño y payloads",
+          all(token in bi for token in ("SourceCommit", "setupSha", "payloads", "mia-release-manifest.json")))
+    check("reutilizar payloads queda marcado como no autorizable para release final",
+          "reused_payloads" in bi and "NO es autorizable" in bi)
+    check("el instalador exige el manifiesto verificable de componentes",
+          "mia-component-manifest.json" in bi and "source_dirty" in bi and "source_commit" in bi)
+    check("el perfil backend se pasa al build y se coteja al reutilizar payloads",
+          "BackendProfile" in bi and "-Profile $BackendProfile" in bi and "ComponentManifest.profile" in bi)
+    check("el primer arranque se mide sobre datos temporales y exige marcador completo",
+          all(token in bi for token in ("FirstRunWatch", "--first-run", ".mia-setup-complete", "first_run_ms")))
+    check("tamaño instalado y meta decimal de 335 MB quedan medidos, no prometidos",
+          all(token in bi for token in ("installed_payload_bytes", "target_installer_bytes", "target_met", "335 * 1000 * 1000", "NO cumplida")))
+    check("la meta de 335 MB solo aplica al perfil compacto medido",
+          "target_applicable" in bi and "Perfil Offline" in bi)
+    check("el ensamblado rechaza caches/tests/docs/harness privados",
+          "Assert-NoPrivateBuildContent" in bi and all(token in bi for token in ("__pycache__", "tests", "docs", "harness")))
+    check("orquestación expone el manifiesto de capacidades al backend",
+          "MIA_BUNDLE_MANIFEST" in ORCH_INSTALLER.read_text(encoding="utf-8"))
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)

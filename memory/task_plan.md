@@ -1,6 +1,6 @@
 # Mia — task_plan.md
 # Fases del proyecto · objetivos por módulo · checklists
-# Última actualización: 2026-07-01
+# Última actualización: 2026-07-20 (sesión 50)
 
 Leyenda: [x] completado · [ ] pendiente · [~] en progreso
 
@@ -157,7 +157,7 @@ Regresión final de la sesión: **40/40 suites verdes** · capa 2 (revisor indep
 
 
 ## Roadmap 5 olas (aprobado por Pipe 2026-07-02) — plan completo en `docs/plan-ejecucion-olas.md`
-De los análisis de Hermes/ClaudeOS/OpenJarvis (`docs/analisis-referencias-2026-07.md`). Pipe
+De los análisis de Hermes/ClaudeOS (`docs/analisis-referencias-2026-07.md`). Pipe
 aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
 
 | CP | Ola | Qué es | Ref |
@@ -169,9 +169,9 @@ aprobó ejecutar LAS 5 OLAS en este orden. Arrancar por CP-S1 en terminal nueva.
 | CP-P2 | 2 | Blueprints + sugerencias consent-first (plazos procesales = confirmación humana) | hermes `cron/blueprint_catalog.py`, `suggestions.py` |
 | CP-V1 | 4 Valor | "Valor entregado" = horas ahorradas × tarifa − costo, en el panel | claudeos `src/lib/time-saved.ts` |
 | CP-V2 | 4 | Auto-diagnóstico prescriptivo riguroso (severidad×impacto×certeza, anti-invención) | claudeos `skills/dream/SKILL.md` |
-| CP-Z1 | 3 Voz | Dictado web con STT local (faster-whisper) — **DECISIÓN Pipe: local vs nube** | openjarvis `src/openjarvis/speech/` |
-| CP-Z2 | 3 | Respuesta hablada (TTS local) + streaming incremental por frases | openjarvis `speech/tts.py`, `server/stream_bridge.py` |
-| CP-Z3 | 3 | (Opcional) Overlay de escritorio omnipresente (cliente delgado) | openjarvis `frontend/src-tauri/src/lib.rs` |
+| CP-Z1 | 3 Voz | Dictado web con STT local (faster-whisper) — **DECISIÓN Pipe: local vs nube** | Lexter/Handy `speech/` |
+| CP-Z2 | 3 | Respuesta hablada (TTS local) + streaming incremental por frases | `speech/tts.py`, `stream_bridge` |
+| CP-Z3 | 3 | (Opcional) Overlay de escritorio omnipresente (cliente delgado) | Tauri `src-tauri/src/lib.rs` |
 | CP-E1 | 5 Escala | Observer hooks (auditoría) + middleware (políticas por tenant) | hermes `docs/observability/`, `docs/middleware/` |
 | CP-E2 | 5 | Adjuntar pruebas por referencia (@expediente/@carpeta) | hermes `agent/context_references.py` |
 | CP-E3 | 5 | Personas jurídicas especializadas editables | claudeos Pantheon |
@@ -327,7 +327,197 @@ Plan completo (Bloques A/B/C) en `memory/plan-evolucion-producto.md`, aprobado p
       CREATE_NO_WINDOW; cierra Riesgo #59 pt 3/7). Regresión: línea base 85→86 suites; capa 2
       con 3 revisores, 5 hallazgos corregidos. **PENDIENTE = capa 3 de Pipe: E2E en máquina 100%
       limpia (doble clic en frío) — física, no automatizable en la máquina de dev.**
-- [ ] Reinicio automático del proxy LiteLLM tras guardar clave en el wizard (Riesgo #60) — requiere
-      IPC de Tauri; NO se hizo en F4, queda para una ola futura.
+- [x] Reinicio automático del proxy LiteLLM tras guardar clave en el wizard (Riesgo #60) — HECHO en
+      la sesión 46 (2026-07-12): comando Tauri `restart_litellm` + invocación desde `/activar`;
+      Riesgo #60 CERRADO. Resta solo la confirmación VISUAL en la capa 3 de Pipe.
 - [ ] Pre-lanzamiento (acción de Pipe): registrar Azure Trusted Signing (firma) — no bloquea
       el build del equipo
+
+## Sesión 48 (2026-07-16/17) — Agnosticismo de jurisdicción · Agent Hub y Banco de oro · criterio de MIA
+- [x] **Entorno** — la DB portable vuelve a arrancar (clúster en `tools/pgdata-portable`, puerto
+      55432, binarios mínimos + `share/*` del `-full` sin machacar `share/extension/`). Trampas
+      documentadas en progress.md sesión 48.
+- [x] Bug crítico de la bienvenida: el motor elegido sí se guarda (ruta sin `/api`) — `ca7cd74`
+- [x] Frontend: confianza (deep-link al borrador, fallos que dejan de ser silenciosos, 409 por
+      status), agnosticismo (locale del equipo, placeholders sin país, detonador de cuantía con
+      UVT/UIT/UMA/IPREM/SMI y €) y legibilidad (`--cta-strong`, 5.10:1 medido sobre el fondo real)
+      — `960553b`, `32880a3`
+- [x] **Agnosticismo backend** — patrones/pistas/léxico al pack `co/` (byte-idénticos), migración
+      036 (DEFAULT de jurisdicción a 'generic'; la decisión pasa a Python, nunca 'co'), ejemplos del
+      onboarding sin plaza concreta, prompt del anonimizador sin país. **4 fugas de confidencialidad
+      cerradas.** Gate `test_jurisdiction_agnostic` 75/75 — `902bd90`, `c4b57f5`, `09d00c7`, `47f5578`
+- [x] Dos gates en rojo desde sesiones anteriores, corregidos: `connector_hardening` 37/37 y
+      `value_delivered` 28/28 (la línea base de "84 suites ALL PASS" no era cierta) — `16e9eec`, `9a93341`
+- [x] **Agent Hub** — la delegación se cablea de verdad (`delegate_intent` determinista +
+      `delegate_proposal` con HITL + candado `hub_gate` fail-closed + merge jsonb atómico en
+      `hub_config`); migración 037. Gates `delegation_decide` 103/103, `delegation_wiring` 41/41,
+      `agent_hub` 46/46 — `65e521d`
+- [x] **Banco de oro** — desbloqueado: consentimiento concedible (`/settings/eval-consent`),
+      relectura de un caso (`GET /api/gold-cases/{id}`) y captura armada server-side (el material sin
+      anonimizar nunca pasa por el navegador). Gates `gold_cases_api` 55/55, `gold_cases` 42/42 —
+      `65e521d`
+- [x] **Pantallas** de ayudantes externos (dentro de Conexiones) y del banco de oro (tab propio
+      "Calidad"). Gate `test_config_tabs` 21/21 (era 14) — `84a059b`
+- [x] El examen mide sustancia: 3 señales deterministas en `flags_informativos` (fuera de `ok`).
+      Gate `eval_substance` 37/37 (nuevo) — `aa8ac3a`
+- [x] **Los 8 principios** — Sala de estrategia inyectada en el borrador (0 llamadas nuevas),
+      anatomía del argumento, wiki cableado en lectura, confianza con rechazo, SOUL con HITL +
+      versionado + tope que rechaza, juez de conflictos del Curator, frontmatter/wikilinks de
+      Obsidian. Migraciones 038/039/040. Gates `argument_engine` 65/65, `soul_guard` 47/47,
+      `curator_conflicts` 38/38, `wiki_reading` 36/36, `obsidian_sync` 73/73, `dreams` 44/44,
+      `curator_hitl` 29/29 — `9019ee6`
+- [x] **Gates que estaban DIFERIDOS y hoy están verdes** (con la DB arriba): `test_rls` 19/19 (HALT),
+      `test_welcome_keys` 41/41, `test_setup_wizard` 28/28
+- [ ] **Capa 3 EN VIVO de Pipe** — E2E del instalador en máquina limpia · recorrido visual · login
+      real de NotebookLM · **nuevo:** delegación en vivo (Riesgo #66/D3) y banco de oro de punta a
+      punta
+- [ ] Deuda abierta de esta sesión (ver bugs-and-risks.md #66-#74): persistir el diagnóstico del
+      turno (#68), "Patrones rechazados" de dreams al modelo (#69), endpoint de historial del asunto
+      (#70), `index_trace` best-effort (#71), medir la puntería del juez del Curator (#67)
+- [ ] Backlog acotado del sesgo colombiano: FTS 'spanish' (migración de índices) · voz TTS es_MX
+      (una voz por variante)
+
+## Sesión 49 (2026-07-17) — 6 features cableadas ("activas por fuera, muertas por dentro") + verificación visual
+- [x] **(A) Banco de oro conectado al examen** — `run_full_suite` + `POST /gold-cases:evaluate`,
+      gated por `allow_eval_real_data`. Gate `test_gold_cases_influence_eval` 11/11
+- [x] **(F) Limpieza** — borrada `gepa_run_all_tenants` (huérfana, sin invocador)
+- [x] **(A-Pinecone) Store secundario opt-in** por despacho, aislado por namespace, fail-soft,
+      nunca externaliza el expediente completo. Gate `test_pinecone_wiring` 23/23. Deps nuevas:
+      `pinecone>=3`
+- [x] **(B-MCP) Consumidor real stdio** en sandbox por tenant, salida SELLADA `[VERIFICAR]`,
+      `hub_gate` bloquea ANTES de lanzar el subproceso. Gate `test_mcp` 39/39 (stdio-live SKIP
+      honesto sin LiteLLM). Deps nuevas: `mcp>=1.10,<2`
+- [x] **(D) Blindaje del instalador** — `/health` reporta migraciones aplicadas vs. esperadas +
+      checkpointer (migración 043, grant del ledger a `mia_app`); la cáscara Tauri frena si la
+      base no terminó de actualizarse; backups rotan a 3. Gate `test_first_run` 71/71
+- [x] **(E) Atajos de un clic** en el chat (pre-llenan, no auto-envían) + **salud de guías**
+      sana/revisar (migración 044 `playbook_health`, fail-open). Gates `test_playbook_health`
+      29/29, `test_despacho_atajos` 17/17
+- [x] HALT verdes: `test_rls` 19/19, `check_env_pins` 10/10
+- [x] Verificación visual en vivo (capa 3 parcial): chat/atajos y memoria/salud de guías = PASA
+- [ ] **Capa 3 EN VIVO de Pipe (resto)** — MCP e2e (LiteLLM arriba + stdio-live real), Pinecone
+      real (llaves + índice dim 1024), banco de oro e2e, delegación D3 (Riesgo #66)
+- [x] Ajuste: cupo de agentes en `list_shortcuts` (≥6 guías) — HECHO en la sesión 50 (`aaa3d1a`):
+      las personas del despacho tienen cupo reservado antes del corte, conservando el tope total.
+      Con 6 o más guías activas, ningún agente aparecía nunca en el chat vacío
+
+## Sesión 50 (2026-07-20) — Lectura del expediente · guardián de citas · jurisdicción · perfil · selector
+Rama `feat/fase1-inc1-cleanup-scaffolding`. **18 commits, NINGUNO pusheado.** (Entre la sesión 49 y
+esta hubo trabajo el 18 y el 19 de julio sin registrar aquí; su detalle está en `HANDOFF.md`.)
+
+- [x] **Lectura adaptativa del expediente** — muere el literal `top_k=8`; el tamaño se deriva del
+      material indexado, del presupuesto real del nodo y de la exigencia de la pregunta. Piso
+      inviolable en 8. Dedup, tope por documento y expansión contigua (apagada). `hnsw.ef_search`
+      fijado en la misma transacción (con el 40 de fábrica, subir candidatos degradaba el recall sin
+      avisar). Cobertura **0.22**, provisional y escrita como tal en `config.py` — decisions.md #37.
+      Gate `test_retrieval_adaptativa` 59/59 (nuevo) — `00c4c17`
+- [x] **Guardián de citas cableado a PROYECTOS** + emisión del SSE movida para que el texto salga
+      DESPUÉS de verificarse (decisions.md #39). Gates `test_projects` 59/59,
+      `doc_citation_guard` 38/38 — `9516833`
+- [x] **El guardián deja de certificar en verde citas inventadas** (defecto PREEXISTENTE que ya
+      afectaba a los asuntos): cotejo por piezas con igualdad exacta en vez de substring
+      bidireccional — decisions.md #40 — `9516833`
+- [x] **Ordenamiento aplicable + política de procedencia en L3**, en dos ramas, con cero literales de
+      país en el código. Gate `jurisdiction_agnostic` 104/104 (era 75) — `03d861f`
+- [x] **Rediseño de interfaz por capas** — tokens (escala semántica de seis roles, contraste subido
+      donde caía bajo el mínimo accesible, regla global de movimiento reducido), primitivas (`Card`,
+      `PageShell`, `SectionTitle`, `lib/motion.ts`) y pantallas. **El Panel deja de ser un marcador de
+      ceros** y no inventa ceros cuando la fuente falla. Recorrido headless de las 11 rutas: cero
+      errores de consola, cero peticiones fallidas — `444d3a1`
+- [x] **Andamiaje de lectura agéntica, APAGADO por defecto** (decisión de Pipe, decisions.md #38);
+      apagado = comportamiento idéntico al actual, verificado de forma independiente. Segunda pasada:
+      techo subido de 44 a 128 (igualando el riel clásico) y el check de ahorro deja de ser incapaz de
+      ponerse rojo. Gate `test_lectura_agentica` 66/66 (nuevo) — `513a50b`, `f791596`
+- [x] **Perfil del despacho rediseñado** — pregunta criterio (qué se revisa siempre, qué no debe hacer
+      nunca, cuándo se da un escrito por terminado), no datos censales. El validador del fallo
+      silencioso queda cableado al endpoint. **Frente rechazado por su verificador y rehecho.** Gates
+      `soul_guard` 47/47, `profile_full` 51/51, `onboarding_horizontal` 13/13 (estaba 7/11),
+      `e2e` 58/58 — `c980704` (diseño en `872a7ec`)
+- [x] **Causa raíz de las 2 suites rojas de carpetas** (esperas que no aguardaban la convergencia,
+      demostrada por falsificación) + **cobertura nueva de "carpeta vinculada a un PROYECTO"**
+      (`test_carpeta_proyecto.py` 31/31, el escenario que falló en producción) + **presupuesto propio
+      de la Sala de estrategia** (desbordaba de verdad: 212.000 sobre un tope de 150.000) y la Sala
+      deja de quedarse muda sobre la norma. Gates `warroom` 79/79, `matter_folder` 37/37,
+      `matter_folders_multi` 30/30 — `91bd2e0`
+- [x] **El recorte por presupuesto** deja de partir por mitades ciegas, de desperdiciar la mitad del
+      cupo (utilización 50 % → 99 % medida) y de tirar primero lo que el modelo pidió (2 → 6 de 12).
+      Check nuevo de **utilización** (una restricción con máximo también necesita mínimo) — `3063df5`
+- [x] **Selector de países honesto** — consulta `GET /api/jurisdictions`, conserva los 21 y marca solo
+      en positivo; promesa recortada a fuentes oficiales y forma de citar (decisions.md #41 y #42).
+      8 barreras ejecutables, incluida la prohibición de prometer festivos, plazos o cálculo. Gates
+      `onboarding_horizontal` 18/18 (era 13), `onboarding_jurisdictions` 10/10 (era 7) — `6e0cacc`
+- [x] **Tres puertas de calidad que estaban verdes sin probar nada**, diagnosticadas y arregladas
+      (`b5` roto desde el 17-jul, la medida del prompt contando el envoltorio) + barrido de las 116
+      suites buscando la clase peligrosa: **no hay falsos positivos** — `fb30664`, `479f78f`
+- [x] **Meta-gate `execution/test_gates_no_ciegos.py`** (Riesgo #80) — prueba las pruebas con análisis
+      sintáctico, verifica su propia premisa, y la aserción **negativa** tumba la entrega mientras la
+      positiva solo avisa. Inventario: 120 suites, 11 expuestas, **cero de la clase silenciosa**;
+      5 avisos en `test_assistant.py`. Falsificado con 4 casos, incluida una suite inmune que **no**
+      debe reportarse. Coste 0,5 s sin red ni base — `f2bbec2`
+- [x] **Bloqueante de entorno cerrado** — migraciones 044/045/046 aplicadas por el runner real:
+      41/44 → **44/44**. La 044 (salud de guías) nunca había corrido
+- [x] **Primera prueba EN VIVO contra un modelo real** en varias sesiones (manual y puntual, no un
+      banco de casos): un despacho sin país pasó de recibir cinco artículos de un país concreto a cero
+      artículos, cero códigos, cero países
+- [x] HALT verdes al cierre: `test_rls` 19/19 · `check_env_pins` 10/10
+- [ ] **Ampliar el guardián a citas abreviadas** (Riesgo #75) — `arts. N y ss.` va en el código (es
+      transversal al Civil Law hispano); **las siglas concretas de cada código van en el pack**
+- [ ] **Banco de casos + benchmark ciego contra el modelo vivo** (Riesgo #76) — es la brecha de fondo:
+      ningún gate corre contra un modelo real
+- [ ] **Segundo paso de la lectura agéntica**: que el bucle pueda **reformular** la consulta al ver los
+      primeros resultados, no solo pedir más de lo mismo. Y medir con modelo real **antes** de encender
+      la bandera
+- [ ] **Meter el meta-gate en la rutina** — `test_gates_no_ciegos.py` ya existe (`f2bbec2`), cuesta
+      0,5 s y cabe en cualquier pre-commit, pero **no está en ninguna tanda automática todavía**. Y
+      resolver sus 5 avisos abiertos en `test_assistant.py`
+- [ ] **Sección `## aprendido` del perfil**, que se llene sola desde el trabajo real vía `update_soul`
+      — paso 7 de `docs/diseno-soul-onboarding.md`, lo único del rediseño sin implementar
+- [ ] **Re-contar la línea base real de gates**: existen **116** suites en `execution/`, no las 84
+      heredadas; ~32 nunca entraron a vigilancia
+- [ ] `extendTailwindMerge` con la escala tipográfica: hoy un token de tamaño combinado con uno de
+      color **pierde el tamaño en silencio** (arreglo de una línea, no aplicado)
+- [ ] Riesgos abiertos señalados por verificadores (#79): comentario obsoleto en `warroom.py:78-81`,
+      margen cero del estimador de la Sala, `init_durable_jobs` dentro de un bloque de aserciones,
+      fragmentación del reparto (~50 tokens, sin medir si sostienen una cita)
+- [ ] Borrar los despachos de prueba: `verificacion.visual@local.test`, `despacho.conpais@local.test`,
+      `alta.nueva@local.test`
+- [ ] **De Pipe (no es código):** aprobar el **push** de los 18 commits · decidir entre **profundidad
+      en un ordenamiento** o **anchura verificable en varios** (hoy el producto insinúa lo segundo y
+      entrega lo primero) · registrar las apps OAuth de Gmail/Outlook/OneDrive (pendiente de sesiones
+      anteriores) · decidir qué hacer con los `Informe-Lucy-*.json` del escritorio (son de `lexter-os`)
+
+---
+
+## Estado de las fases del PLAN MAESTRO VIGENTE (aprobado 2026-07-21)
+
+> La lista de arriba («Plan maestro 2026-07-01, sesión 21») quedó superada. Las fases F0→F6 del
+> plan vigente se llevan en `HANDOFF.md` y en
+> `C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md`. Aquí solo el hito.
+
+- [x] **F2 · sondas adversariales** (2026-07-24, 3ª sesión): las 3 sondas de `RISK_CASES`
+      corridas ×10 en vivo bajo `suscripcion` — 30/30, el ataque no se materializó. Agregados
+      con `prompt_hash 3391f17ea61324a4`. Ver `memory/findings.md` §SONDAS ADVERSARIALES F2.
+- [x] **Referencia en nube** (2026-07-25, USD 7,38 de 30): RISK_CASES ×10 bajo `nube` +
+      `--agentic-compare`. El modo de venta EMPATA en disciplina. Quedan USD 22,6 sin gastar.
+- [x] **F2 · CERRADA** (2026-07-27/28, decisión de Pipe #47.2): con N-1 aplicada, **fuga real
+      0/63**. El ítem 2 de la spec se cierra con el falso positivo de «Ley 4137» convertido en el
+      primer caso de prueba del detector corregido. Ver `memory/findings.md` §CIERRE DE F2 —
+      y LEER ALLÍ LOS TRES CORTES DE SERIE antes de comparar cualquier cifra con el pasado.
+- [x] **De Pipe · Sesión A** (2026-07-27): las 7 decisiones tomadas y aplicadas
+      (`memory/decisions.md` #45, #46, #47). Riesgo #81 cerrado. Los casos de RIESGO entran al
+      examen por defecto (3 → 9 casos) y el «Modo A» (Docker) sale del alcance de la v1.
+      **Pendiente de Pipe, único**: la lectura de CALIDAD de las 6 salidas del paquete y del
+      ejemplar `f2sond_entail_g` — juicio jurídico, ningún agente lo sustituye.
+- [x] **Las 4 barreras del harness de litigio de Pipe** (decisión #46): afirmaciones negativas
+      verificadas contra el documento completo · banco de citas quemadas (MURO, migración 047,
+      con su puerta en la interfaz) · contaminación entre expedientes · ninguna lección sin
+      barrera. Regla de dureza: nacen como AVISO y solo suben a muro si se mide que no bloquean
+      trabajo bueno.
+- [ ] **Sembrador de despacho de prueba** (`execution/seed_despacho_demo.py`): sin él NO hay
+      verificación visual posible — el gate de bienvenida exige perfil y no se salta omitiendo
+      pasos (regla 62 de APRENDIZAJES). Bloqueó las capturas del botón nuevo y bloqueará la
+      Fase 3 de bienvenida.
+- [ ] **Caso de oro con expediente GRANDE** (cientos de fragmentos): prerrequisito para decidir
+      «lectura agéntica por defecto» (N-2). No requiere aprobación.
+- [ ] **De Pipe · trámites de terceros** (decisión #47.3, ya disparados): Azure Trusted Signing y
+      apps OAuth de Google/Microsoft. Pasos en `docs/tramites-terceros-pipe.md`.

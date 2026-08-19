@@ -3,7 +3,8 @@
 # Última actualización: 2026-06-14
 
 > Estado: 2c entregado. Gate `execution/test_context_compressor.py` **22/22** (offline,
-> cliente LLM falso → bloqueo haiku verificado end-to-end). Adaptado de
+> cliente LLM falso → el BLOQUEO de compression verificado end-to-end: bajo política
+> 'soberano' resuelve a `mia-local` y un `model=` explícito NO lo cambia). Adaptado de
 > `hermes-ref/agent/context_compressor.py` (~2.000 líneas), recortado a lo esencial.
 > **2026-06-14:** el resumen pasa a `role="user"` (Riesgo #12 cerrado, decisión #15).
 
@@ -16,7 +17,7 @@
 | `protect_first_n`  | **5**          | primeros 5 mensajes siempre intactos            |
 | `protect_last_n`   | **30**         | últimos 30 mensajes siempre intactos            |
 | `threshold_percent`| **0.55**       | comprime al superar el 55% de la ventana        |
-| modelo de resumen  | **claude-haiku** | `call_llm(task="compression")` — BLOQUEO (decisión #7) |
+| modelo de resumen  | **cadena barata/local BLOQUEADA** | `call_llm(task="compression")` — bloqueo (decisión #7); modelo concreto por política: 'suscripcion'=cli-claude-haiku, 'nube'=claude-haiku, 'soberano'=mia-local |
 | idioma del resumen | **español jurídico** | nunca inglés (preamble filter-safe)       |
 
 Hermes parametriza estos valores (sus defaults son 0.50/3/20); Mia fija 0.55/5/30 por
@@ -35,7 +36,8 @@ decisión de proyecto. No hay contradicción — solo distintos valores.
    a. `frozen_inicio` = primeros 5, `frozen_final` = últimos 30, `medio` = el resto.
    b. **`[VERIFICAR]`**: los mensajes del medio que lo contienen NO se resumen — se
       **mueven al frozen_final** (se preservan verbatim).
-   c. El resto del medio se resume con `call_llm(task="compression")` (haiku).
+   c. El resto del medio se resume con `call_llm(task="compression")` (modelo bloqueado
+      de la política activa: haiku barato en nube/suscripción, `mia-local` en soberano).
    d. El resumen se inserta como **un mensaje `role="user"`** con prefijo
       `[RESUMEN DE CONTEXTO ANTERIOR]` + marcador de fin. **No `role="system"`**:
       Anthropic toma `system` como parámetro ÚNICO al tope del request y LiteLLM
@@ -61,16 +63,15 @@ desde cero, ACTUALIZA el resumen previo (lo incorpora al prompt como "RESUMEN PR
 
 ---
 
-## 3 · Integración con el turno (`agent/core.py`, PASO 2)
+## 3 · Integración con el turno real
 
-`MiaAgent.run_turn` llama al compresor **antes** de cada turno sobre `self.messages`.
-Si actuó, loguea el ahorro (`tokens_before → tokens_after`). Es **transparente al
-abogado**: no aparece en el stream SSE (§G). El `MiaAgent` lleva `context_window`
-(`config.MIA_CONTEXT_WINDOW`, default 200k), `matter_id` y un `trace_capture` opcional;
-el `compressor` se arma en `__post_init__`.
+La recuperación vive en `agents/context_recovery.py` y se invoca desde los nodos LangGraph
+cuando el proveedor devuelve `CONTEXT_TOO_LONG`. El presupuesto depende del nodo, se permite
+un solo rescate por turno y el resultado queda atribuido en la telemetría.
 
-> El system prompt (10 capas) se arma aparte y se cachea; la compresión solo toca el
-> historial, así que NO invalida el prefix cache.
+> El system prompt (10 capas) se arma aparte y su prefijo estable se **marca** para el
+> prefix caching de Anthropic; la compresión solo toca el historial, así que NO invalida
+> ese prefijo. El ahorro real se mide en el panel (cache hit-rate), no se promete un %.
 
 ---
 
@@ -95,8 +96,9 @@ Cuando el compresor actúa, escribe un EVENTO en el JSONL del tenant vía
 .venv\Scripts\python.exe execution\test_context_compressor.py   # 22/22 (offline)
 ```
 
-Gate mínimo (subconjunto): threshold 55% ✓ · protect 5/30 intactos ✓ · compression→haiku
-siempre ✓ · [VERIFICAR] nunca comprimido ✓ · resumen en español ✓ · traza actualizada ✓.
+Gate mínimo (subconjunto): threshold 55% ✓ · protect 5/30 intactos ✓ · compression
+BLOQUEADA (model explícito no la cambia; mia-local bajo 'soberano') ✓ · [VERIFICAR] nunca
+comprimido ✓ · resumen en español ✓ · traza actualizada ✓.
 
 ---
 

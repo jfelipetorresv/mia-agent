@@ -1,6 +1,6 @@
 # Empaquetado del frontend (Fase 1 · bloque instalador · frente B)
 
-Este documento cubre SOLO el frontend Next.js 14. El backend (PyInstaller) tiene
+Este documento cubre SOLO el frontend Next.js 16.3. El backend (PyInstaller) tiene
 su propio `build_backend.ps1` / `entry_backend.py` / `mia-backend.spec`, a cargo
 de otro frente — no tocar esos archivos desde aquí.
 

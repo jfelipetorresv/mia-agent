@@ -49,14 +49,17 @@ from pathlib import Path
 
 from .. import embeddings
 from ..db import pool
+from ..jobs import enqueue_classification
 from ..ingest.extract import extract_text_detailed
-from ..ingest.ingest import chunk_text
+from ..ingest.document_derivation import SUPPORTED_ANYDOC_EXTENSIONS
+from ..ingest.ingest import chunk_text, chunk_extracted_text
 from .obsidian_sync import ObsidianSync
+from .pinecone_connector import pinecone_scope_for_tenant
 
 logger = logging.getLogger("mia.connectors.local_folders")
 
 SOURCE_PREFIX = "local:"          # knowledge_chunks.source = 'local:<source_id>' (varchar 50)
-ALLOWED_SUFFIXES = {".md", ".txt", ".pdf", ".docx"}
+ALLOWED_SUFFIXES = {".md", ".txt", ".pdf", ".docx"} | set(SUPPORTED_ANYDOC_EXTENSIONS)
 EXCLUDED_DIR_NAMES = {"node_modules", "__pycache__"}
 MAX_FILE_BYTES = 20 * 1024 * 1024   # > 20 MB → se omite con log
 MAX_FILES_PER_SYNC = 2000           # máx. archivos NUEVOS/CAMBIADOS indexados por corrida
@@ -556,9 +559,11 @@ class LocalFolderSync:
                         continue
                     if kind == "matters":
                         await self._ingest_matter_file(tenant_id, matter_id, source_id, rel,
-                                                       text, new_hashes[rel], f)
+                                                       text, new_hashes[rel], f,
+                                                       offset_map=meta.get("folio_map") or [],
+                                                       extraction_meta=meta)
                     else:
-                        chunks = self._chunk_file(text, rel)
+                        chunks = self._chunk_file(text, rel, meta)
                         vectors = await self._embed_chunks([c["text"] for c in chunks])
                         await self._upsert_chunks(tenant_id, db_source, rel, chunks, vectors)
                     stats["indexed"] += 1
@@ -674,15 +679,22 @@ class LocalFolderSync:
     def _read_text(p: Path) -> tuple[str, dict]:
         """Texto plano + metadata de OCR. PDF/Word vía extract_text_detailed (SÍNCRONA y
         CPU-pesada — el llamador la corre en un hilo, M1); .md/.txt lectura directa."""
-        if p.suffix.lower() in (".pdf", ".docx"):
+        if p.suffix.lower() in ({".pdf"} | SUPPORTED_ANYDOC_EXTENSIONS):
             return extract_text_detailed(p.name, p.read_bytes())
+        # .md/.txt: texto plano sin páginas → mapa de folios vacío (folio NULL). No inventar.
         return (p.read_text(encoding="utf-8", errors="replace"),
-                {"has_body": True, "ocr_unavailable": False})
+                {"has_body": True, "ocr_unavailable": False, "folio_map": []})
 
-    def _chunk_file(self, text: str, rel: str) -> list[dict]:
+    def _chunk_file(self, text: str, rel: str, extraction_meta: dict | None = None) -> list[dict]:
         """.md → troceo por encabezados de ObsidianSync; el resto → chunk_text (ingest)."""
         if rel.lower().endswith(".md"):
             return self._md._chunk_document(text, rel)
+        if (extraction_meta or {}).get("derivation", {}).get("parser") == "anydoc":
+            structured = chunk_extracted_text(text, extraction_meta)
+            return [
+                {"text": piece, "heading_path": None, "position": i, "source_file": rel}
+                for i, (piece, _folio) in enumerate(structured)
+            ]
         return [
             {"text": piece, "heading_path": None, "position": i, "source_file": rel}
             for i, piece in enumerate(chunk_text(text))
@@ -714,11 +726,13 @@ class LocalFolderSync:
                     (tenant_id, db_source, filepath, chunk["position"],
                      chunk["heading_path"], chunk["text"], vec),
                 )
-            await conn.execute(
+            pruned = await (await conn.execute(
                 "DELETE FROM knowledge_chunks WHERE tenant_id = %s::uuid AND source = %s "
-                "AND source_path = %s AND chunk_index >= %s",
+                "AND source_path = %s AND chunk_index >= %s RETURNING chunk_index",
                 (tenant_id, db_source, filepath, len(chunks)),
-            )
+            )).fetchall()
+        await self._pinecone_mirror_upsert(tenant_id, db_source, filepath, chunks, vectors,
+                                           pruned_indices=[r[0] for r in pruned])
 
     async def _delete_removed(self, tenant_id: str, db_source: str, current) -> int:
         """Borra los chunks cuyos archivos ya no existen en la carpeta. Devuelve el
@@ -731,17 +745,71 @@ class LocalFolderSync:
                 (tenant_id, db_source),
             )).fetchall()
             removed = sorted({r[0] for r in rows} - current)
+            deleted_rows: list[tuple] = []
             if removed:
-                await conn.execute(
+                deleted_rows = await (await conn.execute(
                     "DELETE FROM knowledge_chunks WHERE tenant_id = %s::uuid AND source = %s "
-                    "AND source_path = ANY(%s)",
+                    "AND source_path = ANY(%s) RETURNING source_path, chunk_index",
                     (tenant_id, db_source, removed),
-                )
+                )).fetchall()
+        if deleted_rows:
+            ids = [f"{db_source}:{path}:{idx}" for path, idx in deleted_rows]
+            await self._pinecone_mirror_delete(tenant_id, ids)
         return len(removed)
+
+    # ── espejo en Pinecone (store SECUNDARIO opt-in, Módulo A) ───────────────
+    async def _pinecone_mirror_upsert(self, tenant_id: str, db_source: str, filepath: str,
+                                      chunks: list[dict], vectors: list[list[float]],
+                                      *, pruned_indices: list[int]) -> None:
+        """Espeja el upsert (y la poda por encogimiento) de ESTE archivo en Pinecone.
+        Id determinista `{db_source}:{filepath}:{chunk_index}`: un re-sync hace upsert
+        en sitio, nunca duplica. FAIL-SOFT total (mismo patrón que `wiki_notes` /
+        `_notebooklm_context`): pgvector YA quedó escrito arriba; si Pinecone no está
+        configurado (Noop) o la llamada falla, el sync del abogado sigue igual."""
+        try:
+            async with pinecone_scope_for_tenant(tenant_id) as pc:
+                if not pc.is_configured:
+                    return
+                if chunks:
+                    vectors_pc = []
+                    for chunk, vec in zip(chunks, vectors):
+                        metadata = {
+                            "content": (chunk["text"] or "")[:2000],
+                            "source": db_source,
+                            "source_path": filepath,
+                        }
+                        if chunk.get("heading_path"):
+                            metadata["heading_path"] = chunk["heading_path"]
+                        vectors_pc.append({
+                            "id": f"{db_source}:{filepath}:{chunk['position']}",
+                            "values": vec,
+                            "metadata": metadata,
+                        })
+                    await pc.upsert(tenant_id, vectors_pc)
+                if pruned_indices:
+                    ids = [f"{db_source}:{filepath}:{idx}" for idx in pruned_indices]
+                    await pc.delete(tenant_id, ids)
+        except Exception:  # noqa: BLE001 — Pinecone es opcional, jamás tumba el sync
+            logger.warning("pinecone: upsert omitido para %s (tenant=%s)",
+                           filepath, tenant_id, exc_info=True)
+
+    async def _pinecone_mirror_delete(self, tenant_id: str, ids: list[str]) -> None:
+        """Espeja en Pinecone el borrado de chunks cuyos archivos desaparecieron de la
+        carpeta. FAIL-SOFT total — ver `_pinecone_mirror_upsert`."""
+        try:
+            async with pinecone_scope_for_tenant(tenant_id) as pc:
+                if not pc.is_configured:
+                    return
+                await pc.delete(tenant_id, ids)
+        except Exception:  # noqa: BLE001 — Pinecone es opcional, jamás tumba el sync
+            logger.warning("pinecone: delete omitido para %d ids (tenant=%s)",
+                           len(ids), tenant_id, exc_info=True)
 
     # ── persistencia del EXPEDIENTE VINCULADO (documents + chunks · RLS por tenant) ──
     async def _ingest_matter_file(self, tenant_id: str, matter_id, source_id: str, rel: str,
-                                  text: str, sha256: str, path: Path) -> None:
+                                  text: str, sha256: str, path: Path,
+                                  offset_map: list[tuple[int, int, int]] | None = None,
+                                  extraction_meta: dict | None = None) -> None:
         """Ingesta un archivo de la carpeta vinculada al expediente: extrae texto, trocea,
         embebe e inserta un documento (origin='folder', source_path=ruta relativa, sha256,
         source_id=ESTA fuente) y sus chunks. Reemplaza SIEMPRE el documento previo de esa
@@ -752,7 +820,9 @@ class LocalFolderSync:
         de OTRA carpeta vinculada al mismo expediente (bug de poda cruzada, ver
         memory/bugs-and-risks.md). Los documentos subidos a mano (origin='upload') NUNCA
         se tocan aquí."""
-        chunks = chunk_text(text)
+        # Troceo con folio: cada chunk hereda el folio (página) de su offset de inicio, medido
+        # sobre el MISMO `text` que produjo extract (`offset_map`). Sin páginas → folio NULL.
+        pairs = chunk_extracted_text(text, extraction_meta or {"folio_map": offset_map or []})
         async with pool.tenant_connection(tenant_id) as conn:
             # Borrar la versión previa de ESTA ruta traída por ESTA fuente (idempotente) —
             # o el huérfano pre-028 del mismo path, nunca la de una carpeta hermana.
@@ -760,10 +830,10 @@ class LocalFolderSync:
                 "DELETE FROM documents WHERE matter_id=%s::uuid AND origin='folder' "
                 "AND source_path=%s AND (source_id=%s::uuid OR source_id IS NULL)",
                 (matter_id, rel, source_id))
-            if not chunks:
+            if not pairs:
                 # Archivo sin texto útil: no se crea documento (quedó podado el anterior).
                 return
-            vectors = await self._embed_chunks(chunks)
+            vectors = await self._embed_chunks([c for c, _ in pairs])
             doc_id = (await (await conn.execute(
                 "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
                 "source_path, origin, source_id) VALUES "
@@ -771,11 +841,14 @@ class LocalFolderSync:
                 (tenant_id, matter_id, path.name, _guess_mime(path.name), sha256, rel,
                  source_id),
             )).fetchone())[0]
-            for i, (content, vec) in enumerate(zip(chunks, vectors)):
+            for i, ((content, folio), vec) in enumerate(zip(pairs, vectors)):
                 await conn.execute(
-                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
-                    "VALUES (%s::uuid, %s, %s, %s, %s)",
-                    (tenant_id, doc_id, i, content, vec))
+                    "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
+                    (tenant_id, doc_id, i, content, vec, "documento", folio))
+        # Documento + chunks ya COMMITEADOS (cerró el `async with`): recién aquí el job ve la fila.
+        # Triaje de metadata como trabajo recuperable — fail-soft, jamás rompe el sync de la carpeta.
+        await enqueue_classification(tenant_id, doc_id)
 
     async def _prune_matter_docs(self, tenant_id: str, matter_id, source_id: str,
                                  current) -> int:

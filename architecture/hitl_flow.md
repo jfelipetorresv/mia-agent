@@ -238,3 +238,99 @@ vive solo en el análisis/diagnóstico que ve el abogado en pantalla.
 pre-entrega EJECUTADO (no solo texto) en el propio gate de aprobación del borrador — toca el flujo
 de HITL que Pipe ya clasificó como "resultado legal", así que requiere su aprobación previa antes
 de tocar `hitl_checkpoint`/la UI de aprobación. No implementado en esta sesión.
+
+---
+
+## 8 · La SEGUNDA pausa del turno: "Mia decide y me pregunta" (CP-HUB2, 2026-07-16)
+
+Decisión de Pipe: *"parte del encanto de MIA es que puede determinar si necesita agentes o
+subagentes"*. Mia ya puede decidir por su cuenta que necesita un **ayudante externo** (Agent Hub) —
+pero antes de que salga un byte del computador, el abogado ve **qué ayudante** y **el texto exacto**,
+y aprueba de un clic. Con memoria: *"no me preguntes más por este ayudante en este asunto"*.
+
+```
+START → intake → delegation → facts → research → analysis → draft → verification
+                    │                                                     ↓
+                    └─ interrupt() CONDICIONAL                      hitl_checkpoint
+                       (solo si hay propuesta que aprobar)                ↓
+                                                                     finalize → END
+```
+
+### 8.1 · Por qué el turno tiene DOS interrupts y no uno
+
+La pausa del ayudante va **justo después de intake** por una razón de coste del abandono: su salida
+va a `metadata` y **nunca** al razonamiento jurídico (D3 sin cerrar), así que no alimenta a ningún
+especialista y puede ir en cualquier parte del grafo. Se elige el sitio donde una pausa sin
+respuesta cuesta menos: si el abogado no contesta, lo único que queda esperando es el intake.
+Colgada tras el análisis, congelaría el turno entero.
+
+### 8.2 · Por qué está partida en dos nodos (lo que NO se puede romper)
+
+Al reanudar un `interrupt()`, **LangGraph re-ejecuta el nodo desde su primera línea**. Si el mismo
+nodo decidiera la propuesta (llamando al modelo) y luego preguntara, al aprobar volvería a llamar al
+modelo y podría redactar **otro** texto: saldría del equipo algo que el abogado nunca vio, y la
+pantalla de aprobación sería teatro. Por eso:
+
+- `intake_node` → `_plan_delegation()` **planifica** (candado, modelo, memoria) y deja el plan en
+  `state['delegation_request']`, que **se persiste en el checkpoint**.
+- `delegation_node` → `interrupt()` y **lee el texto del estado**; su re-ejecución no decide nada.
+
+Es el mismo patrón que el gate del borrador (`draft_node` calcula → `hitl_checkpoint_node` pregunta).
+**Invariante:** un nodo que interrumpe NO puede calcular lo que muestra.
+
+### 8.3 · Que las dos pausas no se confundan ES parte del candado
+
+Con dos interrupts, comprobar solo "¿hay alguna pausa?" deja un agujero real: un `POST /approve`
+(aprobar el **borrador**) reanudaría la pausa del **ayudante** y el texto saldría sin que nadie viera
+la propuesta. Dos barreras independientes, ambas verificadas en el gate:
+
+1. **Por nodo** (`api/routes/_common.py`): `require_awaiting_review` exige `hitl_checkpoint in
+   st.next`; `require_awaiting_delegation` exige `delegation in st.next`. Se usa `st.next` (nombres
+   de nodo) y `st.values`, nunca la forma interna del `Interrupt` de LangGraph — contrato estable
+   entre versiones. `prepare_new_turn` distingue además **qué** 409 devolver.
+2. **Por payload**: la decisión del borrador es `{"decision": "approved"}`; la del ayudante,
+   `{"delegacion": "aprobada", "huella": …}`. **No comparten ni una clave**, así que un payload no
+   puede leerse como el otro. Todo lo demás cae a "no" (fail-closed, §6.1).
+
+La **huella** (sha256 de ayudante+texto) ata la aprobación a un texto concreto: si la pantalla manda
+otra, se rechaza (aprobó una pestaña vieja).
+
+### 8.4 · Lo que el candado NO delega en el abogado
+
+Que haya un humano aprobando **no** es excusa para darle al modelo un gatillo cargado: un control que
+depende de leer con atención cada vez se degrada (a la décima propuesta se aprueba sin leer). Los
+límites que sostienen la función son estructurales (ver `agents/delegate_proposal.py`):
+
+- El **proponente no ve el expediente**: solo el mensaje limpio del abogado (`retrieval_query`) y el
+  catálogo. No puede filtrar lo que nunca leyó.
+- El texto propuesto se **sanea a una línea** ≤400 chars (`untrusted.sanitize_field`): no puede
+  fingir interfaz ("=== APROBADO ===") y, sobre todo, **es legible** — lo que lo hace revisable.
+- El ayudante sale de un **catálogo cerrado** ya filtrado por `hub_gate.allowed_agents`.
+- En **'soberano'** el catálogo es `[]`: no se propone, ni se gasta una llamada al modelo. El
+  candado se evalúa **antes de proponer** y **otra vez antes de invocar** (la política pudo
+  endurecerse mientras la pausa estaba abierta).
+
+### 8.5 · Si el abogado nunca responde
+
+No pasa nada, y ese es el diseño: el grafo queda suspendido, no sale un byte, y el próximo turno del
+asunto recibe un **409** que le recuerda la pregunta abierta. Descartar es la salida.
+
+### 8.6 · La memoria y los modos
+
+`matter_agent_consent` (migración 037, RLS) guarda "no me preguntes más" por **(asunto, ayudante)**,
+nunca global. **No es un permiso**: solo suprime la pregunta — el candado se evalúa igual, y por eso
+el orden de llamada es siempre candado → memoria. Revocar (`DELETE .../delegation/memoria/{slug}`)
+devuelve al defecto seguro: preguntar.
+
+`tenant_settings.config->>'delegation_mode'`: `preguntar` (**defecto**, la decisión de Pipe) ·
+`autonomo` · `solo_si_lo_pido` (el comportamiento previo a CP-HUB2). La invocación explícita
+(nombrar al ayudante en el mensaje) funciona igual en los tres y nunca pregunta: el abogado ya lo
+ordenó.
+
+### 8.7 · Cómo verificar
+
+```
+.venv\Scripts\python.exe execution\init_matter_agent_consent.py   # migración (1 vez)
+.venv\Scripts\python.exe execution\test_delegation_decide.py      # 103/103 (grafo + DB + HTTP)
+.venv\Scripts\python.exe execution\test_delegation_wiring.py      # 45/45 (invocación explícita)
+```

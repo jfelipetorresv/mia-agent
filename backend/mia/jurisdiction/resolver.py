@@ -11,17 +11,42 @@ from ..db import pool
 from .pack import GENERIC_CODE
 
 
-async def resolve_jurisdictions(tenant_id: str) -> list[str]:
-    """Códigos de jurisdicción activos del tenant. Fallback ['generic'] si no hay config."""
+def _codes(values: object) -> list[str]:
+    """Normaliza una lista JSON sin adivinar códigos. Vacío conserva el fallback seguro."""
+    if not isinstance(values, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        code = str(value).strip().lower()
+        if code and code not in seen:
+            seen.add(code)
+            out.append(code)
+    return out
+
+
+async def resolve_jurisdictions(tenant_id: str, matter_id: str | None = None) -> list[str]:
+    """Jurisdicciones activas con precedencia asunto → firma u organización → genérico.
+
+    `matters.jurisdictions=[]` es la migración compatible: el asunto hereda el perfil de la
+    organización. Una lista no vacía es el contexto seleccionado para ESE asunto y gobierna
+    todo el turno. La lectura sigue bajo RLS, por lo que un asunto ajeno o inexistente no puede
+    aportar una jurisdicción.
+    """
     async with pool.tenant_connection(tenant_id) as conn:
+        if matter_id:
+            cur = await conn.execute(
+                "SELECT jurisdictions FROM matters WHERE id = %s::uuid", (str(matter_id),)
+            )
+            row = await cur.fetchone()
+            matter_codes = _codes(row[0] if row else None)
+            if matter_codes:
+                return matter_codes
         cur = await conn.execute(
             "SELECT config->'jurisdictions' FROM tenant_settings WHERE tenant_id = %s::uuid",
             (str(tenant_id),),
         )
         row = await cur.fetchone()
 
-    vals = row[0] if row and row[0] else None
-    if not vals:
-        return [GENERIC_CODE]
-    codes = [str(v).strip().lower() for v in vals if str(v).strip()]
+    codes = _codes(row[0] if row else None)
     return codes or [GENERIC_CODE]

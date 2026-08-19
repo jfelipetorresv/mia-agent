@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { apiGet, clearToken, getToken } from "@/lib/api";
 
 // Rutas SIN sesión (primera vez o regreso). `/activar` NO está aquí a propósito:
@@ -41,6 +42,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   }, [isPublic, pathname, router]);
 
   if (isPublic) return <>{children}</>;
-  if (!ready) return null;
+  if (!ready) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden />
+      </div>
+    );
+  }
   return <>{children}</>;
 }

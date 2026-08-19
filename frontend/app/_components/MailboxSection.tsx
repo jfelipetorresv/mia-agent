@@ -16,6 +16,9 @@ type Conexion = {
   funciones: string[];
   // ¿La cuenta ya otorgó permiso de archivos de OneDrive? (solo Microsoft lo usa)
   archivos?: boolean;
+  // ¿La instalación ya tiene registrada la app OAuth de este proveedor? Si no,
+  // "Conectar" no se ofrece (honestidad de UI): el clic solo acabaría en un error.
+  disponible?: boolean;
 };
 
 // El backend ahora reporta conexiones POR PROVEEDOR (un despacho puede tener Microsoft
@@ -150,7 +153,13 @@ export default function MailboxSection() {
       { proveedor: "google", proveedor_nombre: "Google Workspace", conectado: false, funciones: [] },
     ];
   const conectadas = todasLasConexiones.filter((c) => c.conectado);
-  const disponibles = todasLasConexiones.filter((c) => !c.conectado);
+  // Honestidad de UI: "Conectar" solo se ofrece si la instalación tiene registrada la
+  // app OAuth del proveedor (`disponible`). Si el status no trae el campo (versión
+  // vieja del backend), se asume disponible para no ocultar una función que sí existe.
+  const disponibles = todasLasConexiones.filter((c) => !c.conectado && c.disponible !== false);
+  const pendientesDeHabilitar = todasLasConexiones.filter(
+    (c) => !c.conectado && c.disponible === false,
+  );
 
   return (
     <div className="space-y-4">
@@ -225,7 +234,7 @@ export default function MailboxSection() {
               correos completos a un expediente cuando tú lo pidas — apagado por defecto)
             </span>
           </label>
-          {todasLasConexiones.some((c) => c.proveedor === "microsoft" && !c.conectado) ? (
+          {disponibles.some((c) => c.proveedor === "microsoft") ? (
             <label className="flex cursor-pointer items-start gap-2 text-sm">
               <input
                 type="checkbox"
@@ -243,6 +252,16 @@ export default function MailboxSection() {
               </Button>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {pendientesDeHabilitar.length > 0 ? (
+        <div className="rounded-xl border border-border bg-muted/40 px-4 py-3">
+          <p className="text-sm text-muted-foreground">
+            La conexión con {pendientesDeHabilitar.map((c) => c.proveedor_nombre).join(" y ")} aún
+            no está habilitada en este equipo. Es un paso único del administrador — pídele que
+            registre la conexión (guía en Configuración).
+          </p>
         </div>
       ) : null}
 

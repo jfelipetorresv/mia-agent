@@ -22,12 +22,23 @@ Verifica contra DB REAL (RLS + config por despacho), en el estilo de test_mailbo
   el spec seguro (secreto resuelto, sin claves de instalación); fail-closed sin habilitar
   y sin secreto requerido; RLS entre despachos; disable; forma peligrosa → rechazada.
 
+Verifica STDIO REAL (e6b-*, cablea CP-E6b: mcp.gate + mcp.client + mcp.turn), con un
+servidor MCP de verdad (`@modelcontextprotocol/server-filesystem` vía `npx`, sin
+credenciales) contra una carpeta temporal con un archivo de prueba:
+  (a) `mcp.turn.consult` real devuelve texto que menciona el archivo.
+  (b) política 'soberano' → None SIN llegar a abrir un subproceso (el gate corta antes).
+  (c) no queda un proceso node/npx colgado tras la consulta.
+SKIP honesto (sin contar como FAIL) si falta node/npx o si el gateway LLM no está arriba
+en esta máquina — sin ellos no hay forma de ejercitar la ida-y-vuelta real.
+
 Exit 0 = PASS · 1 = FAIL.        .venv\\Scripts\\python.exe execution\\test_mcp.py
 """
 import asyncio
 import os
+import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -138,16 +149,19 @@ async def offline_checks() -> None:
 
     # ── F · catálogo curado, §G ──────────────────────────────────────────────
     entries = catalog.list_catalog()
-    check("e6-16 · el catálogo trae entradas curadas", len(entries) >= 2)
-    marcas = ("mcp", "hermes", "claude", "server", "npx")
-    check("e6-17 · §G: ningún display_name filtra marca/jerga técnica",
-          all(not any(m in d.display_name.lower() for m in marcas) for d in entries))
-    doc = catalog.get_descriptor("gestion-documental")
-    check("e6-18 · cada entrada declara sus secretos y su nota de permisos mínimos",
-          doc is not None and "dms_api_token" in doc.required_secret_keys()
-          and "solo lectura" in doc.permissions_note.lower())
+    check("e6-16 · el catálogo de producto está vacío a propósito (sin DMS ni procesos fingidos)",
+          entries == [])
+    lab = catalog.lab_filesystem_descriptor()
+    check("e6-17 · el laboratorio de stdio existe pero no se vende al abogado",
+          lab.slug == "lab-filesystem" and lab not in entries)
+    check("e6-18 · el descriptor de laboratorio declara secretos y nota de permisos",
+          "dms_api_token" in lab.required_secret_keys()
+          and "solo lectura" in lab.permissions_note.lower())
     check("e6-19 · el template de entorno usa placeholders ${clave} para los secretos",
-          doc.env_template.get("DMS_API_TOKEN") == "${dms_api_token}")
+          lab.env_template.get("DMS_API_TOKEN") == "${dms_api_token}")
+    check("e6-19b · no hay consulta-procesos ni gestion-documental en el catálogo",
+          catalog.get_descriptor("gestion-documental") is None
+          and catalog.get_descriptor("consulta-procesos") is None)
 
     # ── G · relay (eleva el puente de Telegram) ──────────────────────────────
     from mia.channels import relay
@@ -207,7 +221,9 @@ async def db_checks() -> None:
         b = c.execute("INSERT INTO tenants(name) VALUES('B mcp cpe6') RETURNING id").fetchone()[0]
     ta, tb = str(a), str(b)
     tenants.extend([ta, tb])
-    slug = "gestion-documental"
+    lab = catalog.lab_filesystem_descriptor()
+    catalog.CATALOG[lab.slug] = lab
+    slug = lab.slug
     try:
         # fail-closed ANTES de habilitar: resolve lanza (no hay nada configurado)
         try:
@@ -239,6 +255,13 @@ async def db_checks() -> None:
         blob = repr(st)
         check("e6-db4 · el status no filtra el valor del secreto del despacho",
               "TOKEN-A-secreto" not in blob)
+        with _sb() as c:
+            raw_mcp = c.execute(
+                "SELECT config->'mcp'->'servers'->%s->'secrets'->>'dms_api_token' "
+                "FROM tenant_settings WHERE tenant_id=%s", (slug, ta)
+            ).fetchone()[0]
+        check("e6-db4b · PostgreSQL no guarda el secreto MCP en claro",
+              str(raw_mcp).startswith("MIA-ENC-V1:") and "TOKEN-A-secreto" not in str(raw_mcp))
 
         # resolve produce el spec seguro: secreto resuelto, sin claves de instalación
         os.environ["ANTHROPIC_API_KEY"] = "sk-ant-secretaXYZ"
@@ -309,22 +332,224 @@ async def db_checks() -> None:
                   blocked)
         finally:
             catalog.CATALOG.pop("hostil-cpe6", None)
+            catalog.CATALOG.pop(lab.slug, None)
     finally:
         with _sb() as c:
             c.execute("DELETE FROM tenants WHERE id = ANY(%s)", (tenants,))
         await pool.close_pool()
 
 
+# ── STDIO real: mcp.gate + mcp.client + mcp.turn cableados de punta a punta ──────
+def _node_available() -> bool:
+    import shutil as _shutil
+
+    return bool(_shutil.which("npx") and _shutil.which("node"))
+
+
+def _litellm_reachable(url: str) -> bool:
+    """TCP simple al gateway LLM (LiteLLM). No exige una ruta HTTP concreta — solo que
+    algo esté escuchando ahí; sin esto `mcp.turn.consult` no puede completar la
+    ida-y-vuelta real con el LLM (que decide si usa las tools)."""
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        u = urlparse(url)
+        host = u.hostname or "localhost"
+        port = u.port or (443 if u.scheme == "https" else 80)
+        with socket.create_connection((host, port), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+def _server_filesystem_process_count() -> int:
+    """Cuenta procesos node.exe corriendo ESTE servidor MCP (server-filesystem), -1 si no se
+    pudo determinar (Windows únicamente; no crítico — un no-op honesto, no rompe el check).
+
+    Filtra por LÍNEA DE COMANDO, no por nombre de imagen a secas: en una máquina de
+    desarrollo real puede haber cientos de `node.exe` de otras herramientas (editores,
+    otros CLIs, statusline de agentes) — contar 'node.exe' desnudo sería un check ruidoso
+    y falso-positivo, no una prueba de que ESTE subproceso quedó colgado."""
+    if os.name != "nt":
+        return -1
+    try:
+        import subprocess
+
+        ps_cmd = (
+            "(Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | "
+            "Where-Object { $_.CommandLine -like '*server-filesystem*' }).Count"
+        )
+        out = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=15,
+        ).stdout.strip()
+        return int(out) if out.isdigit() else -1
+    except Exception:  # noqa: BLE001 — el check es un extra de higiene, no crítico
+        return -1
+
+
+def _set_policy(tenant_id: str, policy: str) -> None:
+    """Fija config['model_policy'] por fuera de la app (mismo patrón de test_agent_hub.py):
+    mcp.gate la lee de la DB — no debe depender del MIA_MODEL_POLICY del entorno."""
+    with _sb() as c:
+        c.execute(
+            "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s::jsonb) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "config = COALESCE(tenant_settings.config,'{}'::jsonb) || EXCLUDED.config",
+            (tenant_id, f'{{"model_policy": "{policy}"}}'),
+        )
+
+
+async def mcp_live_checks() -> None:
+    """Sección STDIO REAL: un servidor MCP de verdad (proceso), SIN credenciales, contra
+    una carpeta temporal con un archivo de prueba. SKIP honesto (sin `check()`, no cuenta
+    como FAIL) si falta node/npx o si el gateway LLM no está arriba en esta máquina."""
+    from mia import config as mia_config
+
+    if not _node_available():
+        print("  [SKIP] mcp-live: node/npx no están instalados en esta máquina")
+        return
+    if not _litellm_reachable(mia_config.LITELLM_BASE_URL):
+        print(f"  [SKIP] mcp-live: el gateway LLM no responde en {mia_config.LITELLM_BASE_URL} "
+              "(levanta el proxy de Modo B para activar esta sección)")
+        return
+
+    from mia.db import pool
+    from mia.mcp import client as mcp_client, service as mcp_service, turn as mcp_turn
+
+    await pool.open_pool()
+    tenants: list[str] = []
+    tmp_dir = tempfile.mkdtemp(prefix="mia-mcp-live-")
+    marker_name = "expediente-prueba.txt"
+    with open(os.path.join(tmp_dir, marker_name), "w", encoding="utf-8") as fh:
+        fh.write("Documento de prueba para CP-E6b (stdio real).")
+
+    try:
+        with _sb() as c:
+            a = c.execute(
+                "INSERT INTO tenants(name) VALUES('A mcp live') RETURNING id").fetchone()[0]
+            b = c.execute(
+                "INSERT INTO tenants(name) VALUES('B mcp live') RETURNING id").fetchone()[0]
+        ta, tb = str(a), str(b)
+        tenants.extend([ta, tb])
+
+        from mia.mcp import catalog as mcp_catalog
+        lab = mcp_catalog.lab_filesystem_descriptor()
+        mcp_catalog.CATALOG[lab.slug] = lab
+        slug = lab.slug
+        await mcp_service.enable_server(
+            ta, slug, {"DMS_ROOT": tmp_dir},
+            {"dms_api_token": "no-se-usa-server-filesystem"})
+
+        # (b) política 'soberano' → None SIN abrir subproceso: el gate corta ANTES de
+        # llegar a `mcp.client.open_session` (blindado con un guard que haría FALLAR el
+        # check si, por un bug, se llegara a intentar abrir uno).
+        await mcp_service.enable_server(
+            tb, slug, {"DMS_ROOT": tmp_dir},
+            {"dms_api_token": "no-se-usa-server-filesystem"})
+        _set_policy(tb, "soberano")
+
+        def _boom(*_a, **_k):
+            raise AssertionError(
+                "mcp-live: se intentó abrir un subproceso bajo política soberana")
+
+        orig_open_session = mcp_client.open_session
+        mcp_client.open_session = _boom  # type: ignore[assignment]
+        try:
+            soberano_answer = await mcp_turn.consult(tb, "lista los archivos disponibles")
+        finally:
+            mcp_client.open_session = orig_open_session
+        check("e6b-02 · política 'soberano' bloquea la consulta MCP SIN abrir subproceso",
+              soberano_answer is None)
+
+        # (a) + (c): consulta real contra el servidor de sistema de archivos (proceso real,
+        # sin credenciales) — verifica texto no-None que menciona el archivo Y que no queda
+        # un node/npx colgado después.
+        before = _server_filesystem_process_count()
+        answer = await asyncio.wait_for(
+            mcp_turn.consult(ta, "Lista los nombres de los archivos disponibles."),
+            timeout=90)
+        check("e6b-01 · consult() real devuelve texto que menciona el archivo de prueba",
+              bool(answer) and marker_name.lower() in answer.lower())
+        await asyncio.sleep(1.5)
+        after = _server_filesystem_process_count()
+        check("e6b-03 · no queda un proceso del servidor MCP colgado tras la consulta",
+              before < 0 or after <= before)
+    finally:
+        from mia.mcp import catalog as mcp_catalog_cleanup
+        mcp_catalog_cleanup.CATALOG.pop("lab-filesystem", None)
+        with _sb() as c:
+            c.execute("DELETE FROM tenants WHERE id = ANY(%s)", (tenants,))
+        await pool.close_pool()
+        import shutil as _shutil
+        _shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+_DB_ENV_KEYS = ("PG_PASSWORD", "PG_HOST", "PG_PORT", "PG_DB", "DATABASE_URL", "JWT_SECRET")
+_TEST_KEY_WRAP = b"MIA-TEST-KEYWRAP-V1:"
+
+
+@contextmanager
+def _ci_local_key_backend():
+    """En Linux/CI no hay Windows DPAPI. El cifrado AES-GCM de secretos en DB
+    sigue real; solo el envoltorio de la llave local se stubbea. En Windows se
+    usa DPAPI de producto. No toca dpapi.py ni at_rest.py."""
+    tmp = tempfile.mkdtemp(prefix="mia-mcp-appdir-")
+    prev_app_dir = os.environ.get("MIA_APP_DIR")
+    os.environ["MIA_APP_DIR"] = tmp
+    patched = False
+    orig_protect = orig_unprotect = None
+    if os.name != "nt":
+        from mia.security import dpapi
+
+        orig_protect, orig_unprotect = dpapi.protect, dpapi.unprotect
+
+        def protect(data: bytes, *, description: str = "Mia") -> bytes:
+            _ = description
+            return _TEST_KEY_WRAP + data
+
+        def unprotect(data: bytes) -> bytes:
+            if not data.startswith(_TEST_KEY_WRAP):
+                raise dpapi.DPAPIError("envoltorio de prueba inválido")
+            return data[len(_TEST_KEY_WRAP):]
+
+        dpapi.protect = protect
+        dpapi.unprotect = unprotect
+        patched = True
+    try:
+        yield
+    finally:
+        if patched:
+            from mia.security import dpapi
+
+            dpapi.protect = orig_protect
+            dpapi.unprotect = orig_unprotect
+        if prev_app_dir is None:
+            os.environ.pop("MIA_APP_DIR", None)
+        else:
+            os.environ["MIA_APP_DIR"] = prev_app_dir
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
+    # offline_checks pone claves FALSAS (e6-02). En local las recupera el .env;
+    # en CI no hay .env y el pool se quedaba reintentando 180 s con 'clavedb'.
+    saved_db_env = {key: os.environ.get(key) for key in _DB_ENV_KEYS}
     asyncio.run(offline_checks())
-    # offline_checks deja claves FALSAS en el entorno (prueba de no-filtración e6-02).
-    # Recargar las reales del .env antes de tocar la DB: con pg_hba scram (DB portable)
-    # la clave falsa rompe la autenticación de _sb() y el pool queda huérfano reintentando.
+    for key, value in saved_db_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
     load_dotenv(ROOT / ".env", override=True)
     if os.getenv("PG_PASSWORD"):
-        asyncio.run(db_checks())
+        with _ci_local_key_backend():
+            asyncio.run(db_checks())
+            asyncio.run(mcp_live_checks())
     else:
         check("e6-db · SKIP (sin PG_PASSWORD): no se ejercitó la DB real", False)
+        print("  [SKIP] mcp-live: requiere DB (PG_PASSWORD) para habilitar el servidor")
     passed = sum(1 for _, ok in _results if ok)
     print(f"\n{passed}/{len(_results)} checks PASS")
     if all(ok for _, ok in _results):

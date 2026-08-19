@@ -49,12 +49,21 @@ function apiMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : fallback;
 }
 
-function paramsSummary(params: Record<string, unknown>): string {
+// Traduce los parámetros de una automatización a lenguaje llano (§G: el abogado
+// nunca ve claves técnicas). Si el blueprint trae la etiqueta humana de cada campo
+// (blueprint.campos[].etiqueta), se usa esa. Si algún parámetro no tiene etiqueta
+// conocida, se prefiere un resumen honesto y vago a exponer una clave cruda.
+function paramsSummary(params: Record<string, unknown>, blueprint?: Blueprint): string {
   const dias = params.dias_antes;
   if (dias != null) return `${dias} día${Number(dias) === 1 ? "" : "s"} de anticipación`;
-  return Object.entries(params)
-    .map(([k, v]) => `${k}: ${String(v)}`)
-    .join(" · ");
+  const entries = Object.entries(params);
+  if (entries.length === 0) return "";
+  const campos = blueprint?.campos || [];
+  const etiquetas = entries.map(([k]) => campos.find((c) => c.name === k)?.etiqueta);
+  if (etiquetas.every((e) => Boolean(e))) {
+    return entries.map(([, v], i) => `${etiquetas[i]}: ${String(v)}`).join(" · ");
+  }
+  return "Configuración personalizada";
 }
 
 export default function AutomationsSection() {
@@ -68,6 +77,7 @@ export default function AutomationsSection() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   const nameByKey = Object.fromEntries(plantillas.map((p) => [p.key, p.nombre]));
+  const blueprintByKey = Object.fromEntries(plantillas.map((p) => [p.key, p]));
 
   const load = useCallback(async () => {
     setMsg("");
@@ -195,7 +205,9 @@ export default function AutomationsSection() {
                 <div className="font-medium">{s.nombre}</div>
                 <p className="mt-1 text-sm text-muted-foreground">{s.rationale}</p>
                 {Object.keys(s.params || {}).length ? (
-                  <p className="mt-1 text-xs text-muted-foreground">{paramsSummary(s.params)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {paramsSummary(s.params, blueprintByKey[s.blueprint_key])}
+                  </p>
                 ) : null}
                 {s.toca_plazo_procesal ? (
                   <p className="mt-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1.5 text-xs text-warning">
@@ -231,9 +243,13 @@ export default function AutomationsSection() {
               <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
                 <div className="min-w-0">
                   <div className="text-sm font-medium">
-                    {nameByKey[a.blueprint_key] || a.kind}
+                    {/* Nunca `a.kind` a secas: si la plantilla ya no está en el
+                        catálogo, esa clave es un nombre técnico (§G). */}
+                    {nameByKey[a.blueprint_key] || "Automatización"}
                   </div>
-                  <div className="text-sm text-muted-foreground">{paramsSummary(a.params || {})}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {paramsSummary(a.params || {}, blueprintByKey[a.blueprint_key])}
+                  </div>
                   {a.is_procedural ? (
                     <p className="mt-1 text-xs font-medium text-warning">Plazo procesal — confirma tú las fechas</p>
                   ) : null}

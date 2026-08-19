@@ -40,6 +40,7 @@ import random
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import psycopg
@@ -62,6 +63,7 @@ except Exception:
 import init_local_folders                              # noqa: E402  (migración 016)
 import init_matter_folders                             # noqa: E402  (migración 025)
 import init_projects_multifolder                       # noqa: E402  (migración 028)
+import init_durable_jobs                               # noqa: E402  (migración 034)
 from mia import config, embeddings                     # noqa: E402
 from mia.db import pool                                # noqa: E402
 from mia.connectors import local_folders as lf         # noqa: E402
@@ -273,6 +275,13 @@ async def connector_checks(a: str, b: str, matter_a: str, work: Path) -> None:
 
         # Re-aplica el backfill de la 028 (idempotente, mismo SQL que corrió en producción).
         init_projects_multifolder.apply()
+        # 034 envuelta: si la migración lanza, la suite antes moría muda (crash sin
+        # diagnóstico) en vez de reportar un FAIL legible con la causa.
+        try:
+            init_durable_jobs.apply()
+            check("034 (init_durable_jobs) se aplica sin error", True)
+        except Exception as e:
+            check(f"034 (init_durable_jobs) se aplica sin error [excepción: {e}]", False)
 
         check("backfill H3: expediente con historial AMBIGUO (A desvinculada + B activa) "
               "conserva su documento viejo con source_id NULL — no se colapsa bajo B",
@@ -346,15 +355,33 @@ def api_checks(tid_a: str, tid_b: str, matter_target: str, matter_same_tenant: s
         check("las 2 carpetas tienen ids distintos", source1_id != source2_id)
 
         # --- GET /folders lista ambas y su ingesta converge ---
+        # La ingesta NO es síncrona: POST /folders solo ENCOLA un trabajo durable y el
+        # trabajador (jobs/durable.DurableWorker) lo reclama con POLL_SECONDS = 1.0s. Este
+        # bucle DEBE ceder tiempo real al trabajador entre sondeos; si gira sin dormir,
+        # agota sus intentos en ~0.2s (medido: 100 GET seguidos tardan 243 ms) y falla
+        # SIEMPRE, sin que el código de producción tenga nada malo. Por eso el corte es
+        # por RELOJ, no por número de vueltas.
+        # Presupuesto MEDIDO (4 corridas seguidas en esta máquina, 2 carpetas de 1 archivo
+        # cada una): convergió en 9.8 s, 11.2 s, 8.2 s y 11.3 s. El tope de 60 s deja ~5x
+        # sobre el peor caso observado. El reloj SOLO se agota cuando algo está realmente
+        # roto, así que un tope holgado no vuelve lento el gate en verde.
+        deadline = time.monotonic() + 60.0
+        t0 = time.monotonic()
         files1 = files2 = 0
-        for _ in range(100):
+        elapsed = 0.0
+        while True:
             rl = client.get(f"/api/matters/{matter_target}/folders", headers=auth_a)
             byid = {f["id"]: f for f in rl.json().get("folders", [])}
             files1 = byid.get(source1_id, {}).get("files_indexed", 0)
             files2 = byid.get(source2_id, {}).get("files_indexed", 0)
+            elapsed = time.monotonic() - t0
             if files1 >= 1 and files2 >= 1:
                 break
-        check("GET /folders -> lista las 2 carpetas con su conteo por fuente",
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        check(f"GET /folders -> lista las 2 carpetas con su conteo por fuente "
+              f"(convergió en {elapsed:.1f}s)",
               rl.status_code == 200 and files1 >= 1 and files2 >= 1)
         visible.append(rl.text)
 

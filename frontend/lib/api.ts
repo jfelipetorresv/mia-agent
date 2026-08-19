@@ -16,6 +16,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Mensaje mostrable al abogado (§G). Solo devuelve el texto del backend cuando
+ * viene redactado en llano: si la respuesta no traía `detail`, el constructor de
+ * ApiError arma "Error 500" como mensaje, y eso es jerga técnica que nunca debe
+ * llegar a la pantalla. En ese caso —y ante un error de red— cae al fallback.
+ */
+export function plainMessage(err: unknown, fallback: string): string {
+  const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
+  return msg || fallback;
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem("mia_token");
@@ -32,7 +43,10 @@ export function clearToken(): void {
 function handleUnauthorized(): void {
   clearToken();
   if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-    window.location.href = "/login";
+    // Este módulo no puede usar el hook de Next Router; el cierre de sesión debe
+    // reiniciar el estado de toda la aplicación antes de cargar la ruta pública.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/login");
   }
 }
 
@@ -64,6 +78,32 @@ export async function apiGet<T = unknown>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`, { headers: authHeaders(), cache: "no-store" });
   await checkResponse(res);
   return res.json();
+}
+
+/**
+ * GET que NUNCA lanza: ante cualquier fallo devuelve el valor de respaldo.
+ *
+ * Es la pieza que permite que una pantalla compuesta por varias tarjetas
+ * independientes (el Panel) se degrade tarjeta a tarjeta en vez de quedarse en
+ * blanco entera porque una fuente no respondió. Devuelve `null` en el respaldo
+ * cuando la tarjeta debe DESAPARECER, y nunca un dato inventado: una cifra
+ * plausible es peor que una ausencia (§3 — ningún dato sin fuente).
+ *
+ * REGLA DEL RESPALDO — el `fallback` tiene que ser una AUSENCIA reconocible,
+ * no una forma que la pantalla pueda leer como un dato. `null` siempre que la
+ * pantalla deba poder preguntar "¿llegó esto?". Nunca `{}` para un resumen de
+ * cifras ni `[]` para una lista de la que se afirme algo: `{}` se pinta como
+ * ceros ("no aprobaste ningún borrador") y `[]` como "no tienes nada
+ * pendiente" — dos afirmaciones falsas sobre el trabajo del despacho nacidas
+ * de una petición que simplemente no respondió. `[]` solo vale cuando la
+ * pantalla no concluye nada de que la lista venga vacía.
+ */
+export async function apiGetSoft<T>(path: string, fallback: T): Promise<T> {
+  try {
+    return await apiGet<T>(path);
+  } catch {
+    return fallback;
+  }
 }
 
 export async function apiSend<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
@@ -181,8 +221,8 @@ async function consumeSse(res: Response, onEvent: SseHandler): Promise<void> {
   }
 }
 
-// Consume un SSE por GET (el mensaje viaja en el query param del path). Lo usa el
-// turno del asunto (/matters/{id}/stream), donde el mensaje es corto.
+// Consume un SSE por GET. Queda para warroom/stream y compat; el turno del asunto
+// debe usar streamPost para que el mensaje no viaje en la URL.
 export async function streamTurn(
   streamPath: string,
   onEvent: SseHandler,
@@ -193,9 +233,8 @@ export async function streamTurn(
   await consumeSse(res, onEvent);
 }
 
-// Consume un SSE por POST con cuerpo JSON — para turnos cuyo mensaje puede ser
-// largo (chat general del asistente): no cabe con garantías en un query param, así
-// que abrimos el stream directamente sobre el POST (fetch, no EventSource).
+// Consume un SSE por POST con cuerpo JSON — turno del asunto, chat del asistente,
+// HITL y delegación: el texto no viaja en query string (historial/proxy logs).
 export async function streamPost(
   streamPath: string,
   body: unknown,
@@ -213,4 +252,76 @@ export async function streamPost(
   await consumeSse(res, onEvent);
 }
 
-export const apiConfig = { hasToken: () => Boolean(getToken()) };
+/* ────────────────────────────────────────────────────────────────────────────
+ * Clientes tipados de las fuentes que alimentan el Panel
+ *
+ * Estas cuatro fuentes ya existían en el servidor y estaban MAL EXPUESTAS: dos
+ * no las llamaba nadie y dos se leían recortadas (el Panel declaraba 1 de los 6
+ * campos del gasto y 4 de los ~15 del resumen). Se tipan aquí, junto al
+ * transporte, para que la forma viva en UN sitio y la pantalla no vuelva a
+ * inventar campos.
+ *
+ * Todas se consumen con `apiGetSoft`: si una falla, su tarjeta se degrada sola.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Un paso del recorrido de puesta a punto. El servidor ya redacta `titulo` y
+ *  `detalle` en lenguaje llano y resuelve `enlace`: la pantalla solo los pinta. */
+export type SetupPaso = {
+  id: string;
+  titulo: string;
+  estado: "listo" | "pendiente" | "omitido";
+  detalle: string;
+  accion: "automatica" | "guiada";
+  enlace: string | null;
+  guia: { que_es: string; para_que: string; como: string[] } | null;
+};
+
+export type SetupStatus = {
+  pasos: SetupPaso[];
+  secciones: { titulo: string; que_es: string; para_que: string }[];
+  completados: number;
+  total: number;
+  siguiente: string | null;
+  mensaje: string;
+};
+
+/** Salud de las guías de trabajo del despacho. Las tres claves llegan siempre,
+ *  aunque valgan 0. `revisar` = guías con citas que hay que verificar. */
+export type PlaybookHealth = { sano: number; revisar: number; sin_revisar: number };
+
+/** Resumen del día de UN asunto. Determinista y sin modelo: sale de lo que hay
+ *  en el expediente, así que ninguna línea es una afirmación generada. */
+export type DailyItem = {
+  ref: string;
+  requiere_decision: boolean;
+  origen: "pendiente" | "bandeja" | "bitacora";
+  texto: string;
+};
+
+export type DailyBriefing = {
+  matter_id: string;
+  items: DailyItem[];
+  requieren_decision: number;
+  resumen: string;
+};
+
+/** Gasto de IA del mes. `monthly_budget_usd`/`remaining_usd` son `null` cuando
+ *  el despacho no fijó tope (`unlimited`), y `null` NO es 0: no se pinta cifra. */
+export type BudgetStatus = {
+  monthly_budget_usd: number | null;
+  spent_this_month_usd: number;
+  reserved_usd: number;
+  remaining_usd: number | null;
+  over_budget: boolean;
+  unlimited: boolean;
+};
+
+export const getSetupStatus = () => apiGetSoft<SetupStatus | null>("/api/setup/status", null);
+
+export const getPlaybookHealth = () =>
+  apiGetSoft<PlaybookHealth | null>("/api/playbooks/health/summary", null);
+
+export const getBudget = () => apiGetSoft<BudgetStatus | null>("/api/policy/budget", null);
+
+export const getMatterDaily = (matterId: string) =>
+  apiGetSoft<DailyBriefing | null>(`/api/matters/${matterId}/daily`, null);

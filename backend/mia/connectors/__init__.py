@@ -15,6 +15,7 @@ from .pinecone_connector import (
     PineconeConnector,
     PineconeConnectorBase,
     get_pinecone_connector,
+    pinecone_scope_for_tenant,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "PineconeConnector",
     "NoopPineconeConnector",
     "get_pinecone_connector",
+    "pinecone_scope_for_tenant",
 ]

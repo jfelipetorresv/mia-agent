@@ -6,6 +6,25 @@ de pgvector sobre el embedding del summary+applies_when), los **consolida** con 
 (`call_llm(task="curator")` → claude-sonnet) en un playbook mejorado, y **poda** los playbooks
 sin uso en 90 días (`last_used_at`). Todo bajo `pool.tenant_connection` (RLS).
 
+CONTRADICCIÓN ANTES QUE FUSIÓN (migración 038)
+----------------------------------------------
+La similitud coseno NO es compatibilidad. "En estos casos siempre pedimos X" y "en estos casos
+nunca pedimos X" son semánticamente casi idénticos: el coseno los ve como gemelos y la fusión
+producía una mezcla que no decía NINGUNA de las dos cosas. Ahí es donde el criterio de un
+despacho se corrompe sin que nadie lo vea.
+
+Por eso el coseno ya no decide solo. Tras él corre un SEGUNDO paso (`_classify_pair`, juez LLM
+barato) que separa DUPLICADO de CONFLICTO:
+
+  · duplicado → fusión propuesta, exactamente como siempre.
+  · conflicto → NUNCA se funde. Sube al abogado como elección binaria (A vs B, con su fecha y su
+    procedencia, ambas versiones vivas y sin mezclar) en una propuesta `kind='conflict'`.
+
+El umbral es DELIBERADAMENTE conservador (ver `_classify_pair`): ante la duda se trata como
+duplicado. Un detector con falsos positivos convierte cada aprobación en un interrogatorio, el
+abogado deja de aprobar y la memoria deja de aprender — peor que el problema que arregla. Es
+preferible fusionar de más que interrogar de más.
+
 El LLM y los embeddings son síncronos; se invocan vía `asyncio.to_thread` para no bloquear el
 event loop (mismo patrón que `agents/graph.py`).
 """
@@ -16,6 +35,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 
 from psycopg.rows import dict_row
@@ -28,8 +48,35 @@ from ..observability import audit
 
 logger = logging.getLogger("mia.curator")
 
-SIMILARITY_THRESHOLD = 0.85   # similitud coseno por encima de la cual dos playbooks se fusionan
+SIMILARITY_THRESHOLD = 0.85   # similitud coseno por encima de la cual dos playbooks se comparan
 PRUNE_DAYS = 90               # playbooks sin uso en N días se archivan
+
+# ── juez de contradicción (segundo paso, tras el coseno) ──────────────────────
+# DÓNDE ESTÁ EL UMBRAL Y POR QUÉ AHÍ:
+#
+# Un par sube al abogado como CONFLICTO solo si se cumplen las DOS condiciones:
+#   1) el juez responde literalmente "contrarios"  (ni "iguales" ni "no_se"), y
+#   2) su confianza declarada es >= 0.85.
+#
+# Todo lo demás — "iguales", "no_se", confianza baja, JSON ilegible, respuesta vacía, el modelo
+# caído, una excepción cualquiera — cae a DUPLICADO, que es el comportamiento de hoy (fusión
+# propuesta, que el abogado ya puede rechazar). La asimetría es intencional y es el corazón del
+# diseño: los dos errores posibles NO cuestan lo mismo.
+#
+#   · Falso negativo (un conflicto tratado como duplicado): el abogado ve una propuesta de fusión
+#     de más, la rechaza, y todo sigue como antes de este cambio. Coste: un clic.
+#   · Falso positivo (dos formulaciones del mismo criterio marcadas como contrarias): el abogado
+#     recibe un interrogatorio por nada. Repetido, deja de aprobar — y una memoria que nadie
+#     aprueba deja de aprender. Coste: la función entera.
+#
+# 0.85 y no 0.5: a 0.5 basta con que el juez "se incline" para interrumpir al abogado, y en pares
+# con coseno > 0.85 (redacciones casi calcadas) inclinarse es fácil. 0.85 exige que el juez esté
+# convencido. Y no 0.95, porque los modelos rara vez declaran confianzas tan altas y el detector
+# se volvería decorativo. Si hay que moverlo, BAJARLO es lo peligroso.
+CONFLICT_MIN_CONFIDENCE = 0.85
+_JUDGE_TASK = "curator_conflict"   # auxiliar/barato en toda política (ver agent/llm.py)
+_JUDGE_MAX_CHARS = 4000            # recorte por playbook: acota coste y contexto del juez
+_JUDGE_VERDICTS = ("iguales", "contrarios", "no_se")
 
 
 class _ProposalAbort(Exception):
@@ -43,6 +90,10 @@ class CuratorProposal:
     `proposed_merges`   : [{"source_ids": [a, b], "target_title": str, "reason": str}]
     `proposed_deletions`: [{"id": str, "title": str, "reason": str}]
     `snapshot_hash`     : hash del estado de playbooks activos al momento de proponer.
+    `raised_conflicts`  : conflictos detectados en esta corrida. NO son parte de esta propuesta:
+                          cada uno se persiste como su PROPIA propuesta `kind='conflict'` (se
+                          resuelve eligiendo A o B, no aprobando en bloque). Viajan aquí solo
+                          para que el cron y el endpoint puedan reportarlos.
     """
 
     tenant_id: str
@@ -51,6 +102,7 @@ class CuratorProposal:
     snapshot_hash: str = ""
     id: str | None = None                 # se rellena al persistir
     status: str = "pending"
+    raised_conflicts: list[dict] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         return not self.proposed_merges and not self.proposed_deletions
@@ -62,6 +114,7 @@ class CuratorProposal:
             "status": self.status,
             "merges": self.proposed_merges,
             "deletions": self.proposed_deletions,
+            "conflicts": self.raised_conflicts,
             "snapshot_hash": self.snapshot_hash,
         }
 
@@ -209,18 +262,62 @@ class Curator:
                     "AND last_used_at < now() - (%s * interval '1 day') ORDER BY id", (days,))
                 return await cur.fetchall()
 
+    async def _playbook_facts(self, tenant_id: str) -> dict[str, dict]:
+        """Fecha y procedencia de cada playbook activo — lo que el abogado necesita para decidir
+        cuál de dos versiones enfrentadas es su criterio de HOY.
+
+        Va aparte de `_snapshot_state` a propósito: ese estado se serializa a jsonb (`snapshot`)
+        y alimenta el `snapshot_hash`; meterle `timestamptz` lo rompería. Aquí las fechas salen
+        ya como texto ISO y no tocan el hash."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT id::text, to_char(updated_at, 'YYYY-MM-DD') AS fecha, "
+                    "       COALESCE(metadata->>'origin', 'manual') AS procedencia "
+                    "FROM playbooks WHERE status = 'active'")
+                return {r["id"]: r for r in await cur.fetchall()}
+
+    async def _known_conflict_pairs(self, tenant_id: str) -> set[frozenset]:
+        """Pares que YA se le mostraron al abogado como conflicto y siguen vivos: pendientes de
+        decidir (`pending`) o decididos con "déjalas las dos" (`rejected`).
+
+        Sirve a las dos mitades del riesgo: no volver a gastar el juez en un par ya juzgado, y
+        —sobre todo— no volver a preguntar cada semana lo mismo. Un despacho que decidió
+        conscientemente sostener dos criterios en tensión no puede ser interrogado por ello en
+        cada corrida del cron: eso es el interrogatorio que hace que se deje de aprobar."""
+        async with pool.tenant_connection(tenant_id) as conn:
+            rows = await (await conn.execute(
+                "SELECT conflict->'a'->>'id', conflict->'b'->>'id' FROM curator_proposals "
+                "WHERE kind = 'conflict' AND status IN ('pending', 'rejected')")).fetchall()
+        return {frozenset((r[0], r[1])) for r in rows if r[0] and r[1]}
+
     async def propose(self, tenant_id: str, *, threshold: float = SIMILARITY_THRESHOLD,
                       days: int = PRUNE_DAYS, persist: bool = True) -> CuratorProposal:
         """DRY-RUN: calcula fusiones y podas propuestas SIN ejecutarlas y (opcional) persiste
         la propuesta como `pending`. Es el único camino que el cron y el endpoint deben usar
-        para NO mutar sin revisión humana (Riesgo #19)."""
+        para NO mutar sin revisión humana (Riesgo #19).
+
+        El coseno solo dice "estos dos se parecen". Quién decide si eso es un DUPLICADO
+        (fusionable) o un CONFLICTO (jamás fusionable) es `_classify_pair`. Los conflictos NO
+        entran en `proposed_merges`: salen de esta propuesta y se persisten como propuestas
+        `kind='conflict'` propias."""
         state = await self._snapshot_state(tenant_id)
         by_id = {r["id"]: r for r in state}
+        snapshot_hash = self._snapshot_hash(state)
+        facts = await self._playbook_facts(tenant_id)
+        known = await self._known_conflict_pairs(tenant_id)
 
         merges: list[dict] = []
+        conflicts: list[dict] = []
         for a_id, b_id, score in await self.find_candidates(tenant_id, threshold):
             a, b = by_id.get(a_id), by_id.get(b_id)
             if not a or not b:
+                continue
+            if frozenset((a_id, b_id)) in known:
+                continue   # ya está sobre la mesa del abogado (o él ya dijo "déjalas las dos")
+            verdict = await self._classify_pair(a, b)
+            if verdict is not None:
+                conflicts.append(self._conflict_payload(a, b, facts, score, verdict))
                 continue
             merges.append({
                 "source_ids": [a_id, b_id],
@@ -237,27 +334,38 @@ class Curator:
 
         proposal = CuratorProposal(
             tenant_id=tenant_id, proposed_merges=merges, proposed_deletions=deletions,
-            snapshot_hash=self._snapshot_hash(state),
+            snapshot_hash=snapshot_hash, raised_conflicts=conflicts,
         )
         if persist:
             async with pool.tenant_connection(tenant_id) as conn:
                 row = await (await conn.execute(
                     "INSERT INTO curator_proposals "
-                    "  (tenant_id, proposed_merges, proposed_deletions, snapshot_hash, stats) "
-                    "VALUES (%s::uuid, %s, %s, %s, %s) RETURNING id::text",
+                    "  (tenant_id, kind, proposed_merges, proposed_deletions, snapshot_hash, stats) "
+                    "VALUES (%s::uuid, 'cleanup', %s, %s, %s, %s) RETURNING id::text",
                     (tenant_id, Json(merges), Json(deletions), proposal.snapshot_hash,
                      Json({"merges": len(merges), "deletions": len(deletions)})),
                 )).fetchone()
                 proposal.id = row[0]
+                # Una fila por conflicto: cada uno es una elección binaria independiente.
+                for c in conflicts:
+                    crow = await (await conn.execute(
+                        "INSERT INTO curator_proposals "
+                        "  (tenant_id, kind, conflict, snapshot_hash, stats) "
+                        "VALUES (%s::uuid, 'conflict', %s, %s, %s) RETURNING id::text",
+                        (tenant_id, Json(c), proposal.snapshot_hash, Json({"conflicts": 1})),
+                    )).fetchone()
+                    c["proposal_id"] = crow[0]
         return proposal
 
     async def list_proposals(self, tenant_id: str, status: str = "pending") -> list[dict]:
-        """Propuestas del tenant en un estado (default 'pending')."""
+        """Propuestas del tenant en un estado (default 'pending'). Incluye las de limpieza
+        (kind='cleanup') y los conflictos de criterio (kind='conflict')."""
         async with pool.tenant_connection(tenant_id) as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    "SELECT id::text, proposed_merges, proposed_deletions, snapshot_hash, "
-                    "status, stats, created_at, reviewed_at, reviewed_by "
+                    "SELECT id::text, kind, proposed_merges, proposed_deletions, conflict, "
+                    "resolution, snapshot_hash, status, stats, created_at, reviewed_at, "
+                    "reviewed_by "
                     "FROM curator_proposals WHERE status = %s ORDER BY created_at DESC",
                     (status,))
                 return await cur.fetchall()
@@ -279,13 +387,21 @@ class Curator:
                 async with conn.cursor(row_factory=dict_row) as cur:
                     # Lock de fila + lectura de estado en la misma transacción (anti doble-approve).
                     await cur.execute(
-                        "SELECT id::text, proposed_merges, proposed_deletions, snapshot_hash, status "
+                        "SELECT id::text, kind, proposed_merges, proposed_deletions, "
+                        "snapshot_hash, status "
                         "FROM curator_proposals WHERE id = %s::uuid FOR UPDATE", (proposal_id,))
                     prop = await cur.fetchone()
                     if not prop:
                         return {"status": "not_found", "error": "propuesta inexistente"}
                     if prop["status"] != "pending":
                         return {"status": prop["status"], "error": "la propuesta no está pendiente"}
+                    # Un conflicto de criterio NO se aprueba en bloque: se resuelve eligiendo una
+                    # de las dos versiones (resolve_conflict). Aprobarlo aquí lo daría por
+                    # zanjado sin que nadie eligiera nada — justo lo que este cambio impide.
+                    if prop["kind"] == "conflict":
+                        return {"status": prop["status"],
+                                "error": "esta propuesta es un conflicto de criterio: "
+                                         "hay que elegir una de las dos versiones"}
                     await conn.execute(
                         "UPDATE curator_proposals SET status='applying' WHERE id = %s::uuid",
                         (proposal_id,))
@@ -348,6 +464,94 @@ class Curator:
                 "WHERE id = %s::uuid", (reviewed_by, proposal_id))
             await self._audit(conn, tenant_id, "curator_proposal_rejected", proposal_id, {}, reviewed_by)
         return {"status": "rejected"}
+
+    async def resolve_conflict(self, tenant_id: str, proposal_id: str, choice: str, *,
+                               reviewed_by: str | None = None) -> dict:
+        """Resuelve un conflicto de criterio: el abogado elige qué versión sostiene el despacho.
+
+        `choice`:
+          'a' | 'b' — la elegida queda como está; la otra se ARCHIVA (nunca se borra: sigue en el
+                      historial y se puede reactivar). No se funde nada: la versión que sobrevive
+                      es literalmente la que el abogado leyó y escogió.
+          'none'    — las dos siguen vivas. La contradicción es un estado legítimo de la memoria:
+                      un despacho puede sostener dos criterios en tensión y no deberle explicación
+                      a nadie. Queda `rejected` para no volver a preguntar lo mismo cada semana.
+
+        Mismas protecciones que `apply_proposal` (son el mismo peligro): `FOR UPDATE` en la misma
+        transacción que la ejecución (dos aprobadores concurrentes → el 2º ve status != pending) y
+        validación del `snapshot_hash` (si el conocimiento cambió desde que se detectó el
+        conflicto, no se archiva nada → `drift`, hay que regenerar)."""
+        if choice not in ("a", "b", "none"):
+            return {"status": "invalid", "error": "hay que elegir una versión (o ninguna)"}
+        drift = False
+        archived = 0
+        new_status = "pending"
+        try:
+            async with pool.tenant_connection(tenant_id) as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "SELECT id::text, kind, conflict, snapshot_hash, status "
+                        "FROM curator_proposals WHERE id = %s::uuid FOR UPDATE", (proposal_id,))
+                    prop = await cur.fetchone()
+                    if not prop:
+                        return {"status": "not_found", "error": "propuesta inexistente"}
+                    if prop["kind"] != "conflict":
+                        return {"status": prop["status"],
+                                "error": "esta propuesta no es un conflicto de criterio"}
+                    if prop["status"] != "pending":
+                        return {"status": prop["status"], "error": "la propuesta no está pendiente"}
+                    await conn.execute(
+                        "UPDATE curator_proposals SET status='applying' WHERE id = %s::uuid",
+                        (proposal_id,))
+
+                    state = await self._read_active_state(conn)
+                    if self._snapshot_hash(state) != prop["snapshot_hash"]:
+                        drift = True
+                        raise _ProposalAbort()   # revierte la transacción (applying→pending)
+
+                    await conn.execute(
+                        "UPDATE curator_proposals SET snapshot = %s WHERE id = %s::uuid",
+                        (Json(state), proposal_id))
+
+                    if choice in ("a", "b"):
+                        loser = (prop["conflict"] or {}).get("b" if choice == "a" else "a", {})
+                        loser_id = str(loser.get("id") or "")
+                        if not loser_id:
+                            raise RuntimeError("el conflicto no tiene las dos versiones")
+                        c2 = await conn.execute(
+                            "UPDATE playbooks SET status='archived', updated_at=now() "
+                            "WHERE id = %s::uuid AND status='active' AND NOT protected",
+                            (loser_id,))
+                        archived = c2.rowcount
+
+                    new_status = "approved" if choice in ("a", "b") else "rejected"
+                    await conn.execute(
+                        "UPDATE curator_proposals SET status=%s, resolution=%s, reviewed_at=now(), "
+                        "reviewed_by=%s WHERE id = %s::uuid",
+                        (new_status, choice, reviewed_by, proposal_id))
+                    await self._audit(conn, tenant_id, "curator_conflict_resolved", proposal_id,
+                                      {"choice": choice, "archived": archived}, reviewed_by)
+            return {"status": new_status, "choice": choice, "archived": archived}
+
+        except _ProposalAbort:
+            pass
+        except Exception as e:
+            logger.exception("resolve_conflict falló (tenant %s, prop %s) → rollback",
+                             tenant_id, proposal_id)
+            async with pool.tenant_connection(tenant_id) as conn:
+                await conn.execute(
+                    "UPDATE curator_proposals SET status='failed', reviewed_at=now(), "
+                    "reviewed_by=%s WHERE id = %s::uuid AND status IN ('pending','applying')",
+                    (reviewed_by, proposal_id))
+                await self._audit(conn, tenant_id, "curator_conflict_failed", proposal_id,
+                                  {"error": str(e)}, reviewed_by)
+            return {"status": "failed", "error": str(e), "archived": 0}
+
+        async with pool.tenant_connection(tenant_id) as conn:
+            await self._audit(conn, tenant_id, "curator_proposal_drift", proposal_id, {},
+                              reviewed_by)
+        return {"status": "drift",
+                "error": "El estado cambió desde que se generó la propuesta; regenerar."}
 
     async def _execute_merge(self, conn, tenant_id: str, merge: dict) -> int:
         """Aplica UNA fusión propuesta (misma lógica que consolidate, desde la propuesta).
@@ -425,7 +629,8 @@ class Curator:
                 async with llm.tenant_model_policy(tenant_id):
                     p = await self.propose(tenant_id)
                 out[tenant_id] = {"proposal_id": p.id, "merges": len(p.proposed_merges),
-                                  "deletions": len(p.proposed_deletions)}
+                                  "deletions": len(p.proposed_deletions),
+                                  "conflicts": len(p.raised_conflicts)}
             except Exception as e:
                 out[tenant_id] = {"error": str(e)}
                 logger.exception("curator.propose falló (tenant %s)", tenant_id)
@@ -460,6 +665,125 @@ class Curator:
             rows = c.execute("SELECT id FROM tenants").fetchall()
         return [str(r[0]) for r in rows]
 
+    # ── juez de contradicción: ¿duplicado o conflicto? ────────────────────────
+    async def _classify_pair(self, a: dict, b: dict) -> dict | None:
+        """Segundo paso tras el coseno. Devuelve el veredicto del conflicto ({dice_a, dice_b,
+        confianza}) SOLO si el juez está convencido de que los dos textos se contradicen; en
+        cualquier otro caso devuelve None = DUPLICADO (fusionable, comportamiento de siempre).
+
+        FAIL-SOFT: este método no propaga NADA. El juez es una llamada a un modelo dentro del
+        cron semanal; si el modelo está caído, tarda, o devuelve basura, el Curator degrada al
+        comportamiento de hoy (fusionar) y lo deja escrito en el log — nunca tumba su corrida.
+        El coste de degradar es una propuesta de fusión que el abogado puede rechazar; el coste
+        de reventar es que el despacho se quede sin curaduría."""
+        try:
+            raw = await asyncio.to_thread(self._judge, a, b)
+        except Exception:
+            logger.exception(
+                "curator: el juez de contradicción falló (%s / %s) → se trata como duplicado "
+                "(degradado al comportamiento previo)", a.get("id"), b.get("id"))
+            return None
+        if not raw:
+            return None
+
+        veredicto = str(raw.get("veredicto", "")).strip().lower()
+        if veredicto not in _JUDGE_VERDICTS:
+            logger.warning("curator: veredicto ilegible (%r) en %s / %s → duplicado",
+                           raw.get("veredicto"), a.get("id"), b.get("id"))
+            return None
+        if veredicto != "contrarios":
+            return None
+        try:
+            confianza = float(raw.get("confianza", 0.0))
+        except (TypeError, ValueError):
+            return None
+        if confianza < CONFLICT_MIN_CONFIDENCE:
+            # El juez se inclina pero no está convencido → duplicado. Ver CONFLICT_MIN_CONFIDENCE.
+            logger.info("curator: posible contradicción descartada por confianza %.2f < %.2f "
+                        "(%s / %s) → duplicado", confianza, CONFLICT_MIN_CONFIDENCE,
+                        a.get("id"), b.get("id"))
+            return None
+
+        dice_a = str(raw.get("dice_a") or "").strip()[:300]
+        dice_b = str(raw.get("dice_b") or "").strip()[:300]
+        if not dice_a or not dice_b:
+            # Sin las dos mitades no hay elección binaria que enseñar: no se interrumpe al
+            # abogado con media pregunta.
+            logger.warning("curator: contradicción sin las dos versiones explicadas (%s / %s) "
+                           "→ duplicado", a.get("id"), b.get("id"))
+            return None
+        return {"dice_a": dice_a, "dice_b": dice_b, "confianza": confianza}
+
+    @staticmethod
+    def _judge(a: dict, b: dict) -> dict | None:
+        """Llamada síncrona al juez (task auxiliar/barato). Devuelve el JSON parseado o None.
+
+        AGNOSTICISMO (regla dura): el prompt no nombra ningún país, ordenamiento, código ni
+        figura jurídica. Pregunta por la estructura lógica de dos instrucciones — obligar vs
+        prohibir, afirmar vs negar, dos valores distintos para lo mismo — que es idéntica en
+        cualquier jurisdicción. Un detector que reconociera contradicciones por léxico de un
+        país solo funcionaría en ese país."""
+        messages = [
+            {"role": "system", "content": (
+                "Eres un comparador de reglas de trabajo. Recibes DOS reglas, A y B, que un "
+                "sistema detectó como muy parecidas. Tu ÚNICA tarea es decir si dicen LO MISMO "
+                "o si se CONTRADICEN. No juzgues cuál es mejor ni entres en el fondo del asunto.\n"
+                "Veredictos posibles:\n"
+                "- \"iguales\": dicen lo mismo con otras palabras, o una es un detalle o un caso "
+                "particular de la otra. Quien las juntara no perdería ninguna instrucción.\n"
+                "- \"contrarios\": aplicadas al MISMO supuesto ordenan cosas incompatibles: una "
+                "obliga lo que la otra prohíbe, una afirma lo que la otra niega, o fijan valores, "
+                "plazos o umbrales distintos para la misma cosa. Quien siguiera las dos a la vez "
+                "no sabría qué hacer.\n"
+                "- \"no_se\": no tienes certeza, hablan de supuestos distintos, o el texto no "
+                "alcanza para saberlo.\n"
+                "REGLA CRÍTICA: ante CUALQUIER duda responde \"no_se\". Marcar como contrarias "
+                "dos reglas que en realidad dicen lo mismo es un error CARO; no detectar una "
+                "contradicción es un error barato. Sé exigente antes de decir \"contrarios\".\n"
+                "Responde ÚNICAMENTE un objeto JSON, sin texto alrededor:\n"
+                "{\"veredicto\": \"iguales|contrarios|no_se\", \"confianza\": 0.0-1.0, "
+                "\"dice_a\": \"lo que ordena A, máximo 25 palabras\", "
+                "\"dice_b\": \"lo que ordena B, máximo 25 palabras\"}\n"
+                "\"confianza\" es cuán seguro estás de tu veredicto. \"dice_a\" y \"dice_b\" "
+                "describen cada regla POR SEPARADO: jamás las combines en una sola frase.")},
+            {"role": "user", "content": (
+                f"REGLA A — {a.get('title', '')}\n"
+                f"Cuándo aplica: {a.get('applies_when', '')}\n"
+                f"{str(a.get('content') or '')[:_JUDGE_MAX_CHARS]}\n\n"
+                f"REGLA B — {b.get('title', '')}\n"
+                f"Cuándo aplica: {b.get('applies_when', '')}\n"
+                f"{str(b.get('content') or '')[:_JUDGE_MAX_CHARS]}")},
+        ]
+        resp = llm.call_llm(messages, task=_JUDGE_TASK)
+        text = (resp.choices[0].message.content or "").strip()
+        return _parse_judge_json(text)
+
+    @staticmethod
+    def _conflict_payload(a: dict, b: dict, facts: dict[str, dict], score: float,
+                          verdict: dict) -> dict:
+        """Payload de un conflicto: las DOS versiones vivas, cada una con su fecha y su
+        procedencia. Nunca un texto mezclado — el abogado elige entre A y B, no entre una
+        fusión y nada."""
+        def side(pb: dict, dice: str) -> dict:
+            f = facts.get(pb["id"], {})
+            return {
+                "id": pb["id"],
+                "title": pb.get("title", ""),
+                "summary": pb.get("summary", ""),
+                "applies_when": pb.get("applies_when", ""),
+                "extracto": str(pb.get("content") or "")[:1200],
+                "fecha": f.get("fecha") or "",
+                "procedencia": f.get("procedencia") or "manual",
+                "dice": dice,
+            }
+
+        return {
+            "a": side(a, verdict["dice_a"]),
+            "b": side(b, verdict["dice_b"]),
+            "score": round(float(score), 3),
+            "confianza": round(float(verdict["confianza"]), 2),
+        }
+
     # ── fusión con LLM ────────────────────────────────────────────────────────
     @staticmethod
     def _fuse(a: dict, b: dict) -> str:
@@ -476,6 +800,31 @@ class Curator:
         ]
         resp = llm.call_llm(messages, task="curator")
         return resp.choices[0].message.content or ""
+
+
+_JSON_OBJ = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _parse_judge_json(text: str) -> dict | None:
+    """Extrae el objeto JSON del veredicto. Tolera ```json … ``` y prosa alrededor (los modelos
+    pequeños de la política 'soberano' la añaden). Devuelve None si no hay JSON legible — el
+    llamador lo trata como duplicado (fail-soft)."""
+    if not text:
+        return None
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except (ValueError, TypeError):
+        pass
+    m = _JSON_OBJ.search(text)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except (ValueError, TypeError):
+        return None
+    return obj if isinstance(obj, dict) else None
 
 
 def _json_meta(a_id: str, b_id: str, a: dict, b: dict):

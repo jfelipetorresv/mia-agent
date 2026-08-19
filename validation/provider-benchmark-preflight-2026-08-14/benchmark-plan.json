@@ -1,0 +1,229 @@
+{
+  "schema_version": "mia-provider-benchmark/v1",
+  "created_at": "2026-08-14T18:02:36.084229+00:00",
+  "revision": "d258592957210c1ede96d5fd9bb6b0880fad819d",
+  "arms": {
+    "claude": {
+      "arm_id": "claude",
+      "cli_installed": true,
+      "producer_policy": "quality_adaptive",
+      "graph_producer_ready": true,
+      "benchmark_graph_ready": true,
+      "eval_provider": null,
+      "isolated_eval_ready": false,
+      "isolated_eval_preflight": null,
+      "legal_routes": {
+        "legal_facts": [
+          "cli-claude-opus",
+          "cli-claude-sonnet",
+          "claude-sonnet"
+        ],
+        "legal_research": [
+          "cli-claude-opus",
+          "cli-claude-sonnet",
+          "claude-sonnet"
+        ],
+        "legal_analysis": [
+          "cli-claude-opus",
+          "cli-claude-sonnet",
+          "claude-sonnet"
+        ],
+        "legal_draft": [
+          "cli-claude-opus",
+          "cli-claude-sonnet",
+          "claude-sonnet"
+        ],
+        "legal_verification": [
+          "cli-claude-opus",
+          "cli-claude-sonnet",
+          "claude-sonnet"
+        ],
+        "legal_work": [
+          "cli-claude-opus",
+          "cli-claude-sonnet",
+          "claude-sonnet"
+        ],
+        "legal_edit": [
+          "cli-claude-opus",
+          "cli-claude-sonnet",
+          "claude-sonnet"
+        ]
+      },
+      "blockers": [],
+      "production_blockers": []
+    },
+    "codex": {
+      "arm_id": "codex",
+      "cli_installed": true,
+      "producer_policy": null,
+      "graph_producer_ready": false,
+      "benchmark_graph_ready": true,
+      "eval_provider": "codex",
+      "isolated_eval_ready": true,
+      "isolated_eval_preflight": {
+        "adapter_version": "mia-codex-cli-benchmark/v1",
+        "ready": true,
+        "blockers": [],
+        "cli_version": "codex-cli 0.147.0",
+        "authenticated": true,
+        "required_flags": [
+          "--ephemeral",
+          "--ignore-user-config",
+          "--ignore-rules",
+          "--output-schema",
+          "--sandbox",
+          "--json",
+          "--strict-config"
+        ],
+        "missing_flags": [],
+        "launcher": "codex.exe",
+        "isolation": {
+          "ephemeral": true,
+          "isolated_cwd": true,
+          "repo_mounted": false,
+          "shell_tool": false,
+          "web_search": false,
+          "apps": false,
+          "subagents": false,
+          "browser_tools": false,
+          "computer_use": false,
+          "image_tools": false,
+          "skills": false,
+          "plugins": false,
+          "user_config": false,
+          "local_rules": false,
+          "structured_output": true,
+          "environment_allowlist": true
+        },
+        "note": "Preflight sin inferencia ni gasto; valida interfaz, no calidad del modelo."
+      },
+      "legal_routes": {},
+      "blockers": [],
+      "production_blockers": [
+        "sin_ruta_productor_juridico_en_mia"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "case_id": "fuga-jurisdiccion-contrato-sin-pais",
+      "group": "risk",
+      "sha256": "d6e4fc0bf8379acb2294860765283c5f63a022fb4d2e739c3a97b96e46edb812",
+      "synthetic": true,
+      "repetitions": 10
+    },
+    {
+      "case_id": "disciplina-citas-formas-abreviadas",
+      "group": "risk",
+      "sha256": "ceea6f02e6b822cef4cdaa2d56c9b78dabf5c3f13aa7192e6e2844714a47ecea",
+      "synthetic": true,
+      "repetitions": 10
+    },
+    {
+      "case_id": "procedencia-despacho-vacio",
+      "group": "risk",
+      "sha256": "f34d21564ede07c1451a70233f24991de241fe8e98d9b7c4b73068d4daace55b",
+      "synthetic": true,
+      "repetitions": 10
+    },
+    {
+      "case_id": "entailment-cita-real-no-sostiene",
+      "group": "risk",
+      "sha256": "1259f186f41af7e9480e1b9f525aa257e95f3d54b0a43ab9b928f0b87ab26b30",
+      "synthetic": true,
+      "repetitions": 10
+    },
+    {
+      "case_id": "afirmacion-juridica-sin-cita",
+      "group": "risk",
+      "sha256": "7a8d4e763ae606a434ef4a9898a32875587186d942e35d567001cc22f46a80c2",
+      "synthetic": true,
+      "repetitions": 10
+    },
+    {
+      "case_id": "soporte-cruzado-mal-anclado",
+      "group": "risk",
+      "sha256": "d83c1608d046fef71cef64c306892fb7b1d0193057dac1ea05945eb55f820436",
+      "synthetic": true,
+      "repetitions": 10
+    },
+    {
+      "case_id": "holdout-anclaje-norma-sellada",
+      "group": "holdout",
+      "sha256": "eb49a3592f7da8ca02efcb32eca48ccbd85012c8062fdaf5593340f7880e615b",
+      "synthetic": true,
+      "repetitions": 10
+    },
+    {
+      "case_id": "holdout-expediente-vacio",
+      "group": "holdout",
+      "sha256": "bcb5731cb80c2d1e4e7e772ef432d44472e243252b945f9de3cd3e7c491e796d",
+      "synthetic": true,
+      "repetitions": 10
+    },
+    {
+      "case_id": "holdout-forma-abreviada-sigla",
+      "group": "holdout",
+      "sha256": "2db8e22051c0caaba60d89cf19f4bffc0e57e27516b94156b796b08b25274042",
+      "synthetic": true,
+      "repetitions": 10
+    }
+  ],
+  "requirements": {
+    "minimum_repetitions": 10,
+    "blind_human_review": true,
+    "required_telemetry": [
+      "tokens",
+      "latency_ms",
+      "cost_usd",
+      "model",
+      "effective_model",
+      "effort",
+      "fallbacks"
+    ],
+    "quality_gates": [
+      "zero_unsupported_claims",
+      "zero_false_verified_citations",
+      "zero_jurisdiction_leaks",
+      "no_material_false_block_increase"
+    ],
+    "mutation_gate": "execution/test_eval_scoring_mutacion.py",
+    "holdout_integrity": {
+      "ok": true,
+      "motivos": [],
+      "n_casos": 3,
+      "fuente_ok": true,
+      "esperado": {
+        "casos": {
+          "holdout-anclaje-norma-sellada": "eb49a3592f7da8ca02efcb32eca48ccbd85012c8062fdaf5593340f7880e615b",
+          "holdout-expediente-vacio": "bcb5731cb80c2d1e4e7e772ef432d44472e243252b945f9de3cd3e7c491e796d",
+          "holdout-forma-abreviada-sigla": "2db8e22051c0caaba60d89cf19f4bffc0e57e27516b94156b796b08b25274042"
+        },
+        "fuente_sha256": "1cf8a5af09ed9d95a1be78b7fa52b65f6f37f4a0cfe599fb63f8fd180711e5f1",
+        "orden": [
+          "holdout-anclaje-norma-sellada",
+          "holdout-expediente-vacio",
+          "holdout-forma-abreviada-sigla"
+        ]
+      },
+      "obtenido": {
+        "casos": {
+          "holdout-anclaje-norma-sellada": "eb49a3592f7da8ca02efcb32eca48ccbd85012c8062fdaf5593340f7880e615b",
+          "holdout-expediente-vacio": "bcb5731cb80c2d1e4e7e772ef432d44472e243252b945f9de3cd3e7c491e796d",
+          "holdout-forma-abreviada-sigla": "2db8e22051c0caaba60d89cf19f4bffc0e57e27516b94156b796b08b25274042"
+        },
+        "orden": [
+          "holdout-anclaje-norma-sellada",
+          "holdout-expediente-vacio",
+          "holdout-forma-abreviada-sigla"
+        ],
+        "fuente_sha256": "1cf8a5af09ed9d95a1be78b7fa52b65f6f37f4a0cfe599fb63f8fd180711e5f1"
+      }
+    }
+  },
+  "required_turns": 180,
+  "execution_ready": true,
+  "production_ready": false,
+  "blockers": [],
+  "plan_sha256": "dda8750794d693bddc7426412b9410e77f7659dbc871f3b11d6e6f1f4eb2f0ed"
+}

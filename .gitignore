@@ -1,4 +1,7 @@
 .env
+.mia-backup-key.dpapi
+.mia-backup-recovery-confirmed
+.maintenance/
 mia-data/
 .tmp/
 .venv/
@@ -12,8 +15,12 @@ __pycache__/
 *.egg-info/
 mia_backend.egg-info/
 
-# Herramientas locales de desarrollo (no del producto)
-.claude/
+# Herramientas locales de desarrollo (no del producto) — EXCEPTO settings.json
+# (hooks damage-control a nivel de proyecto: SI se versiona, para que un clon
+# limpio lo tenga). ".claude/*" en vez de ".claude/" para que git no deje de
+# descender al directorio y la excepción de abajo pueda aplicar.
+.claude/*
+!.claude/settings.json
 frontend/.playwright-cli/
 .playwright-cli/
 
@@ -21,3 +28,10 @@ frontend/.playwright-cli/
 # SI se versionan, solo se ignora la salida del build.
 packaging/dist/
 packaging/build/
+
+# Temporales que crean las suites del banco de pruebas (defecto de higiene: deberian ir a TEMP)
+mia-harness-ledger-*/
+mia-spend-guard-*/
+
+# Evidencia visual del E2E (PNGs pesados; la bitacora es validation/validation-log.md)
+validation/screenshots/

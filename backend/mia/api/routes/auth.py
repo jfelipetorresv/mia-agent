@@ -1,6 +1,7 @@
 """Rutas de autenticacion real multi-tenant."""
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -14,14 +15,16 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import config
 from ...db import pool
+from ...onboarding.workspace import scaffold_despacho_workspace
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # ── Freno anti fuerza-bruta (auditoría 2026-07) ────────────────────────────────
 # Sin esto, /login acepta intentos ilimitados: un atacante puede probar millones de
 # contraseñas contra un email conocido. Ventana deslizante EN MEMORIA por proceso
-# (suficiente para Modo B, 1 worker; en Modo A multi-worker migrar a un contador
-# compartido, p. ej. en Postgres o Redis — anotado en la auditoría).
+# (suficiente para 1 worker, Modo B; si algún día hubiera un despliegue
+# multi-worker, migrar a un contador compartido, p. ej. en Postgres o Redis —
+# anotado en la auditoría).
 _LOGIN_MAX_FAILURES = 5          # fallos permitidos por (ip, email) …
 _LOGIN_WINDOW_SECONDS = 15 * 60  # … dentro de esta ventana → 429
 _LOGIN_IP_MAX_FAILURES = 30      # tope agregado: fallos por ip (cualquier email)
@@ -37,9 +40,10 @@ _DUMMY_HASH = bcrypt.hashpw(b"mia-timing-equalizer", bcrypt.gensalt(rounds=12))
 
 
 def _client_ip(request: Request) -> str:
-    # En Modo A detrás de un reverse proxy esto es la IP del proxy, no la del
-    # cliente: habría que leer X-Forwarded-For DESDE UN PROXY CONFIABLE antes de
-    # confiar en ella (anotado en la auditoría como límite conocido).
+    # Si algún día hubiera un despliegue detrás de un reverse proxy, esto sería
+    # la IP del proxy, no la del cliente: habría que leer X-Forwarded-For DESDE
+    # UN PROXY CONFIABLE antes de confiar en ella (anotado en la auditoría como
+    # límite conocido).
     return request.client.host if request.client else "unknown"
 
 
@@ -186,6 +190,16 @@ async def register(body: RegisterBody, request: Request):
             )
     except errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail="Email ya registrado") from exc
+
+    # Fase 1: andamiaje en disco del despacho (.mia/ + expedientes/). Es ACCESORIO — la
+    # fuente de verdad es la fila del tenant ya creada; nunca debe tumbar el registro.
+    # Idempotente y no destructivo; I/O síncrona → threadpool para no bloquear el event loop.
+    try:
+        await run_in_threadpool(
+            scaffold_despacho_workspace, tenant_id, despacho_nombre=firm_name)
+    except Exception:  # noqa: BLE001 — el andamiaje de disco jamás rompe el alta del despacho
+        logging.getLogger("mia.onboarding").warning(
+            "no se pudo crear el andamiaje del despacho (tenant=%s)", tenant_id, exc_info=True)
 
     return {"token": create_token(tenant_id, email), "tenant_id": tenant_id}
 

@@ -42,8 +42,8 @@ from fastapi import APIRouter, HTTPException, Request
 from ...connectors import local_folders
 from ...connectors.graph_drive import list_sources as list_drive_sources
 from ...db import pool
+from ...jobs import latest_job
 from ._common import assert_owns_matter
-from .matter_folders import _SYNCS_IN_FLIGHT
 
 router = APIRouter(prefix="/api", tags=["matter_sources"])
 logger = logging.getLogger("mia.api.matter_sources")
@@ -63,9 +63,9 @@ def _folder_name(source: dict) -> str:
     return Path(source["path"]).name or source["path"]
 
 
-def _folder_status(documentos: int, source_id: str) -> str:
+def _folder_status(documentos: int, job_status: str | None) -> str:
     """Estado en llano de una carpeta LOCAL: revisión en vuelo > documentos leídos > vacía."""
-    if source_id in _SYNCS_IN_FLIGHT:
+    if job_status in ("queued", "running"):
         return "Leyendo la carpeta…"
     if documentos > 0:
         return f"{documentos} documentos leídos"
@@ -88,6 +88,9 @@ async def _folder_sources(tid: str, matter_id: str) -> list[dict]:
     out: list[dict] = []
     for source in await local_folders.get_matter_sources(tid, matter_id):
         last_sync = await local_folders.source_last_sync(tid, source["id"])
+        job = await latest_job(
+            tid, "matter_folder_sync", f"matter-folder:{source['id']}"
+        )
         async with pool.tenant_connection(tid) as conn:
             documentos = (await (await conn.execute(
                 "SELECT count(*) FROM documents WHERE matter_id=%s::uuid AND origin='folder' "
@@ -100,7 +103,7 @@ async def _folder_sources(tid: str, matter_id: str) -> list[dict]:
             "detalle": source["path"],
             "documentos": documentos,
             "last_sync": last_sync.isoformat() if last_sync else None,
-            "estado": _folder_status(documentos, source["id"]),
+            "estado": _folder_status(documentos, (job or {}).get("status")),
         })
     return out
 

@@ -163,7 +163,7 @@ export default function SalaEstrategiaDialog({ open, onOpenChange, matterId, has
             {disponibles.length > 0 ? (
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Sumar del despacho
+                  Sumar de mi firma u organización
                 </p>
                 <ul className="space-y-2">
                   {disponibles.map((a) => (

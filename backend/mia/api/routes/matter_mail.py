@@ -25,10 +25,12 @@ en crudo). El campo `provider` es técnico y viaja en la API; los TEXTOS van en 
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
 import unicodedata
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -38,8 +40,10 @@ from ...connectors.mailbox.base import PROVIDERS
 from ...connectors.mailbox.providers import _max_attachment_bytes
 from ...connectors.mailbox.service import MailboxService
 from ...db import pool
+from ...jobs import enqueue_classification
 from ...ingest.extract import extract_text_detailed_async
-from ...ingest.ingest import chunk_text
+from ...ingest.document_derivation import SUPPORTED_ANYDOC_EXTENSIONS
+from ...ingest.ingest import chunk_extracted_text
 from ...observability import audit
 from ._common import _is_uuid
 
@@ -49,7 +53,7 @@ logger = logging.getLogger("mia.api.matter_mail")
 MAX_LINK_ITEMS = 20  # máx. correos por llamada de vinculación (evita lotes desmedidos)
 
 # Extensiones que el extractor de texto sabe leer (mismo criterio que la carpeta vinculada).
-_SUPPORTED_SUFFIXES = (".pdf", ".docx", ".txt", ".md")
+_SUPPORTED_SUFFIXES = (".pdf", ".docx", ".txt", ".md") + tuple(SUPPORTED_ANYDOC_EXTENSIONS)
 
 
 def _make_mailbox_service() -> MailboxService:
@@ -91,6 +95,18 @@ def _body_filename(meta: dict) -> str:
     """Nombre legible del documento del cuerpo: correo-AAAA-MM-DD-<asunto>.txt."""
     fecha = (meta.get("date") or "")[:10] or "sin-fecha"
     return f"correo-{fecha}-{_slug(meta.get('subject') or '')}.txt"
+
+
+def _parse_mail_date(raw: str | None) -> date | None:
+    """Fecha PROPIA del correo (≠ created_at = fecha de ingesta) para
+    `documents.fecha_documento`. El metadato `date` del buzón llega en ISO
+    (`_iso(parse_dt(...))`), así que basta con los primeros 10 caracteres (YYYY-MM-DD).
+    Si NO parsea, devuelve None: NUNCA se inventa una fecha (Mia no interpreta fechas
+    procesales; el dato se guarda solo si es inequívoco)."""
+    try:
+        return date.fromisoformat((raw or "")[:10])
+    except (ValueError, TypeError):
+        return None
 
 
 def _body_text(meta: dict, body: str) -> str:
@@ -236,7 +252,8 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
         full_text.encode("utf-8"), full_text,
         source_path=f"{provider}:{message_id}",
         display_name=f"Correo: {asunto}",
-        added=added, already=already, skipped=skipped)
+        added=added, already=already, skipped=skipped,
+        fecha_documento=_parse_mail_date(meta.get("date")))
 
     # 2) cada adjunto soportado → documento propio
     cap = _max_attachment_bytes()
@@ -255,7 +272,8 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
             continue
         try:
             # M1: la extracción (OCR incluido) corre en un hilo — no congela el event loop.
-            text, meta = await extract_text_detailed_async(name, data)
+            text, meta = await extract_text_detailed_async(
+                name, data, att.get("content_type") or None)
         except Exception:  # noqa: BLE001 — adjunto ilegible: se omite en llano
             skipped.append({"name": name,
                             "reason": "No pude leer ese archivo adjunto; puede estar dañado."})
@@ -272,12 +290,16 @@ async def _link_one(tenant_id: str, matter_id: str, conn, message_id: str,
         await _ingest_document(
             tenant_id, matter_id, name, att.get("content_type") or None, data, text,
             source_path=f"{provider}:{message_id}/{name}",
-            display_name=name, added=added, already=already, skipped=skipped)
+            display_name=name, added=added, already=already, skipped=skipped,
+            offset_map=meta.get("folio_map") or [], extraction_meta=meta)
 
 
 async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: str | None,
                            raw: bytes, text: str, *, source_path: str, display_name: str,
-                           added: list, already: list, skipped: list) -> None:
+                           added: list, already: list, skipped: list,
+                           fecha_documento: date | None = None,
+                           offset_map: list[tuple[int, int, int]] | None = None,
+                           extraction_meta: dict | None = None) -> None:
     """Ingesta UN documento origin='mail' (dedupe por sha256): extrae→trocea→embebe→inserta.
     Molde de LocalFolderSync._ingest_matter_file, pero la clave de dedupe es la HUELLA del
     contenido (como la subida manual): re-vincular el mismo correo NO duplica nada."""
@@ -289,20 +311,31 @@ async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: 
     if dup:
         already.append(display_name)
         return
-    chunks = chunk_text(text)
-    if not chunks:
+    # Troceo con folio: cada chunk hereda el folio (página) de su offset de inicio, medido
+    # sobre el MISMO `text` que produjo extract (`offset_map`). El CUERPO del correo y las
+    # fuentes sin páginas no traen mapa → folio NULL. Nunca se inventa.
+    pairs = chunk_extracted_text(text, extraction_meta or {"folio_map": offset_map or []})
+    if not pairs:
         skipped.append({"name": display_name,
                         "reason": "Ese correo o archivo no tenía texto para agregar."})
         return
-    vectors = embeddings.embed_texts(chunks)
+    # El cliente de embeddings es síncrono (y normalmente hace red): no debe
+    # bloquear el event loop que atiende el resto de la API.
+    vectors = await asyncio.to_thread(embeddings.embed_texts, [c for c, _ in pairs])
     async with pool.tenant_connection(tenant_id) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "
-            "source_path, origin) VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'mail') "
-            "RETURNING id",
-            (tenant_id, matter_id, filename, mime, sha256, source_path))).fetchone())[0]
-        for i, (content, vec) in enumerate(zip(chunks, vectors)):
+            "source_path, origin, fecha_documento) "
+            "VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, 'mail', %s) RETURNING id",
+            (tenant_id, matter_id, filename, mime, sha256, source_path,
+             fecha_documento))).fetchone())[0]
+        for i, ((content, folio), vec) in enumerate(zip(pairs, vectors)):
             await conn.execute(
-                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding) "
-                "VALUES (%s::uuid, %s, %s, %s, %s)", (tenant_id, doc_id, i, content, vec))
+                "INSERT INTO chunks (tenant_id, document_id, ord, content, embedding, procedencia, folio_ancla) "
+                "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s)",
+                (tenant_id, doc_id, i, content, vec, "documento", folio))
+    # Documento + chunks ya COMMITEADOS (cerró el `async with`): recién aquí el job ve la fila.
+    # Triaje de metadata recuperable — fail-soft. La `fecha_documento` del correo (fidedigna) ya
+    # quedó fijada en el INSERT: el clasificador NO la pisa (la respeta / persiste con COALESCE).
+    await enqueue_classification(tenant_id, doc_id)
     added.append(display_name)

@@ -29,6 +29,7 @@ Helpers stateless que leen el estado del agente por duck-typing (no importan cor
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
@@ -43,16 +44,58 @@ TIER_STABLE = "stable"
 TIER_CONTEXT = "context"
 TIER_VOLATILE = "volatile"
 
+# Identidad fallback del producto. Antes vivía en el `MiaAgent` experimental; el runtime
+# real consume este builder desde los grafos, así que la fuente canónica pertenece aquí.
+DEFAULT_IDENTITY = (
+    "Eres Mia, una agente juridica cognitiva para despachos de abogados del "
+    "Civil Law hispanoamericano. Razonas sobre expedientes, citas fuentes "
+    "primarias verificables y entregas diagnosticos y borradores para que un "
+    "abogado los apruebe. Eres precisa y prudente: nunca inventas citas legales "
+    "— si no puedes verificar una norma o sentencia, lo dices explicitamente."
+)
+
 # ── Capas STABLE de texto fijo ─────────────────────────────────────────────
 
 # L2 · Metodología jurídica
+#
+# Los dos bloques finales (anatomía y jerarquía) son la METODOLOGÍA ARGUMENTAL, no el
+# estilo de ninguna firma: fijan qué tiene que TRAER un argumento para estar completo y
+# cómo se reparte el desarrollo entre ellos. Van aquí, en el tier STABLE, por dos razones:
+#   · es texto FIJO — entra al prefijo cacheado (TTL 1h) y su costo marginal por turno es
+#     ~cero; ponerlo en la instrucción de cada nodo (L8, no cacheada) se pagaría entero en
+#     todos los turnos y en cada especialista;
+#   · aplica a TODOS los que sostienen una posición (cruce, borrador, panelistas de la
+#     sala), no a un nodo suelto.
+# Regla dura de agnosticismo: los seis elementos y los movimientos se nombran por su
+# ROL FUNCIONAL (hecho, fuente normativa, autoridad interpretativa, prueba,
+# confrontación, consecuencia). Ni un país, ni una corporación, ni un artículo
+# concreto, ni un formato de cita — eso vive en el pack de jurisdicción y en el
+# SOUL.md del despacho, nunca en el código.
+# 2026-07-23 — la capa se expandió con un manual de litigio de referencia,
+# DESTILADO: solo lo universal del oficio (postura, anatomía, confrontación,
+# arquitectura, exhaustividad); lo específico de identidad, jurisdicción, formato y
+# firma quedó fuera a propósito — eso lo pone cada despacho vía SOUL/packs.
+# Contrato operacional de metodología. La evolución histórica vive en Git; sus invariantes
+# se ejecutan en test_argument_engine/test_prompt_builder.
 METHODOLOGY = (
-    "Razonas como un jurista del Civil Law hispanoamericano. Estructuras tu "
-    "análisis en: (1) hechos relevantes, (2) problema jurídico, (3) fundamentos "
-    "de derecho con sus fuentes, (4) conclusión y recomendación. Distingues entre "
-    "norma aplicable, jurisprudencia y doctrina. Eres prudente: nombras tus "
-    "supuestos, los riesgos y lo que falta por verificar antes de afirmar una "
-    "conclusión."
+    "Razonas como jurista del Civil Law hispanoamericano: (1) hechos relevantes, "
+    "(2) problema jurídico, (3) fundamentos con fuentes, (4) conclusión y recomendación. "
+    "Nombras supuestos, riesgos y vacíos. En trabajo no adversarial conservas rigor sin "
+    "construir un adversario. Anatomía del argumento. En litigio, un argumento no es un "
+    "título ni un enunciado: es un desarrollo con seis capas: planteamiento contrario; "
+    "fuente normativa —transcrita solo cuando el ordenamiento esté declarado—; autoridad "
+    "interpretativa aplicada A ESTE caso y no enunciada en abstracto; hecho concreto del "
+    "expediente y prueba que lo acredita; confrontación con lo que sostiene el adversario; "
+    "y consecuencia concreta que de él se sigue con su petición. Si falta una capa, se "
+    "anuncia, no se disimula. Los elementos son andamiaje interno, nunca meta-lenguaje. "
+    "Mapea todos los ángulos con soporte; corta lo especulativo y fusiona duplicados. "
+    "Jerarquía. Identifica los tres o cuatro más sólidos y concentra en ellos el grueso "
+    "del desarrollo; una lista plana con igual peso es un defecto, no una virtud. "
+    "Busca admisiones, contradicciones, silencios, mejor versión, dilemas y actos propios. "
+    "La prueba y los hechos mandan sobre los adjetivos; lo subsidiario se rotula y no "
+    "concede la tesis principal. Las peticiones reflejan exactamente lo demostrado. "
+    "Pasada del adversario: intenta despachar cada argumento en dos líneas y cierra toda "
+    "salida fácil con fuente o admisión antes de entregar."
 )
 
 # L3 · Citación y verificación (CLAUDE.md global · "Legal Citation Verification")
@@ -64,6 +107,136 @@ CITATION_POLICY = (
     "cita plausible pero no confirmada. Citas con precisión: norma, artículo y, "
     "cuando aplique, la corporación, el número y la fecha de la providencia."
 )
+
+# L3 (continuación) · ORDENAMIENTO APLICABLE — la regla dura número uno del producto.
+#
+# Mia NO es de ningún país: se instala en el despacho que la contrata y se adapta a SU
+# ordenamiento. Antes de esta capa, la jurisdicción no se le decía al modelo en NINGÚN
+# punto del prompt (solo un "según la jurisdicción del despacho" suelto en la instrucción
+# del nodo de investigación, que no dice CUÁL). Con el hueco abierto, el modelo lo
+# rellenaba con lo que más ha visto: un despacho sin configurar, con cero documentos,
+# recibía articulado de un país concreto transcrito de memoria paramétrica y presentado
+# como derecho aplicable y como "conocimiento consolidado del despacho".
+#
+# Por eso el texto es imperativo y cerrado, no una sugerencia: contra un prior
+# paramétrico fuerte, "procura" y "en lo posible" no hacen nada. Y por eso NO hay un
+# solo nombre de país, código, corporación ni base de datos en este archivo — los
+# nombres salen del pack del despacho (`jurisdiction/packs/{code}/meta.json`), que son
+# DATOS. Escribir aquí el nombre de un país sería cometer el defecto que esta capa
+# corrige.
+
+_JURISDICTION_HEADING = "## Ordenamiento aplicable — REGLA IMPERATIVA"
+
+# Caso PELIGROSO: el despacho no declaró ordenamiento (o su pack no se pudo leer). Aquí
+# es donde el modelo rellenaba el vacío. La prohibición se enuncia por CATEGORÍAS
+# funcionales (artículo, código, corporación, base normativa), nunca por nombres.
+JURISDICTION_UNKNOWN = (
+    f"{_JURISDICTION_HEADING}\n"
+    "El despacho NO te ha declarado bajo qué ordenamiento trabaja. No lo deduzcas del "
+    "idioma, de las partes ni de lo que más hayas visto: no saberlo es el estado real.\n"
+    "PROHIBIDO mientras no lo sepas — aunque el abogado lo pida, aunque parezca obvio y "
+    "aunque lo recuerdes con nitidez: nombrar o numerar un artículo, una ley, un "
+    "decreto, un código o una constitución de un país concreto; transcribir el texto de "
+    "una disposición, literal o parafraseado; nombrar cortes, altas corporaciones, "
+    "entidades públicas o bases de datos normativas de un país concreto, ni ofrecerte a "
+    "consultarlas; afirmar que una regla concreta 'es' el derecho aplicable. Si te "
+    "viene a la cabeza un articulado, ESE impulso es lo que se prohíbe: no lo escribas. "
+    "Marcarlo [VERIFICAR] no lo autoriza — aquí la cita no se marca, se omite.\n"
+    "LO QUE SÍ HACES: razonas en el plano de la INSTITUCIÓN jurídica, no del "
+    "articulado — la figura, sus elementos, requisitos y efectos, con el rigor de "
+    "siempre. Y dices en una frase que para citar norma necesitas saber bajo qué "
+    "ordenamiento trabaja el despacho."
+)
+
+# Procedencia: prohibición de atribuir a una fuente lo que salió de la memoria del
+# modelo. Va SIEMPRE, haya o no jurisdicción configurada — el defecto observado fue
+# atribuir al "conocimiento consolidado del despacho" un texto que el despacho nunca
+# cargó. La exigencia de marcar EN LA MISMA LÍNEA ataca el otro patrón observado: diez
+# citas y una sola marca [VERIFICAR] en un párrafo de cierre.
+PROVENANCE_POLICY = (
+    "## Procedencia — de dónde sale cada cosa que afirmas\n"
+    "Solo atribuyes una afirmación al expediente, al conocimiento del despacho o a "
+    "cualquier fuente si ESE material te llegó sellado en este turno. Si no te llegó "
+    "nada, dilo: no digas que el despacho 'conserva' un conocimiento que no estás "
+    "viendo, ni presentes tu propia memoria como material del despacho. Mentir sobre el "
+    "ORIGEN es tan grave como inventar la norma.\n"
+    "Lo que sale de tu memoria se anuncia como tal y se marca [VERIFICAR] EN LA MISMA "
+    "LÍNEA de cada afirmación. Una sola marca al final para diez citas NO cumple."
+)
+
+
+def _jurisdiction_labels(codes: Any) -> tuple[list[str], bool]:
+    """(nombres declarados por el despacho, alguno_sin_verificar) a partir de sus códigos.
+
+    Los NOMBRES salen del pack (`meta.json → name`), que es dato del despacho; si el
+    despacho declaró un código para el que no hay pack instalado, se usa el propio código
+    como etiqueta (sigue siendo dato suyo) y cuenta como no verificado. FAIL-CLOSED: ante
+    cualquier error de carga se devuelve ([], True) → se emite la instrucción del caso
+    desconocido, que es la restrictiva. Nunca lanza: un pack roto no puede tumbar el
+    prompt del turno.
+    """
+    if not codes:
+        return [], True
+    try:
+        from ..jurisdiction.pack import GENERIC_CODE, load_pack
+    except Exception:  # noqa: BLE001 — fail-closed al caso restrictivo
+        return [], True
+    labels: list[str] = []
+    unverified = False
+    for raw in codes:
+        code = str(raw or "").strip().lower()
+        if not code or code == GENERIC_CODE:
+            continue
+        try:
+            p = load_pack(code)
+        except Exception:  # noqa: BLE001 — un pack ilegible no invalida a los demás
+            labels.append(code.upper())
+            unverified = True
+            continue
+        if p.is_generic:
+            # Código declarado por el despacho sin pack instalado: se respeta su
+            # declaración (puede citar SU derecho) pero no hay datos verificados.
+            labels.append(code.upper())
+            unverified = True
+            continue
+        labels.append(str(p.name or code).strip() or code.upper())
+        if not p.verified:
+            unverified = True
+    return labels, unverified
+
+
+def build_jurisdiction_directive(codes: Any = None) -> str:
+    """Instrucción de ordenamiento aplicable para los códigos del despacho.
+
+    Sin códigos (o con códigos que no resuelven a ningún ordenamiento declarado) devuelve
+    la instrucción del caso DESCONOCIDO: razonar por institución jurídica y prohibición
+    total de articulado de país. Con ordenamiento(s) declarado(s), Mia razona y cita con
+    ESE y declara como extranjero/comparado cualquier otro.
+    """
+    labels, unverified = _jurisdiction_labels(codes)
+    if not labels:
+        return JURISDICTION_UNKNOWN
+    declared = " · ".join(labels)
+    parts = [
+        f"{_JURISDICTION_HEADING}\n"
+        f"El despacho trabaja bajo este ordenamiento (o estos): {declared}. Razonas, "
+        "citas y concluyes ÚNICAMENTE con él: es el único derecho aplicable a este "
+        "asunto, y la norma que cites debe pertenecerle.\n"
+        "PROHIBIDO presentar como aplicable el derecho de otro ordenamiento. Si traes "
+        "una figura, una norma o una decisión ajena a lo declarado arriba, la "
+        "identificas EXPRESAMENTE como derecho extranjero o comparado en la misma frase "
+        "en que la mencionas y dices que NO es aplicable aquí — nunca la deslices como "
+        "si lo fuera, ni mezcles articulado de dos ordenamientos en una enumeración.\n"
+        "Si el asunto exige derecho de un ordenamiento que el despacho no declaró, no lo "
+        "improvises: dilo y pide que te confirmen con qué reglas se trabaja."
+    ]
+    if unverified:
+        parts.append(
+            "El sistema NO tiene datos de referencia verificados de ese ordenamiento. "
+            "Toda norma o providencia que cites saldrá de tu memoria: márcala "
+            "[VERIFICAR] en la misma línea y no la presentes como confirmada."
+        )
+    return "\n".join(parts)
 
 # L5 · Comunicación con el usuario (CLAUDE.md §G)
 USER_COMMS = (
@@ -88,8 +261,22 @@ def _methodology_layer(agent: Any) -> str:
 
 
 def _citation_layer(agent: Any) -> str:
-    """L3 · Política de citación/verificación (texto fijo)."""
-    return CITATION_POLICY
+    """L3 · Citación + ORDENAMIENTO APLICABLE + procedencia.
+
+    Las tres reglas viven juntas porque son la misma pregunta ("¿de dónde sale esto y
+    vale aquí?") y porque así la más determinante del producto —bajo qué derecho razona
+    Mia— deja de aparecer de pasada. Sigue en el tier STABLE: la jurisdicción del
+    despacho no cambia entre turnos ni entre nodos, así que el prefijo sigue siendo
+    byte-estable y cacheable (el cache es por despacho, no global).
+
+    `jurisdiction_codes` es una costura duck-typed: si el caller no la llena, se emite la
+    instrucción del caso desconocido, que es la restrictiva (fail-closed).
+    """
+    return "\n\n".join((
+        CITATION_POLICY,
+        build_jurisdiction_directive(getattr(agent, "jurisdiction_codes", None)),
+        PROVENANCE_POLICY,
+    ))
 
 
 def _tools_layer(agent: Any) -> str:
@@ -212,10 +399,60 @@ def build_system_prompt_parts(agent: Any) -> dict[str, str]:
     }
 
 
+# ── Prefix caching de Anthropic — límite del PREFIJO ESTABLE (decisión #3) ───
+# El caching de Anthropic es un match de PREFIJO: se marca `cache_control` en el
+# último bloque del prefijo estable y todo lo anterior se cachea (TTL 1h). El agente
+# consume el system como un STRING plano (`{"role":"system","content": <str>}`), así
+# que el punto de corte (dónde termina el tier STABLE y empieza el volátil) no se puede
+# recuperar del texto plano. En vez de ensuciar el string con un marcador (rompería el
+# conteo de tokens, el CLI de suscripción y los gates que comparan byte-a-byte), lo
+# registramos aquí: el texto completo → longitud de su prefijo estable. `agent/llm.py`
+# consulta `cache_split(system_text)` en el punto de embudo (call_llm) y, SOLO para los
+# aliases de la API directa de Anthropic, parte el system en dos bloques de content:
+# [estable con cache_control] + [resto sin cache]. El string devuelto por
+# build_system_prompt / build_graph_system queda IDÉNTICO byte-a-byte a hoy — el modelo
+# ve el mismo texto; solo cambia la metadata de cacheo (que Anthropic no renderiza).
+# El prefijo estable (L1 identidad/SOUL · L2 método · L3 citación · L5 §G; L4/L6 son
+# costuras vacías) es byte-estable entre turnos Y entre nodos del mismo asunto (L7/L8/
+# persona viven en el tier CONTEXT, no aquí) → el bloque que escribe un nodo lo LEE el
+# siguiente. Si la búsqueda falla (string no registrado) o el prefijo no alcanza el
+# mínimo cacheable del modelo (Anthropic omite el cache en silencio), NO se rompe nada:
+# se manda el string plano y la medición (metrics/usage) marca 0 — degradación limpia.
+_CACHE_BOUNDARY_MAX = 256
+_CACHE_BOUNDARY: "OrderedDict[str, int]" = OrderedDict()
+
+
+def _register_cache_boundary(full: str, stable: str) -> None:
+    """Registra el corte estable/volátil del system `full` (evicción FIFO acotada)."""
+    if not stable or stable == full or not full.startswith(stable):
+        return  # sin prefijo separable → no hay nada que cachear aparte
+    _CACHE_BOUNDARY[full] = len(stable)
+    _CACHE_BOUNDARY.move_to_end(full)
+    while len(_CACHE_BOUNDARY) > _CACHE_BOUNDARY_MAX:
+        _CACHE_BOUNDARY.popitem(last=False)
+
+
+def cache_split(system_text: str) -> tuple[str, str] | None:
+    """(prefijo_estable, resto) del system si su corte de cacheo está registrado; si no, None.
+
+    Ruta de SOLO LECTURA (sin mutación) para no competir por el dict con el hilo que
+    construye el prompt. `prefijo + resto == system_text` byte-a-byte (invariante del
+    registro: full.startswith(stable))."""
+    n = _CACHE_BOUNDARY.get(system_text)
+    if n is None or n <= 0 or n >= len(system_text):
+        return None
+    return system_text[:n], system_text[n:]
+
+
 def build_system_prompt(agent: Any) -> str:
     """System prompt de sistema completo (stable + context + volatile)."""
     parts = build_system_prompt_parts(agent)
-    return "\n\n".join(p for p in (parts["stable"], parts["context"], parts["volatile"]) if p)
+    full = "\n\n".join(p for p in (parts["stable"], parts["context"], parts["volatile"]) if p)
+    # Registra el corte estable/volátil para el caching de Anthropic (ver arriba). No
+    # altera `full`: el string devuelto es idéntico a hoy. build_graph_system termina en
+    # build_system_prompt(agent), así que los nodos del grafo quedan cubiertos aquí.
+    _register_cache_boundary(full, parts["stable"])
+    return full
 
 
 def invalidate(agent: Any) -> None:
@@ -254,6 +491,18 @@ DIAGNOSIS_CLOSING_FOOTER = "=== FIN DEL CIERRE ==="
 _WARROOM_DICTAMEN_HEADER = "=== DICTAMEN DE LA SALA ==="
 _WARROOM_DICTAMEN_FOOTER = "=== FIN DEL DICTAMEN ==="
 
+# Instrucción de ANCLAJE de citas compartida por los nodos que AFIRMAN derecho o hechos
+# (analysis, draft, edit, work). Mismo mecanismo que el nodo facts: cada cita se ancla al
+# documento del expediente que la respalda como [doc n]. La advertencia es HONESTA — quien
+# decide qué queda en firme NO es el modelo obedeciendo, sino un verificador determinista que
+# marca [VERIFICAR] toda cita sin ancla a su respaldo. Sin país ni código concreto (§ agnóstico).
+_ANCHOR_INSTRUCTION = (
+    "Ancla al expediente cada norma, providencia o dato que afirmes, citándolo como [doc n] "
+    "— cada documento llega sellado en un bloque <<<DOC n>>> y n es ese número. Un verificador "
+    "determinista marca [VERIFICAR] toda cita que no quede anclada a su respaldo; anclarla bien "
+    "es lo que evita esa marca. No inventes el número de un documento que no se te entregó."
+)
+
 # L8 · instrucción de CADA nodo del grafo — SOLO la tarea del turno: la identidad,
 # la metodología (estructura hechos/problema/fundamentos/conclusión), la regla
 # [VERIFICAR] y el tono §G ya viven en L1/L2/L3/L5 (no se duplican aquí).
@@ -266,8 +515,21 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "Eres el especialista de hechos del equipo. Extrae del expediente los hechos "
         "relevantes para la consulta del abogado: numerados, en orden cronológico, "
         "cada uno anclado a su fuente citándola como [doc n] — cada documento llega "
-        "sellado en un bloque <<<DOC n>>> y n es ese número. Señala expresamente las "
-        "inconsistencias entre documentos y las fechas o datos determinantes. NO "
+        "sellado en un bloque <<<DOC n>>> y n es ese número. Señala las fechas y los "
+        "datos determinantes.\n"
+        "Las inconsistencias NO se describen: se explotan. Por cada una di dónde consta "
+        "cada extremo (el [doc n] y el punto del documento), en qué consiste exactamente "
+        "la contradicción y para qué sirve en el escrito. Rastrea también las "
+        "contradicciones internas de un mismo documento, el tratamiento desigual de "
+        "supuestos iguales, las admisiones tácitas del adversario y los vacíos de prueba "
+        "sobre lo que él debe acreditar. Las admisiones favorables LITERALES se "
+        "transcriben "
+        "VERBATIM con su [doc n]: su literalidad exacta es la que después se cita en el "
+        "escrito, y no se estira más allá de lo que dice; la admisión tácita se "
+        "presenta como inferencia y rotulada como tal, nunca como texto admitido. La aritmética se recomputa, "
+        "nunca se asume: suma los comprobantes, recalcula los totales, coteja las series "
+        "entre documentos y señala toda cifra que no cuadre — una contradicción "
+        "aritmética verificada vale más que diez adjetivos. NO "
         "analices el derecho aplicable ni recomiendes estrategia: eso corresponde a "
         "otro turno del equipo. Cierra con una lista breve titulada 'Datos faltantes "
         "por confirmar' con lo que el expediente NO acredita."
@@ -275,14 +537,38 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
     "research": (
         "## Tarea de este turno — INVESTIGACIÓN\n"
         "Eres el especialista de investigación del equipo. Identifica las normas, la "
-        "jurisprudencia y las decisiones aplicables al problema planteado, según la "
-        "jurisdicción del despacho. Si se te entregan fuentes recuperadas del corpus "
-        "del sistema, apóyate PRIMERO en ellas y cítalas indicando que están "
-        "respaldadas en el corpus; todo lo que provenga solo de tu conocimiento va "
-        "con [VERIFICAR]. Estructura tu memoria de investigación en: (1) normas "
-        "aplicables y por qué aplican, (2) jurisprudencia y decisiones relevantes, "
-        "(3) qué falta por confirmar contra la fuente oficial. NO redactes el "
-        "escrito ni el diagnóstico completo: eso corresponde a otro turno del equipo."
+        "jurisprudencia y las decisiones aplicables al problema planteado, apoyándote "
+        "EXCLUSIVAMENTE en 'Fichas Verificadas' (A-, J-, N-*) del corpus normativo y "
+        "jurisprudencial del despacho que se te hayan entregado en este turno. "
+        "Cero alucinaciones paramétricas: está terminantemente prohibido investigar "
+        "abiertamente usando tu conocimiento interno o inventar citas. Si no hay una "
+        "Ficha Verificada en el corpus que soporte el punto necesario para el caso, "
+        "detente, indícalo expresamente y pide autorización para crearla. Estructura "
+        "tu memoria de investigación en: (1) normas aplicables (solo de fichas), "
+        "(2) jurisprudencia (solo de fichas), (3) vacíos detectados donde se requiere "
+        "crear una nueva ficha. NO redactes el escrito ni el diagnóstico completo."
+    ),
+    "verificador_citas": (
+        "## Tarea de este turno — GATE DE CALIDAD DE CITAS\n"
+        "Eres el auditor de citas del equipo. Auditas; NUNCA redactas ni reescribes el "
+        "borrador — tu salida es solo un informe. Recibes el borrador (ya anotado por el "
+        "guardián determinista) y el informe de ese guardián. Revisa el 100% de las citas "
+        "legales y fácticas, sin muestreo, en tres preguntas por cita: (1) ¿es de segunda "
+        "mano y debería atribuirse al original?, (2) ¿su materia y supuesto coinciden con "
+        "el caso?, (3) ¿su contenido es compatible con la tesis del borrador, o le sirve a "
+        "la contraparte? Responde EXACTAMENTE en este formato: primera línea 'APTO' si no "
+        "encuentras nada que el guardián no haya marcado, o 'HALLAZGOS:' seguida de una "
+        "línea por hallazgo (cita → problema → qué haría un abogado). Nada más: ni saludo, "
+        "ni el borrador repetido, ni correcciones redactadas."
+    ),
+    "harvest": (
+        "## Tarea de este turno — COSECHA DE APRENDIZAJE\n"
+        "El abogado ha finalizado y aprobado el documento. Compara el borrador que Mia "
+        "entregó originalmente con la versión final aprobada. Identifica qué argumentos "
+        "se eliminaron, qué enfoques se corrigieron y qué conocimiento nuevo aportó el "
+        "abogado. Genera un reporte breve de 'Lecciones Aprendidas' y propón la creación "
+        "o actualización de Fichas Verificadas (A-, J-, N-*) para el Corpus. Nunca edites "
+        "el Corpus en caliente: escribe propuestas en formato markdown para revisión posterior."
     ),
     "analysis": (
         "## Tarea de este turno — CRUCE Y DIAGNÓSTICO\n"
@@ -292,7 +578,15 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "posición del cliente, y qué vacíos impiden una conclusión definitiva. "
         "Apóyate en el expediente como evidencia y, si aparece, en el conocimiento "
         "del despacho como orientación de método (nunca en reemplazo de la fuente "
-        "normativa). Antes del cierre, en prosa aparte, ofrece 2 a 5 caminos concretos "
+        "normativa). " + _ANCHOR_INSTRUCTION + " "
+        "Jerarquiza los argumentos disponibles: ordénalos del más fuerte al "
+        "más débil, di por qué cada uno lo es, asigna a los tres o cuatro más sólidos el "
+        "grueso del desarrollo del escrito y nombra los que conviene descartar, cada "
+        "descarte CON su motivo — el mapa de ángulos es exhaustivo antes de ser "
+        "selectivo, y omitir un argumento disponible es tan grave como afirmar sin "
+        "fuente. Esto es "
+        "jerarquía de ARGUMENTOS, no elección de camino: el menú de opciones que sigue "
+        "es del abogado. Antes del cierre, en prosa aparte, ofrece 2 a 5 caminos concretos "
         "que el abogado pueda elegir para este asunto — p. ej. redactar tal escrito, "
         "pedir más hechos o documentos, esperar y observar, escalar o consultar a "
         "alguien más, u otro camino distinto. NUNCA elijas por él ni le des una única "
@@ -312,21 +606,61 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "Redacta el borrador del escrito jurídico a partir del diagnóstico, el perfil "
         "del despacho y los playbooks aplicables. Tono profesional del oficio. Es un "
         "borrador para que el abogado lo apruebe.\n"
+        "Reglas del momento de redactar: abre cada argumento con su tesis en la "
+        "primera o segunda oración (nunca con historia procesal ni doctrina) y "
+        "ciérralo con su consecuencia y la petición que sostiene. Un párrafo, una "
+        "idea: apertura con la afirmación, desarrollo con la prueba, cierre que "
+        "conecta con la tesis; si un párrafo puede quitarse sin perder un paso del "
+        "razonamiento, se quita. Cada transcripción vive íntegra UNA sola vez, en el "
+        "argumento donde más trabaja; las demás menciones remiten a ella. Sin "
+        "muletillas ('es importante destacar', 'cabe señalar', 'en resumen') y sin "
+        "conectores de relleno encadenados: cada conector señala un paso real del "
+        "razonamiento. Y nada de meta-lenguaje del método en el texto: el escrito no "
+        "anuncia sus propios elementos ni su estrategia — la ejecuta.\n"
+        "Pasada final antes de entregar (auto-verificación; corrige lo que encuentres y "
+        "declara al abogado lo que no puedas corregir — nunca lo calles): ningún "
+        "argumento meramente enunciativo sin desarrollo; cada uno cierra con su "
+        "consecuencia concreta, no con una frase genérica; el grueso de la extensión "
+        "está en los más sólidos; la aritmética recomputada y las cifras coherentes "
+        "entre secciones (el mismo monto, la misma fecha, en todas sus menciones — y si "
+        "dos menciones de una cifra del expediente discrepan, vuelve al [doc n] y "
+        "avísalo: no adivines cuál es la correcta); sin "
+        "contradicciones internas — nada afirmado en un argumento y negado en otro, "
+        "salvo subsidiariedad rotulada; el orden en que se anuncian los argumentos "
+        "coincide con el orden en que se desarrollan; las peticiones se apoyan solo en "
+        "argumentos efectivamente desarrollados; y cero marcadores de plantilla sin "
+        "resolver (nada de [X], [fecha], [cliente]).\n"
+        # AFIRMACIONES NEGATIVAS (decisión #46.1 — principio del harness de litigio del
+        # despacho). Origen: un extractor informó que un memorando «no menciona al garante» y
+        # el documento lo nombraba con NIT y póliza en cuatro lugares; la afirmación llegó al
+        # escrito. Es la clase de frase más fácil de refutar y la que más cara sale.
+        "Afirmaciones negativas sobre un documento — la regla más estricta del escrito: antes "
+        "de escribir que una pieza 'no menciona', 'no contiene', 'no analiza' o 'guarda "
+        "silencio' sobre algo, verifícalo buscándolo en el documento COMPLETO, no en el "
+        "fragmento que tienes a la vista ni en el resumen que otro te dio. Si no puedes "
+        "revisar la pieza entera, no lo afirmes: escribe qué SÍ verificaste y hasta dónde "
+        "llega tu revisión ('en los apartes disponibles no aparece…'). Y prefiere siempre el "
+        "alcance estrecho y verdadero al amplio y falso: 'el informe no examina la posición "
+        "del garante' sobrevive a la contradicción; 'no lo menciona' se cae con una sola "
+        "página, y al caerse arrastra la credibilidad de todo lo demás que alegues.\n"
+        + _ANCHOR_INSTRUCTION + "\n"
         "Si al citar una norma o providencia sospechas que pudo haber sido derogada, "
         "modificada o su exequibilidad condicionada, y no puedes confirmarlo con lo "
         "que tienes en este turno, DILO expresamente en el propio texto del escrito "
         "(p. ej. \"esta disposición podría haber sido modificada — confírmese antes "
-        "de radicar\") en vez de omitirlo o de usarla como si no hubiera ninguna duda. "
+        "de presentar el escrito\") en vez de omitirlo o de usarla como si no hubiera ninguna duda. "
         "No bloquees el borrador por esto: solo avisa."
     ),
     "edit": (
         "## Tarea de este turno — CORRECCIÓN\n"
         "Incorpora al borrador las indicaciones del abogado, conservando lo que no se "
-        "pidió cambiar. Devuelve el borrador corregido completo."
+        "pidió cambiar. Devuelve el borrador corregido completo.\n"
+        + _ANCHOR_INSTRUCTION
     ),
     # Bloque A (evolución de producto): "Proyecto" = espacio de trabajo libre estilo
     # Cowork, sin diagnóstico formal ni borrador con aprobación HITL — eso es de los
-    # Asuntos. El grafo de proyecto (build_project_graph) es START → intake → work → END.
+    # Asuntos. El grafo de proyecto (build_project_graph) es
+    # START → intake → delegation → work → verificacion → END.
     "work": (
         "## Tarea de este turno — PROYECTO\n"
         "Estás trabajando dentro de un PROYECTO del despacho: un espacio de trabajo "
@@ -338,9 +672,9 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "puntual. Tono conversacional y directo, como quien trabaja codo a codo con el "
         "abogado. Si te pide un documento (un escrito, una tabla comparativa, un "
         "resumen), entrégalo COMPLETO dentro de tu respuesta — el abogado lo guardará "
-        "tal cual se lo entregues. Toda afirmación jurídica que no tenga respaldo en las "
-        "fuentes o en el conocimiento del despacho se marca [VERIFICAR]. Nunca inventes "
-        "citas, normas ni providencias."
+        "tal cual se lo entregues. " + _ANCHOR_INSTRUCTION + " Toda afirmación jurídica "
+        "que no tenga respaldo en las fuentes o en el conocimiento del despacho se marca "
+        "[VERIFICAR]. Nunca inventes citas, normas ni providencias."
     ),
     # Sala de estrategia (warroom): panel de counsel con posturas OPUESTAS que debaten el
     # asunto y un moderador que sintetiza un dictamen. La postura de cada panelista llega en
@@ -354,8 +688,13 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "de tu postura (la tesis más fuerte, la grieta, la duda o el punto técnico, según te "
         "corresponda). No inventes hechos que no consten en el expediente ni normas o "
         "providencias sin respaldo: todo lo que no puedas verificar va marcado con [VERIFICAR]. "
+        "Los vacíos del caso no se rellenan: se declaran como PREGUNTAS para el abogado. "
+        "Franqueza total: la lealtad al cliente exige señalar las debilidades de la propia "
+        "posición, no adularla — un panel que solo confirma no sirve de nada. "
         "En la ronda de réplicas, responde a las posturas de los DEMÁS panelistas que se te "
-        "entreguen: refuta o matiza SIN repetir lo que ya dijiste. No redactes el escrito ni "
+        "entreguen: concéntrate en los DESACUERDOS mayores — donde el panel chocó de verdad — "
+        "y refuta o matiza SIN repetir lo que ya dijiste; las coincidencias no necesitan "
+        "réplica. No redactes el escrito ni "
         "el dictamen final: eso es de otro turno del equipo."
     ),
     "warroom_moderator": (
@@ -364,7 +703,16 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
         "SOLO lo que dijeron los panelistas y lo que consta en el expediente: NO introduzcas "
         "hechos, normas ni providencias nuevas. Si una postura se apoya en algo sin respaldo, "
         "consérvale su marca [VERIFICAR]. Sopesa las posturas opuestas con equilibrio: no "
-        "adoptes la de un panelista como si fuera la única. Cierra SIEMPRE, como lo ÚLTIMO que "
+        "adoptes la de un panelista como si fuera la única. Pero sopesar NO es promediar: "
+        "donde el panel se dividió, RESUELVE — toma posición y di por qué esa lectura pesa "
+        "más CON las razones que ya dieron los panelistas, y deja constancia del desacuerdo "
+        "y de su porqué en vez de diluirlo en una fórmula intermedia que no le sirva a "
+        "nadie. Todo lo que quieras que llegue al abogado va DENTRO de los campos del "
+        "bloque final (la constancia del desacuerdo en 'Riesgos' o 'Puntos ciegos'; los "
+        "vacíos que el panel declaró como preguntas, en 'Puntos ciegos' COMO preguntas, no "
+        "como supuestos resueltos): la prosa fuera del bloque no se conserva. La sala "
+        "ASESORA: la decisión de estrategia es del abogado, y el dictamen se la debe dejar "
+        "fácil, no tomársela. Cierra SIEMPRE, como lo ÚLTIMO que "
         "escribas, con este bloque en este formato exacto:\n"
         f"{_WARROOM_DICTAMEN_HEADER}\n"
         "Tesis viable: <Sí | Con reservas | Riesgosa>\n"
@@ -377,6 +725,69 @@ GRAPH_NODE_INSTRUCTIONS: dict[str, str] = {
     ),
 }
 
+# Instrucciones operacionales destiladas para los tres nodos que cargaban explicación
+# repetida de L2. Las frases contractuales permanecen porque los gates las falsan.
+GRAPH_NODE_INSTRUCTIONS["facts"] = (
+    "## Tarea de este turno — HECHOS\n"
+    "Cada pieza externa llega sellada como <<<DOC n>>>; toda afirmación debe anclarse "
+    "al bloque correspondiente con [doc n]. "
+    "Extrae hechos relevantes numerados y cronológicos, cada uno con [doc n], fechas y "
+    "datos determinantes. Las inconsistencias NO se describen: se explotan; indica dónde "
+    "consta cada extremo, el punto del documento, la contradicción y para qué sirve en el "
+    "escrito. Busca contradicciones internas de un mismo documento, tratamiento desigual "
+    "de supuestos iguales, admisiones tácitas del adversario y vacíos de prueba. Transcribe "
+    "admisiones literales sin estirarlas; rotula inferencias. Recomputa la aritmética y avisa "
+    "toda discrepancia. NO analices el derecho aplicable. Cierra con 'Datos faltantes por confirmar'."
+)
+GRAPH_NODE_INSTRUCTIONS["analysis"] = (
+    "## Tarea de este turno — CRUCE Y DIAGNÓSTICO\n"
+    "Cruza el informe del especialista de hechos, la investigación y el expediente; "
+    "explica qué favorece, perjudica o falta. "
+    + _ANCHOR_INSTRUCTION + " Jerarquiza los argumentos disponibles del más fuerte al más "
+    "débil, di por qué cada uno lo es, asigna el grueso a tres o cuatro, nombra los que "
+    "conviene descartar y motiva cada descarte. Es jerarquía de ARGUMENTOS, no elección "
+    "de camino. ofrece 2 a 5 caminos concretos; NUNCA elijas por él. "
+    "Añade UNA pregunta de segundo orden. Como lo ÚLTIMO escribe exactamente:\n"
+    f"{DIAGNOSIS_CLOSING_HEADER}\n"
+    "Problema jurídico: <una o dos frases>\n"
+    "Normas y fuentes: <claves, con [VERIFICAR] donde aplique>\n"
+    "Riesgo y recomendación: <riesgo principal y recomendación>\n"
+    f"{DIAGNOSIS_CLOSING_FOOTER}"
+)
+GRAPH_NODE_INSTRUCTIONS["draft"] = (
+    "## Tarea de este turno — BORRADOR\n"
+    "Redacta desde el diagnóstico, perfil y playbooks. Abre cada argumento con su tesis; "
+    "desarróllalo con prueba y ciérralo con consecuencia y petición. Un párrafo, una idea; "
+    "sin muletillas, relleno ni meta-lenguaje. Usa cada transcripción íntegra una sola vez. "
+    "Pasada final: corrige argumentos sin desarrollo, cifras y aritmética incoherentes, "
+    "contradicciones, orden, peticiones sin sustento y marcadores de plantilla; ante cifras "
+    "divergentes vuelve al [doc n], avisa y no adivines. Antes de afirmar que una pieza no "
+    "menciona, contiene o analiza algo, busca en el documento completo; si no puedes "
+    "confirmarlo, dilo. No bloquees el borrador por esa duda: señálala para revisión."
+)
+
+
+def _state_jurisdictions(state: Any) -> list[str] | None:
+    """Códigos de jurisdicción alcanzables desde el estado del grafo, o None.
+
+    Duck-typed y tolerante (el estado puede ser un dict, un TypedDict o un objeto): lee
+    `state['jurisdictions']` y, en su defecto, `state['metadata']['research_jurisdictions']`
+    (que el nodo de investigación ya escribe). Ante cualquier forma inesperada devuelve
+    None → instrucción del caso desconocido. Nunca lanza.
+    """
+    if not hasattr(state, "get"):
+        return None
+    try:
+        codes = state.get("jurisdictions")
+        if not codes:
+            md = state.get("metadata") or {}
+            codes = md.get("research_jurisdictions") if hasattr(md, "get") else None
+        if not codes:
+            return None
+        return [str(c) for c in codes if str(c or "").strip()] or None
+    except Exception:  # noqa: BLE001 — fail-closed al caso restrictivo
+        return None
+
 
 def build_graph_system(
     state: Any,
@@ -384,6 +795,7 @@ def build_graph_system(
     matter_context: str = "",
     playbook_index: str = "",
     persona_voice: str = "",
+    jurisdictions: list[str] | None = None,
 ) -> str:
     """System prompt del nodo del grafo, compuesto con las 10 capas — sin MiaAgent.
 
@@ -396,9 +808,15 @@ def build_graph_system(
     CONTEXT, NO cacheado: la persona cambia por turno y no debe envenenar el prefijo
     estable). El rol colorea el tono; las reglas duras (L2 método, L3 citación) van ANTES
     y el propio bloque reitera que la voz no las relaja. Vacío → nodo idéntico a hoy.
+
+    `jurisdictions` (códigos de pack del despacho) alimenta L3. Si el caller no la pasa,
+    se busca en el estado (`jurisdictions`, o `metadata.research_jurisdictions`, que el
+    nodo de investigación ya deja escrito); si tampoco está, se emite la instrucción del
+    caso DESCONOCIDO — la restrictiva. Nunca se adivina un ordenamiento.
     """
     if node not in GRAPH_NODE_INSTRUCTIONS:
         raise ValueError(f"nodo desconocido para build_graph_system: {node!r}")
+    codes = jurisdictions if jurisdictions is not None else _state_jurisdictions(state)
     snapshot = state.get("soul_snapshot") if hasattr(state, "get") else None
     soul = str(((snapshot or {}).get("content")) or "").strip()
     from types import SimpleNamespace
@@ -431,8 +849,48 @@ def build_graph_system(
         matter_context=matter_context,                    # L7
         system_message=node_instruction,                  # L8 (voz de persona + tarea del nodo)
         memory_block=playbook_index,                      # L9
+        jurisdiction_codes=codes,                         # L3 (ordenamiento aplicable)
     )
     return build_system_prompt(agent)
+
+
+def build_lean_system(state: Any, node: str,
+                      jurisdictions: list[str] | None = None) -> str:
+    """System prompt MAGRO para nodos que NO redactan litigio (F1.2/F1.5 del plan).
+
+    El gate de citas y la cosecha no necesitan la metodología completa (L2, ~1.700
+    tokens), ni el SOUL entero, ni la ficha del asunto — con las 10 capas, su prefijo
+    pesaba lo mismo que el del redactor, en cada llamada. Se quedan con lo que SÍ usan:
+    identidad de agente en una línea, la disciplina de citación con el ordenamiento del
+    turno (L3 — la materia del gate; a la cosecha le recuerda no inventar fuentes) y la
+    instrucción del nodo. Medido en el baseline F0 (validation/baseline-f0-por-nodo.md):
+    el gate era el 30% del gasto atribuido del turno. Los nodos que REDACTAN (facts,
+    research, analysis, draft, edit, work) conservan las 10 capas."""
+    from types import SimpleNamespace
+
+    if node not in GRAPH_NODE_INSTRUCTIONS:
+        raise ValueError(f"nodo desconocido para build_lean_system: {node!r}")
+    codes = jurisdictions if jurisdictions is not None else _state_jurisdictions(state)
+    partes = [
+        GRAPH_FALLBACK_IDENTITY,
+        _citation_layer(SimpleNamespace(jurisdiction_codes=codes)),
+        GRAPH_NODE_INSTRUCTIONS[node],
+    ]
+    return "\n\n".join(p.strip() for p in partes if p and p.strip())
+
+
+def build_gate_system() -> str:
+    """System MAGRO del auditor de citas: identidad + oficio. Nada de análisis ni draft.
+
+    El payload de usuario (borrador anotado + pack de fuentes + informe del muro) se
+    arma en el nodo; aquí no entra el expediente, ni el diagnóstico, ni las 10 capas.
+    """
+    return "\n\n".join((
+        GRAPH_FALLBACK_IDENTITY.strip(),
+        GRAPH_NODE_INSTRUCTIONS["verificador_citas"].strip(),
+        "No heredas el análisis ni el prompt de redacción. Auditas el texto que te dan "
+        "contra el pack de fuentes y el informe del muro. No reescribes el borrador.",
+    ))
 
 
 def parse_diagnosis_closing(diagnosis: str) -> dict | None:

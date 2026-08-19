@@ -226,17 +226,48 @@ async def run_gate() -> None:
         check("s3-18b · con clave pero SIN opt-in del despacho, 'nube' NO usa openrouter",
               llm.OPENROUTER_ALIAS not in chain_no_optin)
 
-        # 'suscripcion' y 'soberano' NUNCA usan openrouter (aunque haya clave + opt-in).
-        for pol in ("suscripcion", "soberano"):
-            tok = llm.set_model_policy(pol)
-            or_tok = llm.set_openrouter_allowed(True)
-            try:
-                c = llm.resolve_fallback_chain("main")
-            finally:
-                llm.reset_openrouter_allowed(or_tok)
-                llm.reset_model_policy(tok)
-            check(f"s3-20 · '{pol}' no usa openrouter aunque haya clave + opt-in",
-                  llm.OPENROUTER_ALIAS not in c)
+        # 'soberano' NUNCA usa openrouter (aunque haya clave + opt-in): es la muralla de
+        # confidencialidad — con esa política NADA sale del equipo del despacho.
+        tok = llm.set_model_policy("soberano")
+        or_tok = llm.set_openrouter_allowed(True)
+        try:
+            c_sob = llm.resolve_fallback_chain("main")
+        finally:
+            llm.reset_openrouter_allowed(or_tok)
+            llm.reset_model_policy(tok)
+        check("s3-20 · 'soberano' no usa openrouter aunque haya clave + opt-in",
+              llm.OPENROUTER_ALIAS not in c_sob)
+
+        # 'suscripcion' SÍ lo usa como overflow ("más uso"). La sesión 47 (b582541,
+        # decisión de Pipe "Ambas") extendió el respaldo de 'nube' a 'suscripcion': cuando
+        # la suscripción no alcanza, el trabajo sigue por OpenRouter en vez de degradar.
+        # El test fijaba la regla vieja (CP-S3, solo 'nube') y quedó desactualizado.
+        # Lo que se protege sigue intacto y se comprueba abajo: sin opt-in NO se enruta.
+        tok = llm.set_model_policy("suscripcion")
+        or_tok = llm.set_openrouter_allowed(True)
+        try:
+            c_sus = llm.resolve_fallback_chain("main")
+        finally:
+            llm.reset_openrouter_allowed(or_tok)
+            llm.reset_model_policy(tok)
+        # 2026-08-14: la cadena main de 'suscripcion' ya no termina en mia-local (las
+        # membresías fallan claro en vez de degradar a local). Lo protegido: el overflow
+        # va DESPUÉS de la suscripción y solo con opt-in.
+        check("s3-20b · 'suscripcion' usa openrouter como overflow con clave + opt-in",
+              llm.OPENROUTER_ALIAS in c_sus
+              and c_sus.index(llm.OPENROUTER_ALIAS) > c_sus.index("cli-claude"))
+
+        # Y el consentimiento manda también aquí: sin opt-in del despacho, la suscripción
+        # NO enruta a un tercero por el mero hecho de que exista una clave.
+        tok = llm.set_model_policy("suscripcion")
+        or_tok = llm.set_openrouter_allowed(False)
+        try:
+            c_sus_no = llm.resolve_fallback_chain("main")
+        finally:
+            llm.reset_openrouter_allowed(or_tok)
+            llm.reset_model_policy(tok)
+        check("s3-20c · 'suscripcion' SIN opt-in no usa openrouter (consentimiento, regla 2)",
+              llm.OPENROUTER_ALIAS not in c_sus_no)
 
         # SIN clave: 'nube' queda como antes (no aparece un alias con auth muerta).
         config.OPENROUTER_API_KEY = ""

@@ -212,30 +212,32 @@ export default function MissionBoard({ matterId, compact = false }: { matterId: 
   }
 
   if (!loaded) {
-    return <p className="mt-10 text-center text-sm text-gray-400">Cargando plan…</p>;
+    return <p className="mt-10 text-center text-sm text-muted-foreground">Cargando plan…</p>;
   }
 
   return (
     <div className="flex h-full flex-col">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           Descompón un objetivo grande en hitos concretos. Tú apruebas, editas y marcas el avance — nada se ejecuta solo.
         </p>
         {!creating ? (
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="shrink-0 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
+            className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 active:scale-[0.98]"
           >
             Nueva misión
           </button>
         ) : null}
       </div>
 
-      {msg ? <p role="alert" className="mb-3 text-sm text-amber-700">{msg}</p> : null}
+      {msg ? (
+        <p role="alert" className="mb-3 rounded-md bg-warning/10 px-3 py-2 text-sm text-warning">{msg}</p>
+      ) : null}
 
       {creating ? (
-        <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <div className="mb-4 rounded-xl border border-border bg-muted p-4">
           <h3 className="mb-3 font-medium">Nueva misión</h3>
           <div className="space-y-3">
             <Field label="Título" value={createForm.title} onChange={(v) => setCreateForm({ ...createForm, title: v })} />
@@ -251,13 +253,13 @@ export default function MissionBoard({ matterId, compact = false }: { matterId: 
               onChange={(v) => setCreateForm({ ...createForm, outcome: v })}
             />
           </div>
-          <p className="mt-2 text-xs text-gray-500">Mia propondrá hitos editables al crear — no se ejecuta nada automáticamente.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Mia propondrá hitos editables al crear — no se ejecuta nada automáticamente.</p>
           <div className="mt-3 flex gap-2">
             <button
               type="button"
               onClick={createMission}
               disabled={busy}
-              className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+              className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50"
             >
               {busy ? "Creando…" : "Crear y proponer hitos"}
             </button>
@@ -265,7 +267,7 @@ export default function MissionBoard({ matterId, compact = false }: { matterId: 
               type="button"
               onClick={() => { setCreating(false); setCreateForm({ title: "", objective: "", outcome: "" }); }}
               disabled={busy}
-              className="rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+              className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-[0.98]"
             >
               Cancelar
             </button>
@@ -274,7 +276,7 @@ export default function MissionBoard({ matterId, compact = false }: { matterId: 
       ) : null}
 
       {missions.length === 0 && !creating ? (
-        <p className="py-12 text-center text-sm text-gray-400">
+        <p className="py-12 text-center text-sm text-muted-foreground">
           Aún no hay misiones para este asunto. Crea una para desglosar el trabajo en hitos.
         </p>
       ) : null}
@@ -287,14 +289,14 @@ export default function MissionBoard({ matterId, compact = false }: { matterId: 
                 <button
                   type="button"
                   onClick={() => setSelectedId(m.id)}
-                  className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${
+                  className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition active:scale-[0.98] ${
                     (selected?.id === m.id)
-                      ? "border-gray-900 bg-gray-50 font-medium"
-                      : "border-gray-100 hover:bg-gray-50"
+                      ? "border-primary bg-muted font-medium"
+                      : "border-border hover:bg-muted"
                   }`}
                 >
                   <div className="truncate">{m.title}</div>
-                  <div className="text-xs text-gray-400">
+                  <div className="text-xs text-muted-foreground">
                     {m.progress.done} de {m.progress.total} hitos
                     {m.status === "archived" ? " · archivada" : ""}
                   </div>
@@ -357,7 +359,7 @@ function MissionDetail({
   }, [mission.id, mission.title, mission.objective, mission.outcome]);
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-gray-100 p-4">
+    <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border p-4">
       <div className="mb-4 space-y-2">
         <input
           value={editTitle}
@@ -365,7 +367,7 @@ function MissionDetail({
           onBlur={() => {
             if (editTitle.trim() && editTitle !== mission.title) onUpdateMission({ title: editTitle.trim() });
           }}
-          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium outline-none focus:border-gray-400"
+          className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm font-medium outline-none focus:border-primary"
         />
         <textarea
           value={editObjective}
@@ -376,7 +378,7 @@ function MissionDetail({
             }
           }}
           rows={2}
-          className="w-full resize-y rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+          className="w-full resize-y rounded-lg border border-input bg-card px-3 py-2 text-sm outline-none focus:border-primary"
         />
         {editOutcome || mission.outcome ? (
           <input
@@ -384,13 +386,13 @@ function MissionDetail({
             onChange={(e) => setEditOutcome(e.target.value)}
             onBlur={() => onUpdateMission({ outcome: editOutcome.trim() })}
             placeholder="Resultado esperado (opcional)"
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+            className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm outline-none focus:border-primary"
           />
         ) : null}
       </div>
 
       <div className="mb-4">
-        <div className="mb-1 flex justify-between text-xs text-gray-500">
+        <div className="mb-1 flex justify-between text-xs text-muted-foreground">
           <span>{mission.progress.done} de {mission.progress.total} hitos</span>
           <span>{pct}%</span>
         </div>
@@ -400,9 +402,9 @@ function MissionDetail({
           aria-valuemax={100}
           aria-valuenow={pct}
           aria-label="Avance de la misión"
-          className="h-2 overflow-hidden rounded-full bg-gray-100"
+          className="h-2 overflow-hidden rounded-full bg-muted"
         >
-          <div className="h-full rounded-full bg-gray-900 transition-all" style={{ width: `${pct}%` }} />
+          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
 
@@ -411,7 +413,7 @@ function MissionDetail({
           type="button"
           onClick={() => onDecompose(false)}
           disabled={busy}
-          className="rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium hover:bg-gray-50 disabled:opacity-50"
+          className="rounded-lg border border-border px-3 py-1 text-xs font-medium transition hover:bg-muted active:scale-[0.98] disabled:opacity-50"
         >
           Proponer más hitos
         </button>
@@ -419,7 +421,7 @@ function MissionDetail({
           type="button"
           onClick={() => onDecompose(true)}
           disabled={busy}
-          className="rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium hover:bg-gray-50 disabled:opacity-50"
+          className="rounded-lg border border-border px-3 py-1 text-xs font-medium transition hover:bg-muted active:scale-[0.98] disabled:opacity-50"
         >
           Rehacer propuesta
         </button>
@@ -428,7 +430,7 @@ function MissionDetail({
             type="button"
             onClick={() => onUpdateMission({ status: "archived" })}
             disabled={busy}
-            className="rounded-lg px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+            className="rounded-lg px-3 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-[0.98] disabled:opacity-50"
           >
             Archivar
           </button>
@@ -437,7 +439,7 @@ function MissionDetail({
             type="button"
             onClick={() => onUpdateMission({ status: "active" })}
             disabled={busy}
-            className="rounded-lg px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+            className="rounded-lg px-3 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-[0.98] disabled:opacity-50"
           >
             Reactivar
           </button>
@@ -446,7 +448,7 @@ function MissionDetail({
           type="button"
           onClick={onDeleteMission}
           disabled={busy}
-          className="rounded-lg px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+          className="rounded-lg px-3 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-destructive active:scale-[0.98] disabled:opacity-50"
         >
           Eliminar misión
         </button>
@@ -454,7 +456,7 @@ function MissionDetail({
 
       <ul className="space-y-2">
         {sorted.map((m, idx) => (
-          <li key={m.id} className="rounded-lg border border-gray-100 px-3 py-3">
+          <li key={m.id} className="rounded-lg border border-border px-3 py-3">
             <div className="flex flex-wrap items-start gap-2">
               <div className="flex shrink-0 flex-col gap-0.5">
                 <button
@@ -462,7 +464,7 @@ function MissionDetail({
                   aria-label="Subir hito"
                   disabled={busy || idx === 0}
                   onClick={() => onMoveMilestone(m, -1)}
-                  className="rounded px-1 text-xs text-gray-400 hover:bg-gray-100 disabled:opacity-30"
+                  className="rounded px-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-[0.98] disabled:opacity-30"
                 >
                   ↑
                 </button>
@@ -471,7 +473,7 @@ function MissionDetail({
                   aria-label="Bajar hito"
                   disabled={busy || idx === sorted.length - 1}
                   onClick={() => onMoveMilestone(m, 1)}
-                  className="rounded px-1 text-xs text-gray-400 hover:bg-gray-100 disabled:opacity-30"
+                  className="rounded px-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-[0.98] disabled:opacity-30"
                 >
                   ↓
                 </button>
@@ -483,13 +485,13 @@ function MissionDetail({
                     const v = e.target.value.trim();
                     if (v && v !== m.title) onUpdateMilestone(m.id, { title: v });
                   }}
-                  className="w-full rounded border border-transparent px-1 py-0.5 text-sm font-medium outline-none focus:border-gray-300"
+                  className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium outline-none focus:border-primary"
                 />
                 {m.detail ? (
-                  <p className="text-xs text-gray-500">{m.detail}</p>
+                  <p className="text-xs text-muted-foreground">{m.detail}</p>
                 ) : null}
                 {m.is_procedural ? (
-                  <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                  <p className="rounded border border-warning/30 bg-warning/10 px-2 py-1 text-xs text-warning">
                     Toca un plazo — confírmalo tú [VERIFICAR]
                   </p>
                 ) : null}
@@ -498,7 +500,7 @@ function MissionDetail({
                     value={m.actor}
                     onChange={(e) => onUpdateMilestone(m.id, { actor: e.target.value })}
                     disabled={busy}
-                    className="rounded border border-gray-200 px-2 py-1 text-xs outline-none"
+                    className="rounded border border-input bg-card px-2 py-1 text-xs outline-none"
                   >
                     <option value="mia">Mia lo prepara</option>
                     <option value="abogado">Lo haces tú</option>
@@ -507,7 +509,7 @@ function MissionDetail({
                     value={m.status}
                     onChange={(e) => onUpdateMilestone(m.id, { status: e.target.value })}
                     disabled={busy}
-                    className="rounded border border-gray-200 px-2 py-1 text-xs outline-none"
+                    className="rounded border border-input bg-card px-2 py-1 text-xs outline-none"
                     aria-label="Estado del hito"
                   >
                     <option value="queued">Pendiente</option>
@@ -520,7 +522,7 @@ function MissionDetail({
                 type="button"
                 onClick={() => onRemoveMilestone(m.id)}
                 disabled={busy}
-                className="shrink-0 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                className="shrink-0 rounded px-2 py-1 text-xs text-muted-foreground transition hover:bg-muted hover:text-destructive active:scale-[0.98] disabled:opacity-50"
               >
                 Quitar
               </button>
@@ -543,12 +545,12 @@ function MissionDetail({
           value={newMilestone}
           onChange={(e) => setNewMilestone(e.target.value)}
           placeholder="Añadir hito manual…"
-          className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+          className="flex-1 rounded-lg border border-input bg-card px-3 py-2 text-sm outline-none focus:border-primary"
         />
         <button
           type="submit"
           disabled={busy || !newMilestone.trim()}
-          className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+          className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50"
         >
           Añadir
         </button>
@@ -570,19 +572,19 @@ function Field({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-sm font-medium text-gray-700">{label}</label>
+      <label className="mb-1 block text-sm font-medium text-foreground">{label}</label>
       {multiline ? (
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
-          className="w-full resize-y rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+          className="w-full resize-y rounded-lg border border-input bg-card px-3 py-2 text-sm outline-none focus:border-primary"
         />
       ) : (
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400"
+          className="w-full rounded-lg border border-input bg-card px-3 py-2 text-sm outline-none focus:border-primary"
         />
       )}
     </div>

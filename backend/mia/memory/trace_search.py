@@ -10,12 +10,14 @@ generada), `ORDER BY ts_rank_cd(...) DESC`. NINGUNA llamada LLM. Todo bajo `tena
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 
 from ..db import pool
 
@@ -32,6 +34,14 @@ class TraceSearchError(ValueError):
     """Consulta de búsqueda malformada. El endpoint la mapea a 400 Bad Request (no 500)."""
 
 
+# Reintentos ante fallos TRANSITORIOS de la fila índice (Riesgo #71): un hipo de
+# conexión no debe dejar el turno sin fila en `traces` — sin ella, el banco de oro
+# no encuentra el turno y su 409 mentiría. Un error de ESQUEMA (columna/tabla
+# ausente) NO se reintenta: reintentarlo solo repite el mismo fallo determinista.
+_INDEX_RETRIES = 3
+_INDEX_BACKOFF_S = 0.2
+
+
 async def index_trace(
     tenant_id: str,
     *,
@@ -43,22 +53,45 @@ async def index_trace(
     activated_playbooks: list | None = None,
     retrieved_doc_ids: list | None = None,
     trace_ts: str | None = None,
+    diagnosis: str | None = None,
+    diagnosis_summary: dict | None = None,
 ) -> str | None:
-    """Indexa una traza en la tabla `traces` (RLS). Devuelve el id, o None si falla.
+    """Indexa una traza en la tabla `traces` (RLS). Devuelve el id.
 
     Dual-write: el JSONL (SFT) lo sigue escribiendo `TraceCapture`; esta fila es el índice
-    consultable. `content_tsv` se genera sola en el INSERT (columna generada)."""
+    consultable. `content_tsv` se genera sola en el INSERT (columna generada).
+
+    `diagnosis`/`diagnosis_summary` persisten el razonamiento del turno (Riesgo #68) para que
+    la captura del banco de oro no lo lea vacío. Reintenta fallos transitorios de conexión
+    (Riesgo #71); un fallo persistente se PROPAGA para que el llamador lo registre (no se
+    traga en silencio)."""
     ap = [str(x) for x in (activated_playbooks or [])]
     rd = [str(x) for x in (retrieved_doc_ids or [])]
-    async with pool.tenant_connection(tenant_id) as conn:
-        row = await (await conn.execute(
-            "INSERT INTO traces "
-            "  (tenant_id, matter_id, input, output, model, hitl_outcome, "
-            "   activated_playbooks, retrieved_doc_ids, trace_ts) "
-            "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id::text",
-            (tenant_id, matter_id, input, output, model, hitl_outcome, ap, rd, trace_ts),
-        )).fetchone()
-    return row[0] if row else None
+    summary = Json(diagnosis_summary) if diagnosis_summary is not None else None
+    last_exc: Exception | None = None
+    for attempt in range(_INDEX_RETRIES):
+        try:
+            async with pool.tenant_connection(tenant_id) as conn:
+                row = await (await conn.execute(
+                    "INSERT INTO traces "
+                    "  (tenant_id, matter_id, input, output, model, hitl_outcome, "
+                    "   activated_playbooks, retrieved_doc_ids, trace_ts, "
+                    "   diagnosis, diagnosis_summary) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id::text",
+                    (tenant_id, matter_id, input, output, model, hitl_outcome, ap, rd,
+                     trace_ts, diagnosis, summary),
+                )).fetchone()
+            return row[0] if row else None
+        except psycopg.OperationalError as e:
+            # Transitorio (conexión caída, timeout): reintentar con backoff corto.
+            last_exc = e
+            if attempt < _INDEX_RETRIES - 1:
+                await asyncio.sleep(_INDEX_BACKOFF_S * (attempt + 1))
+                continue
+            raise
+    if last_exc is not None:
+        raise last_exc
+    return None
 
 
 async def search_traces(

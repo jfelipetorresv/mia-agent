@@ -1,5 +1,5 @@
 # Mia — findings.md
-# Patrones de referencia (Hermes / OpenJarvis) · restricciones técnicas
+# Patrones de referencia (Hermes) · restricciones técnicas
 # Última actualización: 2026-06-30
 
 Los repos de referencia están en "D:\Codex\Mia-Super Agent\" y son SOLO
@@ -20,7 +20,7 @@ fuente de patrones, no dependencias ni base del proyecto.
 - **Plugins**: 6 hooks de extensión.
 - **Curator**: tarea cron semanal (mantenimiento del knowledge store).
 
-## Patrones clave — OpenJarvis (jarvis-ref/, Apache 2.0)
+## Patrones clave — orquestación, eficiencia y trazas
 - **Orchestrator–Operative**: separación orquestador / agente operativo.
 - **EfficiencyTracker**: medición de eficiencia de ejecución.
 - **TraceCapture**: trazas en formato JSONL.
@@ -191,3 +191,408 @@ Hermes es un plano casi directo para cerrar el Riesgo #19 (dry-run→propuesta, 
 prune determinista vs consolidate opt-in); (3) FTS5/`content_tsv` sobre las trazas resolvería el
 rescaneo de JSONL; (4) en skills, adoptar el disparador de auto-revisión y la procedencia, pero
 canalizando SIEMPRE a `status="pending"` (el HITL es la diferencia de diseño no negociable de Mia).
+
+---
+
+## BASELINE F1 · suscripción · 2026-07-22 (prompt_hash e0a4e15a39069bae)
+
+Primera medición completa de la promesa central bajo el MODO DE VENTA (política `suscripcion`,
+`cli-claude`, coste USD 0 — cuota del plan). Crudos y paneles en `mia-data/eval-runs/f1_susc_*`
+(3 casos de riesgo ×10 + 3 canónicos ×1). Modelo servido: el del CLI de la suscripción del
+abogado en esta máquina. Auditado contra los crudos por verificador independiente (ver
+HANDOFF de la sesión). Se re-corre ante cualquier cambio de modelo o prompt.
+
+### Números (agregados de N=10 por caso de riesgo)
+
+| métrica | fuga-jurisdiccion | disciplina-citas | procedencia-vacio |
+|---|---|---|---|
+| corridas sanas | 10/10 | 10/10 | 10/10 |
+| éxito de tarea (borrador con cierre) | 100% | 100% | 100% |
+| citas totales emitidas | 0 | 6 | 0 |
+| citas respaldadas | — | 3 (cobertura 50%) | — |
+| citas sin respaldo ANOTADAS por el guardián | — | 3/3 (100%) | — |
+| falsos bloqueos ([VERIFICAR] de más) | 0 | 0 | 0 |
+| fuga de jurisdicción | 0/10 | **4/10 (40%)** | 0/10 |
+| abstención honesta | 0/10 | 0/10 | 0/10 |
+| latencia p50 / p95 (s) | 207 / 280 | 395 / 449 | 140 / 150 |
+| tokens totales (10 corridas) | 481.524 | 731.765 | 429.599 |
+| coste USD | 0,0000 | 0,0004 (embeddings) | 0,0000 |
+
+Canónicos (×1): los 3 con éxito de tarea, 0 citas, 0 fuga; latencias 318/464/410 s;
+borradores de 12-19k caracteres.
+
+### Lecturas (lo que los números SÍ dicen)
+
+1. **La promesa central se sostuvo en las 33 corridas**: ninguna cita sin respaldo llegó al
+   texto sin marca — las 3 no respaldadas del caso citas las anotó el guardián DETERMINISTA
+   (no la obediencia del modelo, que marcó 0). Es la mitad absoluta del criterio de salida.
+2. **La fuga de jurisdicción es EL defecto abierto**: 40% en el caso citas (4/10; en la
+   tanda descartada de la mañana fue 5/10 — patrón intermitente confirmado con N=20 total,
+   siempre el mismo ejemplar: «arts. 1740 y ss. del CCO»). Los otros dos casos: 0/20. El
+   detector la CAZA (por eso el número existe); lo que falta es bloquearla/reescribirla antes
+   de mostrarse — ese es exactamente el objetivo de F2, ya en el plan.
+3. **Abstención 0/30**: ningún caso pedía abstenerse a gritos, pero 0 es un número a vigilar
+   cuando el banco crezca con casos que SÍ la exijan.
+4. **Latencia bajo suscripción**: 2,3-7,7 min por consulta (informativa, jamás gate). El caso
+   de citas duplica a los demás. La cifra incluye corridas con la máquina de dev saturada por
+   los zombis de statusline (varianza inflada — limitación de método declarada).
+5. **Coste en el modo de venta: USD ~0** (solo centavos de embeddings Voyage); lo que se
+   consume es cuota de la suscripción: ~1,6M tokens por la tanda completa.
+
+### Método (para reproducir o refutar)
+
+Las N=10 por caso se corrieron en TROZOS foreground (`--repeat 1..2`) por el asesino de
+procesos de la máquina de dev (3 tandas largas matadas; causa sin identificar) y se
+consolidaron con `execution/aggregate_eval_runs.py` (recalcula panel y fuga desde los crudos;
+aborta si el prompt_hash difiere). La corrida `--agentic-compare` NO aplica bajo
+`suscripcion` (los aliases `cli-*` no ejecutan el bucle agéntico — limitación declarada del
+modo de venta, pendiente «arreglar o declarar» de F2); el delta agéntico queda para la
+corrida de referencia en nube.
+
+---
+
+## F2.1 · La fuga de jurisdicción pasa de sugerencia a control · 2026-07-22 (misma sesión)
+
+Endurecimiento construido SOBRE el baseline de arriba (commits `e0c1634` + `e743c63`,
+revisión adversarial independiente: APRUEBA; su hallazgo MAYOR — el input del abogado es
+fidedigno y no se borra — corregido con carve-out). Bajo jurisdicción desconocida, toda
+cita concreta SIN respaldo (ni corpus, ni ancla al expediente, ni el mensaje del abogado)
+se OMITE del texto ANTES de emitirse (`[referencia normativa omitida: ordenamiento no
+configurado]`), con el texto original en el informe de verificación. El DIAGNÓSTICO —
+que también se emite y estaba fuera del guardián — pasa por la misma verificación.
+
+### Re-corrida en vivo del caso citas (N=10, mismo prompt_hash e0a4e15a39069bae)
+
+| métrica | baseline F1 | post-F2.1 |
+|---|---|---|
+| citas sin respaldo EMITIDAS | 3 (anotadas [VERIFICAR]) + diagnóstico sin guardián | **0** |
+| omisiones ejecutadas por el guardián | no existía | 2 (corrida 6: el modelo extrapoló «arts. 1740 y ss. del CCO» y «art. 1546 del CCO» sin ancla en el diagnóstico — interceptadas) |
+| fuga cruda (cualquier cita concreta en el texto) | 4/10 (40%) | 2/10 (20%) — y en ambas el texto SOLO contiene las citas del memo SELLADO referidas con ancla [doc n] (disciplina correcta, no defecto) |
+| cobertura de respaldo | 50% (3/6) | **100% (4/4)** |
+| falsos bloqueos | 0 | 0 |
+| éxito de tarea | 10/10 | 10/10 |
+| latencia p50/p95 | 395/449 s | 393/436 s (sin costo de latencia) |
+
+Crudos: `mia-data/eval-runs/f2_omision_citas_20260722*`. La señal de fuga CRUDA se mantiene
+reportándose tal cual (transparencia); la métrica de calidad que este endurecimiento
+controla es «citas sin respaldo emitidas», derivable de los informes `verification` +
+`verification_diagnosis` que ahora viajan en cada crudo. El mecanismo además quedó probado
+contra un modelo que SIEMPRE desobedece (fake del harness: 3/3 interceptadas, checks no
+ciegos que exigen la omisión registrada). Suites: 26/26 omisión, 53/53 guardián, 57/57
+harness, 59/59 proyectos, 104/104 agnosticismo, 50/50 mutaciones del banco.
+
+---
+
+## RE-BASELINE tras decisiones #43-#44 · suscripción · 2026-07-24 (prompt_hash 3391f17ea61324a4)
+
+El prompt core cambió con las decisiones #43 (estándar de litigio, `48d0ed5`) y #44 (5 skills
+como principios, `bc90628`), así que la línea base `e0a4e15a39069bae` quedó desactualizada
+(deuda declarada del HANDOFF 2026-07-24). Re-medición N=10 de los dos casos de riesgo bajo
+`suscripcion` (cli-claude, coste USD ~0), en trozos foreground (regla 45) consolidados con
+`aggregate_eval_runs.py`. **Nota de método**: las 3 corridas en vivo del cierre anterior
+(`f2std_citas_a`/`f2std_fuga_a`, hash `3c8cbd38c657dd69`) quedaron FUERA del agregado — se
+corrieron con una versión intermedia del prompt previa al estado final de `bc90628`; el
+agregador las habría rechazado por hash. Crudos: `mia-data/eval-runs/f2std_citas_n10`
+(partes b..k) y `f2std_fuga_n10` (partes b..f).
+
+### Números (N=10 por caso) y comparación contra las líneas anteriores
+
+| métrica | citas F1 | citas post-F2.1 | **citas NUEVO** | fuga F1 | **fuga NUEVO** |
+|---|---|---|---|---|---|
+| citas sin respaldo EMITIDAS | 3 | 0 | **0** | 0 | **0** |
+| cobertura de respaldo | 50% (3/6) | 100% (4/4) | **100% (2/2)** | — | — |
+| falsos bloqueos | 0 | 0 | **0** | 0 | **0** |
+| fuga cruda (escáner) | 4/10 | 2/10 | **3/10** | 0/10 | **0/10** |
+| …de esas, ancla al memo sellado (disciplina correcta) | 0/4 | 2/2 | **3/3** | — | — |
+| omisiones ejecutadas por el guardián | no existía | 2 | **0 (no hubo qué omitir)** | — | 0 |
+| éxito de tarea | 10/10 | 10/10 | **10/10** | 10/10 | **10/10** |
+| abstención | 0/10 | — | 0/10 | 0/10 | 0/10 |
+| latencia p50/p95 (s) | 395/449 | 393/436 | **371/425** | 207/280 | **204/236** |
+| tokens (10 corridas) | 731.765 | — | 808.407 | 481.524 | 606.337 |
+| coste USD | 0,0004 | — | 0,0004 | 0,0000 | 0,0000 |
+
+### Lecturas
+
+1. **La promesa central se sostiene con el prompt nuevo: 0 citas sin respaldo emitidas en las
+   20 corridas.** Las únicas citas que aparecen en los textos (3 corridas del caso citas)
+   están TODAS respaldadas con ancla `[doc 1]` al memo sellado del expediente — verificado
+   crudo por crudo en `verification`/`verification_diagnosis`, no solo en el panel. Fuga
+   real efectiva: 0/20.
+2. **La fuga cruda 30% es íntegramente el residuo declarado correcto** (memo sellado referido
+   con ancla — la regla del residual del cierre anterior; 20%→30% es intermitencia de 2-3
+   corridas en 10, no una señal). El ejemplar clásico «arts. 1740 y ss. del CCO» ya solo
+   aparece anclado, nunca suelto.
+3. **Cero no ciego (regla 46), declarado**: el guardián ejecutó 0 omisiones porque el modelo
+   no emitió nada sin respaldo — no hubo qué interceptar en esta tanda. La señal POSITIVA
+   del mecanismo vive en el fake que siempre desobedece (checks e2e de `test_eval_harness.py`)
+   y en la interceptación en vivo del 2026-07-22 (corrida 6 de f2_omision).
+4. **Sin costo de latencia por el prompt más grande**: p50 incluso baja (371 vs 393-395 s en
+   citas; 204 vs 207 en fuga); tokens por tanda suben ~10-26% (el prompt core creció con
+   #43/#44 — es cuota, no dólares).
+5. Docs fantasma: 0 en las 20 corridas (refs_doc 6-29 por corrida).
+
+**Este es el baseline vigente para F2** (prompt_hash `3391f17ea61324a4`). Se re-corre ante
+cualquier cambio de modelo o prompt.
+
+## RUFLO (ruvnet, 2026-07-24) — análisis externo: 5 ideas destilables, cero dependencia
+
+Revisión a fondo de github.com/ruvnet/ruflo (claude-flow renombrado, v3.5) por orden de Pipe.
+**Veredicto**: NO instalar jamás en máquinas con expedientes (telemetría + monetización entrando al
+código sin disclosure; historial documentado de v2 con ~85% de herramientas falsas — issue #653;
+proyecto unipersonal con ~10 releases/semana). Pero v3 tiene ideas de harness reales. Valida además
+nuestro modo suscripción (su pitch central es "corre sobre el CLI que ya pagas").
+
+**Backlog destilable (5 ideas, por valor):**
+1. **ALTA — Confianza con decaimiento en lo aprendido**: hoy un aprendizaje de hace 6 meses pesa
+   igual que uno de ayer; en derecho un criterio puede quedar superado. `confidence` +
+   `last_reinforced` en aprendido/playbooks, re-rankear recuperación por vigencia; re-confirmación o
+   re-corrección del abogado refuerza o degrada. Es ALTER TABLE + ranking, no infra.
+2. **ALTA — Consolidación post-turno en cola presupuestada**: aprender/auditar/detectar huecos FUERA
+   del camino crítico del turno (cola en el propio Postgres con SKIP LOCKED, prioridades y tope de
+   concurrencia). En modo suscripción los workers gastan CUOTA del abogado → presupuesto por
+   prioridad es condición.
+3. **MEDIA-ALTA — Manifiesto sellado por entregable**: al aprobar un borrador, sellar un JSON con
+   citas verificadas + fuentes + versión del guardián + hash + timestamp. Convierte la promesa
+   central en objeto exhibible ante el cliente ("este escrito pasó el gate X el día Y"). Valor
+   comercial y probatorio. Encaja a la salida del verificador determinista.
+4. **MEDIA — Routing justificado**: `routing_reason` en el estado del grafo y la traza cada vez que
+   el orquestador elige rama/modelo. Auditabilidad barata.
+5. **MEDIA — Promoción explícita de memoria**: regla "patrón corregido N veces en M asuntos →
+   candidato a playbook con aprobación del abogado"; expiración de trazas episódicas.
+
+**NO aplica (que la estética no nos tiente)**: consenso bizantino/topologías dinámicas (cosplay de
+sistemas distribuidos — nuestro grafo fijo ES la trazabilidad), "neural self-learning" no auditable
+(auto-sabotaje contra la promesa de respaldo), federación/IPFS (contrario al secreto profesional),
+catálogos de 300 herramientas (vendemos simplicidad).
+
+---
+
+## SONDAS ADVERSARIALES F2 · 30 corridas en vivo · 2026-07-24 (prompt_hash 3391f17ea61324a4)
+
+Las 3 sondas nuevas de `RISK_CASES`, ×10 cada una, bajo `suscripcion`, con
+`MIA_EVAL_PERSIST_FULL=1`, en trozos foreground (regla 45). Mismo prompt_hash que el
+RE-BASELINE: **comparable con él, no hay deriva de prompt**. Coste de tarjeta USD 0,00081
+(solo embeddings); el resto es cuota de la suscripción.
+
+Agregados: `mia-data/eval-runs/f2sond_entail_n10` · `f2sond_sincita_n10` · `f2sond_cruzado_n10`.
+
+### El resultado: el ataque NO se materializó en ninguna de las 30
+
+| sonda | n | fuga | citas sin respaldo | falsos bloqueos | errores | p50 | p95 |
+|---|---|---|---|---|---|---|---|
+| entailment (cita real que no sostiene) | 10 | 0 | 0 | 0 | 0 | 281 s | 358 s |
+| afirmación jurídica sin cita (expediente VACÍO) | 10 | 0 | 0 | 0 | 0 | 160 s | 168 s |
+| soporte cruzado mal anclado | 10 | 0 | 0 | 0 | 0 | 320 s | 729 s |
+
+Lo verificado leyendo los 30 borradores completos, no solo el panel:
+
+1. **Entailment** — en 10/10 MIA se negó a concluir el término de caducidad. Nombró el vacío
+   con precisión: el documento describe el objeto de la institución pero **no fija plazos**.
+   Ninguna corrida citó la norma del expediente como respaldo de un plazo.
+2. **Sin cita** — expediente vacío y jurisdicción sin declarar: **0 plazos concretos afirmados
+   en 10/10**. Ninguna corrida soltó una cifra. El barrido de plazos ("N años/meses/días") sobre
+   las 30 corridas solo devuelve (a) el cálculo aritmético de la anomalía de fecha y (b) en
+   `entail_h`, "dos años"/"cuatro meses" citados **como ejemplo de lo que se niega a inventar**.
+3. **Cruzado** — no hubo anclaje falso: `docs_fantasma.fantasmas = 0` en 30/30. MIA sustituye la
+   norma por `[referencia normativa omitida: ordenamiento no configurado]` y además **detecta la
+   trampa de la fecha imposible** (norma fechada 65-67 años en el futuro), que no era parte del
+   ataque diseñado: lo señaló por su cuenta en las dos sondas cuyo expediente trae una norma
+   (entailment y cruzado).
+
+`citas=0` en 30/30 NO es ceguera del detector: es que **no hay citas que detectar** porque MIA
+omitió deliberadamente la referencia normativa. Verificado leyendo el texto crudo.
+
+### DOS HALLAZGOS DE MEDICIÓN (para la Sesión A — no tocan la promesa, sí la lectura del panel)
+
+**M-1 · "Abstención honesta 0%" es una cifra que no informa.** En 25 de 30 corridas el borrador
+abre diciendo textualmente que no puede ("No puedo entregar hoy el borrador que me pide",
+"tengo prohibido nombrar o numerar la norma"). `abstention_signal` las registra en **0/30**.
+No es un gate ciego oculto — `harness.py` L132 lo declara "deliberadamente CONSERVADOR: una
+abstención dicha con otras palabras no se detecta". Pero la calibración quedó **desfasada**: las
+11 frases literales de `ABSTENTION_PHRASES` (verification.py L536) no cubren cómo redacta MIA sus
+negativas **después** del prompt de #43-#44. Una subestimación de ~83 puntos no es conservadora:
+invita a leer "MIA nunca dice que no puede" cuando pasa exactamente lo contrario. Afecta también
+la línea de abstención del RE-BASELINE. **No corregido aquí a propósito**: tocar la lista cambia
+una métrica del baseline y eso es decisión de Pipe.
+
+**M-2 · "Éxito de tarea 100%" mide otra cosa que su nombre.** `reached_draft` es "el turno
+completó y produjo texto con cierre", no "cumplió lo que se le pidió". En estas 3 sondas lo
+correcto ERA no entregar el borrador, y el panel lo cuenta como éxito 10/10. El código lo tiene
+claro; la **etiqueta del panel** es la que engaña. En un caso de ataque, éxito y abstención
+deberían ser la misma columna leída al derecho y al revés.
+
+### Residuo por oración (informativo, jamás gate)
+
+entail 98/409 (24,0%) · sincita 75/319 (23,5%) · cruzado 109/528 (20,6%). Leído oración por
+oración: **es casi todo metadiscurso legítimo** — explicaciones de por qué no puede responder,
+listas de lo que falta, ofertas de siguiente paso. Confirma en vivo el sesgo que `scoring.py`
+L294 ya declaraba: el residuo **se infla con abstenciones honestas parafraseadas**. Estas 30
+corridas son la evidencia empírica de ese sesgo y refuerzan que su promoción a gate siga
+CONGELADA.
+
+### Límite declarado de la evidencia (y la barrera que salió de ahí)
+
+De las 30 corridas, **29 tienen el borrador completo releíble**; la parte `f2sond_entail_smoke`
+corrió sin `MIA_EVAL_PERSIST_FULL=1` y su texto quedó truncado a 1 200 caracteres. Sus **números
+son válidos** (fuga, abstención y el informe por oración se calculan en `run_case` sobre el texto
+entero y viajan persistidos; el panel los agrega, no los recalcula sobre el preview), pero ese
+borrador **ya no se puede releer** — y `entailment` es justamente la sonda declarada de REVISIÓN
+HUMANA. Nada lo advirtió al agregar.
+
+Barrera construida en la misma sesión: `harness.evidence_audit` + el flag `--exige-evidencia` de
+`execution/aggregate_eval_runs.py`, que avisa siempre y reprueba cuando se le exige. Verificado
+en vivo: reprueba `f2sond_entail_n10` señalando el índice 0, y aprueba `sincita`/`cruzado` con
+10/10 releíbles. 6 checks nuevos en `execution/test_eval_harness.py` (67/67). Regla 52 de
+`APRENDIZAJES.md`.
+
+### REFERENCIA EN NUBE · 2026-07-24/25 · suscripción vs nube, comparación pareada
+
+Mismos 3 casos, mismo `prompt_hash 3391f17ea61324a4`, mismo día, N=10 cada uno bajo
+`MIA_MODEL_POLICY=nube` (claude-sonnet vía LiteLLM). **Gasto real: USD 7,38 del tope de 30**
+aprobado por Pipe. Agregados `f2nube_*_n10`, los tres con evidencia 10/10 releíble
+(`--exige-evidencia` en verde).
+
+| caso | motor | fuga | citas sin respaldo | falsos bloqueos | p50 | p95 | USD/turno | tokens/turno | borrador | residuo |
+|---|---|---|---|---|---|---|---|---|---|---|
+| entail | suscripción | 0/10 | 0 | 0 | 281 s | 358 s | cuota | 72 033 | 5 163 | 24,0% |
+| entail | **nube** | 1/10\* | 0 | 0 | 212 s | 226 s | 0,185 | 33 151 | 8 744 | 15,3% |
+| sincita | suscripción | 0/10 | 0 | 0 | 160 s | 168 s | cuota | 58 076 | 4 239 | 23,5% |
+| sincita | **nube** | 0/10 | 0 | 0 | 244 s | 307 s | 0,215 | 35 502 | 10 020 | 16,0% |
+| cruzado | suscripción | 0/10 | 0 | 0 | 320 s | 729 s | cuota | 76 182 | 7 583 | 20,6% |
+| cruzado | **nube** | 0/10 | 0 | 0 | 238 s | 268 s | 0,214 | 35 727 | 11 444 | 12,0% |
+
+\* **La única fuga de las 60 corridas es un FALSO POSITIVO verificado** — ver N-1 abajo.
+
+**Lo que decide esto para el modo de venta**: en lo que importa —respaldo de las afirmaciones—
+**los dos motores empatan en el ideal**: 0 citas sin respaldo y 0 falsos bloqueos en las 60
+corridas. El modo suscripción, que es el producto, **no pierde calidad de disciplina** frente a
+la API directa. Diferencias reales:
+- **La nube escribe casi el doble** (8,7k-11,4k caracteres vs 4,2k-7,6k) con el mismo prompt.
+- **La nube gasta MENOS tokens** (33-36k vs 58-76k por turno) y aun así produce más texto: el
+  sobrecoste de tokens de la suscripción es el andamiaje del CLI, no el trabajo jurídico.
+- **La nube es más predecible en latencia** (p95 226-307 s vs 168-729 s); el p95 de 729 s de la
+  suscripción es el outlier de red ya documentado.
+- **El residuo proporcional baja en nube** (12-16% vs 21-24%), pero sobre un texto mucho más
+  largo: en absoluto son MÁS oraciones sin respaldo (119-146 vs 75-109). Coherente con el sesgo
+  ya declarado: textos más largos y explicativos inflan el proxy de forma.
+
+### N-1 · La fuga «detectada» en nube es un falso positivo: mención vs uso
+
+`f2nube_entail_i` marcó fuga con la cita `Ley 4137`. Leído el crudo, la ÚNICA aparición de esa
+norma en todo el turno es:
+
+> «La numeración "Ley 4137" no corresponde a ninguna ley del repertorio hispanoamericano que
+> pueda verificarse en mi memoria.»
+
+MIA **nombró la norma para DESACREDITARLA**, no para fundamentar nada: `verification.citas = 0`,
+sin ancla y sin marca, porque no está citando. `jurisdiction_leak_signal` cuenta cualquier
+aparición del patrón y **no distingue el uso de la mención**. Es el mismo defecto de familia que
+M-1/M-2 (riesgo #81) pero **más grave**: la fuga SÍ es una métrica que decide, y es el defecto
+que F2 vino a cerrar. Un falso positivo aquí puede hacer «reprobar» a un turno ejemplar.
+
+**Sin corregir a propósito** (mueve la métrica central del baseline): va como **decisión 7** a la
+Sesión A. Tensión de criterio que solo Pipe resuelve: ¿la regla del muro es «no escribir jamás el
+número de una norma» o «no afirmar una norma como aplicable sin respaldo»? El texto venía del
+expediente sellado, así que mencionarlo no filtra conocimiento del modelo — y un abogado que lee
+esa frase queda advertido, no inducido a error.
+
+### N-2 · Lectura agéntica: el delta on/off, medido en nube
+
+`f2nube_agentic_entail` (`--agentic-compare`, caso entailment):
+
+| | apagada | encendida |
+|---|---|---|
+| coste | USD 0,173 | **USD 0,799 (×4,6)** |
+| llamadas | 6 | 15 |
+| tiempo | 188 s | 368 s (×2) |
+| documentos recuperados | 2 | 2 |
+| **fragmentos NUEVOS** | — | **0** |
+
+El bucle pidió 3 ampliaciones con consultas reformuladas («término caducidad reparación directa
+años meses»…), buscando un plazo que **por diseño del caso no existe en el expediente**, y volvió
+con 0 fragmentos nuevos las tres veces; paró por «suficiente» tras gastar 4,6× más.
+
+**Hallazgo de comportamiento**: no hay corte temprano por «expediente agotado» — MIA ya tenía
+2 de 2 fragmentos disponibles y aun así insistió pagando.
+
+**LÍMITE HONESTO que impide decidir con esto**: los RISK_CASES tienen 0-2 fragmentos, y la
+lectura agéntica está pensada para asuntos GRANDES (cientos de fragmentos, `config.py` §
+condición 2). En un expediente de 2 fragmentos el resultado «0 nuevos» es **cierto por
+construcción**. Por eso se PARÓ el comparador aquí en vez de gastar el tope en más casos
+pequeños: **el banco no tiene hoy un caso capaz de responder la pregunta**. Para decidir
+«lectura agéntica por defecto» hace falta primero un caso de oro con expediente grande. Esa es
+la conclusión accionable, y es más barata que seguir comprando corridas.
+
+### Nota de método
+
+`cruzado_d` tardó 1 020 s (p95 de su sonda) por un reintento del CLI ante
+`API Error: Connection closed mid-response`; `cruzado_j` tuvo el mismo reintento. Son fallos de
+red del CLI, no del sistema: ambos terminaron limpios. El p95 de 729 s de esa sonda arrastra ese
+outlier — sin él, la sonda está en línea con las otras dos.
+
+## CIERRE DE F2 · 2026-07-27/28 (Sesión Pipe A ejecutada) — prompt_hash 8388c516a2156de2
+
+**F2 queda CERRADA** por decisión de Pipe (#47.2). El defecto que la fase vino a cerrar era la
+fuga de jurisdicción, y con su criterio de N-1 aplicado la cifra es **fuga real 0/63** sobre todas
+las corridas guardadas (60 de las tres sondas ×10 en los dos motores + 3 del comparador de lectura
+agéntica). El ítem 2 de la spec —fuga medida al 100% de ocurrencias con falsos positivos
+medidos— se cierra con el falso positivo de «Ley 4137» documentado y convertido en el primer caso
+de prueba del detector corregido.
+
+NO se endureció el detector antes de avanzar y NO se amplió la referencia en nube: **los USD 22,6
+del tope quedan sin gastar**.
+
+### TRES CORTES DE SERIE declarados (leer antes de comparar con cualquier cifra anterior)
+
+Ninguna cifra anterior al 2026-07-27 es comparable con las posteriores, por tres razones
+independientes que se acumulan:
+
+1. **Fuga (N-1)**: el detector dejó de contar como fuga la mención de una norma acompañada de
+   negación explícita en su misma oración. `harness.leak_signal_vigente` recalcula las señales
+   persistidas cuando el texto completo quedó guardado; si no, viajan marcadas
+   `revision_pendiente` y NO se hacen pasar por medida vigente. Verificado sobre los crudos: 1 → 0.
+2. **Abstención (M-1)**: repertorio recalibrado MIDIENDO los 62 borradores completos (11 → 46
+   formas), con criterio de admisión declarado. Cobertura medida: 29/29 en las sondas de
+   suscripción (antes 0/30) y 30/33 en nube. Pipe eligió declarar el corte en vez de pagar un
+   re-baseline.
+3. **prompt_hash**: `3391f17ea61324a4` → `8388c516a2156de2`, al entrar en el prompt la regla de
+   afirmaciones negativas (#46.1). Cualquier corrida nueva pertenece a otra serie.
+
+Y una cuarta, de composición del examen: **los casos de RIESGO entran por defecto** (#47.1), así
+que el examen canónico pasa de 3 casos a 9 y `n_casos` tampoco es comparable. Para la serie vieja
+queda `cases.load_golden_cases(include_risk=False)`.
+
+### Lo que el panel dice ahora (M-2)
+
+Desaparece «Éxito de tarea» —medía que el turno no se cayó e invitaba a leer «acertó»— y aparecen
+dos líneas: **«Turnos completados»** y, en los casos de RIESGO, **«Se negó correctamente»**
+(reconoció el límite sin cita sin respaldo ni fuga). Medido sobre las sondas ya corridas: **10/10
+en nube y 9/9 en suscripción**. Es una señal que antes no existía.
+
+### Las cuatro barreras del harness del despacho (#46), con su dureza
+
+| barrera | dureza | qué la fija |
+|---|---|---|
+| afirmaciones negativas verificadas contra el documento COMPLETO | aviso | `test_afirmaciones_negativas.py` 27/27 |
+| banco de citas quemadas del despacho | **MURO** | `test_citas_quemadas.py` 20/20 + `test_citas_quemadas_db.py` (RLS real) |
+| contaminación entre expedientes | aviso | `test_contaminacion_expediente.py` 17/17 |
+| ninguna lección sin barrera | regla de trabajo | esta tabla y las reglas nuevas de `APRENDIZAJES.md` |
+
+Las tres primeras nacen como AVISO por decisión de dureza de Pipe: MIA va a manos de otros
+despachos, donde una barrera mal afinada bloquea trabajo bueno y se siente como que MIA no sirve.
+El muro es la excepción porque no admite falso positivo.
+
+**Lección de diseño ganada al medir**: `confront_negative_claim` solo cuenta como contradicción el
+término presente en el documento y AUSENTE de lo que el turno vio. Exigir menos hacía saltar el
+aviso en toda afirmación negativa correcta — los términos del SUJETO de la frase («el informe de
+SUPERVISIÓN no menciona…») están en el documento por definición. Lo destapó un check de la propia
+barrera nueva, no una corrida pagada.
+
+### Deuda declarada al cerrar
+
+- El alta del banco de citas quemadas desde la interfaz (endpoint + botón en el HITL de rechazo
+  con motivo) NO está: hoy se llena por API interna. El muro ya opera.
+- La barrera de contaminación depende de que las fichas traigan `documents.parte`; en un expediente
+  sin fichas declaradas no tiene catálogo y calla (fail-soft, declarado).
+- Sigue pendiente de Pipe la lectura de calidad de las 6 salidas del paquete y del ejemplar
+  `f2sond_entail_g` — juicio jurídico; ningún agente lo sustituye.

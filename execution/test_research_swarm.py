@@ -75,7 +75,7 @@ class _Recorder:
         self.worker_shrink_provided: list[bool] = []  # M1: el worker pasa su propio shrink
 
     def install(self, builder: MatterGraphBuilder):
-        async def fake_resolve(_tenant):
+        async def fake_resolve(_tenant, _matter=None):
             return list(self.jurisdictions)
 
         async def fake_budget_status(_tenant):
@@ -87,7 +87,7 @@ class _Recorder:
             src = [{"tipo": "norma", "referencia": f"L-{js}", "titulo": f"Norma {js}"}]
             return (f"FUENTES[{js}]", src, list(jurisdictions or []))
 
-        async def fake_patterns(_tenant):
+        async def fake_patterns(_tenant, _matter=None):
             return []
 
         def fake_annotate(text, *, sources=None, extra_patterns=None):
@@ -194,7 +194,7 @@ async def _checks() -> None:
         research.resolve_jurisdictions_for = orig[0]
         real_resolve = research.resolve_jurisdictions
 
-        async def dup_resolve(_tenant):
+        async def dup_resolve(_tenant, matter_id=None):
             return ["co", "co", "ec", "ec", "co"]
         research.resolve_jurisdictions = dup_resolve
         try:

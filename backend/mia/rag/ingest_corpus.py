@@ -10,16 +10,36 @@ Precarga un corpus mínimo y representativo de Colombia (normas + jurisprudencia
 relaciones) en el SAT-Graph compartido. Idempotente (todo es upsert): re-ejecutarlo no
 duplica.
 
+OPT-IN DEL PACK: este corpus es COLOMBIANO, así que NO se siembra solo. `ingest_baseline_corpus`
+exige un `jurisdiction` cuyo pack declare `baseline_corpus_seed: true` en `meta.json` (hoy: solo
+`co`). Un despacho español o mexicano no recibe estas normas sembradas.
+
 VERIFICACIÓN DE CITAS: estos son DATOS SEMILLA para desarrollo, no citas entregadas a un
 cliente. Los datos aproximados o provisionales van marcados con `[VERIFICAR]` en `metadata`
 para auditoría contra la fuente primaria (SUIN-Juriscol / la corte respectiva) antes de
 cualquier uso real.
+
+BLINDAJE (auditoría 2026-07-17): como el corpus semilla trae jurisprudencia [VERIFICAR] y
+fechas aproximadas, `ingest_baseline_corpus` SE NIEGA a correr salvo que la env var
+`MIA_ALLOW_SEED_FAKE=1` esté fijada (opt-in explícito de test). Así ningún uso a mano en
+producción siembra datos sin confirmar en el SAT-Graph compartido; los tests que lo ejercitan
+fijan la env var a propósito.
 """
 from __future__ import annotations
 
+import logging
+import os
 from datetime import date
 
+from ..jurisdiction.pack import load_pack
 from .sat_graph import SATGraph
+
+logger = logging.getLogger("mia.rag.ingest_corpus")
+
+# Opt-in EXPLÍCITO de test para sembrar el corpus semilla provisional (ver
+# `ingest_baseline_corpus`). Sin esta env var fijada a "1", la función se niega a correr: un
+# uso a mano en producción no puede sembrar citas [VERIFICAR] en el SAT-Graph compartido.
+SEED_FAKE_ENV = "MIA_ALLOW_SEED_FAKE"
 
 # ── Normas (5) ──────────────────────────────────────────────────────────────
 _NORMS = [
@@ -117,20 +137,14 @@ _JURIS = [
         "keywords": ["seguro de cumplimiento", "contrato de seguro", "siniestro"],
         "metadata": {"nota": "[VERIFICAR] contra la providencia oficial (CSJ)"},
     },
-    {
-        "court": "Consejo de Estado", "sala": "Sección Tercera",
-        "decision_number": "CE-S3-2019-00123", "radicado": None,
-        "magistrado_ponente": None,
-        "decision_date": date(2019, 6, 15),
-        "topic": "Responsabilidad fiscal — elementos constitutivos",
-        "ratio_decidendi": ("[VERIFICAR] Elementos constitutivos de la responsabilidad fiscal: "
-                            "daño patrimonial al Estado, conducta y nexo causal."),
-        "obiter_dicta": None,
-        "keywords": ["responsabilidad fiscal", "daño patrimonial", "nexo causal"],
-        "metadata": {"placeholder": True,
-                     "nota": "[VERIFICAR] identificador y datos PROVISIONALES (sin referencia "
-                             "en el corpus de Hermes)"},
-    },
+    # NOTA (hallazgo de auditoría 2026-07-17): aquí vivía una tercera providencia con
+    # `decision_number: "CE-S3-2019-00123"` marcada `placeholder: True` — un identificador de
+    # jurisprudencia INVENTADO, sin referencia en fuente alguna. Se ELIMINÓ: un producto legal
+    # ("ningún hecho sin fuente; ninguna cita sin verificación") no puede sembrar una cita
+    # fabricada ni siquiera como semilla de desarrollo. Las dos providencias restantes son
+    # reales (identificadores verificables) y van marcadas [VERIFICAR] pendientes de contraste
+    # contra la fuente primaria; el corpus de producción se construye con `corpus_factory.py`
+    # (texto oficial real). NO reintroducir identificadores inventados.
 ]
 
 # ── Relaciones (2): (source_norm_number, target_norm_number, relation_type) ──
@@ -140,20 +154,62 @@ _RELATIONS = [
 ]
 
 
-async def ingest_baseline_corpus(pool=None) -> dict:
-    """Precarga el corpus base en el SAT-Graph (upsert idempotente). Devuelve un resumen
-    {norms, jurisprudence, relations}.
+async def ingest_baseline_corpus(pool=None, jurisdiction: str | None = None) -> dict:
+    """Precarga el corpus semilla en el SAT-Graph (upsert idempotente). Devuelve un resumen
+    {norms, jurisprudence, relations} — o {..., "skipped": <motivo>} si no se sembró nada.
+
+    OPT-IN EXPLÍCITO DEL PACK (regla de agnosticismo): este corpus es COLOMBIANO. Solo se
+    siembra si `jurisdiction` apunta a un pack que declara `baseline_corpus_seed: true` en su
+    `meta.json`. Sin `jurisdiction`, con un pack que no lo declare (p. ej. España) o en modo
+    genérico → NO se siembra nada: un despacho no recibe el corpus de otro país. El sesgo aquí
+    es el contrario al del anonimizador: ante la duda NO se siembra (sembrar derecho ajeno
+    desinforma; no sembrar solo deja el corpus vacío).
 
     `pool`: el pool global `db.pool` ya abierto (lo gestiona el caller); SATGraph accede al
     corpus compartido a través de él. Se acepta por contrato del Módulo 3a; si es None se usa
     el módulo global de todos modos.
     """
+    vacio = {"norms": 0, "jurisprudence": 0, "relations": 0}
+    if not jurisdiction:
+        return {**vacio, "skipped": "sin jurisdicción declarada (el corpus semilla es opt-in)"}
+    try:
+        pack = load_pack(jurisdiction)
+    except Exception:  # noqa: BLE001 — un pack ilegible NO puede terminar sembrando corpus ajeno
+        logger.exception("ingest_corpus: pack '%s' ilegible; no se siembra corpus", jurisdiction)
+        return {**vacio, "skipped": f"pack '{jurisdiction}' ilegible"}
+    if not pack.baseline_corpus_seed:
+        return {**vacio,
+                "skipped": (f"el pack '{jurisdiction}' no declara baseline_corpus_seed; "
+                            "este corpus semilla es de Colombia y no se siembra en otra "
+                            "jurisdicción")}
+
+    # BLINDAJE (hallazgo de auditoría 2026-07-17): el corpus semilla contiene DATOS
+    # PROVISIONALES — jurisprudencia marcada [VERIFICAR] y fechas aproximadas (no citas
+    # verificadas). Correr este módulo a mano (`python -m mia.rag.ingest_corpus co`)
+    # sembraría esos datos sin confirmar en el SAT-Graph COMPARTIDO por TODOS los tenants.
+    # Por eso solo se permite bajo un opt-in EXPLÍCITO de test (`MIA_ALLOW_SEED_FAKE=1`), que
+    # los gates fijan a propósito; cualquier uso a mano en producción falla aquí con un mensaje
+    # claro. El corpus real de producción se construye con `rag/corpus_factory.py` (texto
+    # oficial descargado, sin [VERIFICAR]).
+    if os.getenv(SEED_FAKE_ENV) != "1":
+        raise RuntimeError(
+            "ingest_baseline_corpus está DESHABILITADO fuera de tests: su corpus semilla "
+            "contiene datos provisionales ([VERIFICAR], fechas aproximadas) que NO deben "
+            "sembrarse en el SAT-Graph compartido de producción. Usa rag/corpus_factory.py "
+            f"(texto oficial real). Los tests que lo necesitan fijan {SEED_FAKE_ENV}=1."
+        )
+
+    # La jurisdicción va EXPLÍCITA en cada fila: antes estos dicts no la traían y quedaban
+    # marcados por el `COALESCE(..., 'co')` del INSERT. Ese default ya no existe (sat_graph
+    # marca 'generic' cuando no se dice), así que sembrar sin decirlo dejaría el corpus
+    # semilla sin adscripción — y además duplicaría las filas 'co' ya cargadas, porque la
+    # jurisdicción es parte de la clave del upsert.
     sat = SATGraph()
     ids: dict[str, object] = {}
     for n in _NORMS:
-        ids[n["norm_number"]] = await sat.add_norm(n)
+        ids[n["norm_number"]] = await sat.add_norm({**n, "jurisdiction": pack.code})
     for j in _JURIS:
-        await sat.add_jurisprudence(j)
+        await sat.add_jurisprudence({**j, "jurisdiction": pack.code})
     rel = 0
     for src, tgt, rtype in _RELATIONS:
         await sat.add_relation(ids[src], ids[tgt], rtype)
@@ -161,19 +217,25 @@ async def ingest_baseline_corpus(pool=None) -> dict:
     return {"norms": len(_NORMS), "jurisprudence": len(_JURIS), "relations": rel}
 
 
-async def _run() -> None:
-    """Abre el pool global, ingesta el corpus base y cierra. Entry point del runner."""
+async def _run(jurisdiction: str) -> None:
+    """Abre el pool global, ingesta el corpus semilla de `jurisdiction` y cierra. Entry point
+    del runner. La jurisdicción es EXPLÍCITA: sembrar corpus de un país es una decisión, no un
+    efecto colateral de ejecutar un script."""
     from ..db import pool
     await pool.open_pool()
     try:
-        summary = await ingest_baseline_corpus(pool)
-        print(f"[OK] corpus base ingestado (idempotente): {summary}")
+        summary = await ingest_baseline_corpus(pool, jurisdiction=jurisdiction)
+        if summary.get("skipped"):
+            print(f"[--] no se sembró nada: {summary['skipped']}")
+        else:
+            print(f"[OK] corpus semilla ingestado (idempotente): {summary}")
     finally:
         await pool.close_pool()
 
 
 if __name__ == "__main__":
-    # Ejecutar como módulo (imports relativos):  python -m mia.rag.ingest_corpus
+    # Ejecutar como módulo (imports relativos):
+    #   python -m mia.rag.ingest_corpus co
     import asyncio
     import sys
 
@@ -184,4 +246,8 @@ if __name__ == "__main__":
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
-    asyncio.run(_run())
+    if len(sys.argv) < 2:
+        print("Uso: python -m mia.rag.ingest_corpus <jurisdiccion>   (p. ej. 'co')\n"
+              "El corpus semilla es opt-in del pack: hay que decir de qué país se siembra.")
+        raise SystemExit(2)
+    asyncio.run(_run(sys.argv[1]))

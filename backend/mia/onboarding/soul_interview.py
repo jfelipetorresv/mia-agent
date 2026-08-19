@@ -24,6 +24,25 @@ el resultado mezclaba respuestas reales con plantilla vacía. Ahora:
 - `build_summary` produce un RESUMEN en lenguaje llano ("Así entendí a tu despacho")
   que es lo que ve el abogado; el SOUL.md técnico queda por debajo.
 
+REDISEÑO 2026-07-20 ("más rico, no más largo" — docs/diseno-soul-onboarding.md):
+el perfil capturaba datos censales y CERO criterio. Se pedía el estilo en 3 adjetivos
+mientras el resumen decía "tu estilo no te lo pregunto" (se contradecía), y `hard_nos`
+se renderizaba sin que ninguna pregunta lo alimentara. Se retiran del cuestionario los
+campos que Mia PUEDE INFERIR del trabajo real o que no cambian un borrador — estilo en
+adjetivos (p3), sitio web y canales (p4), herramientas (p18: no activan nada, Conexiones
+sabe la verdad) y el modo profundo (p19: no implementado, el frontend ya lo ocultaba) —
+y se fusionan p6+p7 en un solo paso. En su lugar entran las tres que hacen COMPUTABLE el
+criterio: la línea de autonomía (`autonomia.*`), las líneas rojas (`nunca`) y el estándar
+de cierre (`terminado`). Mismo número de pasos, otro rendimiento.
+`## aprendido` es la sección que crece sola con el uso: no la alimenta ninguna pregunta
+— la escribe Mia desde el trabajo real vía `update_soul`. AVISO: ese escritor todavía
+NO existe (incremento aparte); hoy la sección solo se RENDERIZA si alguien pone el campo.
+Todo lo retirado se SIGUE renderizando si viene en un `responses.json` viejo: un perfil
+ya creado no pierde nada ni deja de guardarse (`LEGACY_RENDERED_FIELDS`). Los campos del
+cuestionario ORIGINAL de 19 preguntas que hoy no renderiza nadie (`LEGACY_STORED_FIELDS`:
+cortes, doctrina, misión…) se reconocen y se conservan igual, aunque no se impriman: un
+despacho configurado antes del recorte tiene que poder volver a guardar su perfil.
+
 Helpers de archivo (soul_path / load_soul_text / load_soul_snapshot / soul_status):
 puros (solo config + stdlib, sin LLM) para que `agents/state.py` y `agent/core.py`
 los importen sin arrastrar el cliente LLM.
@@ -52,48 +71,90 @@ logger = logging.getLogger("mia.onboarding.soul")
 QUESTIONS: list[dict] = [
     # Bloque 1 — Identidad
     {"id": "p1", "block": "identity", "field": "identity.name",
-     "question": "¿Cuál es el nombre completo de tu despacho y tu nombre como abogado principal?",
-     "example": "Fajardo & Asociados · María Fajardo"},
+     "question": "¿Cómo se llama tu despacho y cómo firmas tú?",
+     "example": "Va impreso en cada escrito que redacte para ti."},
     {"id": "p2", "block": "identity", "field": "identity.location",
-     "question": "¿En qué ciudad y país operas principalmente?",
-     "example": "Bogotá, Colombia"},
-    {"id": "p3", "block": "identity", "field": "identity.voice",
-     "question": "¿Cómo describirías en 3 adjetivos el estilo de escritura de tu despacho?",
-     "example": "Técnico, argumentativo, conciso"},
-    {"id": "p4", "block": "identity", "field": "identity.channels",
-     "question": "¿Tienes sitio web o canales públicos del despacho?",
-     "example": "fajardoasociados.co — LinkedIn Fajardo & Asociados"},
-    # Bloque 2 — Jurisdicción. NOTA (consolidación 2026-07-09, decisión de Pipe): la
-    # pregunta descriptiva de país (antes p5, field jurisdiction.base) ya NO se hace —
-    # el frontend tiene UN solo selector múltiple de países (el mismo del enrutamiento
-    # de paquetes jurídicos) y auto-llena `jurisdiction.base` con los países elegidos
-    # al completar. build_soul/build_summary siguen renderizando ese campo.
+     "question": "¿En qué ciudad y país trabajas?",
+     # El ejemplo enseña el FORMATO, no una plaza: MIA no es de ningún país.
+     "example": "Ciudad, País"},
+    # Bloque 2 — Jurisdicción y práctica.
+    # NOTA (consolidación 2026-07-09, decisión de Pipe): la pregunta descriptiva de país
+    # (antes p5, field jurisdiction.base) ya NO se hace — el frontend tiene UN solo
+    # selector múltiple de países (el mismo del enrutamiento de paquetes jurídicos) y
+    # auto-llena `jurisdiction.base` con los países elegidos al completar.
+    # NOTA (rediseño 2026-07-20): p6 y p7 se FUSIONAN en un solo paso. Sigue siendo la
+    # pregunta p6 y sigue alimentando `jurisdiction.practice_areas`, pero el frontend
+    # recoge en la misma pantalla `jurisdiction.client_type` (a quién defiende). Es el
+    # único prior antes de que exista un solo documento; después Mia lo corrige sola
+    # leyendo partes y materias de los expedientes.
     {"id": "p6", "block": "jurisdiction", "field": "jurisdiction.practice_areas",
-     "question": "¿Cuáles son las ramas del derecho en que te especializas?",
-     "example": "Civil, comercial, laboral, seguros"},
-    {"id": "p7", "block": "jurisdiction", "field": "jurisdiction.client_type",
-     "question": "¿Qué tipo de cliente defiende principalmente tu despacho?",
-     "example": "Aseguradoras (HDI, Zurich, SURA, Seguros del Estado)"},
-    # Bloque 3 — Herramientas
-    {"id": "p18", "block": "tools", "field": "memory.tools_that_survived",
-     "question": "¿Hay herramientas que usas a diario que Mia debe conocer?",
-     "example": "Correo, gestor documental, calendario, mensajería."},
-    # Bloque 4 — Modo profundo (opcional; el frontend puede ocultarlo hasta implementarse)
-    {"id": "p19", "block": "triad_mode", "field": "triad_mode",
-     "question": "¿Quieres habilitar el modo de análisis profundo para asuntos de alta "
-                 "complejidad? Tres modelos distintos en ciclo cerrado: más tiempo y costo, "
-                 "mayor calidad.",
-     "example": "Sí — imputaciones fiscales >$1.000M COP y arbitrajes"},
+     "question": "¿A quién defiendes y en qué asuntos?",
+     "example": "Escribe lo tuyo con tus palabras. Nada de esto queda fijo."},
+    # Bloque 3 — Criterio. Aquí está la riqueza (rediseño 2026-07-20): lo que hace
+    # COMPUTABLE el juicio del despacho. Antes el perfil capturaba datos censales y cero
+    # criterio; `hard_nos` incluso se renderizaba sin que ninguna pregunta lo alimentara.
+    {"id": "p20", "block": "criterio", "field": "autonomia.reviso_siempre",
+     "question": "¿Qué quieres revisar siempre antes de que salga, y qué puedo resolver sin preguntarte?",
+     "example": "Sin esto solo tengo dos modos: pedirte permiso para todo, o excederme."},
+    {"id": "p21", "block": "criterio", "field": "nunca",
+     "question": "¿Qué no debo hacer nunca?",
+     "example": "Una prohibición tuya me dice más que un párrafo sobre tu estilo."},
+    {"id": "p22", "block": "criterio", "field": "terminado",
+     "question": "¿Cuándo das un escrito por terminado?",
+     "example": "Es mi única forma de saber cuándo entregarte algo en vez de adivinar."},
 ]
 
 # Orden canónico de los bloques (para el progreso del frontend).
-BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "tools", "triad_mode")
+BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "criterio")
+
+# ── Campos que el generador SABE leer ────────────────────────────────────────
+# `build_soul` lee por CAMPO (`identity.name`…), no por id de pregunta. Si llegan llaves
+# que no están aquí, el perfil sale vacío y nadie se entera: el API devolvía 200 con un
+# SOUL de dos líneas (fallo silencioso comprobado en vivo el 2026-07-20 mandando
+# {"p1":…,"p2":…}). Esta lista es el contraste contra el que el endpoint valida antes de
+# escribir nada.
+
+# Los que alimenta el cuestionario de hoy (+ `aprendido`, que no pregunta nadie: lo
+# escribe Mia desde el trabajo real vía `update_soul`).
+CURRENT_FIELDS: frozenset[str] = frozenset({
+    "identity.name", "identity.location",
+    "jurisdiction.base", "jurisdiction.practice_areas", "jurisdiction.client_type",
+    "autonomia.reviso_siempre", "autonomia.decide_solo", "nunca", "terminado",
+    "aprendido",
+})
+
+# Campos de entrevistas ANTERIORES que `build_soul`/`build_summary` SIGUEN renderizando
+# (voz, canales, estructura, ritmo, herramientas, triad…): salieron del cuestionario, no
+# del generador.
+LEGACY_RENDERED_FIELDS: frozenset[str] = frozenset({
+    "identity.voice", "identity.channels",
+    "legal_voice.structure", "legal_voice.banned_words",
+    "hard_nos", "rhythm", "memory.tools_that_survived", "triad_mode",
+})
+
+# Campos del cuestionario ORIGINAL de 19 preguntas (anterior a los recortes del
+# 2026-07-06/09) que HOY ya no se renderizan. Se reconocen igual —y se conservan en el
+# archivo de respuestas— porque hay despachos configurados de verdad que los traen: sin
+# esto, reabrir "Revisar mi perfil" y volver a guardar devolvía 422 y dejaba al abogado
+# encerrado fuera de su propio perfil (hallazgo BLOQUEANTE-1, 2026-07-20). Reconocer no es
+# renderizar: el dato se guarda y no se imprime, que es la degradación limpia acordada.
+LEGACY_STORED_FIELDS: frozenset[str] = frozenset({
+    "jurisdiction.courts", "jurisdiction.key_courts",
+    "doctrinal_stance.preferred_sources", "doctrinal_stance.discarded_args",
+    "doctrinal_stance.key_jurisprudence",
+    "mission.headline", "mission.pillars", "mission.not_in_scope",
+    "memory.decisions_made", "memory.orbit",
+})
+
+KNOWN_FIELDS: frozenset[str] = CURRENT_FIELDS | LEGACY_RENDERED_FIELDS | LEGACY_STORED_FIELDS
 
 # Secciones que el SOUL.md PUEDE contener (solo aparecen si hay respuesta). Sirve al
 # gate y a la inspección; ya NO es un template fijo obligatorio.
 SOUL_SECTIONS: tuple[str, ...] = (
-    "## identity", "## jurisdiction", "## legal_voice", "## hard_nos",
-    "## rhythm", "## tools", "## triad_mode",
+    "## identity", "## jurisdiction", "## autonomia", "## nunca", "## terminado",
+    "## aprendido",
+    # legacy: solo aparecen si un responses.json viejo todavía los trae
+    "## legal_voice", "## hard_nos", "## rhythm", "## tools", "## triad_mode",
 )
 
 # Referencia informativa del formato (ya no se "rellena": se construye omitiendo lo
@@ -276,6 +337,15 @@ def build_soul(responses: dict, *, dates: Optional[tuple[str, str]] = None) -> s
     areas = _text(r.get("jurisdiction.practice_areas"))
     client = _text(r.get("jurisdiction.client_type"))
 
+    # Criterio (rediseño 2026-07-20): lo que hace computable el juicio del despacho.
+    reviso = _items(r.get("autonomia.reviso_siempre"))
+    decide = _items(r.get("autonomia.decide_solo"))
+    nunca = _items(r.get("nunca"))
+    terminado = _text(r.get("terminado"))
+    # `aprendido`: lo escribe Mia desde el trabajo real (no se pregunta). Cada línea llega
+    # ya redactada con su marca [inferido], su fecha y su fuente — aquí solo se imprime.
+    aprendido = _items(r.get("aprendido"))
+
     structure = _text(r.get("legal_voice.structure"))
     banned = _text(r.get("legal_voice.banned_words"))
     hard_nos = _items(r.get("hard_nos"))
@@ -297,6 +367,12 @@ def build_soul(responses: dict, *, dates: Optional[tuple[str, str]] = None) -> s
             line("location", location), line("channels", channels), line("voice", voice)]),
         _section("## jurisdiction", [
             line("base", base), line("practice_areas", areas), line("client_type", client)]),
+        _section("## autonomia", [
+            line("reviso_siempre", ", ".join(reviso)),
+            line("decide_solo", ", ".join(decide))]),
+        _section("## nunca", [f"- {n}" for n in nunca]),
+        _section("## terminado", [f"- {terminado}" if terminado else ""]),
+        # ── legacy: solo si un responses.json viejo todavía trae estos campos ──
         _section("## legal_voice", [
             line("structure", structure), line("banned_words", banned)]),
         _section("## hard_nos", [f"- {h}" for h in hard_nos]),
@@ -306,6 +382,8 @@ def build_soul(responses: dict, *, dates: Optional[tuple[str, str]] = None) -> s
         # triad_mode solo aparece si el despacho lo activó (opt-in)
         _section("## triad_mode", [
             "- enabled: true", line("trigger", triad_trigger)]) if triad_on else "",
+        # Va al final: es lo que crece con el uso, debajo de lo que el abogado declaró.
+        _section("## aprendido", [f"- {a}" for a in aprendido]),
     ]
     return "\n".join(p for p in parts if p).rstrip() + "\n"
 
@@ -321,6 +399,11 @@ def build_summary(responses: dict) -> str:
     base = _text(r.get("jurisdiction.base"))
     areas = _text(r.get("jurisdiction.practice_areas"))
     client = _text(r.get("jurisdiction.client_type"))
+    reviso = _items(r.get("autonomia.reviso_siempre"))
+    decide = _items(r.get("autonomia.decide_solo"))
+    nunca = _items(r.get("nunca"))
+    terminado = _text(r.get("terminado"))
+    aprendido = _items(r.get("aprendido"))
     structure = _text(r.get("legal_voice.structure"))
     banned = _text(r.get("legal_voice.banned_words"))
     hard_nos = _items(r.get("hard_nos"))
@@ -339,7 +422,11 @@ def build_summary(responses: dict) -> str:
         ("Dónde trabajas", location),
         ("Jurisdicción", base),
         ("Áreas de práctica", areas),
-        ("Tipo de cliente", client),
+        ("A quién defiendes", client),
+        ("Lo que reviso siempre contigo", ", ".join(reviso)),
+        ("Lo que resuelvo sin preguntarte", ", ".join(decide)),
+        ("Un escrito está listo cuando", terminado),
+        # legacy: solo aparecen si el perfil viene de una entrevista anterior
         ("Estilo de escritura", voice),
         ("Estructura de tus escritos", structure),
         ("Palabras que evitas", banned),
@@ -350,9 +437,15 @@ def build_summary(responses: dict) -> str:
     for label, value in bullets:
         if value:
             lines.append(f"- **{label}:** {value}")
-    if hard_nos:
-        lines.append("- **Reglas que nunca debo romper:**")
-        lines.extend(f"  - {h}" for h in hard_nos)
+    # Las líneas rojas van en su propia lista: son prohibiciones, no un dato más.
+    for titulo, reglas in (("Lo que nunca debo hacer", nunca),
+                           ("Reglas que nunca debo romper", hard_nos)):
+        if reglas:
+            lines.append(f"- **{titulo}:**")
+            lines.extend(f"  - {x}" for x in reglas)
+    if aprendido:
+        lines.append("- **Lo que he ido aprendiendo de tu trabajo:**")
+        lines.extend(f"  - {a}" for a in aprendido)
     lines.append("")
     lines.append(
         "Tu estilo de redacción no te lo pregunto: Mia lo aprende de tus propios escritos "
@@ -403,6 +496,18 @@ def derive_firm_profile(responses: dict) -> dict:
         out["tools"] = tools
 
     return out
+
+
+def firm_name(responses: dict) -> str:
+    """Nombre del despacho tal como quedaría en el SOUL.md ('' si no vino).
+
+    Es el único dato que Mia no puede inferir ni omitir: encabeza el archivo y va impreso
+    en cada escrito. El endpoint lo exige explícitamente en vez de deducirlo de que exista
+    la sección `## identity` — esa sección aparece con CUALQUIER dato de identidad (una
+    ciudad, un canal), así que el guardián decía exigir el nombre y no lo exigía
+    (hallazgo MAYOR-3, 2026-07-20). Tolera la forma legacy (string 'Despacho · Abogado')
+    y la nueva ({firm, lawyer})."""
+    return _firm_lawyer((responses or {}).get("identity.name"))[0]
 
 
 def validate_soul(content: str) -> list[str]:

@@ -1,0 +1,46 @@
+{
+  "schema_version": "mia-provider-benchmark/v1",
+  "plan_sha256": "dda8750794d693bddc7426412b9410e77f7659dbc871f3b11d6e6f1f4eb2f0ed",
+  "execution_ready": true,
+  "blockers": [],
+  "required_turns": 180,
+  "model_calls_executed": 0,
+  "codex_isolated_adapter": {
+    "adapter_version": "mia-codex-cli-benchmark/v1",
+    "ready": true,
+    "blockers": [],
+    "cli_version": "codex-cli 0.147.0",
+    "authenticated": true,
+    "required_flags": [
+      "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--output-schema",
+      "--sandbox",
+      "--json",
+      "--strict-config"
+    ],
+    "missing_flags": [],
+    "launcher": "codex.exe",
+    "isolation": {
+      "ephemeral": true,
+      "isolated_cwd": true,
+      "repo_mounted": false,
+      "shell_tool": false,
+      "web_search": false,
+      "apps": false,
+      "subagents": false,
+      "browser_tools": false,
+      "computer_use": false,
+      "image_tools": false,
+      "skills": false,
+      "plugins": false,
+      "user_config": false,
+      "local_rules": false,
+      "structured_output": true,
+      "environment_allowlist": true
+    },
+    "note": "Preflight sin inferencia ni gasto; valida interfaz, no calidad del modelo."
+  },
+  "decision": "ready"
+}

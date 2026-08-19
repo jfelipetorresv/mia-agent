@@ -8,13 +8,27 @@
 // pero el contrato de eventos del proyecto es más simple: "thinking" (avance),
 // "reply" (respuesta final de Mia) y "error" — sin awaiting_review ni draft_ready.
 
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Download, FileText, Save, Send, Sparkles } from "lucide-react";
-import { apiDownload, apiGet, apiSend, streamTurn } from "@/lib/api";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  ChevronDown,
+  Download,
+  FileText,
+  Save,
+  Send,
+  Sparkles,
+} from "lucide-react";
+import { apiDownload, apiGet, apiSend, streamPost } from "@/lib/api";
 import MicButton from "../../_components/MicButton";
 import FuentesPanel from "../../_components/FuentesPanel";
+import AvisoDeCosto, { type AvisoDeCostoData } from "../../_components/AvisoDeCosto";
+import CitationReview, { type CitaDetalle, type Verification } from "../../_components/CitationReview";
+import { SectionTitle } from "../../_components/SectionTitle";
 import { Button } from "@/components/ui/button";
+import MiaMarkdown from "@/components/MiaMarkdown";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -29,18 +43,66 @@ import { useDictation } from "@/lib/useDictation";
 import { cn } from "@/lib/utils";
 
 type Matter = { name?: string; kind?: string };
-type Msg = { role: "user" | "mia"; text: string };
+
+// Lo que el guardián de citas le adjunta a la respuesta del proyecto. El backend lo
+// manda en el evento 'reply' bajo la clave `verificacion` (ver la capa SSE); su forma
+// es la MISMA que ya usa la revisión del borrador de un asunto, más el contador de
+// referencias a documentos que no existen. Se le suma `fantasmas` para no arrastrar la
+// lista completa hasta la pantalla: aquí solo se necesita cuántas son.
+type InformeCitas = Verification & { fantasmas: number };
+
+type Msg = { role: "user" | "mia"; text: string; revision?: InformeCitas | null };
 type Output = { id: string; title: string; created_at?: string };
+type DelegationProposal = {
+  agente?: string;
+  nombre?: string;
+  texto?: string;
+  huella?: string;
+  aviso?: string;
+};
 
 // Umbral a partir del cual vale la pena ofrecer "Guardar en el proyecto" bajo una
 // respuesta de Mia — respuestas cortas (confirmaciones, aclaraciones) no son un
 // archivo que valga la pena conservar aparte.
 const SAVE_THRESHOLD = 600;
 
+// El informe llega por la red: se normaliza antes de pintarlo. Un campo que no venga
+// se cuenta como 0 y una lista malformada queda vacía — nunca se INVENTA un respaldo
+// ni una cifra que el backend no haya mandado, y un informe roto jamás tumba el chat
+// (sin informe, la respuesta se sigue viendo).
+function normalizarInforme(raw: unknown): InformeCitas | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0);
+  const detalle = Array.isArray(r.detalle)
+    ? (r.detalle.filter(
+        (d) => d && typeof d === "object" && typeof (d as CitaDetalle).cita === "string",
+      ) as CitaDetalle[])
+    : [];
+  const df = r.docs_fantasma;
+  // Los campos que el backend solo manda cuando hay algo que decir (citas retiradas,
+  // afirmaciones negativas, contaminación) se copian TAL CUAL. Descartarlos aquí era
+  // silenciarlos: el componente sabe pintarlos, pero en un proyecto nunca los recibía.
+  const opcional = (k: string) => (r[k] !== undefined ? { [k]: r[k] } : {});
+  return {
+    citas: num(r.citas),
+    marcadas: num(r.marcadas),
+    respaldadas: num(r.respaldadas),
+    anotadas: num(r.anotadas),
+    detalle,
+    fantasmas: df && typeof df === "object" ? num((df as Record<string, unknown>).fantasmas) : 0,
+    ...opcional("quemadas"),
+    ...opcional("aviso_quemadas"),
+    ...opcional("omitidas"),
+    ...opcional("afirmaciones_negativas"),
+    ...opcional("contaminacion_expediente"),
+  } as InformeCitas;
+}
+
 function fmtDate(s?: string): string {
   if (!s) return "";
   try {
-    return new Date(s).toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+    return new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short" });
   } catch {
     return "";
   }
@@ -56,8 +118,8 @@ function primerasPalabras(text: string, maxChars = 60): string {
   return (ultimoEspacio > 20 ? corte.slice(0, ultimoEspacio) : corte).trim();
 }
 
-export default function ProyectoWorkspacePage({ params }: { params: { id: string } }) {
-  const matterId = params.id;
+export default function ProyectoWorkspacePage({ params }: { params: Promise<{ id: string }> }) {
+  const matterId = use(params).id;
   const router = useRouter();
   const [matter, setMatter] = useState<Matter | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -65,6 +127,8 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
+  // Aviso de costo del turno: la suscripción no alcanzó y hubo que pagar crédito.
+  const [avisoCosto, setAvisoCosto] = useState<AvisoDeCostoData | null>(null);
   const [streaming, setStreaming] = useState(false);
   const streamAbortRef = useRef<AbortController | null>(null);
   const [dictationNotice, setDictationNotice] = useState("");
@@ -80,6 +144,9 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [saveNotice, setSaveNotice] = useState("");
+  const [delegation, setDelegation] = useState<DelegationProposal | null>(null);
+  const [delegationRemember, setDelegationRemember] = useState(false);
+  const [delegationBusy, setDelegationBusy] = useState(false);
 
   const dictation = useDictation(
     (text) => {
@@ -117,9 +184,96 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matterId]);
 
+  function handleProjectEvent(event: string, data: unknown) {
+    const payload = data as {
+      message?: string;
+      reply?: string;
+      // Informe del guardián de citas. Viaja junto al texto ya marcado, en el mismo
+      // evento: el texto y su revisión no pueden separarse nunca.
+      verificacion?: unknown;
+      propuesta?: DelegationProposal;
+      sugerencia?: string;
+      veces?: number;
+    };
+    if (event === "aviso_de_costo") {
+      // El backend arma el texto (una sola redacción que auditar); aquí solo se muestra.
+      setAvisoCosto({
+        message: payload.message || "",
+        sugerencia: payload.sugerencia,
+        veces: payload.veces,
+      });
+    } else if (event === "thinking") {
+      setStatus(payload.message || "Mia está trabajando…");
+    } else if (event === "awaiting_delegation") {
+      setStatus(payload.message || "Mia propone pedirle ayuda a un asistente externo.");
+      setDelegation(payload.propuesta || {});
+      setDelegationRemember(false);
+      setMessages((m) => {
+        const copy = [...m];
+        const nombre = payload.propuesta?.nombre || "un asistente externo";
+        copy[copy.length - 1] = {
+          role: "mia",
+          text:
+            payload.message ||
+            `Mia propone pedirle ayuda a ${nombre}. Revisa el texto antes de autorizar.`,
+        };
+        return copy;
+      });
+    } else if (event === "reply") {
+      setDelegation(null);
+      setStatus("");
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = {
+          role: "mia",
+          text: payload.reply || "No pude generar una respuesta.",
+          revision: payload.reply ? normalizarInforme(payload.verificacion) : null,
+        };
+        return copy;
+      });
+    } else if (event === "error") {
+      const mensaje = payload.message || "No pude completar esta consulta.";
+      setStatus(mensaje);
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = { role: "mia", text: mensaje };
+        return copy;
+      });
+    }
+  }
+
+  async function respondDelegation(aprobar: boolean) {
+    if (!delegation || delegationBusy || streaming) return;
+    if (aprobar && !delegation.huella) {
+      setStatus("No se pudo confirmar la propuesta. Intenta de nuevo.");
+      return;
+    }
+    setDelegationBusy(true);
+    setStreaming(true);
+    setStatus(aprobar ? "Mia está retomando el trabajo…" : "Mia continúa sin el ayudante…");
+    streamAbortRef.current?.abort();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    try {
+      const path = aprobar
+        ? `/api/matters/${matterId}/delegation/aprobar`
+        : `/api/matters/${matterId}/delegation/descartar`;
+      const body = aprobar
+        ? { huella: delegation.huella, recordar: delegationRemember }
+        : {};
+      setDelegation(null);
+      await streamPost(path, body, handleProjectEvent, controller.signal);
+    } catch {
+      setStatus("No se pudo responder a la propuesta. Intenta de nuevo.");
+    } finally {
+      setDelegationBusy(false);
+      setStreaming(false);
+    }
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || delegation) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", text }, { role: "mia", text: "" }]);
     setStatus("Mia está trabajando…");
@@ -133,34 +287,7 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
         `/api/matters/${matterId}/chat`,
         { message: text },
       );
-      await streamTurn(
-        stream_url,
-        (event, data) => {
-          const payload = data as { message?: string; reply?: string };
-          if (event === "thinking") {
-            setStatus(payload.message || "Mia está trabajando…");
-          } else if (event === "reply") {
-            setStatus("");
-            setMessages((m) => {
-              const copy = [...m];
-              copy[copy.length - 1] = {
-                role: "mia",
-                text: payload.reply || "No pude generar una respuesta.",
-              };
-              return copy;
-            });
-          } else if (event === "error") {
-            const mensaje = payload.message || "No pude completar esta consulta.";
-            setStatus(mensaje);
-            setMessages((m) => {
-              const copy = [...m];
-              copy[copy.length - 1] = { role: "mia", text: mensaje };
-              return copy;
-            });
-          }
-        },
-        controller.signal,
-      );
+      await streamPost(stream_url, { message: text }, handleProjectEvent, controller.signal);
     } catch {
       const mensaje = "No se pudo completar la consulta.";
       setStatus(mensaje);
@@ -289,12 +416,17 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
                       className={
                         m.role === "user"
                           ? "max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
-                          : "max-w-[75%] whitespace-pre-wrap pt-1 font-serif text-[15px] leading-relaxed text-foreground"
+                          : "max-w-[75%] pt-1 font-serif text-[15px] leading-relaxed text-foreground"
                       }
                     >
-                      {m.text || <ThinkingDots />}
+                      {m.text ? (
+                        m.role === "mia" ? <MiaMarkdown text={m.text} /> : m.text
+                      ) : (
+                        <ThinkingDots />
+                      )}
                     </div>
                   </div>
+                  {m.role === "mia" && m.revision ? <RevisionCitas informe={m.revision} /> : null}
                   {m.role === "mia" && m.text.length > SAVE_THRESHOLD ? (
                     <Button
                       variant="outline"
@@ -311,6 +443,7 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
             )}
           </div>
           <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
+            <AvisoDeCosto aviso={avisoCosto} onDismiss={() => setAvisoCosto(null)} />
             <div className="mb-2 flex min-h-5 items-center text-sm text-muted-foreground">{status}</div>
             <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-2 shadow-lg shadow-primary/5 transition-shadow focus-within:border-primary/40 focus-within:shadow-primary/10">
               <textarea
@@ -347,7 +480,7 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
 
         {/* Archivos del proyecto */}
         <aside className="flex shrink-0 flex-col border-t border-border bg-card/40 px-4 py-4 lg:border-t-0 lg:border-l lg:overflow-y-auto">
-          <h3 className="mb-2 text-sm font-semibold">Archivos del proyecto</h3>
+          <SectionTitle level="h3" title="Archivos del proyecto" className="mb-2" />
           {saveNotice ? (
             <div className="mb-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
               {saveNotice}
@@ -426,6 +559,159 @@ export default function ProyectoWorkspacePage({ params }: { params: { id: string
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={Boolean(delegation)} onOpenChange={() => {}}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {delegation?.nombre
+                ? `¿Autorizar a ${delegation.nombre}?`
+                : "¿Autorizar al asistente externo?"}
+            </DialogTitle>
+            <DialogDescription>
+              {delegation?.aviso ||
+                "Esto es una propuesta para que la revises, no algo que Mia ya hizo. Solo saldrá el texto de abajo."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm whitespace-pre-wrap">
+            {delegation?.texto || "(Sin texto propuesto)"}
+          </div>
+          <label className="flex items-start gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={delegationRemember}
+              onChange={(e) => setDelegationRemember(e.target.checked)}
+              disabled={delegationBusy || streaming}
+            />
+            <span>No volver a preguntarme por este ayudante en este proyecto</span>
+          </label>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              disabled={delegationBusy || streaming}
+              onClick={() => respondDelegation(false)}
+            >
+              Descartar
+            </Button>
+            <Button
+              disabled={delegationBusy || streaming || !delegation?.huella}
+              onClick={() => respondDelegation(true)}
+            >
+              Autorizar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── Lo que Mia pudo confirmar en su respuesta ────────────────────────────────
+// En un ASUNTO el abogado ve esto en la pantalla de aprobar el borrador. En un
+// PROYECTO no hay esa parada: la respuesta se entrega de una vez. Así que la
+// revisión de citas tiene que caber aquí mismo, bajo la respuesta, sin robarle
+// el protagonismo — cerrada por defecto, abierta cuando el abogado quiera ver
+// cita por cita (la lista la pinta CitationReview, el mismo componente del
+// borrador: si el resaltado o el detalle divergen, el gate se rompe visualmente).
+function plural(n: number, uno: string, varios: string): string {
+  return n === 1 ? uno : varios;
+}
+
+function RevisionCitas({ informe }: { informe: InformeCitas }) {
+  const [abierto, setAbierto] = useState(false);
+  const porConfirmar = informe.marcadas + informe.anotadas;
+  const expandible = informe.citas > 0 && informe.detalle.length > 0;
+  const alerta = porConfirmar > 0 || informe.fantasmas > 0
+    || (informe.omitidas || 0) + (informe.quemadas || 0) > 0;
+
+  // Sin citas y sin referencias colgando no hay nada que revisar: una línea al pie,
+  // no una caja. Se dice igual — que Mia miró es información para el abogado.
+  if (informe.citas === 0 && informe.fantasmas === 0) {
+    return (
+      <p className="ml-11 text-meta text-muted-foreground">
+        Sin citas de normas ni sentencias que confirmar en esta respuesta.
+      </p>
+    );
+  }
+
+  // Mismo cuidado que en el resumen del borrador: una cita RETIRADA del texto (omitida o
+  // marcada como falsa por el despacho) no está «con respaldo en el material». Decirlo así
+  // era afirmar lo contrario de lo ocurrido en la primera línea que se lee.
+  const retiradas = (informe.omitidas || 0) + (informe.quemadas || 0);
+  const titular =
+    porConfirmar > 0
+      ? plural(porConfirmar, "1 cita por confirmar", `${porConfirmar} citas por confirmar`)
+      : retiradas > 0
+        ? plural(retiradas, "1 cita retirada del texto", `${retiradas} citas retiradas del texto`)
+        : informe.citas > 0
+          ? plural(
+              informe.citas,
+              "1 cita revisada, con respaldo en el material",
+              `${informe.citas} citas revisadas, todas con respaldo en el material`,
+            )
+          : "Revisa las referencias a documentos";
+
+  const Icon = alerta ? AlertTriangle : CheckCircle2;
+
+  const cabecera = (
+    <>
+      <Icon className={cn("mt-px h-4 w-4 shrink-0", alerta ? "text-warning" : "text-success")} />
+      <span className="flex-1 text-label text-foreground">{titular}</span>
+      {expandible ? (
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            abierto && "rotate-180",
+          )}
+          aria-hidden
+        />
+      ) : null}
+    </>
+  );
+
+  return (
+    <div
+      className={cn(
+        "ml-11 max-w-[75%] rounded-lg border px-3 py-2.5",
+        alerta ? "border-warning/30 bg-warning/5" : "border-border bg-card/60",
+      )}
+    >
+      {expandible ? (
+        <button
+          type="button"
+          onClick={() => setAbierto((v) => !v)}
+          aria-expanded={abierto}
+          className="flex w-full items-start gap-2 text-left"
+        >
+          {cabecera}
+        </button>
+      ) : (
+        <div className="flex items-start gap-2">{cabecera}</div>
+      )}
+
+      {informe.fantasmas > 0 ? (
+        <p className="mt-1.5 text-meta text-warning">
+          {plural(
+            informe.fantasmas,
+            "1 referencia apunta a un documento que no está entre los que leyó.",
+            `${informe.fantasmas} referencias apuntan a documentos que no están entre los que leyó.`,
+          )}
+        </p>
+      ) : null}
+
+      {alerta ? (
+        <p className="mt-1.5 text-meta text-muted-foreground">
+          En un proyecto Mia responde de una vez, sin pasarte un borrador para aprobar. Por eso
+          deja señalado en el texto lo que no pudo confirmar contra el material que leyó.
+        </p>
+      ) : null}
+
+      {expandible && abierto ? (
+        <div className="mt-3 border-t border-border/60 pt-3">
+          <CitationReview verification={informe} />
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "default_timeout_seconds": 180,
+  "quick": [
+    "execution/check_env_pins.py",
+    "execution/test_gates_no_ciegos.py",
+    "execution/test_migration_contracts.py",
+    "execution/test_model_policy.py",
+    "execution/test_llm_fallback.py",
+    "execution/test_context_recovery.py",
+    "execution/test_assistant_matter_boundary.py",
+    "execution/test_async_embedding_routes.py",
+    "execution/test_cors_contract.py",
+    "execution/test_document_derivation.py",
+    "execution/test_matter_jurisdictions.py",
+    "execution/test_p0_legal_ledger.py",
+    "execution/test_durable_learning.py",
+    "execution/test_codex_production_provider.py",
+    "execution/test_cambio_de_motor_aviso.py",
+    "execution/test_optional_capabilities.py",
+    "execution/test_catalogo_barreras.py",
+    "execution/test_packs_preflight.py",
+    "execution/test_stage_gate.py",
+    "execution/test_suggestions_cron.py",
+    "execution/test_telegram_lifespan.py",
+    "execution/test_handoff.py",
+    "execution/test_mcp.py",
+    "execution/test_agent_hub.py"
+  ],
+  "full_glob": "execution/test_*.py",
+  "full_requires_database": true,
+  "critical_contracts": [
+    "execution/test_rls.py",
+    "execution/test_citation_seals.py",
+    "execution/test_gates_no_ciegos.py",
+    "execution/test_hitl_flow.py",
+    "execution/test_model_policy.py",
+    "execution/test_matter_jurisdictions.py",
+    "execution/test_p0_legal_ledger.py",
+    "execution/test_durable_learning.py"
+  ]
+}

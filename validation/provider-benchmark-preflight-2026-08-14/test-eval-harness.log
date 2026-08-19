@@ -1,0 +1,94 @@
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � agents.retrieval.pinecone_secondary_notes: [DESACTIVADA] consulta Pinecone con su propio cliente (factura por lectura) y no pasa por las capas envueltas. Es un store SECUNDARIO opt-in y fail-soft: devolver [] es un camino soportado.
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � connectors.notebooklm.consult_notebook: [DESACTIVADA] lanza un subproceso con el CLI de NotebookLM del abogado (su cuota, fuera de este tope). El enriquecimiento es fail-soft: devolver None es un camino soportado.
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � mcp.turn.consult: [DESACTIVADA] levanta los servidores MCP del despacho (subprocesos + red a terceros) y da vueltas de tool-calling; lo que cobren esas herramientas no lo ve este tope. graph._mcp_context ya trata None como 'sigue con el corpus local'.
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � gateway.agent_hub.AgentHub.invoke_result: [DESACTIVADA] delegaci�n a CLIs de agentes externos por subproceso (graph.py ~L939): consume la cuota del despacho por una v�a que este tope no puede medir. El llamador ya degrada fail-soft ante un resultado NO-ok.
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � agent.subscription_llm (CLIs de la suscripci�n): [DECLARADA] los aliases 'cli-*' salen por subproceso al CLI de la suscripci�n del abogado. Pasan por agent.llm._invoke, as� que el guardi�n los CUENTA (tokens y duraci�n), pero su coste en USD es 0 por definici�n: lo que consumen es la CUOTA de la suscripci�n, que no se puede medir en d�lares desde aqu�. Hueco declarado a prop�sito: no es dinero de la tarjeta, es cuota del plan.
+INFO:httpx:HTTP Request: GET https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json "HTTP/1.1 200 OK"
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � embeddings.embed_texts: la llamada NO pas� por litellm.embedding (LiteLLM ausente o respaldo por SDK), as� que no se pudo contar cu�ntos intentos se facturaron: se cobra el PEOR CASO (3 intentos) y no se devuelve nada.
+INFO:mia.agents.graph:lectura del expediente: 1 fragmentos de 1 disponibles (pedidos 8, candidatos 20, complejidad 1.00)
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � agents.retrieval.pinecone_secondary_notes: [DESACTIVADA] consulta Pinecone con su propio cliente (factura por lectura) y no pasa por las capas envueltas. Es un store SECUNDARIO opt-in y fail-soft: devolver [] es un camino soportado.
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � connectors.notebooklm.consult_notebook: [DESACTIVADA] lanza un subproceso con el CLI de NotebookLM del abogado (su cuota, fuera de este tope). El enriquecimiento es fail-soft: devolver None es un camino soportado.
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � mcp.turn.consult: [DESACTIVADA] levanta los servidores MCP del despacho (subprocesos + red a terceros) y da vueltas de tool-calling; lo que cobren esas herramientas no lo ve este tope. graph._mcp_context ya trata None como 'sigue con el corpus local'.
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � gateway.agent_hub.AgentHub.invoke_result: [DESACTIVADA] delegaci�n a CLIs de agentes externos por subproceso (graph.py ~L939): consume la cuota del despacho por una v�a que este tope no puede medir. El llamador ya degrada fail-soft ante un resultado NO-ok.
+WARNING:mia.eval.spend_guard:GASTO NO GOBERNADO por el tope del eval � agent.subscription_llm (CLIs de la suscripci�n): [DECLARADA] los aliases 'cli-*' salen por subproceso al CLI de la suscripci�n del abogado. Pasan por agent.llm._invoke, as� que el guardi�n los CUENTA (tokens y duraci�n), pero su coste en USD es 0 por definici�n: lo que consumen es la CUOTA de la suscripci�n, que no se puede medir en d�lares desde aqu�. Hueco declarado a prop�sito: no es dinero de la tarjeta, es cuota del plan.
+INFO:mia.agents.graph:lectura del expediente: 1 fragmentos de 1 disponibles (pedidos 8, candidatos 20, complejidad 1.00)
+
+-- offline: scorer, comparador, casos, persistencia --
+  [OK]   score: cita sin marca → citas_sin_respaldo ≥ 1 y flag
+  [OK]   score: cierre del diagnóstico detectado
+  [OK]   score: cita con [VERIFICAR] → NO cuenta como sin respaldo
+  [OK]   score: borrador vacío → flag sin_borrador y no ok
+  [OK]   score: borrador minúsculo → flag
+  [OK]   score: sin cierre del diagnóstico → flag
+  [OK]   compare: suben citas sin respaldo → regresión
+  [OK]   compare: se pierde el cierre → regresión
+  [OK]   compare: deja de producir borrador → regresión
+  [OK]   compare: borrador encogido a <mitad → regresión
+  [OK]   compare: bajan citas sin respaldo → mejora
+  [OK]   compare: idéntico → sin_cambio
+  [OK]   compare: regresión + mejora → veredicto REGRESIÓN (fail-safe)
+  [OK]   casos: el set canónico es no vacío y todos SINTÉTICOS
+  [OK]   casos: cada uno trae id, mensaje y documentos
+  [OK]   build_report: resumen con conteos
+  [OK]   persist_report: escribe cases.jsonl + summary.json
+  [OK]   run_eval._run_repeat PERSISTE los crudos (persist_report cableado)
+  [OK]   run_eval: el camino --repeat respeta --run-id (no genera uno propio siempre)
+  [OK]   evidencia: N corridas con draft_full → completa
+  [OK]   evidencia: una parte SIN draft_full → incompleta y la señala por índice
+  [OK]   evidencia: lista vacía NO se declara completa (no hay nada que releer)
+  [OK]   aggregate_eval_runs: calcula la evidencia y la persiste en el reporte
+  [OK]   aggregate_eval_runs: avisa cuando la evidencia está incompleta
+  [OK]   aggregate_eval_runs: --exige-evidencia puede REPROBAR el agregado
+
+-- offline: Frente E — fuga de jurisdicción, procedencia, tasa, agéntico --
+  [OK]   risk cases: el set de riesgo es no vacío y todos SINTÉTICOS
+  [OK]   risk cases: cada uno trae id y mensaje
+  [OK]   risk cases: el examen por defecto es exactamente canónicos + riesgo, sin duplicados
+  [OK]   risk cases: ninguno se coló en el set canónico puro (include_risk=False)
+  [OK]   risk cases: los de EXPEDIENTE GRANDE quedan FUERA del examen por defecto
+  [OK]   risk cases: el caso de fuga de jurisdicción tiene expediente VACÍO a propósito
+  [OK]   risk cases: el caso de procedencia tiene expediente VACÍO a propósito
+  [OK]   risk cases: el caso de disciplina de citas sella una forma ABREVIADA ('arts.')
+  [OK]   jurisdiction_leak: razona por institución sin citar articulado → SIN fuga
+  [OK]   jurisdiction_leak: MUTADO — se añade una cita concreta → SÍ detecta la fuga (mutación roja sobre el mismo texto limpio)
+  [OK]   jurisdiction_leak_rate: 3 corridas limpias → tasa 0.0
+  [OK]   jurisdiction_leak_rate: MUTADO — 2 de 3 corridas con fuga → tasa 0.6667 (reporta TASA, no un booleano de una pasada)
+  [OK]   jurisdiction_leak_rate: una fuga que solo aparece en el DIAGNÓSTICO también cuenta
+  [OK]   provenance: atribución al despacho SIN material sellado → indebida
+  [OK]   provenance: MUTADO — MISMA frase pero CON material sellado → ya NO es indebida
+  [OK]   provenance: sin frases de procedencia → no marca nada aunque no haya material
+  [OK]   compare_agentic: el motivo de parada y el delta de tokens viajan por caso
+  [OK]   compare_agentic: MUTADO — sin traza (motor sin herramientas) → corrio_agentic False y motivo_parada None, NO se inventa un motivo
+
+-- db: política fail-closed, candado, end-to-end por el grafo --
+  [OK]   política: sin flag → allow_real_data False (fail-closed)
+  [OK]   política: con el flag → allow_real_data True
+  [OK]   candado: caso NO sintético sin autorización → EvalConsentError
+  [OK]   e2e: el turno llegó a borrador
+  [OK]   e2e: intake recuperó el expediente del caso (RAG, no a ciegas)
+  [OK]   e2e: la cita sin respaldo del fake fue OMITIDA del borrador (jurisdicción desconocida) y el informe lo registra
+  [OK]   e2e por oración (rama genérica): el informe trae 'oraciones' con con_omision≥1 y sin_respaldo_afirmativa≥1 (fake desobediente end-to-end)
+  [OK]   e2e MUTADO: el mismo borrador sin el modo por oración NO trae 'oraciones'; con él sí
+  [OK]   e2e: el informe de verificación viaja en el resultado
+  [OK]   e2e: el resultado trae puntaje con flags
+  [OK]   e2e: el resultado trae diagnosis_preview (antes se perdía por completo)
+  [OK]   e2e: provenance viaja en el resultado y ve que SÍ hubo material sellado
+  [OK]   e2e agentic_reading: con la bandera apagada (default de esta suite, nunca se tocó), el resultado NO trae la traza — mismo turno de siempre, sin el bucle
+  [OK]   e2e run_case_n: corre el caso 3 veces, con matter_id nuevo cada vez
+  [OK]   e2e run_case_n: el expediente VACÍO no recupera documentos en ninguna corrida
+  [OK]   e2e jurisdiction_leak_rate: la fuga del fake fue interceptada en las 3 corridas (0 emitidas) y cada informe del diagnóstico registra la omisión
+  [OK]   e2e procedencia: despacho vacío → 0 documentos recuperados
+  [OK]   e2e procedencia: provenance ve que este turno no selló material
+  [OK]   S5: un juez sustantivo arbitrario se RECHAZA antes de correr nada (UngovernedJudge) — ni siquiera el que traería una llamada de coartada
+  [OK]   S5: la marca burlable `governed_judge` ya no existe (no se puede acreditar un juez poniéndole un atributo)
+  [OK]   S1: UngovernedJudge deriva de SpendGuardHalt(BaseException): un `except Exception` NO se la come
+  [OK]   S5: sin juez, la calificación sustantiva DETERMINISTA (cobertura de rúbrica) sigue funcionando igual
+
+-- db: S2 — el gasto del banco no contamina el sobre mensual del despacho --
+  [OK]   S2: el gasto del mes cuenta SOLO producción (USD 0.1100 == 0.1100) y NO la fila source='eval' (USD 7.7700)
+  [OK]   S2 · producción INTACTA: un turno normal sigue reservando saldo mensual (reserve_call_sync devolvió un hold)
+  [OK]   S2: el baseline del mes también excluye el eval (USD 0.1100 == 0.1100)
+  [OK]   S2 · producción INTACTA: tras liquidar, el mes suma producción + coste real (USD 0.14 == 0.14) y la reserva quedó devuelta
+
+69/69 checks PASS
+Banco de pruebas OK — CP-E4 verificado.

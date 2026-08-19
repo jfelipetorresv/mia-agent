@@ -4,13 +4,14 @@ El `tenant_id` del JWT viaja a request.state y, en los handlers, al GUC
 `app.tenant_id` vía db.pool.tenant_connection (donde RLS lo aplica).
 
 CP2 (decisión #27): tras autenticar, el middleware también fija la POLÍTICA DE MODELO
-del tenant (suscripcion/nube/soberano) en el ContextVar de agent/llm.py, leyendo
+del tenant (suscripcion/codex/nube/soberano) en el ContextVar de agent/llm.py, leyendo
 `tenant_settings.config['model_policy']` con un caché en memoria por tenant (TTL 60s)
 para no pagar un roundtrip de DB en cada request. Se resetea en finally.
 """
 from __future__ import annotations
 
 import time
+import uuid
 
 import jwt
 from fastapi import Request
@@ -103,6 +104,15 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         tenant_id = payload.get("tenant_id")
         if not tenant_id:
             return JSONResponse({"detail": "Token sin tenant_id"}, status_code=401)
+        # Riesgo #72: el tenant_id se usa aguas abajo como NOMBRE de carpeta en disco
+        # (SOUL, wiki, trazas — fuera del RLS de Postgres). El aislamiento no debe
+        # descansar en sanear ese nombre: se exige que sea un UUID canónico en el borde
+        # (auth.py siempre acuña uuid4; la columna `tenants.id` es uuid). Así, aguas
+        # abajo, el saneo es la identidad y dos despachos jamás colapsan a una carpeta.
+        try:
+            uuid.UUID(str(tenant_id))
+        except (ValueError, AttributeError, TypeError):
+            return JSONResponse({"detail": "Token inválido"}, status_code=401)
         request.state.tenant_id = tenant_id
         request.state.email = payload.get("email")
 

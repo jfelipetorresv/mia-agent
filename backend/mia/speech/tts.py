@@ -36,8 +36,14 @@ TTS_IS_LOCAL = True
 # esto (y install.py lo importa para descargar el mismo modelo). La voz la eligió
 # Pipe por el oído (capa 3, contenido que oye el cliente).
 #
-# es_MX-ald-medium: español latinoamericano (México), 22050 Hz, 1 hablante —
-# más cercano al oído colombiano que el castellano. sid/speed por defecto.
+# es_MX-ald-medium: español latinoamericano (México), 22050 Hz, 1 hablante.
+# sid/speed por defecto.
+#
+# PENDIENTE (agnosticismo de jurisdicción): hoy la voz es una sola para todos los
+# despachos, y un despacho español oiría acento latinoamericano. La elección correcta
+# es POR DESPACHO —del pack de jurisdicción o de una preferencia del despacho—, pero
+# cambiarla no es cosmético: el modelo es un asset que descarga install.py (habría que
+# empaquetar una voz por variante). Se deja documentado, no resuelto.
 _TTS_DIR = "vits-piper-es_MX-ald-medium"
 _TTS_MODEL_FILE = "es_MX-ald-medium.onnx"
 _TTS_TOKENS = "tokens.txt"

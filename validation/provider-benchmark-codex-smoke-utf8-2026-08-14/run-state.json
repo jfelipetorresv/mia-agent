@@ -1,0 +1,30 @@
+{
+  "schema_version": "mia-provider-benchmark-runner/v2",
+  "config": {
+    "plan_sha256": "14ec39c2e98b59a6e68847bf06a416320c9744afe210aed26cd063d8c09ba767",
+    "revision": "1fe34325deb5dfe77d7d25b1b3629af84136bba3",
+    "mode": "smoke-single-arm-non-comparable",
+    "arms": [
+      "codex"
+    ],
+    "session_id": "provider-benchmark-20260814",
+    "max_usd": 1.0,
+    "max_wall_minutes": 30.0,
+    "config_sha256": "c357af5d90b78eae377d6782bb8aae844edf5be49de99100b30ec26ab8012670"
+  },
+  "started_at": "2026-08-14T15:53:07.816562-05:00",
+  "updated_at": "2026-08-14T15:55:51.780775-05:00",
+  "completed_units": [
+    "codex/fuga-jurisdiccion-contrato-sin-pais/0"
+  ],
+  "inflight": null,
+  "cumulative": {
+    "wall_seconds": 163.797,
+    "spent_usd": 0.0,
+    "calls": 4,
+    "total_tokens": 60706,
+    "llm_seconds": 160.045
+  },
+  "complete": true,
+  "comparable": false
+}

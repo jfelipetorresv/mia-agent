@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ApiError, apiSend, setToken } from "@/lib/api";
+import { apiSend, plainMessage, setToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -39,11 +39,10 @@ export default function RegisterPage() {
       // Primer viaje: tras crear el despacho seguimos a la activación de Mia,
       // no directo a conocerte. La navegación explícita la dispara esta pantalla.
       router.replace("/activar");
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Solo mensajes del backend (ApiError, en llano — p. ej. "Email ya registrado"
       // o el freno anti fuerza-bruta); un error de red jamás se muestra en crudo.
-      const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
-      setError(msg || "No se pudo crear la cuenta.");
+      setError(plainMessage(err, "No se pudo crear la cuenta."));
     } finally {
       setLoading(false);
     }
@@ -68,7 +67,7 @@ export default function RegisterPage() {
           <WelcomeField>
             <div className="space-y-2 text-center">
               <MiaLine
-                text="Soy Mia. Creemos el espacio de tu despacho."
+                text="Soy Mia. Creemos el espacio de tu firma u organización."
                 className="text-xl sm:text-2xl"
               />
               <p className="text-sm text-muted-foreground">
@@ -77,12 +76,12 @@ export default function RegisterPage() {
             </div>
           </WelcomeField>
 
-          <WelcomeField label="¿Cómo se llama tu despacho?" htmlFor="firm">
+          <WelcomeField label="¿Cómo se llama tu firma u organización?" htmlFor="firm">
             <Input
               id="firm"
               value={firmName}
               onChange={(e) => setFirmName(e.target.value)}
-              placeholder="Lexia Abogados"
+              placeholder="Ej: Fajardo & Asociados"
               autoFocus
               required
             />
@@ -95,7 +94,7 @@ export default function RegisterPage() {
               onChange={(e) => setEmail(e.target.value)}
               type="email"
               autoComplete="email"
-              placeholder="tu@despacho.com"
+              placeholder="tu@firma.com"
               required
             />
           </WelcomeField>
@@ -132,7 +131,7 @@ export default function RegisterPage() {
               size="lg"
               className="w-full"
             >
-              {loading ? "Creando tu espacio…" : "Crear mi despacho"}
+              {loading ? "Creando tu espacio…" : "Crear mi firma u organización"}
             </Button>
           </WelcomeField>
         </Stagger>

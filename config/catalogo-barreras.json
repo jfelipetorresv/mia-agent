@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "producto": "mia",
+  "nota": "Catálogo barrera ↔ productor ↔ invocador. Una invariante DURA sin invocador de producción hace fallar el gate execution/test_catalogo_barreras.py. Adaptado de la idea de catalogo-barreras de Lexia; no copia el CLI jurídico.",
+  "invariantes": [
+    {
+      "id": "gate-lanzador-health",
+      "dureza": "dura",
+      "productor": "backend/mia/api/run.py::main",
+      "invocador": "python -m mia.api.run",
+      "verificacion": "GET /health → 200",
+      "simbolos": ["mia.api.run:main", "mia.api.main:health"]
+    },
+    {
+      "id": "verification-unavailable-no-final",
+      "dureza": "dura",
+      "productor": "backend/mia/memory/legal_ledger.py::verification_passes",
+      "invocador": "backend/mia/agents/graph.py::finalize_node",
+      "simbolos": ["mia.memory.legal_ledger:verification_passes", "mia.agents.graph:MatterGraphBuilder.finalize_node"]
+    },
+    {
+      "id": "hitl-hash-recibo",
+      "dureza": "dura",
+      "productor": "backend/mia/memory/legal_ledger.py::content_hash",
+      "invocador": "backend/mia/api/routes/hitl.py::_require_current_draft_hash",
+      "simbolos": ["mia.memory.legal_ledger:content_hash", "mia.api.routes.hitl:_require_current_draft_hash"]
+    },
+    {
+      "id": "draft-fail-closed-packs",
+      "dureza": "dura",
+      "productor": "backend/mia/agents/stage_gate.py::require_upstream_for_draft",
+      "invocador": "backend/mia/agents/graph.py::draft_node",
+      "simbolos": ["mia.agents.stage_gate:require_upstream_for_draft", "mia.agents.graph:MatterGraphBuilder.draft_node"]
+    },
+    {
+      "id": "suggestions-cron",
+      "dureza": "dura",
+      "productor": "backend/mia/cron/suggestions.py::generate_suggestions",
+      "invocador": "backend/mia/cron/scheduler.py::build_scheduler",
+      "simbolos": ["mia.cron.suggestions:generate_suggestions", "mia.cron.scheduler:build_scheduler"]
+    },
+    {
+      "id": "telegram-lifespan",
+      "dureza": "dura",
+      "productor": "backend/mia/channels/telegram_bridge.py::start_bridge_if_configured",
+      "invocador": "backend/mia/api/main.py::lifespan",
+      "simbolos": ["mia.channels.telegram_bridge:start_bridge_if_configured", "mia.api.main:lifespan"]
+    },
+    {
+      "id": "export-events-reader",
+      "dureza": "dura",
+      "productor": "backend/mia/memory/legal_ledger.py::list_exports",
+      "invocador": "backend/mia/api/routes/ux.py::list_matter_exports",
+      "simbolos": ["mia.memory.legal_ledger:list_exports", "mia.api.routes.ux:list_matter_exports"]
+    },
+    {
+      "id": "turn-budget-second-pass",
+      "dureza": "dura",
+      "productor": "backend/mia/policy/turn_budget.py::authorize_expensive",
+      "invocador": "backend/mia/agents/graph.py::verificador_citas_node",
+      "simbolos": ["mia.policy.turn_budget:authorize_expensive", "mia.agents.graph:MatterGraphBuilder.verificador_citas_node"]
+    }
+  ]
+}

@@ -1,12 +1,12 @@
 """Mia · api.routes.stream — SSE del turno del asunto (1d · PASO 4).
 
-GET /matters/{matter_id}/stream?message=... abre el SSE: corre intake→analysis→
-draft y emite eventos hasta que el grafo se pausa (interrupt) esperando la revisión
-del abogado. El cierre (finalizing→done) lo emite el POST de aprobación
-(decisión #11). El abogado nunca ve jerga técnica (§G): la capa traduce el avance
-del grafo a frases del oficio.
+POST /matters/{matter_id}/stream  {message}  — camino preferido (el texto no viaja
+en la URL). GET con ?message= se mantiene por compatibilidad con gates antiguos.
 
-El mensaje del abogado entra como query param `message` (GET no lleva body).
+Abre el SSE: corre intake→analysis→draft y emite eventos hasta que el grafo se
+pausa (interrupt) esperando la revisión del abogado. El cierre (finalizing→done)
+lo emite el POST de aprobación (decisión #11). El abogado nunca ve jerga técnica
+(§G): la capa traduce el avance del grafo a frases del oficio.
 """
 from __future__ import annotations
 
@@ -14,18 +14,22 @@ import logging
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ...agents.checkpointer import open_checkpointer
 from ...agents.context_references import expand_context_references
-from ...agents.graph import build_matter_graph, build_project_graph
+from ...agents.graph import (DELEGATION_INTERRUPT_KIND, PROJECT_VERIFICATION_NODE,
+                             PROPOSAL_PROMPT, build_matter_graph, build_project_graph)
 from ...agents.personas import persona_service
 from ...agents.state import initial_state, thread_id_for
+from ...agent import llm
 from ...config import MIA_CONTEXT_WINDOW
 from ...db import pool
 from ...observability import audit
 from ...policy import budget as policy_budget
-from ._common import assert_owns_matter, load_profile_snapshot, prepare_new_turn, sse
+from ._common import (assert_owns_matter, load_profile_snapshot, matter_kind,
+                      prepare_new_turn, sse)
 
 router = APIRouter(tags=["matters"])
 logger = logging.getLogger("mia.api.stream")
@@ -91,6 +95,15 @@ async def _stream_turn_events(
             break
         if "__interrupt__" in chunk:
             v = _interrupt_value(chunk)
+            # CP-HUB2: el turno tiene DOS pausas. Se distinguen por el 'tipo' que cada
+            # interrupt trae en su propio payload — no por el orden ni por adivinar. Una
+            # propuesta de ayudante NO es un borrador: no marca pending_review (el asunto no
+            # tiene nada que aprobar todavía) ni emite 'awaiting_review' (la pantalla del
+            # borrador no debe abrirse con un texto que no es un borrador).
+            if v.get("tipo") == DELEGATION_INTERRUPT_KIND:
+                yield sse("awaiting_delegation", v.get("message", PROPOSAL_PROMPT),
+                          propuesta=v.get("propuesta"))
+                continue
             # Riesgo #25: marcar el asunto como "borrador esperando revisión"
             # (RLS activo: el tenant ya fue validado con assert_owns_matter).
             async with pool.tenant_connection(tenant_id) as conn:
@@ -106,20 +119,30 @@ async def _stream_turn_events(
                 verification=v.get("verification"),
             )
             continue
-        for node in chunk:
+        for node, update in chunk.items():
             if node in _NODE_PROGRESS:
                 yield sse("thinking", _NODE_PROGRESS[node])
-            elif node == "verification":
-                yield sse("draft_ready", "Borrador listo.")
+            elif node == "verificador_citas":
+                # El gate de citas (f264b1e) puede devolver el turno a redacción: solo
+                # cuando su update trae el borrador (pasó, o agotó reintentos) el
+                # borrador está de verdad listo; si no, es una pasada de corrección.
+                if isinstance(update, dict) and update.get("draft"):
+                    yield sse("draft_ready", "Borrador listo.")
+                else:
+                    yield sse("thinking", "Mia está corrigiendo las citas del borrador…")
 
 
 # ── Bloque A (Proyectos) · turno SIN HITL ─────────────────────────────────────
-# Avance del único especialista del grafo de proyecto (build_project_graph) → frases
-# del oficio (§G). Sin interrupt, sin pending_review: el turno siempre corre completo
-# en una sola pasada (intake → work) y termina con el evento 'reply'.
+# Avance del grafo de proyecto (build_project_graph) → frases del oficio (§G). Sin
+# interrupt del borrador, sin pending_review: el turno siempre corre completo en una
+# sola pasada (intake → work → verificación) y termina con el evento 'reply'.
+#
+# 'work' ya NO entrega el texto: entrega el borrador crudo de la respuesta y cede el
+# turno al guardián de citas. Por eso su frase anuncia el paso que ARRANCA (mismo
+# patrón que el flujo de asunto, donde 'draft' anuncia la verificación).
 _PROJECT_NODE_PROGRESS = {
     "intake": "Mia está revisando las fuentes del proyecto…",
-    "work": "Mia está trabajando…",
+    "work": "Mia está verificando las normas y la jurisprudencia que citó…",
 }
 
 
@@ -136,7 +159,11 @@ async def _stream_project_events(
 
     Mismo kill-on-disconnect que _stream_turn_events (CP-S3): sin consumidor no tiene
     sentido seguir gastando minutos de razonamiento. NUNCA marca pending_review (eso es
-    exclusivo del flujo de asunto con HITL) ni emite 'awaiting_review'."""
+    exclusivo del flujo de asunto con HITL) ni emite 'awaiting_review'.
+
+    CP-HUB2: un proyecto SÍ puede pausarse — no por su resultado (que no se aprueba), sino
+    porque Mia proponga sacar texto del computador. El muro de confidencialidad es el mismo
+    para asuntos y proyectos."""
     async for chunk in graph.astream(turn_input, cfg, stream_mode="updates"):
         if await is_disconnected():
             logger.info("stream (proyecto): navegador desconectado; se corta el turno "
@@ -148,13 +175,24 @@ async def _stream_project_events(
                     logger.exception("stream (proyecto): no se pudo limpiar el checkpoint "
                                      "a medias (tenant=%s matter=%s)", tenant_id, matter_id)
             break
+        if "__interrupt__" in chunk:
+            v = _interrupt_value(chunk)
+            if v.get("tipo") == DELEGATION_INTERRUPT_KIND:
+                yield sse("awaiting_delegation", v.get("message", PROPOSAL_PROMPT),
+                          propuesta=v.get("propuesta"))
+            continue
         for node, update in chunk.items():
-            if node == "work":
-                # work_node lleva su texto en su propio campo 'reply' del estado (ver
-                # graph.py) — aquí se traduce al contrato visible del cliente: el
-                # evento SSE 'reply'.
+            if node == PROJECT_VERIFICATION_NODE:
+                # El texto de un proyecto viaja en su propio campo 'reply' del estado
+                # (ver graph.py) y se traduce aquí al contrato visible del cliente: el
+                # evento SSE 'reply'. Se toma del nodo de VERIFICACIÓN, que es el que
+                # deja el texto ya marcado: emitirlo desde 'work' entregaría al
+                # navegador las citas sin revisar (no hay streaming token a token — el
+                # texto sale completo y una sola vez, así que este es EL punto donde el
+                # guardián de citas se hace efectivo o no sirve de nada).
                 reply = (update or {}).get("reply") or ""
-                yield sse("reply", "Mia terminó.", reply=reply)
+                informe = ((update or {}).get("metadata") or {}).get("verification")
+                yield sse("reply", "Mia terminó.", reply=reply, verificacion=informe)
             elif node in _PROJECT_NODE_PROGRESS:
                 yield sse("thinking", _PROJECT_NODE_PROGRESS[node])
 
@@ -206,6 +244,70 @@ async def _recover_project_history(graph: Any, tenant_id: str, matter_id: str) -
     return _budget_project_history(st.values.get("history") or [])
 
 
+# ── Aviso de costo: la suscripción se apalanca, el crédito se avisa (sesión 53) ──
+# `llm` ACUMULA los cambios de motor del turno y arma el texto; aquí se decide cuándo
+# llega a la pantalla. Es el enganche que faltaba: sin esto el abogado podía pagar
+# crédito de tarjeta sin que nada se lo dijera (piloto real, USD 0,57 en silencio).
+AVISO_DE_COSTO_EVENT = "aviso_de_costo"
+
+
+def evento_aviso_de_costo(cambios: list[dict] | None) -> dict | None:
+    """Traduce los cambios de motor del turno a un evento SSE, o None si no hay nada
+    que decirle al abogado (la regla de cuándo hay algo que decir vive en `llm`)."""
+    aviso = llm.aviso_cambio_de_motor(cambios)
+    if aviso is None:
+        return None
+    return sse(
+        AVISO_DE_COSTO_EVENT, aviso["aviso"],
+        sugerencia=aviso["sugerencia"], veces=aviso["veces"], por_tiempo=aviso["por_tiempo"],
+    )
+
+
+async def turno_sse(
+    saludo: str,
+    eventos: Callable[[], AsyncIterator[dict]],
+    tenant_id: str,
+    matter_id: str,
+    error_msg: str = "Mia no pudo completar el turno. Intenta de nuevo.",
+) -> AsyncIterator[dict]:
+    """Cuerpo del SSE de un turno: saludo, los eventos del grafo y —al cerrar— el aviso
+    de costo si la suscripción no alcanzó y hubo que pagar crédito.
+
+    El recolector se abre ANTES de tocar el grafo (los async generators no aíslan
+    contexto, así que el ContextVar queda visible para todo lo que corra dentro, incluidas
+    las tareas que el grafo cree). El aviso se emite también cuando el turno FALLA: si ya
+    se gastó crédito, el abogado tiene que enterarse aunque la respuesta no llegara.
+
+    Extraído del endpoint para poder ejercerlo con dobles, sin DB ni modelo (regla 57:
+    ninguna lección sin barrera, y una barrera que no puede correr no es barrera)."""
+    yield sse("thinking", saludo)
+    cambios: list[dict] = []
+    try:
+        with llm.recolectar_cambios_de_motor() as registro:
+            cambios = registro
+            async for ev in eventos():
+                yield ev
+    except HTTPException:
+        # El ciclo de vida (409/401) es una respuesta HTTP, no un evento del turno.
+        raise
+    except Exception:  # noqa: BLE001 — el turno falla en llano, nunca con un stacktrace
+        logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)
+        yield sse("error", error_msg)
+    aviso = evento_aviso_de_costo(cambios)
+    if aviso is not None:
+        yield aviso
+
+
+class StreamBody(BaseModel):
+    message: str = Field(..., min_length=1)
+
+
+@router.post("/matters/{matter_id}/stream")
+async def stream_matter_post(matter_id: str, request: Request, body: StreamBody):
+    """Turno por POST: el mensaje viaja en el body (no en la URL ni en logs de proxy)."""
+    return await stream_matter(matter_id, request, body.message)
+
+
 @router.get("/matters/{matter_id}/stream")
 async def stream_matter(
     matter_id: str,
@@ -219,10 +321,7 @@ async def stream_matter(
 
     # Bloque A: 'asunto' (comportamiento actual, INTACTO) vs 'proyecto' (sin HITL).
     # matter_id ya está validado por assert_owns_matter — la lectura va bajo RLS igual.
-    async with pool.tenant_connection(tenant_id) as conn:
-        krow = await (await conn.execute(
-            "SELECT kind FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
-    kind = krow[0] if krow else "asunto"
+    kind = await matter_kind(tenant_id, matter_id)
     graph_builder = build_project_graph if kind == "proyecto" else build_matter_graph
 
     # CP-E1: tope de gasto de IA del despacho (política activa). El turno es GET/SSE,
@@ -288,28 +387,34 @@ async def stream_matter(
         retrieval_query=retrieval_query, persona=persona_state, history=prior_history,
     )
 
-    async def gen():
-        if kind == "proyecto":
-            yield sse("thinking", "Mia está revisando las fuentes del proyecto…")
-        else:
-            yield sse("thinking", "Mia está revisando el expediente…")
-        try:
-            async with open_checkpointer() as cp:
-                graph = graph_builder(cp)
-                if kind == "proyecto":
-                    async for ev in _stream_project_events(
-                        graph, turn_input, cfg, tenant_id, matter_id,
-                        request.is_disconnected, checkpointer=cp,
-                    ):
-                        yield ev
-                else:
-                    async for ev in _stream_turn_events(
-                        graph, turn_input, cfg, tenant_id, matter_id,
-                        request.is_disconnected, checkpointer=cp,
-                    ):
-                        yield ev
-        except Exception:
-            logger.exception("stream falló (tenant=%s matter=%s)", tenant_id, matter_id)
-            yield sse("error", "Mia no pudo completar el turno. Intenta de nuevo.")
+    async def eventos_del_grafo():
+        async with open_checkpointer() as cp:
+            graph = graph_builder(cp)
+            emisor = _stream_project_events if kind == "proyecto" else _stream_turn_events
+            async for ev in emisor(
+                graph, turn_input, cfg, tenant_id, matter_id,
+                request.is_disconnected, checkpointer=cp,
+            ):
+                yield ev
+            # TODO(pieza-4e · cierre automático a ~65%): ESTE es el punto de integración
+            # exacto para un cierre auto disparado desde el backend, PERO hoy no hay aquí un
+            # presupuesto de contexto que crezca: `prepare_new_turn` BORRA el checkpoint al
+            # terminar el turno (_common.py: `adelete_thread` cuando el grafo llega a END),
+            # así que `graph.aget_state(cfg)` no acumula la conversación entre turnos y la
+            # compresión del runner es REACTIVA (solo ante CONTEXT_TOO_LONG), no un medidor
+            # de llenado. El tamaño real de la conversación vive en el FRONTEND (el hilo
+            # visible). Por eso el disparo automático lo hace el frontend llamando a
+            # POST /api/matters/{id}/cierre con {auto: true, messages: <hilo visible>} cuando
+            # detecta ~65% de llenado — misma ruta que el botón manual. Si en el futuro el
+            # runner conserva un transcript persistente por sesión, invocar AQUÍ (fail-soft,
+            # sin bloquear el cierre del SSE):
+            #     await session_briefing.maybe_auto_cierre(tenant_id, matter_id, <messages>)
+            # NO se cablea una llamada al LLM dentro del generador SSE sin una fuente real de
+            # la conversación (sería inventar el mecanismo — regla dura: cero cron/heurística).
 
-    return EventSourceResponse(gen(), ping=SSE_PING_SECONDS)
+    saludo = ("Mia está revisando las fuentes del proyecto…" if kind == "proyecto"
+              else "Mia está revisando el expediente…")
+    return EventSourceResponse(
+        turno_sse(saludo, eventos_del_grafo, tenant_id, matter_id),
+        ping=SSE_PING_SECONDS,
+    )

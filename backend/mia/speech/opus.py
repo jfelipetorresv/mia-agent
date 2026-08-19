@@ -3,7 +3,8 @@
 Las notas de voz de Telegram son OGG/Opus; el decodificador WAV de audio.py
 (stdlib `wave`) no las lee. Este módulo aísla el ÚNICO punto que necesita un
 códec real, con PyAV (`av`) — un wheel autocontenido que empaqueta ffmpeg, sin
-binario externo (funciona igual en Modo A/Docker y Modo B/Windows nativo).
+binario externo (funciona igual en Windows nativo hoy; si algún día hubiera
+un despliegue en Docker/Linux, seguiría funcionando igual sin cambios).
 
 Dos direcciones:
   - `decode_ogg_opus_to_pcm16k(data)`: nota de voz ENTRANTE → PCM 16 kHz mono

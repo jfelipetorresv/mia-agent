@@ -132,8 +132,41 @@ def install(script: dict[str, list]) -> FakeCompletions:
     return fc
 
 
+def content_text(msg: dict) -> str:
+    """Texto REAL que el modelo recibe en `msg`, venga como string o como bloques.
+
+    Desde que el prefix caching de Anthropic quedó CABLEADO (commit e8ce3b3),
+    `llm._messages_with_cache` reemplaza —solo para los aliases directos de Anthropic, que
+    son justamente la cadena de este gate: `set_model_policy("nube")` → claude-sonnet— el
+    `content` del system de un `str` por una LISTA de bloques con `cache_control`. El
+    cliente falso se instala en `llm._client`, es decir POR DEBAJO de esa transformación,
+    así que lo que queda en `messages_seen` es la lista, no el string. (Sonda: este gate
+    registra 10 conversiones reales por corrida.)
+
+    Concatenar los bloques reconstruye el system BYTE A BYTE — es el invariante que
+    `prompt_builder.cache_split` declara (`prefijo + resto == system_text`); el marcado de
+    caché es metadata que el modelo no renderiza. Falla en seguro ante una forma
+    inesperada: devuelve texto vacío o su `str()`, nunca algo que haga pasar una aserción
+    de presencia por accidente.
+    """
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "".join(str(b.get("text") or "") for b in c if isinstance(b, dict))
+    return str(c or "")
+
+
 def toks(messages: list[dict]) -> int:
-    return sum(estimate_tokens(str(m.get("content") or "")) for m in messages)
+    # Sobre el TEXTO reconstruido, no sobre el `str()` de la lista de bloques: ese repr
+    # añade las llaves, las comillas, los `cache_control` y escapa cada salto de línea,
+    # de modo que se estaría midiendo el CONTENEDOR y no el prompt. Medido: infla 37
+    # tokens por mensaje-system. Hoy el sesgo es el mismo en los dos prompts de e3 y se
+    # cancela, pero se cancela por casualidad: basta con que una pasada salga por un
+    # alias con caché (lista) y la otra por uno sin caché —mia-local, el eslabón
+    # siguiente de la cadena de fallback— para que el sesgo deje de ser simétrico y e3
+    # dictamine sobre una diferencia que no existe (o esconda una que sí).
+    return sum(estimate_tokens(content_text(m)) for m in messages)
 
 
 # ── datos de prueba ──────────────────────────────────────────────────────────
@@ -287,8 +320,10 @@ def run_db_checks(ids: dict, obs: dict) -> None:
     check("a9 · la nota del método está en el prompt (contenido + ruta)",
           "término de dos años" in up and "metodos/caducidad.md" in up)
     check("a10 · el expediente sigue presente (los docs no se desplazan)",
-          # CP-S1: los documentos van sellados (<<<DOC n>>>) en vez de "[doc n]".
-          "<<<DOC 1>>>" in up and "Demanda de reparación directa" in up)
+          # CP-S1: los documentos van sellados (<<<DOC n ...>>>) en vez de "[doc n]".
+          # El sello ahora puede traer la procedencia (<<<DOC 1 · archivo.pdf · folio 3>>>)
+          # para que Mia pueda citar por nombre y folio: se compara el PREFIJO.
+          "<<<DOC 1" in up and "Demanda de reparación directa" in up)
 
     print("\n-- b · AISLAMIENTO: B nunca ve el knowledge de A --")
     kb = obs["kb"]
@@ -317,8 +352,20 @@ def run_db_checks(ids: dict, obs: dict) -> None:
                      "Expediente:\n(sin documentos recuperados del expediente)")
     got_sys = obs["c_messages"][0]["content"]
     got_user = obs["c_messages"][1]["content"]
+    # Prefix caching de Anthropic: para los alias claude-* (aquí claude-sonnet) el system
+    # se transporta como 2 bloques de content con `cache_control` (habilita el prefix
+    # caching) cuya CONCATENACIÓN reconstruye el string de 10 capas byte a byte. La
+    # garantía de no-regresión es el TEXTO que ve el modelo, no la forma de transporte.
+    # Se usa el `content_text` del módulo (el mismo que emplea `toks`): una sola forma de
+    # leer el content en toda la suite, en vez de dos reconstrucciones que pueden divergir.
+    got_sys_text = content_text(obs["c_messages"][0])
     check("c3 · system prompt determinista = fachada de 10 capas (byte a byte)",
-          got_sys == expected_system and graph_mod.ANALYSIS_SYSTEM in got_sys)
+          got_sys_text == expected_system and graph_mod.ANALYSIS_SYSTEM in got_sys_text)
+    # c3b · el prefijo estable quedó marcado para el prefix caching (claude-* → bloques
+    # con cache_control; la MEDICIÓN del panel captura el ahorro real).
+    check("c3b · el system de un alias Anthropic marca cache_control en el prefijo estable",
+          isinstance(got_sys, list) and any(
+              isinstance(b, dict) and b.get("cache_control") for b in got_sys))
     check("c4 · user prompt IDÉNTICO al de hoy (byte a byte)", got_user == expected_user)
     check("c5 · sin rastro de la sección de conocimiento",
           graph_mod.KNOWLEDGE_HEADER not in got_user and cr.KNOWLEDGE_TRIMMED_MARKER not in got_user)
@@ -342,6 +389,14 @@ def run_budget_checks() -> None:
           and cr.TEXT_CUT_MARKER in section)
     check("d3 · sin notas → sección vacía (prompt intacto)",
           graph_mod._render_knowledge([], window) == "")
+    progressive = graph_mod._render_knowledge([
+        {"content": "NO DEBE ENTRAR", "source_path": "pendiente.md", "doc_status": "borrador"},
+        {"content": "método confirmado", "source_path": "ok.md", "doc_status": "verificado"},
+    ], window)
+    check("d3b · índice visible, pero borradores no entran como contexto completo",
+          "pendiente.md [pendiente]" in progressive
+          and "NO DEBE ENTRAR" not in progressive
+          and "método confirmado" in progressive)
 
     # También a través del nodo: el prompt del analysis respeta el presupuesto.
     saved = config.MIA_CONTEXT_WINDOW
@@ -364,15 +419,29 @@ def run_budget_checks() -> None:
 # ── e · shrink: knowledge se recorta ANTES que documents (offline) ───────────
 def run_shrink_checks() -> None:
     print("\n-- e · shrink: CONTEXT_TOO_LONG → knowledge fuera ANTES que documents --")
+    # VENTANA SINTÉTICA — recalibrada a 4000 al incorporar el índice progresivo de notas.
+    # Lo que este bloque prueba es el ORDEN del recorte (primero el
+    # conocimiento, después los documentos), no un tamaño absoluto: 2000 nunca fue una
+    # medida del producto (la ventana real es 200.000) sino el número que ponía al
+    # escenario e-1 en su sitio — documentos que SÍ caben una vez fuera el knowledge.
+    # Al crecer el system, e-1 dejó de ser ese escenario: con 2000 el prompt ya no bajaba
+    # del umbral de early-exit (85% = 1700) ni quitando todo el conocimiento, así que se
+    # recortaban también los documentos y e5 fallaba por la premisa, no por la propiedad.
+    # Con 4000 el umbral deja margen para el índice, sin cambiar la propiedad probada:
+    # "cabe sin knowledge" y la propiedad se verifica INTACTA (e5 sigue exigiendo docs sin
+    # tocar, y e7/e9 siguen exigiendo que SÍ se recorten cuando de verdad no caben).
+    # El margen (~180 tokens) es deliberado: sin él, cualquier retoque del prompt vuelve a
+    # convertir un gate verde en rojo por motivos ajenos a lo que mide.
+    window = 4000
     saved = config.MIA_CONTEXT_WINDOW
-    config.MIA_CONTEXT_WINDOW = 2000
+    config.MIA_CONTEXT_WINDOW = window
     try:
         builder = MatterGraphBuilder(trace_capture=TraceCapture(tempfile.mkdtemp(prefix="mia_tr_")))
         giant_know = [{"id": "kn0", "content": "método interno del despacho " * 2000,
                        "source_path": "notas/metodo.md"}]
 
         # e-1: docs moderados (caben sin knowledge) → SOLO se elimina knowledge.
-        docs = [{"id": f"d{i}", "content": f"[doc original {i}] " + ("hecho jurídico relevante " * 20)}
+        docs = [{"id": f"d{i}", "content": f"[doc original {i}] " + ("hecho jurídico relevante " * 10)}
                 for i in range(2)]
         st = make_state("t-cp3-off", "m-cp3-off", documents=docs, knowledge=giant_know)
         fc = install({"claude-sonnet": [context_exc(), ok_response("DIAGNÓSTICO rescatado.")]})
@@ -410,7 +479,7 @@ def run_shrink_checks() -> None:
         # early-exit viejo (comparaba contra el 100%) devolvía ese prompt justo — sin
         # margen para la respuesta ni para la subestimación del estimador — y quemaba
         # la única compresión del turno. Ahora se recortan TAMBIÉN los documents.
-        margin = int(2000 * graph_mod.SHRINK_EARLY_EXIT_FRACTION)
+        margin = int(window * graph_mod.SHRINK_EARLY_EXIT_FRACTION)
         # CP6: el system compuesto (10 capas) es más grande que el ANALYSIS_SYSTEM
         # monolítico — los docs se dimensionan DINÁMICAMENTE para que la premisa
         # (85% < est ≤ 100% de la ventana) se mantenga aunque el prompt evolucione.
@@ -433,22 +502,31 @@ def run_shrink_checks() -> None:
 
         rep = 60
         est, user_sin_know = _est_for(_mid_docs(rep))
-        while est > 2000 and rep > 1:
+        while est > window and rep > 1:
             rep -= 1
             est, user_sin_know = _est_for(_mid_docs(rep))
         mid_docs = _mid_docs(rep)
         check(f"e8 · premisa: sin knowledge la estimación cae entre el 85% y el 100% "
-              f"de la ventana ({margin} < {est} <= 2000)", margin < est <= 2000)
+              f"de la ventana ({margin} < {est} <= {window})", margin < est <= window)
         st3 = make_state("t-cp3-off", "m-cp3-off", documents=mid_docs, knowledge=giant_know)
         fc = install({"claude-sonnet": [context_exc(), ok_response("DIAGNÓSTICO 3.")]})
         out3 = asyncio.run(builder.analysis_node(st3))
         user3 = fc.messages_seen[1][1]["content"]
+        # RUPTURA ESPERADA: este check exigía "mitad de docs fuera" porque `shrink_documents`
+        # partía el expediente en dos a ciegas. Desde el recorte POR PRESUPUESTO ya no se
+        # descarta evidencia que quepa: se acorta. La propiedad que e9 mide —que NO hubo
+        # early-exit y los documents se recortaron en la MISMA pasada que el knowledge— se
+        # exige ahora de forma DIRECTA (aparece el marcador de recorte de documento y ningún
+        # documento entra íntegro), que es más estricto: "el doc 3 no está" también se
+        # cumpliría por un recorte equivocado que tirase evidencia sin acortar nada.
+        docs3 = user3.split("Expediente:\n", 1)[1]
         check("e9 · SIN early-exit al 100%: además del knowledge, los documents se "
-              "recortan en la MISMA pasada (mitad de docs fuera, turno completo)",
+              "recortan en la MISMA pasada (turno completo)",
               out3["metadata"].get("diagnosis") == "DIAGNÓSTICO 3."
               and cr.KNOWLEDGE_TRIMMED_MARKER in user3
               and "[doc original 0]" in user3
-              and "[doc original 3]" not in user3 and "[doc original 5]" not in user3)
+              and cr.DOC_TRUNCATED_MARKER in docs3
+              and all(d["content"] not in docs3 for d in mid_docs))
     finally:
         config.MIA_CONTEXT_WINDOW = saved
 

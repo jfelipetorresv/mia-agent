@@ -1,5 +1,5 @@
 # Mia · SOP — SAT-Graph (corpus jurídico compartido)
-# Cómo Mia consulta normas, relaciones y jurisprudencia de Colombia.
+# Cómo Mia consulta normas, relaciones y jurisprudencia de la jurisdicción del despacho.
 # Última actualización: 2026-06-14 (Módulo 3a)
 
 ## Qué es y por qué existe
@@ -20,7 +20,10 @@ aplicada por `execution/init_sat_graph.py`.
   circular, acuerdo). Campos clave: `norm_type` (CHECK), `norm_number`,
   `issuing_body`, `title`/`summary`/`full_text`, **`effective_date`** (NOT NULL) y
   **`expiry_date`** (NULL = vigente) para la vigencia temporal, `jurisdiction`
-  (default `colombia`), `practice_areas text[]`, `metadata jsonb`, y `fts_vector`
+  (default `generic` desde la migración 036 — MIA es agnóstica de jurisdicción;
+  el código en `sat_graph.py::_resolve_jurisdiction` resuelve explícita → pack del
+  tenant → `generic`, nunca un país por defecto), `practice_areas text[]`,
+  `metadata jsonb`, y `fts_vector`
   (lo llena un trigger). Upsert por `UNIQUE (norm_number, issuing_body)`.
 - **`norm_relations`** — arista dirigida `source -> target` con `relation_type`
   (CHECK: `remite_a`, `modifica_a`, `deroga_a`, `excepciona_a`, `define_termino`,

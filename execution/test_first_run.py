@@ -37,6 +37,8 @@ PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 ORCH = ROOT / "desktop" / "orchestration.json"
 MARKER_NAME = ".mia-setup-complete"
 
+sys.path.insert(0, str(BACKEND))
+
 _results: list[tuple[str, bool]] = []
 
 
@@ -60,6 +62,10 @@ def run_first_run(app_dir: Path, pg_bin: Path, pg_data: Path, pg_port: int) -> s
          "--pg-bin", str(pg_bin), "--pg-data", str(pg_data),
          "--pg-port", str(pg_port), "--app-dir", str(app_dir)],
         cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=600,
+        # first_run fija su stdout en UTF-8 (la cascara lo lee con UTF-8
+        # estricto). Sin esto el test lo decodifica con el locale de Windows
+        # y los acentos del mensaje en llano llegan corruptos.
+        encoding="utf-8", errors="replace",
     )
 
 
@@ -135,12 +141,17 @@ def main() -> int:
         check("JWT_SECRET >= 32 caracteres", len(env_values.get("JWT_SECRET") or "") >= 32)
         for key in ("PG_HOST", "PG_PORT", "PG_DB", "PG_PASSWORD", "PG_APP_PASSWORD",
                     "DATABASE_URL", "LITELLM_BASE_URL", "LITELLM_API_KEY",
-                    "LITELLM_MASTER_KEY", "MIA_CORS_ORIGINS", "MIA_ENV"):
+                    "LITELLM_MASTER_KEY", "MIA_CORS_ORIGINS", "MIA_ENV",
+                    "MIA_API_HOST"):
             check(f".env trae {key}", bool(env_values.get(key)))
         check(".env: VOYAGE_API_KEY presente (vacío por defecto)", "VOYAGE_API_KEY" in env_values)
         check("LITELLM_MASTER_KEY == LITELLM_API_KEY",
               env_values.get("LITELLM_MASTER_KEY") == env_values.get("LITELLM_API_KEY"))
         check("MIA_ENV=prod", env_values.get("MIA_ENV") == "prod")
+        check("las marcas temporales de membresía Codex nunca se persisten en .env",
+              "MIA_CODEX_MEMBERSHIP_MODE" not in env_values
+              and "MIA_DESKTOP_RUNTIME" not in env_values
+              and env_values.get("MIA_API_HOST") == "127.0.0.1")
         check("PG_PORT coincide con el puerto efímero pedido", env_values.get("PG_PORT") == str(pg_port))
         check("DATABASE_URL usa PG_APP_PASSWORD y el puerto pedido",
               (env_values.get("PG_APP_PASSWORD") or "?") in (env_values.get("DATABASE_URL") or "")
@@ -230,6 +241,39 @@ def main() -> int:
                             priv_detail.append(t)
                     check("mia_app tiene SELECT/INSERT/UPDATE/DELETE en tablas checkpoint*",
                           priv_ok, str(priv_detail))
+
+            # META D (gap 2/2): tras la 1a corrida real, el ledger debe quedar
+            # completo (todas las migraciones del bundle, ni una menos) y legible
+            # por mia_app (requiere el GRANT de 043_grant_migrations_ledger_read.sql;
+            # sin él /health no puede contar migrations_applied). Consulta directa
+            # (este gate no levanta FastAPI) equivalente a lo que expondría /health.
+            from mia.setup import paths as mia_paths
+
+            expected_count = len(mia_paths.migration_paths())
+            try:
+                with psycopg.connect(
+                    host="127.0.0.1", port=pg_port, dbname="mia",
+                    user="mia_app", password=env_values.get("PG_APP_PASSWORD") or "",
+                    autocommit=True,
+                ) as ac:
+                    applied_count = ac.execute(
+                        "SELECT count(*) FROM public.mia_schema_migrations"
+                    ).fetchone()[0]
+                    checkpointer_present = ac.execute(
+                        "SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' "
+                        "AND tablename LIKE 'checkpoint%')"
+                    ).fetchone()[0]
+                check("mia_app puede leer mia_schema_migrations (GRANT 043)", True)
+            except Exception as exc:  # noqa: BLE001
+                applied_count = -1
+                checkpointer_present = False
+                check("mia_app puede leer mia_schema_migrations (GRANT 043)", False, repr(exc))
+            check(
+                "migrations_applied == migrations_expected == migration_paths() tras 1a corrida",
+                applied_count == expected_count and expected_count > 0,
+                f"applied={applied_count} expected={expected_count}",
+            )
+            check("checkpointer == true tras 1a corrida", checkpointer_present is True)
 
             # (a) login REAL como mia_app vía DATABASE_URL del .env generado.
             database_url = env_values.get("DATABASE_URL") or ""

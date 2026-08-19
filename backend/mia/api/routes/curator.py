@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from ...memory.curator import Curator
 from ._common import require_uuid
@@ -70,6 +71,32 @@ async def curator_reject(proposal_id: str, request: Request):
     result = await Curator().reject_proposal(tid, proposal_id, reviewed_by=_reviewer(request))
     if result.get("status") == "not_found":
         raise HTTPException(status_code=404, detail="Propuesta no encontrada")
+    if result.get("error"):
+        raise HTTPException(status_code=409, detail=result["error"])
+    return result
+
+
+class ConflictChoice(BaseModel):
+    """'a' | 'b' = con esta versión se queda el despacho (la otra se archiva).
+    'none' = las dos siguen vivas (la contradicción es una decisión, no un error)."""
+
+    choice: str
+
+
+@router.post("/proposals/{proposal_id}/resolve")
+async def curator_resolve_conflict(proposal_id: str, body: ConflictChoice, request: Request):
+    """Resuelve un conflicto de criterio: el abogado dice cuál de las dos versiones sostiene el
+    despacho hoy — o que sostiene las dos. Nunca se funden."""
+    tid = _tenant(request)
+    proposal_id = require_uuid(proposal_id, "propuesta")
+    result = await Curator().resolve_conflict(
+        tid, proposal_id, body.choice, reviewed_by=_reviewer(request))
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="Propuesta no encontrada")
+    if result.get("status") == "invalid":
+        raise HTTPException(status_code=400, detail=result["error"])
+    if result.get("status") == "failed":
+        raise HTTPException(status_code=409, detail="No se pudo aplicar tu decisión; se revirtió.")
     if result.get("error"):
         raise HTTPException(status_code=409, detail=result["error"])
     return result

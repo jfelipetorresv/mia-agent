@@ -1,7 +1,8 @@
 "use client";
 
-// CP-E6 · Sistemas conectados (gestión documental / consulta de procesos).
-// Consent-first: todo nace apagado. Sin jerga (§G): nunca "MCP", "servidor", "tenant".
+// CP-E6 · Sistemas conectados. Catálogo de producto vacío a propósito
+// (no hay DMS ni consulta de procesos). Consent-first: todo nace apagado.
+// Sin jerga (§G): nunca "MCP", "servidor", "tenant".
 
 import { useCallback, useEffect, useState } from "react";
 import { FolderSearch, Scale } from "lucide-react";
@@ -66,7 +67,7 @@ function SystemCard({
   useEffect(() => {
     setForm(emptyForm(system.fields));
     setMsg("");
-  }, [system.slug, system.enabled, system.configured]);
+  }, [system.slug, system.enabled, system.configured, system.fields]);
 
   function buildEnableBody(): { env: Record<string, string>; secrets: Record<string, string> } {
     const env: Record<string, string> = {};
@@ -264,7 +265,9 @@ export default function ConnectedSystemsSection() {
   if (!systems?.length) {
     return (
       <p className="text-sm text-muted-foreground">
-        No hay sistemas disponibles para conectar en este momento.
+        No hay sistemas externos conectables en esta versión. Mia trabaja con el expediente
+        y el corpus del despacho; un gestor documental o una consulta judicial se ofrecerán
+        aquí cuando exista un servidor real, no antes.
       </p>
     );
   }
@@ -274,7 +277,7 @@ export default function ConnectedSystemsSection() {
       <div>
         <h3 className="text-sm font-semibold tracking-tight">Sistemas conectados</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Conecta los sistemas del despacho para que Mia consulte documentos y estados de procesos.
+          Conecta los sistemas del despacho cuando Mia tenga un servidor real para ellos.
           Todo nace apagado: tú decides cuándo conectar y puedes desconectar o borrar credenciales cuando quieras.
         </p>
       </div>

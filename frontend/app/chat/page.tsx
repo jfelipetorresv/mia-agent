@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Scale,
   Plus,
@@ -10,22 +11,38 @@ import {
   BellRing,
   Settings2,
   MessagesSquare,
+  Wand2,
+  UserRound,
 } from "lucide-react";
 import { apiGet, streamPost, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import MiaMarkdown from "@/components/MiaMarkdown";
 import { cn } from "@/lib/utils";
 
 type Conversation = { id: string; title: string; updated_at: string };
 type Role = "user" | "assistant";
 type Message = { role: Role; content: string };
+// Atajo de la firma u organización: un clic PRE-LLENA el cuadro de mensaje
+// con `texto` — el abogado revisa y decide si lo envía (consent-first, nunca se auto-envía).
+type Atajo = { kind: "guia" | "agente"; id: string; label: string; texto: string };
 
 // Ejemplos que ENSEÑAN qué puede hacer Mia (empty state). Cada uno toca una
-// capacidad real: sus asuntos, un recordatorio, la configuración y una consulta libre.
+// capacidad real: sus asuntos, un recordatorio, la configuración y lo que Mia ya
+// sabe del despacho.
+//
+// AGNÓSTICOS DE JURISDICCIÓN — obligatorio. Estos textos los ve CUALQUIER despacho de
+// CUALQUIER país el primer día, antes de configurar nada, así que no pueden nombrar una
+// figura jurídica, una rama del derecho, un tipo de trámite, un órgano judicial ni una
+// moneda de ningún ordenamiento concreto. Preguntan por el PROPIO trabajo del abogado y
+// por el estado de Mia, que existen en todas partes. (Antes había aquí una figura del
+// derecho administrativo de un solo país y una llamada a un órgano judicial: se
+// eliminaron.) Al añadir un ejemplo nuevo, leelo como si fueras un despacho del otro
+// lado del mundo: si tiene que traducir el concepto, no sirve.
 const EXAMPLES = [
   { icon: FolderOpen, text: "¿Qué asuntos tengo pendientes?" },
-  { icon: BellRing, text: "Recuérdame llamar al juzgado mañana a las 9" },
+  { icon: BellRing, text: "Recuérdame revisar mis plazos mañana a las 9" },
   { icon: Settings2, text: "¿Qué me falta para terminar de configurar a Mia?" },
-  { icon: Sparkles, text: "Explícame la caducidad de la acción contractual" },
+  { icon: Sparkles, text: "¿Qué has aprendido de mi firma u organización hasta ahora?" },
 ];
 
 function saludoDelDia(): string {
@@ -36,13 +53,16 @@ function saludoDelDia(): string {
 }
 
 export default function ChatPage() {
+  const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [atajos, setAtajos] = useState<Atajo[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [typing, setTyping] = useState(false); // Mia "escribiendo" (typewriter activo)
+  const [matterRequired, setMatterRequired] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const typerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -58,11 +78,24 @@ export default function ChatPage() {
 
   useEffect(() => {
     loadConversations();
+    apiGet<{ atajos: Atajo[] }>("/api/atajos")
+      .then((res) => setAtajos(res.atajos || []))
+      .catch(() => setAtajos([]));
     return () => {
       abortRef.current?.abort();
       if (typerRef.current) clearInterval(typerRef.current);
     };
   }, []);
+
+  // Consent-first: PRE-LLENA el cuadro de mensaje con el texto del atajo. El abogado lo
+  // revisa y edita antes de enviar — nunca se auto-envía.
+  // Se llama `aplicarAtajo` y NO `useAtajo`: es un manejador de clic corriente, no un
+  // hook. Con el nombre anterior la regla `react-hooks/rules-of-hooks` lo tomaba por
+  // hook y marcaba error al invocarlo dentro de onClick.
+  function aplicarAtajo(texto: string) {
+    setInput(texto);
+    inputRef.current?.focus();
+  }
 
   // Autoscroll al fondo mientras Mia responde o llega un mensaje nuevo.
   useEffect(() => {
@@ -73,6 +106,7 @@ export default function ChatPage() {
     if (streaming) return;
     setActiveId(id);
     setStatus("");
+    setMatterRequired(false);
     try {
       const rows = await apiGet<{ role: Role; content: string }[]>(
         `/api/assistant/conversations/${id}/messages`,
@@ -89,6 +123,7 @@ export default function ChatPage() {
     setMessages([]);
     setStatus("");
     setInput("");
+    setMatterRequired(false);
     inputRef.current?.focus();
   }
 
@@ -123,6 +158,7 @@ export default function ChatPage() {
     const text = (preset ?? input).trim();
     if (!text || streaming) return;
     setInput("");
+    setMatterRequired(false);
     setMessages((m) => [...m, { role: "user", content: text }, { role: "assistant", content: "" }]);
     setStatus("Mia está pensando…");
     setStreaming(true);
@@ -143,6 +179,18 @@ export default function ChatPage() {
             setStatus("");
             if (payload.conversation_id) setActiveId(payload.conversation_id);
             typewriter(payload.message || "");
+          } else if (event === "matter_required") {
+            answered = true;
+            setStatus("");
+            setMatterRequired(true);
+            setMessages((m) => {
+              const copy = [...m];
+              copy[copy.length - 1] = {
+                role: "assistant",
+                content: payload.message || "Este trabajo debe continuar dentro de un asunto.",
+              };
+              return copy;
+            });
           } else if (event === "error") {
             answered = true;
             setStatus("");
@@ -227,14 +275,15 @@ export default function ChatPage() {
         <div className="flex-1 overflow-auto">
           {empty ? (
             <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col items-center justify-center px-4 py-16 text-center">
-              <div className="relative mb-6 animate-slide-up">
-                <div className="absolute inset-0 rounded-3xl bg-primary/30 blur-2xl" aria-hidden />
-                <div className="relative flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-lg">
-                  <Scale className="h-8 w-8" />
-                </div>
+              {/* Avatar de Mia — MISMA forma y mismo acabado que en el hilo
+                  (rounded-full, color plano): el objeto no cambia de identidad al
+                  pasar de la pantalla vacía a la conversación. Sin halo desenfocado
+                  detrás ni degradado: son decoración, no información. */}
+              <div className="mb-6 flex h-16 w-16 animate-slide-up items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <Scale className="h-8 w-8" />
               </div>
               <h1
-                className="text-gradient-brand animate-slide-up text-3xl font-semibold tracking-tight"
+                className="animate-slide-up text-display"
                 style={{ animationDelay: "60ms", animationFillMode: "backwards" }}
               >
                 {saludoDelDia()}. Soy Mia.
@@ -243,8 +292,8 @@ export default function ChatPage() {
                 className="mt-3 max-w-md animate-slide-up text-muted-foreground"
                 style={{ animationDelay: "120ms", animationFillMode: "backwards" }}
               >
-                Pregúntame lo que necesites: tus asuntos, un recordatorio o una duda
-                jurídica. Yo propongo, tú tienes la última palabra.
+                Aquí puedo ayudarte a organizar tu trabajo y tus recordatorios. Para analizar
+                un caso o preparar un escrito, entra al asunto correspondiente.
               </p>
               <div className="mt-10 grid w-full max-w-lg gap-3 sm:grid-cols-2">
                 {EXAMPLES.map((ex, i) => (
@@ -259,6 +308,28 @@ export default function ChatPage() {
                   </button>
                 ))}
               </div>
+              {atajos.length > 0 ? (
+                <div
+                  className="mt-8 flex w-full max-w-lg animate-slide-up flex-wrap justify-center gap-2"
+                  style={{ animationDelay: "420ms", animationFillMode: "backwards" }}
+                >
+                  {atajos.map((a) => (
+                    <button
+                      key={`${a.kind}-${a.id}`}
+                      onClick={() => aplicarAtajo(a.texto)}
+                      title="Se agrega a tu cuadro de mensaje para que lo revises antes de enviar"
+                      className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3.5 py-1.5 text-xs font-medium text-card-foreground shadow-sm backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+                    >
+                      {a.kind === "agente" ? (
+                        <UserRound className="h-3.5 w-3.5 text-primary" />
+                      ) : (
+                        <Wand2 className="h-3.5 w-3.5 text-primary" />
+                      )}
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="mx-auto w-full max-w-2xl px-4 py-6">
@@ -278,7 +349,7 @@ export default function ChatPage() {
                           aria-hidden
                         />
                       ) : null}
-                      <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-sm">
+                      <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
                         <Scale className="h-4 w-4" />
                       </div>
                     </div>
@@ -287,16 +358,22 @@ export default function ChatPage() {
                     className={
                       m.role === "user"
                         ? "max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
-                        : "max-w-[80%] whitespace-pre-wrap pt-1 font-serif text-[15px] leading-relaxed text-foreground"
+                        : "max-w-[80%] pt-1 font-serif text-[15px] leading-relaxed text-foreground"
                     }
                   >
                     {m.content ? (
-                      <>
-                        {m.content}
-                        {typing && i === lastIdx ? (
-                          <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-primary" aria-hidden />
-                        ) : null}
-                      </>
+                      m.role === "assistant" ? (
+                        <MiaMarkdown
+                          text={m.content}
+                          trailing={
+                            typing && i === lastIdx ? (
+                              <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-blink bg-primary" aria-hidden />
+                            ) : null
+                          }
+                        />
+                      ) : (
+                        m.content
+                      )
                     ) : (
                       <ThinkingDots />
                     )}
@@ -304,6 +381,14 @@ export default function ChatPage() {
                 </div>
               ))}
               <div ref={endRef} />
+              {matterRequired ? (
+                <div className="mb-6 flex justify-center animate-slide-up">
+                  <Button onClick={() => router.push("/")} variant="cta" className="gap-2">
+                    <FolderOpen className="h-4 w-4" />
+                    Ir a mis asuntos
+                  </Button>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -344,7 +429,10 @@ export default function ChatPage() {
                 <Send className="h-4 w-4" />
               </Button>
             </div>
-            <p className="mt-2 text-center text-xs text-muted-foreground/80">
+            {/* Aviso de responsabilidad del producto: se lee SIEMPRE. Sin modificador
+                de opacidad (lo dejaba por debajo del contraste mínimo AA) y con el
+                token de texto meta, no con un tamaño suelto. */}
+            <p className="mt-2 text-center text-meta text-muted-foreground">
               Mia propone; tú decides. Revisa siempre antes de usar.
             </p>
           </div>

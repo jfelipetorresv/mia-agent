@@ -14,7 +14,9 @@ viven FUERA del núcleo** y con los permisos mínimos.
 Un **canal** es una vía para hablar con Mia: hoy el chat de la web y **Telegram**;
 mañana WhatsApp, correo, u otro. Todos siguen el mismo patrón **relay**:
 
-- El canal corre como un **proceso aparte** (no dentro del motor de Mia).
+- El canal corre **opt-in** con el API si hay `TELEGRAM_BOT_TOKEN` (hilo
+  daemon en el lifespan). También puede correrse a mano
+  (`python -m mia.channels.telegram_bridge`).
 - Guarda **sus** credenciales en **su propio entorno** (el token del bot de Telegram,
   por ejemplo) — el núcleo nunca las ve.
 - Habla con Mia **solo por el API HTTP**, autenticándose con usuario/clave para obtener
@@ -54,9 +56,11 @@ molde a copiar**: su `MiaClient` es solo `RelayClient` con el nombre local.
 
 ## Parte 2 · Sistemas conectados (MCP)
 
-Un **sistema** es algo a lo que Mia se conecta para trabajar: la **gestión documental**
-del despacho, la **consulta de estados de procesos**, etc. Mia habla con ellos por el
-protocolo **MCP** (Model Context Protocol). El código vive en `backend/mia/mcp/`.
+Un **sistema** es un servidor externo con el que Mia podría hablar por **MCP**
+(Model Context Protocol). El código vive en `backend/mia/mcp/`. Hoy el catálogo
+de producto está **vacío**: no hay gestor documental ni consulta de procesos.
+La maquinaria de seguridad sí está; una entrada se añade solo cuando exista un
+servidor real del despacho.
 
 ### Principios de seguridad (todos elevan una costura ya probada)
 
@@ -78,8 +82,10 @@ config hostil que ejecute comandos locales). Cada entrada nace apagada y declara
 - las variables que necesita, separando **secretas** (tokens) de **no secretas** (URLs);
 - la nota de **permisos mínimos** del token.
 
-Entradas actuales: **gestión documental del despacho** y **consulta de estados de
-procesos judiciales** (ambas de solo lectura/consulta).
+Entradas actuales de producto: **ninguna**. Se retiraron «gestión documental»
+(`server-filesystem` + token DMS que no se usaba) y «consulta de procesos»
+(`python -m mia_mcp_procesos`, módulo inexistente). No se inventa un scraper
+judicial ni un DMS. La pantalla de Conexiones lo dice en llano.
 
 ### El flujo seguro (`mcp/service.py::resolve_server`)
 
@@ -114,7 +120,7 @@ entonces todo queda **listo y apagado** — sin superficie de ataque nueva encen
 
 ## Frontend (capa 3 · Cursor)
 
-Pantalla "Sistemas conectados" en Configurar a Mia: lista `GET /api/mcp/status`, con un
-formulario por servidor (los `fields`, marcando secretos) que hace `POST .../enable`, y
-un interruptor que hace `.../disable`. Todo en llano — el abogado ve "Gestión documental
-del despacho", no "servidor MCP". Ver HANDOFF.md §CP-E6.
+Pantalla "Sistemas conectados" en Configurar: lista `GET /api/mcp/status`. Con el
+catálogo vacío muestra el estado honesto (no hay sistemas conectables en esta
+versión). Si hubiera entradas, cada una tendría formulario (`POST .../enable`) e
+interruptor (`.../disable`), en llano, sin jerga de "servidor MCP".

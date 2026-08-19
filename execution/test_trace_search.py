@@ -89,6 +89,20 @@ async def run_gate(t: dict) -> None:
             hitl_outcome="approved", trace_ts="2026-06-30T12:00:00+00:00")
         check("index_trace devuelve ids", all([id1, id2, id3]))
 
+        # === Riesgo #68: el diagnóstico del turno se persiste (antes se perdía con el checkpoint) ===
+        id_diag = await trace_search.index_trace(
+            A, matter_id=m1, input="consulta con diagnóstico",
+            output="borrador final", hitl_outcome="approved", trace_ts="2026-06-30T13:00:00+00:00",
+            diagnosis="Problema: X. Riesgo: Y.",
+            diagnosis_summary={"problema": "X", "normas": "Z", "riesgo": "Y"})
+        async with pool.tenant_connection(A) as conn:
+            row = await (await conn.execute(
+                "SELECT diagnosis, diagnosis_summary FROM traces WHERE id = %s::uuid", (id_diag,)
+            )).fetchone()
+        check("index_trace persiste el diagnóstico en prosa", row and row[0] == "Problema: X. Riesgo: Y.")
+        check("index_trace persiste el cierre estructurado (jsonb)",
+              row and isinstance(row[1], dict) and row[1].get("problema") == "X")
+
         # === búsqueda por keyword ===
         res = await trace_search.search_traces(A, "contrato")
         ids = [r["id"] for r in res]

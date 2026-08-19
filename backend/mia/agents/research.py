@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import hashlib
 from typing import Any
 
 from ..jurisdiction.pack import load_pack
@@ -189,8 +190,8 @@ def build_fts_query(message: str, facts: str = "", extra_patterns: list[str] | N
     return " or ".join(elements)
 
 
-async def resolve_jurisdictions_for(tenant_id: str) -> list[str]:
-    """Jurisdicciones del despacho (fail-soft). CP-E5: la usa el grafo para decidir si
+async def resolve_jurisdictions_for(tenant_id: str, matter_id: str | None = None) -> list[str]:
+    """Jurisdicciones activas del asunto (o de la firma u organización, fail-soft). CP-E5: la usa el grafo para decidir si
     la investigación se delega en paralelo (≥2 jurisdicciones) o corre en un solo paso.
 
     Ante cualquier error devuelve ['generic'] (fail-closed: 'generic' no arroja corpus de
@@ -201,10 +202,10 @@ async def resolve_jurisdictions_for(tenant_id: str) -> list[str]:
     duplicar el bloque en el sintetizador (costo LLM desperdiciado).
     """
     try:
-        codes = await resolve_jurisdictions(tenant_id)
+        codes = await resolve_jurisdictions(tenant_id, matter_id=matter_id)
     except Exception:  # noqa: BLE001 — fail-soft
-        logger.warning("resolve_jurisdictions falló (tenant=%s); se asume 'generic'",
-                       tenant_id, exc_info=True)
+        logger.warning("resolve_jurisdictions falló (tenant=%s matter=%s); se asume 'generic'",
+                       tenant_id, matter_id, exc_info=True)
         return ["generic"]
     seen: set[str] = set()
     deduped = [c for c in codes if not (c in seen or seen.add(c))]
@@ -249,9 +250,11 @@ async def gather_sources(
     for n in norms:
         i += 1
         ref = _norm_reference(n)
-        compact.append({"tipo": "norma", "referencia": ref,
-                        "titulo": _clip(n.get("title"), 200)})
         body = _clip(n.get("summary") or n.get("full_text"))
+        compact.append({"tipo": "norma", "referencia": ref,
+                        "titulo": _clip(n.get("title"), 200),
+                        "pasaje": _clip(body, 280),
+                        "source_passage_hash": hashlib.sha256(body.encode("utf-8")).hexdigest()})
         # CP-S1: sello vía el módulo de cuarentena (mismo formato; suma el
         # anti-escape del contenido y el saneo de la referencia).
         blocks.append(untrusted.fence_block(
@@ -259,9 +262,11 @@ async def gather_sources(
     for r in rulings:
         i += 1
         ref = _ruling_reference(r)
-        compact.append({"tipo": "providencia", "referencia": ref,
-                        "titulo": _clip(r.get("topic"), 200)})
         body = _clip(r.get("ratio_decidendi") or r.get("obiter_dicta"))
+        compact.append({"tipo": "providencia", "referencia": ref,
+                        "titulo": _clip(r.get("topic"), 200),
+                        "pasaje": _clip(body, 280),
+                        "source_passage_hash": hashlib.sha256(body.encode("utf-8")).hexdigest()})
         blocks.append(untrusted.fence_block(
             "FUENTE", f"{_clip(r.get('topic'), 200)}\n{body}", index=i, source=ref))
 
@@ -271,14 +276,14 @@ async def gather_sources(
     return section, compact, jurisdictions
 
 
-async def citation_patterns_for(tenant_id: str) -> list[str]:
+async def citation_patterns_for(tenant_id: str, matter_id: str | None = None) -> list[str]:
     """Patrones de cita EXTRA de los packs de jurisdicción del tenant (verificación).
 
     FAIL-SOFT: sin DB o sin packs devuelve [] — el verificador opera con los
     patrones base genéricos.
     """
     try:
-        codes = await resolve_jurisdictions(tenant_id)
+        codes = await resolve_jurisdictions(tenant_id, matter_id=matter_id)
     except Exception:  # noqa: BLE001 — fail-soft
         return []
     patterns: list[str] = []
@@ -287,6 +292,11 @@ async def citation_patterns_for(tenant_id: str) -> list[str]:
             style = load_pack(code).citation_style or {}
             extra = style.get("citation_patterns") or []
             patterns.extend(str(p) for p in extra if str(p).strip())
+            # Siglas de los códigos del pack (DATOS: "C.C.", "C. Co."...). El verificador
+            # las compone con las formas abreviadas del artículo ("arts. 1516 y ss. C.C.").
+            # Escapa los puntos y liga la sigla al número — mecánica genérica, sigla del pack.
+            patterns.extend(
+                verification.code_abbreviation_patterns(style.get("code_abbreviations")))
         except Exception:  # noqa: BLE001 — un pack corrupto no tumba el turno
             continue
     return patterns

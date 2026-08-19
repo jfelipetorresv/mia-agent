@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 
 from ..security import get_tenant_secret, tenant_secret_scope
+from ..security.at_rest import decrypt_secret, encrypt_secret
 from . import catalog
 from .security import (
     MCPConfigError,
@@ -145,8 +146,14 @@ async def enable_server(tenant_id: str, slug: str, env: dict, secrets: dict) -> 
         raise MCPConfigError(
             "Faltan datos para conectar este sistema: " + "; ".join(missing) + ".")
 
+    encrypted_secrets = {
+        key: encrypt_secret(
+            value, tenant_id=tenant_id, purpose=f"mcp:{slug}:{key}"
+        )
+        for key, value in clean_secrets.items()
+    }
     await _write_server(tenant_id, slug,
-                        {"enabled": True, "env": clean_env, "secrets": clean_secrets})
+                        {"enabled": True, "env": clean_env, "secrets": encrypted_secrets})
     logger.info("Servidor MCP '%s' habilitado (tenant=%s)", slug, tenant_id)
 
 
@@ -207,7 +214,12 @@ async def resolve_server(tenant_id: str, slug: str) -> ResolvedMCPServer:
     if not saved.get("enabled"):
         raise MCPConfigError(f"El servidor '{desc.display_name}' no está habilitado.")
 
-    stored_secrets = {k: v for k, v in (saved.get("secrets") or {}).items() if v}
+    stored_secrets = {
+        key: decrypt_secret(
+            value, tenant_id=tenant_id, purpose=f"mcp:{slug}:{key}"
+        )
+        for key, value in (saved.get("secrets") or {}).items() if value
+    }
     stored_env = {k: v for k, v in (saved.get("env") or {}).items()
                   if k in set(desc.plain_env_keys()) and v}
 

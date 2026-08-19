@@ -4,9 +4,8 @@ Mia · test_packaging.py — gate EN FRÍO del empaquetado PyInstaller (Fase 4 �
 Verifica por string-literal (sin correr el build, sin PyInstaller, sin red) que
 packaging/entry_backend.py, packaging/mia-backend.spec y packaging/build_backend.ps1
 conservan el contrato probado en el spike (spike-fase4/): los imports/collects
-obligatorios sin los cuales el bundle arranca roto o degrada el OCR en silencio, y
-que los pesos de voz (sherpa-onnx) NUNCA quedan incluidos en el bundle (decisión de
-Pipe 2026-07-10: voz se instala aparte con scripts/download_speech_models.ps1).
+obligatorios sin los cuales el bundle arranca roto, y que OCR/voz sean perfiles
+opcionales verificables. El perfil core conserva PDF textual con PyMuPDF.
 
 Salida: exit 0 = PASS · exit 1 = FAIL.
     .venv\\Scripts\\python.exe execution\\test_packaging.py
@@ -54,8 +53,12 @@ def main() -> int:
         "import mia.api.main" in entry,
     )
     check(
-        "entry_backend.py también importa litellm y rapidocr_onnxruntime en frío",
-        "import litellm" in entry and "import rapidocr_onnxruntime" in entry,
+        "entry_backend.py importa litellm en frío pero OCR/voz solo en sus smoke tests",
+        "import litellm" in entry
+        and "\nimport rapidocr_onnxruntime" not in entry
+        and "\nimport sherpa_onnx" not in entry
+        and "from rapidocr_onnxruntime import RapidOCR" in entry
+        and "import sherpa_onnx" in entry,
     )
     check(
         "entry_backend.py delega a mia.api.run.main()",
@@ -90,6 +93,10 @@ def main() -> int:
         or "collect_all('rapidocr_onnxruntime')" in spec,
     )
     check(
+        "mia-backend.spec condiciona OCR/voz al perfil del bundle",
+        all(token in spec for token in ("MIA_BUNDLE_PROFILE", "WITH_OCR", "WITH_VOICE", "if WITH_OCR")),
+    )
+    check(
         "mia-backend.spec trae collect_data_files('litellm')",
         "collect_data_files(\"litellm\")" in spec or "collect_data_files('litellm')" in spec,
     )
@@ -120,8 +127,7 @@ def main() -> int:
         spec.count("upx=False") >= 2,
     )
 
-    # 3 · el .spec NO debe arrastrar pesos de voz (sherpa-onnx / parakeet / piper /
-    #     silero): esos SIEMPRE viven fuera del bundle, en mia-data/models/speech/.
+    # 3 · el .spec no arrastra pesos de modelos de voz (parakeet/piper/silero).
     #     El check busca una llamada REAL a un colector de PyInstaller con uno de
     #     esos nombres como argumento (regex sobre "collect_x('nombre'...)"), no
     #     una simple mención de la palabra — el docstring del .spec SÍ nombra estos
@@ -142,9 +148,9 @@ def main() -> int:
         re.IGNORECASE,
     )
     collected_packages = [m.group(1).lower() for m in collector_call.finditer(spec_code_only)]
-    voice_needles = ["sherpa_onnx", "sherpa-onnx", "parakeet", "piper", "silero"]
+    voice_needles = ["parakeet", "piper", "silero"]
     check(
-        "mia-backend.spec no tiene NINGUNA llamada collect_*() sobre sherpa-onnx/parakeet/piper/silero",
+        "mia-backend.spec no colecta pesos parakeet/piper/silero",
         not any(
             needle.lower() in pkg
             for pkg in collected_packages
@@ -152,7 +158,7 @@ def main() -> int:
         ),
     )
     check(
-        "mia-backend.spec sigue teniendo exactamente 2 llamadas collect_*() reales (litellm + rapidocr)",
+        "mia-backend.spec mantiene colectores de litellm y OCR condicional",
         len(collected_packages) == 2
         and "litellm" in collected_packages
         and "rapidocr_onnxruntime" in collected_packages,
@@ -177,13 +183,29 @@ def main() -> int:
         "mia-backend.spec" in build,
     )
     check(
-        "build_backend.ps1 limpia dist/ y build/ previos antes de compilar",
-        "Remove-Item -Recurse -Force $DistPath" in build
-        and "Remove-Item -Recurse -Force $WorkPath" in build,
+        "build_backend.ps1 limpia solo sus subárboles dist/build antes de compilar",
+        "Remove-TreeRobusto (Join-Path $DistPath 'mia-backend')" in build
+        and "Remove-TreeRobusto (Join-Path $WorkPath 'mia-backend')" in build,
     )
     check(
         "build_backend.ps1 valida $LASTEXITCODE de PyInstaller (no asume éxito ciego)",
         "$LASTEXITCODE" in build and "$exitCode" in build,
+    )
+    check(
+        "build_backend.ps1 verifica componentes incluidos y escribe manifiesto",
+        all(token in build for token in ("ValidateSet('core', 'ocr', 'voice', 'full')", "Invoke-RequiredSmoke", "mia-component-manifest.json", "source_dirty")),
+    )
+    check(
+        "build_backend.ps1 excluye caches/tests/docs/harness del payload",
+        "Assert-NoForbiddenSegments" in build and all(token in build for token in ("__pycache__", "tests", "docs", "harness")),
+    )
+
+    pyproject = (ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
+    check(
+        "pyproject conserva PyMuPDF base y mueve OCR/voz a extras",
+        "PyMuPDF" in pyproject
+        and "[project.optional-dependencies]" in pyproject
+        and all(f"{name} = [" in pyproject for name in ("ocr", "voice", "full")),
     )
 
     # 6 · .gitignore debe ignorar SOLO packaging/dist y packaging/build (los fuentes

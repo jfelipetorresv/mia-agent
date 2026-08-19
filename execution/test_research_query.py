@@ -22,6 +22,7 @@ Salida: exit 0 = PASS · exit 1 = FAIL.
 """
 from __future__ import annotations
 import asyncio
+import os
 import re
 import sys
 from pathlib import Path
@@ -112,7 +113,12 @@ def re_tok_present(query: str, word: str) -> bool:
 async def run_db_checks() -> None:
     await pool.open_pool()
     try:
-        await ingest_baseline_corpus(pool)
+        # El corpus semilla es opt-in del pack: la jurisdicción va EXPLÍCITA ('co' es
+        # quien declara baseline_corpus_seed). Sin ella no se sembraría nada. Además, el
+        # módulo se blinda tras `MIA_ALLOW_SEED_FAKE` (los datos semilla son [VERIFICAR]);
+        # este gate fija el opt-in de test a propósito para poder ejercitarlo.
+        os.environ["MIA_ALLOW_SEED_FAKE"] = "1"
+        await ingest_baseline_corpus(pool, jurisdiction="co")
         sat = SATGraph()
 
         pregunta_larga = (

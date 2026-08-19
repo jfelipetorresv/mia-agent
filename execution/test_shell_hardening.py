@@ -472,9 +472,15 @@ def main() -> int:
     # 6i · child_died evaluado ANTES del health-check en los 3 bucles de espera
     # (hallazgo del revisor adversarial: un hijo muerto + un squatter rápido del
     # puerto podía leerse como "vivo" si el health-check corría primero).
+    # El supervisor de recuperacion reutiliza child_died despues del arranque.
+    # Este gate protege los tres bucles iniciales por servicio; el gate dedicado
+    # test_runtime_supervisor.py cubre las llamadas adicionales del supervisor.
     check(
-        "lib.rs llama child_died(shared, ...) exactamente 3 veces (litellm/backend/frontend, un bucle cada uno)",
-        lib_rs_code.count("child_died(shared,") == 3,
+        "los 3 bucles iniciales llaman child_died (litellm/backend/frontend)",
+        all(
+            f'child_died(shared, "{service}")' in lib_rs_code
+            for service in ("litellm", "backend", "frontend")
+        ),
     )
     litellm_child_died_idx = lib_rs_code.find('child_died(shared, "litellm")')
     # El arranque de litellm (spawn + espera) vive en la fn reutilizable

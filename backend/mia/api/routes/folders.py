@@ -11,7 +11,8 @@ Superficie HTTP de la allowlist de carpetas locales/nubes espejo (connectors/loc
 CP-C2 (Pilar C · decisión #32) añade la superficie de Obsidian (`obsidian_router`):
   GET    /api/obsidian/status     → ¿Obsidian instalado? ¿vault configurado? ruta
   POST   /api/obsidian/install    → instalación guiada vía winget (sin shell; exige
-                                    body {"confirmar": true} — deshabilitar en Modo A)
+                                    body {"confirmar": true} — deshabilitar si algún día
+                                    hubiera un despliegue multi-despacho en servidor)
   POST   /api/obsidian/bootstrap  → crea la estructura Mia/ del vault y lo registra
 
 Auth: el middleware JWT fija `request.state.tenant_id` (RLS). §G: errores sin jerga técnica.
@@ -75,9 +76,9 @@ async def browse_folders(request: Request, path: str | None = None):
     la carpeta señalando, en vez de escribir la ruta a mano). Sin `path` devuelve los
     puntos de partida (Documentos/Escritorio/Descargas, nubes detectadas, discos).
 
-    Deshabilitable en despliegue compartido (Modo A, Docker multi-despacho) con
-    `MIA_DISABLE_FOLDER_BROWSE`: exponer el árbol local del SERVIDOR a varios despachos
-    no tiene sentido ahí — mismo espíritu que la guarda de POST /obsidian/install."""
+    Deshabilitable con `MIA_DISABLE_FOLDER_BROWSE` si algún día hubiera un despliegue
+    multi-despacho en servidor: exponer el árbol local del SERVIDOR a varios despachos
+    no tendría sentido ahí — mismo espíritu que la guarda de POST /obsidian/install."""
     _tenant(request)
     if os.getenv("MIA_DISABLE_FOLDER_BROWSE"):
         raise HTTPException(status_code=503,
@@ -187,9 +188,10 @@ async def obsidian_install_app(request: Request, body: InstallBody | None = None
     responde 400 y NO instala nada (revisión CP-C2: instalar software nunca puede
     dispararse por un clic accidental o un llamado automatizado).
 
-    NOTA DE DESPLIEGUE: en despliegue compartido (Modo A, Docker multi-despacho) este
-    endpoint debe DESHABILITARSE — instala software en el host que atiende a varios
-    despachos (ver Riesgo #10/#15 de sandbox en memory/bugs-and-risks.md)."""
+    NOTA DE DESPLIEGUE: si algún día hubiera un despliegue compartido (Docker
+    multi-despacho) este endpoint debe DESHABILITARSE — instala software en el host
+    que atiende a varios despachos (ver Riesgo #10/#15 de sandbox en
+    memory/bugs-and-risks.md)."""
     _tenant(request)
     if body is None or not body.confirmar:
         raise HTTPException(

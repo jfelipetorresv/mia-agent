@@ -23,8 +23,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 
-from ..security import get_tenant_secret
+from ..db import pool
+from ..security import get_tenant_secret, secrets_from_tenant_config, tenant_secret_scope
 
 logger = logging.getLogger("mia.connectors.pinecone")
 
@@ -166,3 +168,31 @@ def get_pinecone_connector() -> PineconeConnectorBase:
     index_name = get_tenant_secret("pinecone_index_name", DEFAULT_INDEX_NAME)
     return PineconeConnector(api_key, index_name or DEFAULT_INDEX_NAME,
                              DEFAULT_NAMESPACE_PREFIX)
+
+
+@asynccontextmanager
+async def pinecone_scope_for_tenant(tenant_id: str):
+    """Contexto ÚNICO para operar Pinecone de UN despacho (Módulo A · cableado como
+    store secundario opt-in): lee la config de `tenant_settings` (bajo RLS, vía
+    `pool.tenant_connection`), instala el `tenant_secret_scope` con esos secretos y
+    entrega el connector ya resuelto — real si el despacho configuró su clave,
+    `NoopPineconeConnector` si no.
+
+    FAIL-SOFT (mismo patrón que `wiki_notes` / `_notebooklm_context`): cualquier error
+    leyendo o desencriptando la config del despacho (DB caída, fila corrupta, llave de
+    recuperación distinta) degrada a un scope VACÍO — el connector resultante es Noop.
+    Nunca se propaga la excepción al llamador: el sync/turno del abogado sigue con
+    pgvector como si Pinecone no estuviera configurado."""
+    secrets: dict[str, str] = {}
+    try:
+        async with pool.tenant_connection(tenant_id) as conn:
+            row = await (await conn.execute(
+                "SELECT config FROM tenant_settings WHERE tenant_id=%s::uuid", (tenant_id,)
+            )).fetchone()
+        secrets = secrets_from_tenant_config(row[0] if row else {}, tenant_id=tenant_id)
+    except Exception:  # noqa: BLE001 — Pinecone es opcional, jamás tumba al llamador
+        logger.warning("pinecone: no pude resolver la config del despacho (tenant=%s); "
+                       "se degrada a Noop (solo pgvector)", tenant_id, exc_info=True)
+        secrets = {}
+    with tenant_secret_scope(tenant_id, secrets):
+        yield get_pinecone_connector()

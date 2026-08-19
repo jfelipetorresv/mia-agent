@@ -124,11 +124,30 @@ CC_OK_HTML = (
     + ("Fundamento jurídico de relleno. " * 800) + "</p></body></html>"
 )
 
-# Providencia con basura tras "Magistrado Ponente:" (reproduce el defecto verificado
-# 2026-07-08: la heurística vieja capturaba el párrafo siguiente en minúsculas) y una fecha
-# distinta a la real (31 de marzo vs. la real 22 de enero) — sirve para probar que el
-# catálogo verificado PREFIERE sobre lo extraído.
-CC_GARBAGE_MP_HTML = (
+# Providencia real: el patrón "Magistrado Ponente:" apunta a BASURA (reproduce el defecto
+# verificado 2026-07-08: la heurística vieja capturaba el párrafo siguiente en minúsculas),
+# PERO el texto oficial SÍ contiene el MP correcto y la fecha correcta (como una providencia
+# real). El catálogo trae esos mismos datos → se CORROBORAN por inclusión (hallazgo de
+# auditoría 2026-07-17) y el catálogo se usa, pese a que la extracción por regex fallaría.
+CC_CATALOG_OK_HTML = (
+    "<html><head><title>Sentencia T-025/04</title></head><body>"
+    "<p>Sentencia T-025/04</p>"
+    "<p>Referencia: expediente T-653010 y otros acumulados.</p>"
+    "<p>Magistrado Ponente: renden y justifican como transmisión instrumental de la "
+    "constitución y por tanto surgen deberes específicos de protección</p>"
+    "<p>Sala Tercera de Revisión, integrada por el magistrado MANUEL JOSÉ CEPEDA ESPINOSA.</p>"
+    "<p>Bogotá D.C., 22 de enero de 2004.</p>"
+    "<h2>CONSIDERACIONES DE LA CORTE</h2>"
+    "<p>La Corte considera que existe un estado de cosas inconstitucional. "
+    + ("Fundamento jurídico de relleno. " * 800) + "</p></body></html>"
+)
+
+# Providencia donde el catálogo trae un MP y una fecha que NO aparecen en el texto oficial
+# (simula un typo del catálogo): el MP no está en el cuerpo y la fecha del texto es otra
+# (31 de marzo vs. la del catálogo 22 de enero). El fix de auditoría exige NO presentarlos
+# como firmes: el MP cae a la extracción del HTML (que aquí no halla patrón limpio → vacío) y
+# la fecha del catálogo se marca aproximada (decision_date_approx).
+CC_CATALOG_UNCORROB_HTML = (
     "<html><head><title>Sentencia T-025/04</title></head><body>"
     "<p>Sentencia T-025/04</p>"
     "<p>Referencia: expediente T-653010 y otros acumulados.</p>"
@@ -298,20 +317,36 @@ async def run_gate() -> None:
     shell = await cc_shell.fetch_ruling({"tipo": "C", "numero": "590", "anio": 2005})
     check("CorteConstitucional: shell vacío de la SPA -> None", shell is None)
 
-    # === 5b · El catálogo verificado PREFIERE sobre HTML con basura (MP y fecha) ===
+    # === 5b · El catálogo CORROBORADO por el texto oficial PREFIERE sobre la extracción por
+    # regex (que aquí apunta a basura). El MP y la fecha del catálogo SÍ aparecen en el texto,
+    # así que se dan por confirmados (hallazgo de auditoría 2026-07-17) ===
     cc_url_t025 = "http://cc.test/relatoria/2004/T-025-04.htm"
-    cc_garbage_http = _FakeHttp({cc_url_t025: _FakeResponse(CC_GARBAGE_MP_HTML, encoding="cp1252")})
-    cc_override = CorteConstitucionalAdapter(cc_cfg, http=cc_garbage_http)
+    cc_ok_http = _FakeHttp({cc_url_t025: _FakeResponse(CC_CATALOG_OK_HTML, encoding="cp1252")})
+    cc_override = CorteConstitucionalAdapter(cc_cfg, http=cc_ok_http)
     entry_verified = {"tipo": "T", "numero": "025", "anio": 2004,
                       "magistrado_ponente": "Manuel José Cepeda Espinosa",
                       "decision_date": "2004-01-22"}
     ruling_override = await cc_override.fetch_ruling(entry_verified)
-    check("CorteConstitucional: catálogo verificado (magistrado_ponente/decision_date) "
-          "PREFIERE sobre lo extraído del HTML con basura",
+    check("CorteConstitucional: catálogo CORROBORADO por el texto (MP/fecha aparecen en la "
+          "providencia) se usa pese a que la extracción por regex apunte a basura",
           ruling_override is not None
           and ruling_override["magistrado_ponente"] == "Manuel José Cepeda Espinosa"
           and ruling_override["decision_date"] == date(2004, 1, 22)
           and "decision_date_approx" not in ruling_override["metadata"])
+
+    # === 5b-bis · Catálogo NO corroborado por el texto oficial (simula un typo): NO se
+    # presenta como firme. El MP del catálogo, ausente del texto, cae a la extracción del HTML
+    # (aquí sin patrón limpio → vacío); la fecha del catálogo, ausente del texto, se marca
+    # aproximada en vez de darse por confirmada (hallazgo de auditoría 2026-07-17) ===
+    cc_unc_http = _FakeHttp({cc_url_t025:
+                             _FakeResponse(CC_CATALOG_UNCORROB_HTML, encoding="cp1252")})
+    cc_unc = CorteConstitucionalAdapter(cc_cfg, http=cc_unc_http)
+    ruling_unc = await cc_unc.fetch_ruling(entry_verified)
+    check("CorteConstitucional: MP/fecha de catálogo NO corroborados en el texto -> no se "
+          "presentan como confirmados (MP vacío por fallback; fecha marcada aproximada)",
+          ruling_unc is not None
+          and ruling_unc.get("magistrado_ponente") is None
+          and ruling_unc["metadata"].get("decision_date_approx") is True)
 
     # === 5c · Sin catálogo y sin patrón limpio "Magistrado Ponente:" (M.P. abreviado
     # abandonado) -> magistrado_ponente vacío, mejor vacío que basura ===

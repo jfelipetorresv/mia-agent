@@ -13,11 +13,11 @@ from psycopg.types.json import Json
 from .. import config
 from ..agent import llm
 from ..db import pool
-from ..onboarding.soul_interview import soul_path
+from . import soul_manager
 from .gepa import GEPALoop
 from .prescriptions import PrescriptionEngine
 from .trace_capture import TraceCapture
-from .wiki_manager import WikiManager
+from .wiki_manager import WIKI_SCHEMA_VERSION, WikiManager, confidence_score
 
 logger = logging.getLogger("mia.memory.dreams")
 
@@ -57,11 +57,15 @@ class Dreams:
         wiki_manager: WikiManager | None = None,
         gepa: GEPALoop | None = None,
         prescriptions: PrescriptionEngine | None = None,
+        soul: object | None = None,
     ) -> None:
         self.trace_capture = trace_capture or TraceCapture()
         self.wiki_manager = wiki_manager or WikiManager(trace_capture=self.trace_capture)
         self.gepa = gepa or GEPALoop(trace_capture=self.trace_capture)
         self.prescriptions = prescriptions or PrescriptionEngine(trace_capture=self.trace_capture)
+        # Dreams NO escribe el SOUL: solo puede PROPONER a través de este módulo (el único
+        # escritor de la identidad). Inyectable para los gates.
+        self.soul = soul or soul_manager
 
     def _week_traces(self, tenant_id: str) -> list[dict]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=7)
@@ -74,12 +78,18 @@ class Dreams:
 
     async def _save_metrics(self, tenant_id: str, metrics: dict) -> None:
         async with pool.tenant_connection(tenant_id) as conn:
+            # Path anidado '{dreams,last_metrics}' no crea 'dreams' si config='{}'.
+            # Merge del padre (mismo footgun documentado en budget.py / mailbox).
+            patch = {"last_metrics": metrics}
             await conn.execute(
-                "INSERT INTO tenant_settings (tenant_id, config) VALUES (%s::uuid, %s) "
+                "INSERT INTO tenant_settings (tenant_id, config) "
+                "VALUES (%s::uuid, jsonb_build_object('dreams', %s::jsonb)) "
                 "ON CONFLICT (tenant_id) DO UPDATE SET "
-                "config = jsonb_set(tenant_settings.config, '{dreams,last_metrics}', %s::jsonb, true), "
+                "config = jsonb_set("
+                "  COALESCE(tenant_settings.config, '{}'::jsonb), '{dreams}', "
+                "  COALESCE(tenant_settings.config->'dreams', '{}'::jsonb) || %s::jsonb, true), "
                 "updated_at = now()",
-                (tenant_id, Json({"dreams": {"last_metrics": metrics}}), Json(metrics)),
+                (tenant_id, Json(patch), Json(patch)),
             )
 
     async def _replay(self, tenant_id: str, traces: list[dict]) -> dict:
@@ -111,30 +121,87 @@ class Dreams:
             await self._record_rejection(tenant_id, trace)
         return {"approved_matters": len(approved_matters), "concepts_updated": sorted(updated), "rejections": len(rejected)}
 
+    # Presupuesto de la sección "Lo que NO funciona" (la única que el LECTOR del
+    # wiki extrae de este archivo). El _card acota el TOTAL a WIKI_NOTE_MAX_CHARS
+    # (1400) y rechaza —no trunca— si no cabe; mantenemos esta sección holgada bajo
+    # ese tope para que el concepto siempre entre al turno.
+    _REJECTION_ENTRY_MAX_CHARS = 200
+    _REJECTION_SECTION_MAX_CHARS = 650
+
+    @staticmethod
+    def _entries_under(body: str, header: str) -> list[str]:
+        """Líneas de viñeta (`- …`) bajo un encabezado `## …`, en orden."""
+        lines = body.splitlines()
+        out: list[str] = []
+        capturing = False
+        for line in lines:
+            if line.startswith("## "):
+                capturing = line[3:].strip().startswith(header)
+                continue
+            if capturing and line.strip().startswith("- "):
+                out.append(line.strip()[2:].strip())
+        return out
+
     async def _record_rejection(self, tenant_id: str, trace: dict) -> None:
         await self.wiki_manager.init_wiki(tenant_id)
         path = self.wiki_manager.concept_path(tenant_id, "Patrones rechazados")
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
         count = existing.count("- matter:")
+        total = count + 1
+
+        # "Patrones rechazados" es evidencia negativa DURA: cada rechazo es un acto
+        # deliberado del abogado que CONFIRMA el patrón (rechazar cuesta, aprobar es
+        # el default del HITL). Por eso los rechazos son el `support` del concepto y
+        # no hay evidencia en contra: la confianza sube con el volumen, sin hardcodear.
+        # Con la fórmula del wiki, 3+ rechazos superan WIKI_MIN_CONFIDENCE (0.60) y el
+        # concepto entra al prompt — cerrando el lazo que el 0.10 fijo dejaba abierto.
+        confidence = confidence_score(total, 0.0)
+
+        # Acumular los rechazos (no solo el último) para que el modelo vea el conjunto
+        # de patrones a evitar, acotado al presupuesto de la ficha que lee el turno.
+        prev_no_funciona = self._entries_under(existing, "Lo que NO funciona")
+        nuevo = str(trace.get("draft_final") or trace.get("output") or "").strip()
+        nuevo = " ".join(nuevo.split())[: self._REJECTION_ENTRY_MAX_CHARS]
+        if nuevo:
+            prev_no_funciona.append(nuevo)
+        # Conservar los más recientes que quepan en el presupuesto de la sección.
+        seleccion: list[str] = []
+        usado = 0
+        for entry in reversed(prev_no_funciona):
+            costo = len(entry) + 3  # "- " + salto de línea
+            if usado + costo > self._REJECTION_SECTION_MAX_CHARS and seleccion:
+                break
+            seleccion.insert(0, entry)
+            usado += costo
+        no_funciona_block = "\n".join(f"- {e}" for e in seleccion) or "- (pendiente)"
+
+        prev_patrones = self._entries_under(existing, "Patrones identificados")
+        prev_patrones.append(
+            f"matter:{trace.get('matter_id')} motivo:{str(trace.get('output', ''))[:240]}"
+        )
+        patrones_block = "\n".join(f"- {p}" for p in prev_patrones[-20:])
+
         content = (
             "---\n"
             "concept: Patrones rechazados\n"
-            "confidence: 0.10\n"
+            f"wiki_schema: {WIKI_SCHEMA_VERSION}\n"
+            f"confidence: {confidence}\n"
+            f"support_count: {total}\n"
+            "contra_count: 0\n"
             f"last_updated: {datetime.now(timezone.utc).date().isoformat()}\n"
-            f"case_count: {count + 1}\n"
+            f"case_count: {total}\n"
             "---\n"
             "# Patrones rechazados\n"
             "## Definicion (segun la practica de este despacho)\n"
             "Registro de salidas que no funcionaron para este despacho.\n\n"
             "## Patrones identificados\n"
-            f"{existing.split('## Patrones identificados')[-1].strip() if '## Patrones identificados' in existing else ''}\n"
-            f"- matter:{trace.get('matter_id')} motivo:{trace.get('output', '')[:240]}\n\n"
+            f"{patrones_block}\n\n"
             "## Casos que lo soportan (referencias anonimas)\n"
             "- Ver sources.md.\n\n"
             "## Conexiones con otros conceptos\n"
             "- Pendiente.\n\n"
             "## Lo que NO funciona (aprendido de rechazos)\n"
-            f"- {str(trace.get('draft_final') or trace.get('output') or '')[:500]}\n"
+            f"{no_funciona_block}\n"
         )
         path.write_text(content, encoding="utf-8")
         index = self.wiki_manager.wiki_dir(tenant_id) / "index.md"
@@ -151,16 +218,18 @@ class Dreams:
         pruned_skills = await self.gepa.prune_unused_skills(tenant_id)
         return {"lint": lint, "archived_concepts": archived_concepts, "pruned_skills": pruned_skills}
 
-    def _append_soul_rule(self, tenant_id: str, rule: str) -> None:
-        path = soul_path(tenant_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        current = path.read_text(encoding="utf-8") if path.exists() else ""
-        if rule in current:
-            return
-        section = "\n\n## Preferencias aprendidas por Mia\n" if "## Preferencias aprendidas por Mia" not in current else "\n"
-        path.write_text(current.rstrip() + section + f"- {rule}\n", encoding="utf-8")
-
     async def _nudges(self, tenant_id: str, traces: list[dict]) -> list[str]:
+        """Detecta preferencias repetidas y las PROPONE. Ya NO escribe el SOUL.
+
+        Antes, `_append_soul_rule` añadía la regla directo al SOUL.md: sin aprobación del
+        abogado, sin tope de tamaño y sin historial — el único escritor automático sin
+        freno sobre la capa 1 del prompt (la que se inyecta entera, con autoridad de
+        sistema, en todos los turnos). Hoy Dreams PROPONE y el abogado decide
+        (`memory/soul_manager.py`): la capa de máxima autoridad es la de menor autonomía.
+
+        Degrada limpio: si la propuesta no se puede crear (DB caída, tipo no migrado…),
+        se registra y Dreams sigue. Un nudge no puede tumbar el cron ni el turno del
+        abogado. Devuelve las reglas PROPUESTAS (no aplicadas)."""
         edited = [t for t in traces if _outcome(t) == "edited" and (t.get("draft_original") or t.get("draft_final"))]
         if len(edited) < 3:
             return []
@@ -176,8 +245,26 @@ class Dreams:
                 "El abogado ha corregido repetidamente respuestas de este contexto; "
                 "prioriza la forma final aprobada en asuntos similares."
             )
-            self._append_soul_rule(tenant_id, rule)
-            rules.append(rule)
+            # El porqué que leerá el abogado, en llano (§G): qué vio Mia y qué propone.
+            reason = (
+                f"Corregiste {len(items)} borradores parecidos esta semana. Mia propone "
+                "recordar tu forma final para no repetirte la corrección. Es un cambio a "
+                "la descripción de tu despacho: solo se guarda si lo apruebas."
+            )
+            try:
+                created = await self.soul.propose_soul_rule(
+                    tenant_id, rule, reason=reason, signal_count=len(items),
+                    trace_ids=[f"{tenant_id}:{t.get('matter_id')}:{t.get('timestamp')}"
+                               for t in items],
+                )
+            except Exception:  # noqa: BLE001 — un nudge nunca tumba la consolidación
+                logger.warning(
+                    "no se pudo dejar la preferencia aprendida como propuesta; "
+                    "Dreams continúa (el SOUL no se toca sin aprobación).",
+                    exc_info=True)
+                continue
+            if created:
+                rules.append(rule)
         return rules
 
     async def _weekly_report(self, tenant_id: str, firm_name: str, metrics: dict, wiki: dict,

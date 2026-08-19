@@ -97,12 +97,13 @@ async def run_gate() -> None:
     cfg = {"pinecone": {"api_key": "pk-123456789012345678", "index_name": "mia-legal",
                         "status": "active", "stats": {"total_vector_count": 7}},
            "obsidian_vault_path": "D:/vault"}
-    secrets = secrets_from_tenant_config(cfg)
+    secrets = secrets_from_tenant_config(cfg, tenant_id="tenant-a")
     check("s2-07 · secrets_from_tenant_config extrae SOLO secretos (clave+índice)",
           secrets == {"pinecone_api_key": "pk-123456789012345678",
                       "pinecone_index_name": "mia-legal"})
     check("s2-08 · config vacía/None -> scope vacío (sin semilla del entorno)",
-          secrets_from_tenant_config(None) == {} and secrets_from_tenant_config({}) == {})
+          secrets_from_tenant_config(None, tenant_id="tenant-a") == {}
+          and secrets_from_tenant_config({}, tenant_id="tenant-a") == {})
 
     # ── B · redacción por familias ───────────────────────────────────────────
     check("s2-09 · mask_secret preserva prefijo/sufijo en tokens largos y oculta cortos",

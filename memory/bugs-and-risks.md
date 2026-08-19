@@ -1,8 +1,389 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-07-01
+# Última actualización: 2026-08-07 (sesión 55)
+
+## Actualización 2026-08-07 — Sesión 55 (UI-A · revisión commits de Pipe · honestidad-UX · migración 047)
+
+**Cerrados y VERIFICADOS hoy:** DEFECTO UI-A (`585f332`, con mutación) · muro determinista desconectado
+por `f264b1e` (`2e899bf`: el gate LLM se queda y el muro corre sobre su salida; test_seed 12/17→17/17,
+test_e2e 57/58→58/58) · FALLA del checklist de honestidad (botones Conectar sin app OAuth, `c6173e5`,
+verificado en vivo) · migración 047 fuera del ledger (aplicada con `init_citas_quemadas.py` + registro
+con el MISMO sha que calcula `db_bootstrap.migration_sha256`; /health 45/45).
+
+### 🟡 Watch-out — Decisión de arquitectura del gate de citas (para conocimiento de Pipe)
+`f264b1e` (Codex, entre s53 y s54) reemplazó el nodo determinista `verification` por un gate LLM
+(`verificador_citas`) con reintentos a redacción. La sesión 55 NO lo revirtió: reconectó el muro
+determinista DESPUÉS del gate. Queda la pregunta de producto: el gate LLM consume un turno de modelo
+extra por borrador y su prompt se declara "auditor determinista" sin serlo. Si Pipe quiere solo el
+muro, se quita el nodo; si quiere ambos, ya están ambos.
+
+### 🟡 Watch-out — menores de la revisión de los commits de diseño (sin arreglar, deliberadamente)
+- `BrandMark.tsx`: props `breathing`/`glow` quedaron no-op tras el logotipo octaedro (`1be4af5`) y
+  `WelcomeShell.tsx:93` las sigue pasando; el halo/pulso de la bienvenida se perdió sin aviso. Es
+  diseño de Pipe: decidir él si se reimplementa o se retiran las props.
+- `button.tsx` (`6b97a97`): se borró el comentario con la medición de contraste WCAG del variant `cta`
+  al cambiar el hover; el contraste no se re-midió.
+- El nodo `harvest` nuevo (f264b1e) corre tras aprobar sin frase de progreso propia en el SSE.
+
+# (histórico) Última actualización previa: 2026-07-21 (sincronización de documentación — #75 y #79
+# cerrados con evidencia reejecutada; #76 y #78 verificados que SIGUEN abiertos, no se tocan)
+
+## Actualización 2026-07-20 — Sesión 50 (lectura del expediente · guardián de citas · jurisdicción · perfil · selector)
+
+**Cerrados y VERIFICADOS hoy:** migraciones 044/045/046 fuera del ledger · las dos suites de carpetas en
+rojo desde hacía sesiones · la ausencia total de cobertura de "carpeta vinculada a un proyecto" · el
+recorte por presupuesto que partía por mitades ciegas. **Nuevos: #75-#80.**
+**Actualización 2026-07-21:** #75 y #79 se CERRARON el mismo 2026-07-20 (`2ecbbeb` y `753d798`, ambos
+posteriores a esta entrada) pero el archivo no lo reflejaba — corregido con evidencia reejecutada en cada
+entrada. #76, #77, #78 y #80 siguen abiertos: no tienen commit de cierre ni gate que los cubra.
+
+### 🟢 Riesgo — Migraciones 044, 045 y 046 ausentes del ledger; la 044 nunca había corrido (CERRADO 2026-07-20)
+`/health` reportaba **41 de 44**. La 045 y la 046 se habían aplicado a mano en la sesión anterior sorteando
+el landmine de `setup_db.ps1`, así que el registro nunca se escribió; y **la 044 (salud de guías) no había
+corrido nunca**. **Consecuencia real:** el blindaje del instalador —que frena el arranque si la base no
+terminó de actualizarse— habría **frenado el arranque en la máquina de un cliente**, no en la de dev, donde
+las tablas ya existían. **Cierre:** aplicadas por el runner real; verificado en vivo `migrations_expected:44,
+migrations_applied:44`. **Regla que queda:** toda migración se aplica **por el runner**; aplicarla a mano
+para sortear un script roto deja el ledger mintiendo, y el síntoma solo aparece en casa del cliente.
+
+### 🟢 Riesgo — Las 2 suites de carpetas llevaban sesiones en rojo sin causa identificada (CERRADO 2026-07-20, `91bd2e0`)
+`test_matter_folder` y `test_matter_folders_multi` se arrastraban como deuda de una auditoría a la
+siguiente. **La causa era de espera, no de producto:** las comprobaciones no aguardaban a que la indexación
+convergiera. **Demostrado por falsificación**, no por razonamiento: bajando el plazo de espera a 0,05 s se
+ponen en rojo **exactamente** los dos checks que llevaban fallando. Hoy 37/37 y 30/30.
+
+### 🟢 Riesgo — No existía ni un solo test de "carpeta vinculada a un PROYECTO" (CERRADO 2026-07-20, `91bd2e0`)
+Los cinco fallos conocidos de carpetas eran todos de **asuntos**. El escenario sin cubrir era justamente
+**el que falló en producción con Pipe delante**. Cierre: `test_carpeta_proyecto.py`, 31 comprobaciones
+(vincular, indexar, contar, re-indexar y desvincular conservando lo indexado).
+
+### 🟢 Riesgo — El recorte por presupuesto partía por mitades ciegas (CERRADO 2026-07-20, `3063df5`)
+Deuda vieja, ya documentada en el traspaso anterior. `shrink_documents` —que usan facts, analysis, draft,
+work y la Sala de estrategia— hacía `docs[:len//2]` **sin mirar el presupuesto**. Además no descontaba el
+peso del sellado, así que lo renderizado siempre pasaba el tope y el bucle volvía a partir en dos:
+**de 200.000 se quedaba en 35.000 teniendo 70.000 disponibles**. Y tiraba primero lo que el modelo había
+pedido, anulando la lectura agéntica (de 12 ampliaciones sobrevivían 2). Cierre medido: utilización del
+cupo **del 50 % al 99 %**, y 6 de 12 ampliaciones supervivientes. **El gate que faltaba:** la aserción vieja
+solo miraba el techo ("no desbordar") y era **estructuralmente incapaz** de ver que se desperdiciaba la
+mitad; el check nuevo de **utilización** es el único que atrapa dos de las seis mutaciones.
+**Regla que queda:** toda restricción con un máximo debe preguntarse si también necesita un mínimo.
+
+### 🟢 Riesgo #75 — El guardián de citas detectó 1 de 5 en la prueba en vivo y no cubre formas abreviadas (CERRADO 2026-07-20, `2ecbbeb`)
+En la primera prueba contra un modelo real, de las cinco citas que salieron marcadas **el guardián
+determinista solo detectó una**: las otras cuatro las marcó el modelo **obedeciendo la instrucción del
+prompt** — que es exactamente aquello de lo que el guardián existe para no depender. El resultado fue
+correcto, pero **por la razón equivocada**. **Causa conocida:** hoy es un escáner de patrones sobre el
+texto final y no cubre las formas abreviadas (`arts. N y ss.`, siglas de código).
+**Por qué importaba:** una instrucción de prompt es una sugerencia al modelo, no un control; el día que el
+modelo no obedeciera, no habría red.
+**Lo que se construyó (`2ecbbeb`, "feat(guardian): una cita solo queda respaldada con su ancla al
+expediente, y las abreviadas ya no pasan de largo"):** (1) el guardián ahora detecta las formas abreviadas
+transversales del Civil Law — `art./arts. N`, rangos, `y ss./y siguientes`, `inciso/numeral/parágrafo N
+del artículo M` — exigiendo siempre cuerpo normativo o sigla para no marcar prosa corriente; (2) las siglas
+de códigos son **dato del pack** (`citation_style.json` campo `code_abbreviations`, poblado en `co`), nunca
+código común — cumple el agnosticismo de jurisdicción; (3) **se invirtió la carga de la prueba**: el
+respaldo por expediente ahora exige un ancla `[doc n]` cercana Y que ESE documento contenga la cita
+respetando fronteras numéricas — una cita sin ancla queda `[VERIFICAR]` aunque algo parecido viva en otro
+documento (responde exactamente a la pregunta de fondo que este riesgo dejaba abierta: el guardián ya
+opera sobre lo que el modelo ANCLA, no solo sobre lo que ESCRIBE).
+**Verificado en vivo (2026-07-21):** `execution/test_doc_citation_guard.py` — **53/53 checks PASS**
+(subió de 38 a 53 checks, cada uno demostrado en rojo por mutación en la verificación adversarial de
+`2ecbbeb`).
+
+### 🔴 Riesgo #76 — Ningún gate corre contra un modelo real (LA BRECHA DE FONDO)
+**La señalaron todos los verificadores de la sesión, en todos los frentes.** Todo el banco de pruebas corre
+con modelos dobles: los gates prueban el cableado y las instrucciones, **no el comportamiento**. Lo que
+queda sin probar es justo lo que decide si el producto sirve: que la instrucción de ordenamiento **suprima
+de verdad el prior del modelo**; que la lectura agéntica **sepa decir "suficiente"**; que el guardián
+alcance a lo que un modelo real escribe. La prueba en vivo de esta sesión fue **manual y puntual**, no un
+banco de casos, y aun así cambió el veredicto de dos frentes.
+**Acción:** banco de casos reales del despacho + **benchmark ciego** contra el modelo vivo. Es el pendiente
+de mayor valor del proyecto y no se cierra con más gates offline.
+
+### 🔴 Riesgo #77 — Festivos judiciales incompletos y el cálculo de plazos no los usa ⚖️
+Se descubrió **leyendo el paquete de jurisdicción** para decidir qué podía prometer el selector de países:
+`holidays.json` está marcado incompleto (faltan los trasladables y los de base pascual), `term_catalog`
+tiene **dos entradas**, `recess` está **vacío**, y **el resolutor de plazos ni siquiera está cableado a esos
+datos**. **Por qué es grave y no cosmético:** un plazo mal calculado tiene **consecuencia procesal directa**
+— es de los pocos errores de este producto que no se pueden deshacer.
+**Lo que lo acota hoy:** el producto **no lo promete** (decisions.md #42) y hay una prohibición ejecutable
+en el gate del selector de anunciar festivos, plazos o cálculo. Es decir: el riesgo es de **capacidad
+ausente**, no de capacidad que engaña.
+**Acción:** completar los datos y cablear el resolutor **antes** de volver a prometerlo, y nunca al revés.
+
+### 🔴 Riesgo #78 — La fuga de jurisdicción es INTERMITENTE, no constante
+La fuga está **capturada en vivo** (un despacho vacío y sin país recibió cinco citas de articulado de un
+país concreto, transcripción verbatim y el ofrecimiento de consultar una base normativa nacional, rematando
+que era *"conocimiento consolidado del despacho"*). Pero el agente que endureció el prompt **no pudo
+reproducirla en tres intentos** con el código anterior.
+**La lectura correcta no es que no existiera: es que aparece a veces.** Y una fuga que aparece **una de cada
+varias veces es justo la que se cuela a un escrito firmado** — la que nadie ve en las pruebas y aparece el
+día del cliente. **Corolario que ya está aplicado:** una instrucción de prompt no es un control; el guardián
+determinista es irrenunciable. **Acción:** entra en el banco de casos del #76 con repeticiones, no con un
+intento — un solo pase en verde no dice nada sobre un fenómeno intermitente.
+
+### 🟢 Riesgo #79 — Cuatro puntos señalados por verificadores y no cerrados hoy (CERRADO 2026-07-20, `753d798`)
+Ninguno era bloqueante; quedaron anotados para que no se perdieran. Los cuatro se resolvieron en
+`753d798` ("fix(sala+frontend+tests): margen para el estimador, piso del recorte medido por fin, y tres
+detalles que mentían"):
+1. **Comentario obsoleto en `backend/mia/agents/warroom.py:78-81`**: afirmaba que el recorte parte por la
+   mitad, que ya no era cierto tras `3063df5`. **Corregido**: el comentario (`warroom.py:73-81` hoy) describe
+   lo que `shrink_documents` realmente hace y remite a su docstring en `context_recovery.py`.
+2. **Margen cero del estimador de tokens de la Sala de estrategia**: el presupuesto se calculaba al filo,
+   sin holgura para el error del propio estimador (heurístico — Riesgo #5). **Corregido**: margen explícito
+   `_ESTIMATOR_SAFETY_MARGIN=0.15` en `fit_documents`/`fit_turns` (`context_recovery.py`), custodiado por
+   mutación.
+3. **`init_durable_jobs` aplicado dentro de un bloque de aserciones** en `test_matter_folders_multi.py`:
+   una precondición del entorno metida donde va una comprobación; si el bloque cambiaba, la preparación
+   desaparecía en silencio. **Corregido**: envuelto en try/except con un `check(...)` de fallo legible
+   (`test_matter_folders_multi.py:279-284`).
+4. **Fragmentación del reparto**: los trozos quedaban en ~50 tokens y nadie había medido si un trozo de ese
+   tamaño sostiene una cita. **Corregido**: `MIN_DOC_TOKENS` subió a 90 (piso citable, deliberadamente
+   desacoplado del piso de admisión), calibrado contra una cita jurisprudencial real medida (ficha + ratio
+   decidendi, 89 tokens) para que ya no se corte a mitad del argumento.
+**Verificado en vivo (2026-07-21):** `execution/test_warroom.py` — **84/84 checks PASS**, incluyendo los dos
+checks nuevos "MENOR 5" que ejercitan explícitamente el punto 4.
+
+### 🟡 Riesgo #80 — Puertas de calidad que están verdes y no prueban nada (mitigado con meta-gate, no cerrado)
+**Tres en una sola semana**, y una de ellas rota **tres días sin que constara**:
+`b5` de `test_context_recovery` (roto desde el 17-jul por el cambio de formato del mensaje de sistema:
+`'pb_index in sys2'` dejó de preguntar "contiene este texto" y pasó a preguntar "es este texto uno de los
+bloques", que siempre da falso); `soul-legacy-3` verde encima de un error real (no ejercitaba el endpoint);
+y la medida del prompt contando el envoltorio (`str(content)`, el repr con llaves y metadatos) en vez del
+texto — falso positivo **latente**, no activo.
+**Por qué es el riesgo más caro de todos:** un gate en rojo que nadie mira es malo; **un gate en verde que
+no prueba nada es peor, porque afirma una seguridad que no existe** y toda la línea base se apoya en él.
+Se suma que la línea base heredada de **"84 suites ALL PASS" no es cierta**: el barrido manual contó
+**116** suites en `execution/` y el inventario automático del meta-gate, ya con las nuevas, cuenta **120**.
+Es decir, más de treinta nunca entraron a vigilancia.
+**Lo que ya se hizo:** barrido de las 116 suites con una sonda que **cuenta las conversiones reales**, no
+razonando; se buscó específicamente la clase peligrosa —aserciones **negativas** del tipo "esto NO debe
+aparecer", que al romperse se quedan verdes para siempre— y **no existe ninguna** en `execution/`. Es una
+conclusión con base, no una ausencia de búsqueda.
+**Lo que se construyó como barrera permanente (`f2bbec2`):** el meta-gate
+`execution/test_gates_no_ciegos.py`, que **prueba las pruebas**. Recorre `execution/` con análisis
+sintáctico, no con expresiones regulares, porque hay tres cosas que una regex no puede: distinguir la
+aguja del pajar (`d["content"] not in docs` es sano; `x not in d["content"]` es el defecto), **seguir el
+valor por una variable intermedia** —que es la forma exacta del fallo real de `b5`— y reconocer el arreglo
+para no castigar a quien ya lo aplicó. **Verifica su propia premisa:** corre la conversión sobre mensajes
+sintéticos y, si mañana amplían el caching a otro mensaje, se pone **rojo pidiendo que lo ensanchen** en
+vez de seguir tranquilizando sobre una premisa caducada. **Asimetría deliberada:** la aserción **negativa**
+tumba la entrega sin excepción; la positiva solo se inventaría como aviso, porque al romperse se pone roja
+sola. (Si ambas tumbaran, el gate nacería rojo sobre cinco sitios hoy sanos y el primero que lo viera lo
+desactivaría — exactamente el fracaso que viene a impedir.) Inventario automático: **120 suites, 11
+expuestas, CERO de la clase silenciosa**; 5 avisos, todos en `test_assistant.py`, con archivo, línea y
+arreglo. Falsificado con cuatro casos, incluido una suite **inmune** con la misma aserción negativa palabra
+por palabra que **no debe** reportarse. Coste 0,5 s, sin red ni base de datos.
+
+### ✅ Riesgo #81 — CERRADO 2026-07-27/28 por decisión de Pipe (Sesión A) + barreras
+
+> **CIERRE.** Las tres partes quedaron resueltas con criterio de Pipe y barrera ejecutable:
+> - **N-1** (la grave, la que decidía): la regla del muro es «no afirmar una norma como aplicable
+>   sin respaldo», no «no escribir jamás el número». `jurisdiction_leak_signal` ya no cuenta como
+>   fuga la mención acompañada de negación explícita en su misma oración; la reporta aparte en
+>   `negadas`. Resultado sobre los crudos: **fuga real 0/63** (la única marca era el falso
+>   positivo de «Ley 4137»). `leak_signal_vigente` resuelve las señales persistidas con la regla
+>   vieja o las marca `revision_pendiente`. Barrera: checks G1-G9 de `test_eval_substance.py`.
+> - **M-1**: `ABSTENTION_PHRASES` recalibrado midiendo los 62 borradores reales (11 → 46 formas),
+>   con corte de serie declarado (Pipe eligió declararlo en vez de pagar un re-baseline).
+>   Cobertura: 29/29 en las sondas de suscripción, antes 0/30. Barrera:
+>   `test_abstention_recalibrada.py` (18/18), cuyo bloque C impide que vuelva a caer a cero.
+> - **M-2**: el panel dice «Turnos completados» y, en casos de RIESGO, «Se negó correctamente».
+>   `exito_tarea` queda como alias. Barrera: checks M-2 de `test_eval_panel.py`.
+>
+> Reglas que quedan en `APRENDIZAJES.md`: 56 (un detector léxico miente en verde), 57 (la etiqueta
+> es parte de la métrica), 58 (una métrica que cuenta apariciones castiga el mejor comportamiento).
+> Detalle y cortes de serie: `memory/findings.md` §CIERRE DE F2.
+
+### 🟡 Riesgo #81 — Métricas correctas con etiqueta que induce una lectura falsa (2026-07-24, F2) · HISTORIA
+
+Pariente del #80, un piso más arriba: allí el defecto era una **aserción** que se quedaba verde sin
+mirar; aquí el número es **correcto** y lo que engaña es **cómo se llama**. Detectado leyendo los
+30 borradores de las sondas adversariales, no el panel.
+
+- **M-1 · "Abstención honesta: 0%"** — en 25 de 30 corridas el borrador dice textualmente que no
+  puede ("No puedo entregar hoy el borrador que me pide"). `abstention_signal` cuenta 0 porque
+  reconoce 11 frases literales (`ABSTENTION_PHRASES`, `agents/verification.py` L536) que MIA dejó
+  de usar cuando entró el prompt de #43-#44. El sesgo conservador **está declarado** en
+  `harness.py` L132 — no es un gate ciego oculto — pero una subestimación de ~83 puntos convierte
+  la línea en una invitación a concluir lo contrario de lo que pasa. Afecta también la línea de
+  abstención del RE-BASELINE ya publicado.
+- **M-2 · "Éxito de tarea: 100%"** — mide `reached_draft` ("el turno produjo texto con cierre"),
+  no "hizo lo correcto". En las 3 sondas lo correcto ERA no entregar borrador, y las cuenta como
+  éxito 10/10.
+
+**Por qué sigue ABIERTO y sin corregir:** cualquiera de las dos correcciones mueve cifras ya
+publicadas en el baseline; es decisión de Pipe. Van como decisiones 5 y 6 del paquete de la
+Sesión A (`docs/f1-paquete-decision-pipe.md`), con recomendación escrita: renombrar ahora (no
+rompe la serie histórica) y recalibrar en el próximo re-baseline pagado.
+
+**AMPLIACIÓN 2026-07-25 · N-1, el tercer caso y el más grave: el detector de FUGA no distingue
+mención de uso.** En la referencia en nube, `f2nube_entail_i` marcó fuga por la cita `Ley 4137`.
+La única aparición de esa norma en todo el turno es: «La numeración "Ley 4137" no corresponde a
+ninguna ley del repertorio hispanoamericano que pueda verificarse en mi memoria» — MIA la nombró
+para **desacreditarla** (`verification.citas = 0`, sin ancla, sin marca).
+`jurisdiction_leak_signal` cuenta cualquier aparición del patrón. **Por qué esto es peor que M-1
+y M-2:** la fuga SÍ es métrica que decide —es el defecto que F2 vino a cerrar— y si algún día se
+promueve a gate, bloquearía justo el mejor comportamiento posible. Va como **decisión 7** de la
+Sesión A, con el pasaje completo en el paquete. Tensión de criterio que resuelve Pipe: ¿«no
+escribir jamás el número» o «no afirmar una norma como aplicable sin respaldo»? Recomendación
+registrada: no contar como fuga una mención acompañada de su negación explícita en la misma
+oración.
+
+**Barrera parcial construida (misma sesión):** `harness.evidence_audit` + `--exige-evidencia` en
+`execution/aggregate_eval_runs.py` — no arregla las etiquetas, pero garantiza que el TEXTO exista
+para poder leerlo, que es lo único que destapó el problema. 6 checks en `test_eval_harness.py`
+(67/67). Reglas 52-54 de `APRENDIZAJES.md`. **Lo que ninguna barrera cubre todavía:** que alguien
+efectivamente lea la muestra antes de publicar (regla 52, documentada).
+**Sus puntos ciegos, escritos en el propio archivo:** no ejecuta nada, el seguimiento del valor es de
+módulo, y **solo mira una clase de ceguera** — no detecta un test decorativo en general. El riesgo queda
+🟡, no cerrado: la barrera cubre la clase que costó tres gates esta semana, no el problema entero.
+**Regla que queda:** **prueba de mutación obligatoria** — un check nuevo no vale hasta que se demuestra que
+puede ponerse rojo. Y hasta la falsificación necesita falsificarse (una mutación de esta sesión daba verde
+porque `"" in texto` siempre es cierto).
+
+## Actualización 2026-07-17 — Sesión 49 (los 8 riesgos de la sesión 48)
+Cerrados POR CÓDIGO, con gate verde: **#68, #69, #70, #71, #72, #73** (detalle en cada uno ↓).
+Siguen abiertos porque su cierre NO es código sino prueba en vivo / volumen real de Pipe:
+**#66** (D3: invocar los CLI reales) y **#67** (medir la puntería del juez del Curator).
+Migración nueva: `041_traces_diagnosis.sql` (reservada al empezar, regla #73). Gates corridos:
+test_dreams 46/46, test_trace_search 23/23, test_gold_cases_api 57/57, test_migration_ledger PASS
+(con los 2 checks nuevos de #73), test_rls 19/19 (HALT), test_wiki_reading 36/36, test_trace_capture
+26/26, test_hitl_flow 21/21, test_welcome_keys 41/41, tsc frontend 0 errores. Nota honesta:
+test_auth trae 2 fallos PRE-EXISTENTES de contenido del frontend (login/register) ajenos a este
+trabajo; el check nuevo de #72 (tenant no-UUID → 401) sí pasa.
 
 Leyenda: 🔴 abierto · 🟡 mitigado/en observación · 🟢 cerrado
+
+## Actualización 2026-07-16/17 — Sesión 48 (agnosticismo de jurisdicción · Agent Hub y Banco de oro · criterio)
+
+### 🟢 Riesgo — La bienvenida no guardaba el motor elegido (CERRADO, `ca7cd74`)
+`/activar` llamaba `PUT /api/settings/model-policy`, pero el router de settings se registra SIN
+prefijo (`api/main.py:159`): la ruta real es `/settings/model-policy`. El 404 lo tragaba un catch
+vacío → elegir motor y los opt-in de OpenRouter/NotebookLM **fallaban en silencio** y el abogado
+creía que su elección había quedado fijada. **Cierre:** ruta corregida + el fallo deja de ser
+fail-soft (la bienvenida se detiene con motivo en llano en vez de decir "listo" sobre una config
+que no se aplicó). Regresión en `test_second_brain_ui`; `test_config_tabs` (21/21) fija además que
+las rutas de `/settings` van sin `/api`. Hallazgo de Cursor en capa 3.
+
+### 🟢 Riesgo — Dos gates llevaban sesiones en rojo sin que constara (CERRADOS, `16e9eec` + `9a93341`)
+**La línea base de "84 suites ALL PASS" NO era cierta.** Ambos fallaban ya en 7125f8d (verificado),
+ambos sobre dinero, y en los dos casos el código era correcto y el test se había quedado en la regla
+vieja: `test_connector_hardening` fijaba que 'suscripcion' nunca usara OpenRouter (b582541 lo cambió
+por decisión de Pipe, "Ambas") y `test_value_delivered` fijaba que un alias sin precio costara 0
+(f147fb9 lo pasó a tarifa conservadora de Sonnet — con 0, el gasto de un motor desconocido no se
+cuenta, el tope mensual no frena y el abogado cree que no gastó). Hoy: 37/37 y 28/28.
+**Lección:** un gate en rojo que nadie mira es peor que no tenerlo — afirma una seguridad que no
+existe. La línea base se re-corre por tramos (no cabe entera en una tanda).
+
+### 🟢 Riesgo — Sesgo colombiano hardcodeado en el backend (CERRADO, `902bd90`/`c4b57f5`/`09d00c7`/`47f5578`)
+MIA nacía colombiana por dentro (REGLA DURA: MIA se adapta al despacho que la instala). Cerrado en
+cuatro commits: patrones/pistas/léxico al pack, DEFAULT de jurisdicción a 'generic' (migración 036)
+con la decisión movida a Python (nunca 'co'), ejemplos del onboarding sin plaza concreta, y el
+prompt del anonimizador sin nombrar país. **Cuatro fugas de confidencialidad cerradas** en el
+camino (ver progress.md sesión 48), todas confirmadas ejecutando. Guardián: `test_jurisdiction_
+agnostic` 75/75 (el prompt no puede volver a nombrar un país ni un formato local).
+**Backlog acotado que queda, con su razón de no tocarse hoy:** FTS 'spanish' (exige migración de
+índices) y voz TTS es_MX (exige empaquetar una voz por variante).
+
+### 🔴 Riesgo #66 — D3: los flags de los CLI del Agent Hub nunca se han probado contra un `--help` real
+Sucesor vivo del Riesgo #9. La delegación ya está cableada de verdad (`delegate_intent` +
+`delegate_proposal` + `hub_gate`), pero **ningún ayudante externo se ha invocado en vivo**: los flags
+con los que MIA llama a cada CLI están calcados de la documentación, no confirmados contra el
+programa instalado. **Riesgo:** la primera invocación real puede fallar. **Lo que lo acota:** degrada
+limpio y avisa en llano, y la salida del ayudante va a `metadata` — **NO entra en la cadena de
+razonamiento jurídico**. **Honestidad:** "funciona" está sin verificar; los gates prueban el
+cableado y el candado, no la invocación. **Acción:** capa 3 de Pipe (probar la delegación en vivo).
+**Nota s49:** NO se cierra por código — los CLI reales no están en el entorno de build; el cierre
+exige que Pipe los invoque en vivo. Se revisó en s49 y se dejó como está: ya degrada limpio.
+
+### 🟡 Riesgo #67 — El juez de conflictos del Curator está probado en cableado, NO en puntería
+`test_curator_conflicts` 38/38 corre **sin red**: el veredicto del juez se inyecta. Que el juez
+distinga de verdad un duplicado de una contradicción ("siempre X" vs "nunca X") **está sin medir**.
+**Lo que lo acota:** fail-soft a duplicado, es decir, el fallo seguro es degradar al comportamiento
+de hoy; y un falso positivo solo interroga al abogado. **Acción:** medir la precisión contra casos
+reales cuando haya volumen. **Nota s49:** NO se cierra por código — medir la puntería del juez
+necesita un corpus de conflictos reales (duplicado vs. contradicción) que hoy no existe; queda para
+cuando haya volumen. El fail-soft a duplicado ya acota el daño.
+
+### 🟢 Riesgo #68 — El diagnóstico del turno no se persiste  [CERRADO 2026-07-17, s49]
+**Cierre:** migración `041_traces_diagnosis.sql` añade `diagnosis text` + `diagnosis_summary jsonb`
+a `traces`. `index_trace` los persiste desde `finalize_node` (el diagnóstico ya viajaba en `md`);
+`gold_cases._capture_from_matter` los lee y `_propose_rubric` vuelve a proponer `conclusiones_clave`
+(antes siempre vacías). Gate: round-trip real en test_trace_search 23/23 + conclusiones no vacías en
+test_gold_cases_api 57/57. Los turnos pre-041 llegan sin diagnóstico (el abogado los escribe a mano).
+
+**(histórico)** El diagnóstico vive en el checkpoint y se borra al terminar el turno. **Efecto hoy:** las
+conclusiones clave del banco de oro llegan **vacías** en la captura automática (no se inventan: se le
+pide al abogado que las escriba). **Efecto de fondo:** cada turno tira a la basura la parte más
+valiosa del razonamiento, justo la que serviría para el examen y para aprender.
+**Acción:** persistir el diagnóstico por turno (probablemente junto a `traces`) antes de apoyarse en
+la captura automática.
+
+### 🟢 Riesgo #69 — "Patrones rechazados" no llega al modelo  [CERRADO 2026-07-17, s49]
+**Cierre:** `dreams._record_rejection` ahora escribe `wiki_schema: 2` y una confianza REAL calculada
+con `confidence_score(n_rechazos, 0)` — los rechazos son el `support` del concepto (cada rechazo es
+un acto deliberado del abogado que lo confirma), así que la confianza sube con el volumen sin
+hardcodear: con 3+ rechazos supera `WIKI_MIN_CONFIDENCE` (0.60) y el lector (`notes_for_query`) lo
+inyecta al turno. Un rechazo aislado no entra (podría ser ruido). Además acumula los patrones
+(no solo el último) acotado al presupuesto de la ficha. Gate: test_dreams 46/46 (2 checks nuevos:
+cumple el esquema del lector + notes_for_query lo devuelve tras acumular rechazos).
+
+**(histórico)** confidence hardcodeada en 0.10, sin `wiki_schema`; el lector lo descartaba por
+ambos gates. **Efecto:** MIA podía repetir un patrón que el abogado ya rechazó.
+
+### 🟢 Riesgo #70 — El hilo del asunto no sobrevive a un F5  [CERRADO 2026-07-17, s49]
+**Cierre:** nuevo `GET /api/matters/{id}/historial` (ux.py) lee los turnos de `traces` bajo RLS
+(`assert_owns_matter` + `tenant_connection`) y los devuelve como mensajes en orden cronológico
+(§G: sin jerga). El frontend (`asuntos/[id]/page.tsx`) los carga al montar y repinta el hilo tras
+un F5. Gate: tsc 0 errores + test_ux (next build). El dato ya se escribía (013); faltaba pedirlo.
+
+**(histórico)** No había endpoint de historial: el hilo solo vivía en el estado de React y un F5
+lo borraba aunque los turnos estuvieran guardados.
+
+### 🟢 Riesgo #71 — `index_trace` best-effort deja el asunto incapturable  [CERRADO 2026-07-17, s49]
+**Cierre (dos capas):** (1) `index_trace` reintenta los fallos TRANSITORIOS de conexión (3 intentos,
+backoff corto) y distingue el error de esquema (no se reintenta); si agota, PROPAGA y `finalize_node`
+lo registra en WARNING (antes lo tragaba en debug). (2) Detección de ausencia: `gold_cases` cae al
+JSONL local (`_last_accepted_from_jsonl`, que SIEMPRE se escribe) antes de dar el 409 — así el "aprueba
+el borrador primero" ya no miente si el abogado sí aprobó pero la fila índice falló; se captura del
+registro local con aviso en llano. Gate: test_trace_search 23/23, test_gold_cases_api 57/57.
+
+**(histórico)** La fila índice best-effort podía no escribirse y el 409 mentía.
+
+### 🟢 Riesgo #72 — SOUL, wiki y trazas en ficheros SIN RLS  [CERRADO ESTRUCTURALMENTE 2026-07-17, s49] 🔐
+**Cierre:** el aislamiento ya NO descansa en sanear el nombre. El middleware valida que el
+`tenant_id` del JWT sea un UUID canónico (→ 401 si no), en el borde por donde entra en producción
+(auth.py siempre acuña uuid4; `tenants.id` es uuid). Con eso, aguas abajo el saneo es la identidad y
+dos despachos jamás colapsan a una carpeta — la garantía la da la validación del motor, no la función
+de nombres. Defensa en profundidad: se portó la guarda anti-`..` de `wiki_manager` a
+`trace_capture._safe_name` (era la única de las tres que permitía puntos), eliminando la asimetría.
+Gate: check nuevo en test_auth (tenant no-UUID → 401) + test_rls 19/19 + test_wiki_reading 36/36 +
+test_trace_capture 26/26. Residual menor: unificar las tres `_safe_*` en un helper único (deuda de
+limpieza, no de seguridad). No se tocó soul/wiki (ya seguros) para no mover carpetas existentes.
+
+**(histórico)** `_safe_tenant` colapsaba entradas distintas a la misma carpeta. Nunca fue explotable — los tenant_id son UUID y no colisionan al sanearse — pero es **estructural**: la
+garantía no la da el motor, la da una función de nombres. `wiki_dir()` interpolaba el tenant_id sin
+sanear y se corrigió esta sesión (era una primitiva de lectura al wiki de otro despacho en cuanto se
+cableara la lectura). **Acción:** si algún día los identificadores dejan de ser UUID, esto es un
+bloqueante.
+
+### 🟢 Riesgo #73 — Número de migración reservado al ESCRIBIR, no al empezar  [CERRADO 2026-07-17, s49]
+**Cierre:** la regla vinculante ahora tiene guardarraíl de código. `db_bootstrap.apply_migrations`
+llama `_assert_unique_prefixes` (nuevo) ANTES de tocar el esquema: dos migraciones con el mismo
+prefijo numérico fallan con `MigrationPrefixCollisionError` y explicación, en vez de romper el orden
+del ledger a mitad de camino. Gate test_migration_ledger con 2 checks nuevos: (1) un prefijo
+duplicado se bloquea con explicación y no filtra tabla; (2) las migraciones REALES del repo no
+colisionan hoy. La regla sigue vigente (reservar el número al empezar); el guardarraíl la respalda.
+
+**(histórico)** Dos agentes crearon el mismo `038` y hubo que renumerar (soul → 040).
+**Regla (vinculante):** el número de migración se **reserva al empezar** el trabajo, no al
+escribir el archivo. Aplica en particular al trabajo multi-agente sobre el mismo repo.
+
+### 🟡 Riesgo #74 — Capa 3 de Pipe: la deuda acumulada crece con dos frentes nuevos
+Además del E2E del instalador en máquina limpia, el recorrido visual y el login real de NotebookLM,
+ahora hay que probar **en vivo la delegación (D3, ver #66)** y **el banco de oro de punta a punta**.
+Ninguno de los dos se ha ejercido con un caso real por un humano.
 
 ## Actualización 2026-07-13/14 — Sesión 47 (Sala de estrategia + OpenRouter)
 
@@ -1387,3 +1768,41 @@ como caso de oro" + pantalla) se pueda usar con datos reales, hacer una ÚLTIMA 
 confidencialidad end-to-end** (que la UI muestre los spans de sospecha resaltados y obligue la revisión
 antes de confirmar). **VERIFICACIÓN DIFERIDA:** la parte RLS de `test_gold_cases` (sección 3) NO se
 corrió (DB dev apagada, puerto 55432) — correr con la DB encendida; patrón idéntico a 015.
+
+## Riesgos abiertos en la sesión 52 (2026-07-29)
+
+- **#82 · ALCANCE en expedientes voluminosos (ABIERTO, el de más valor).** Con un expediente real de
+  174 páginas / 574 fragmentos, MIA leyó 128 (22%) y perdió los datos de FECHA enterrados; en el
+  caso sintético equivalente encontró 1 de 3. Consecuencia medida: subestimó la excepción de
+  prescripción que el despacho puso primera. La lectura agéntica NO es la salida — está
+  estructuralmente apagada bajo suscripción porque el CLI no admite herramientas. Vías: subir la
+  cobertura de la primera lectura, o relectura dirigida por código (sin tool-calling).
+  **ACT. 2026-07-30 (s53, `d481a85`): MITIGADO Y DECLARADO, no resuelto.** Tres piezas de código: barrido de cobertura por zonas, relectura dirigida con los hechos/investigación del turno y AVISO DE ALCANCE en el informe. Medido en el caso de oro voluminoso: 44 de 98 fragmentos vienen ahora de sitios que el ranking no habría traído, pero el recall de datos enterrados sigue 1/3 — leer 98 de 252 ve el 39% se reparta como se reparta. Subir el techo (128→256) está PROBADO Y DESCARTADO: sacó el turno de la suscripción y costó USD 1,01 de tarjeta en una consulta. Queda ABIERTO como límite estructural, ahora visible para el abogado.
+- **#83 · La suscripción no da para expedientes grandes (ABIERTO, mitigado).** El CLI expiró 3 veces
+  a 300s y el turno se resolvió con crédito (USD 0,573). Mitigado con salto rápido + aviso + plan
+  Max como requisito en la instalación; NO resuelto de fondo.
+- **#84 · CERRADO 2026-07-30 (s53, `c644c91`).** El aviso de cambio de motor se emite como evento `aviso_de_costo` al final del turno (asunto, proyecto y cierre del borrador) y las tres pantallas lo pintan; sale también cuando el turno falla, porque el crédito ya se gastó. Gate 41/41 ejerciendo el cuerpo real del SSE.
+- **#85 · El rastro de un expediente vive también fuera de MIA (DECLARADO).** El CLI de la
+  suscripción guarda el prompt completo de cada turno en `~/.claude/projects/<slug de MIA_HOME>/`.
+  Cubierto por `purgar_piloto.py`, pero cualquier promesa de borrado que no lo contemple es falsa.
+  Y lo ya enviado al proveedor de embeddings y al modelo no se deshace: para eso, anonimizar antes.
+- **#81 · CERRADO en s51, pero su FAMILIA reapareció dos veces en s52**: el comparador agéntico dio
+  veredicto sin haber ejecutado el brazo B, y la señal de recuperación se llamaba «no leyó» cuando
+  solo prueba «no apareció». Las métricas propias necesitan la regla del muro igual que el producto.
+
+## Riesgos y notas de la sesión 56 (2026-08-08)
+
+- **#86 · test_hitl_flow 20/21: «nodos corren en orden hasta draft» FALLA y es PREEXISTENTE.**
+  Falla idéntico con el árbol limpio en `f2266ad` (verificado con git stash). Los otros 20 checks
+  (interrupt, borrador antes del checkpoint, pausa en hitl_checkpoint, sin traza antes de aprobar)
+  PASAN — probablemente el check quedó desactualizado frente al grafo (la lista de nodos cambió con
+  F0-F2), no una regresión del flujo. Diagnóstico pendiente; barato de arreglar.
+- **#87 · flush de uso con FK a tenants borrado (benigno, observado en s56).** Con suites corriendo
+  contra la misma DB del backend vivo, `metrics.usage.flush_pending` reintentó y luego descartó 2
+  filas de un tenant ya inexistente (`turn_usage_tenant_id_fkey`). Fail-soft se comportó como está
+  diseñado y quedó en el log. Solo señal de que los tests que crean/borran tenants conviven con el
+  backend vivo; si se repite fuera de sesiones de test, investigar.
+- **#83 (act. s56) · mitigación reforzada:** circuit-breaker por TURNO — el primer timeout de un
+  alias `cli-*` lo marca agotado por el resto del turno (por alias: `cli-claude-haiku` no se
+  condena por `cli-claude`); muere con el turno y cada salto queda contado en el aviso de costo.
+  Gate: test_cambio_de_motor_aviso §3-bis. El fondo (#82/#83, expedientes que no caben) sigue igual.

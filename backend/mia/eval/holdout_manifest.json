@@ -1,0 +1,13 @@
+{
+  "casos": {
+    "holdout-anclaje-norma-sellada": "eb49a3592f7da8ca02efcb32eca48ccbd85012c8062fdaf5593340f7880e615b",
+    "holdout-expediente-vacio": "bcb5731cb80c2d1e4e7e772ef432d44472e243252b945f9de3cd3e7c491e796d",
+    "holdout-forma-abreviada-sigla": "2db8e22051c0caaba60d89cf19f4bffc0e57e27516b94156b796b08b25274042"
+  },
+  "fuente_sha256": "1cf8a5af09ed9d95a1be78b7fa52b65f6f37f4a0cfe599fb63f8fd180711e5f1",
+  "orden": [
+    "holdout-anclaje-norma-sellada",
+    "holdout-expediente-vacio",
+    "holdout-forma-abreviada-sigla"
+  ]
+}
