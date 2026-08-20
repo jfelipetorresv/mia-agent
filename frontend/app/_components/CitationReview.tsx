@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Ban, BookOpen, CheckCircle2, Landmark, ScrollText } from "lucide-react";
+import {
+  AlertTriangle,
+  Ban,
+  BookOpen,
+  CheckCircle2,
+  Landmark,
+  RotateCcw,
+  ScrollText,
+  Search,
+} from "lucide-react";
 import { apiGet, apiSend, plainMessage } from "@/lib/api";
 import {
   Dialog,
@@ -56,6 +65,35 @@ export type Verification = {
   gate_llm?: {
     veredicto: string;
     detalle: string;
+  };
+  // §19 · CORREGIR ES REDACTAR (barreras_harness.segunda_pasada). Presente solo cuando este
+  // borrador CORRIGE uno anterior: el gate volvió a pasar acotado a los pasajes reescritos.
+  // `aviso` ya viene redactado en el idioma del abogado — se pinta tal cual.
+  segunda_pasada?: {
+    pasajes: number;
+    corregidos?: string[];
+    introducidos?: { cita: string; estado: string }[];
+    persisten?: { cita: string; estado: string }[];
+    aviso: string;
+  };
+  // §21 · BARRIDO DE PATRÓN (barreras_harness.barrido_de_patron). Un defecto señalado con un
+  // ejemplo casi nunca está solo: se barre el escrito completo por su patrón. Presente solo
+  // cuando el patrón aparece más de una vez.
+  barrido_patron?: {
+    patrones: { clase: string; patron: string; ocurrencias: number; ejemplos?: string[] }[];
+    ocurrencias_adicionales: number;
+    aviso: string;
+  };
+  // §23 · VERIFICAR EL CONTENIDO, NO EL CONTINENTE (barreras_harness.revisar_fuentes). El
+  // pasaje que una fuente aporta se coteja contra el contenido del que dice salir, y se le
+  // exige identificación mínima. `estado: "exigido"` = esas fuentes NO entraron al escrito.
+  fuentes?: {
+    estado: "aviso" | "exigido";
+    total: number;
+    verificadas: number;
+    pasaje_no_coincide?: { referencia: string; similitud: number; razon: string; excluida?: boolean }[];
+    sin_identificacion?: { referencia: string; faltan?: string[] }[];
+    aviso: string;
   };
   // Qué parte del expediente alcanzó a leer el turno. Presente solo cuando leyó una
   // fracción: en un expediente que cabe entero, no hay nada que advertir.
@@ -210,18 +248,35 @@ export default function CitationReview({ verification }: { verification: Verific
   );
 }
 
-// Dos avisos que Mia levanta sola al revisar su propio borrador. Son AVISOS: no frenan nada y no
+// Los avisos que Mia levanta sola al revisar su propio borrador. Son AVISOS: no frenan nada y no
 // cambian el texto — quien decide es el abogado. Se muestran solo cuando hay algo que decir.
+//
+// Los tres últimos llegaron con los principios 19/21/23 del harness de litigio (2026-08-19). Cada
+// bloque trae su `aviso` YA REDACTADO en el idioma del abogado por `barreras_harness.py`: aquí se
+// pinta ese texto tal cual, jamás una reescritura de esta pantalla. Lo que esta capa añade es el
+// detalle enumerable (qué citas, qué patrones, qué fuentes), que en el backend solo cabía resumido
+// a cinco. Si un bloque no viene, no se pinta nada: ni hueco ni cero.
 function AvisosDeRevision({ verification }: { verification: Verification }) {
   const neg = verification.afirmaciones_negativas;
   const cruce = verification.contaminacion_expediente;
   const alcance = verification.alcance_lectura;
   const gate = verification.gate_llm;
+  const segunda = verification.segunda_pasada;
+  const barrido = verification.barrido_patron;
+  const fuentes = verification.fuentes;
   const hayNeg = Boolean(neg && neg.n_a_revisar > 0);
   const hayCruce = Boolean(cruce && cruce.n_partes_ajenas > 0);
   const hayAlcance = Boolean(alcance && alcance.total > 0);
   const hayGate = Boolean(gate && gate.detalle);
-  if (!hayNeg && !hayCruce && !hayAlcance && !hayGate) return null;
+  const haySegunda = Boolean(segunda && segunda.aviso);
+  const hayBarrido = Boolean(barrido && barrido.aviso);
+  const hayFuentes = Boolean(fuentes && fuentes.aviso);
+  if (
+    !hayNeg && !hayCruce && !hayAlcance && !hayGate &&
+    !haySegunda && !hayBarrido && !hayFuentes
+  ) {
+    return null;
+  }
 
   return (
     <div className="mt-2 space-y-2">
@@ -275,6 +330,100 @@ function AvisosDeRevision({ verification }: { verification: Verification }) {
           <p className="mt-1 whitespace-pre-wrap font-serif text-muted-foreground">{gate.detalle}</p>
           <p className="mt-1.5 text-muted-foreground/80">
             Es un aviso, no un veredicto: la decisión sobre cada cita es tuya.
+          </p>
+        </div>
+      ) : null}
+      {haySegunda && segunda ? (
+        // §19 · el borrador que corrige a otro se vuelve a verificar ACOTADO a lo que cambió.
+        // Sin defectos nuevos ni pendientes es una BUENA noticia (y por eso no se pinta en
+        // amarillo): la corrección quedó bien y el escrito lo dice.
+        <div
+          className={cn(
+            "rounded-lg border px-3 py-2 text-xs",
+            (segunda.introducidos?.length || 0) + (segunda.persisten?.length || 0) > 0
+              ? "border-warning/30 bg-warning/5"
+              : "border-border bg-muted/40"
+          )}
+        >
+          <p className="flex items-start gap-2 font-medium text-foreground">
+            <RotateCcw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            {segunda.aviso}
+          </p>
+          {(segunda.introducidos?.length || 0) > 0 ? (
+            <p className="mt-1.5 text-muted-foreground">
+              Trajo problema nuevo:{" "}
+              <span className="font-serif text-foreground">
+                {(segunda.introducidos || []).map((d) => d.cita).join(" · ")}
+              </span>
+            </p>
+          ) : null}
+          {(segunda.persisten?.length || 0) > 0 ? (
+            <p className="mt-1 text-muted-foreground">
+              Sigue sin respaldo:{" "}
+              <span className="font-serif text-foreground">
+                {(segunda.persisten || []).map((d) => d.cita).join(" · ")}
+              </span>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {hayBarrido && barrido ? (
+        // §21 · un defecto señalado con un ejemplo casi nunca está solo. Se listan TODAS las
+        // ocurrencias del patrón, no solo la primera, con los ejemplos que trajo el barrido.
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
+          <p className="flex items-start gap-2 font-medium text-warning">
+            <Search className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {barrido.aviso}
+          </p>
+          <ul className="mt-1.5 space-y-1.5">
+            {(barrido.patrones || []).map((p, i) => (
+              <li key={i} className="text-muted-foreground">
+                <span className="font-serif text-foreground">“{p.patron}”</span> ·{" "}
+                {p.ocurrencias === 1 ? "1 vez" : `${p.ocurrencias} veces`} en el escrito
+                {(p.ejemplos || []).length > 0 ? (
+                  <ul className="mt-0.5 space-y-0.5 pl-3">
+                    {(p.ejemplos || []).map((ej, j) => (
+                      <li key={j} className="font-serif text-muted-foreground/90">
+                        …{ej}…
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {hayFuentes && fuentes ? (
+        // §23 · el sello del archivo prueba que no cambió, no que diga lo que dice decir. Este
+        // bloque llega de aguas arriba (la fuente que se le inyectó al redactor) y por eso viaja
+        // con el informe del borrador: la causa de una cita sin respaldo puede no estar en el texto.
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
+          <p className="flex items-start gap-2 font-medium text-warning">
+            <ScrollText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {fuentes.aviso}
+          </p>
+          {(fuentes.pasaje_no_coincide?.length || 0) > 0 ? (
+            <ul className="mt-1.5 space-y-1">
+              {(fuentes.pasaje_no_coincide || []).map((f, i) => (
+                <li key={i} className="text-muted-foreground">
+                  <span className="font-serif text-foreground">{f.referencia}</span> — {f.razon}
+                  {f.excluida ? " No entró al escrito." : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {(fuentes.sin_identificacion?.length || 0) > 0 ? (
+            <p className="mt-1.5 text-muted-foreground">
+              Sin identificación completa:{" "}
+              <span className="font-serif text-foreground">
+                {(fuentes.sin_identificacion || []).map((f) => f.referencia).join(" · ")}
+              </span>
+            </p>
+          ) : null}
+          <p className="mt-1.5 text-muted-foreground/80">
+            De {fuentes.total} fuentes de este turno, {fuentes.verificadas} traen un texto que sí
+            corresponde a lo que dicen citar.
           </p>
         </div>
       ) : null}

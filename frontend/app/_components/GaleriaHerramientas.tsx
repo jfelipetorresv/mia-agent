@@ -32,9 +32,16 @@
 
 import { useEffect, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { Sparkles, FolderSearch, Send, BookOpen } from "lucide-react";
+import { Sparkles, FolderSearch, Send, BookOpen, Check, Copy } from "lucide-react";
 import { apiGet } from "@/lib/api";
 import { Card } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SectionTitle } from "@/app/_components/SectionTitle";
 import { staggerStyle } from "@/lib/motion";
@@ -242,6 +249,13 @@ type Herramienta = {
   /** Ancla de la tarjeta detallada donde SÍ se hace la acción. */
   ancla?: string;
   accion?: string;
+  /**
+   * Acción SECUNDARIA de la tarjeta, para los estados en los que no hay nada que
+   * pulsar porque falta un paso de instalación. Hoy la usa el registro de la
+   * aplicación de Google: en vez de dejar al abogado con una frase que describe un
+   * bloqueo, la tarjeta abre la guía que lo levanta.
+   */
+  guia?: { texto: string; abrir: () => void };
 };
 
 function ToolCard({ h, delay }: { h: Herramienta; delay: number }) {
@@ -273,6 +287,14 @@ function ToolCard({ h, delay }: { h: Herramienta; delay: number }) {
           >
             {h.accion}
           </a>
+        ) : h.guia ? (
+          <button
+            type="button"
+            onClick={h.guia.abrir}
+            className="rounded-md px-2 py-1 text-meta font-medium text-primary underline-offset-4 transition-colors hover:bg-accent hover:underline"
+          >
+            {h.guia.texto}
+          </button>
         ) : null}
       </div>
     </Card>
@@ -305,6 +327,166 @@ function Grupo({
   );
 }
 
+/* ────────────────────── La guía de registro de Google ──────────────────────
+ *
+ * Google Drive y Gmail no se conectan con un botón mientras la INSTALACIÓN no tenga
+ * registrada su propia aplicación en Google Cloud. Ese registro lo hace una vez quien
+ * instala Mia, y hasta 2026-08-20 la tarjeta se limitaba a decir que faltaba: un
+ * bloqueo enunciado sin salida. Esta guía es la salida.
+ *
+ * FUENTE TÉCNICA (no se inventa nada aquí): el flujo real de
+ * `backend/mia/connectors/mailbox/oauth.py` — `drive.readonly` para Drive,
+ * `gmail.metadata` / `gmail.readonly` y `calendar.readonly` para correo y agenda — y la
+ * URI de retorno de la instalación, que viaja desde `config.MAILBOX_OAUTH_REDIRECT_URI`
+ * por `/api/mailbox/status` y NO se cablea en esta pantalla.
+ *
+ * Los nombres de la consola de Google van en su forma literal: quien sigue la guía los
+ * va a leer tal cual en la pantalla que tiene delante.
+ */
+
+function BotonCopiar({ valor }: { valor: string }) {
+  const [copiado, setCopiado] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        // `navigator.clipboard` no existe en contextos no seguros. Si no está, el campo
+        // sigue siendo seleccionable a mano: el botón no promete lo que no puede cumplir.
+        void navigator.clipboard?.writeText(valor).then(
+          () => {
+            setCopiado(true);
+            window.setTimeout(() => setCopiado(false), 2000);
+          },
+          () => setCopiado(false)
+        );
+      }}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-meta font-medium text-foreground transition-colors hover:bg-accent"
+    >
+      {copiado ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+      {copiado ? "Copiada" : "Copiar"}
+    </button>
+  );
+}
+
+function Paso({ n, titulo, children }: { n: number; titulo: string; children: ReactNode }) {
+  return (
+    <li className="flex gap-3">
+      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted/60 text-meta font-semibold text-foreground shadow-neu-sunken">
+        {n}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-label font-medium text-foreground">{titulo}</p>
+        <div className="mt-1 space-y-2 text-pretty text-body text-muted-foreground">{children}</div>
+      </div>
+    </li>
+  );
+}
+
+function GuiaRegistroGoogle({
+  abierta,
+  onClose,
+  uriRetorno,
+}: {
+  abierta: boolean;
+  onClose: () => void;
+  uriRetorno: string;
+}) {
+  return (
+    <Dialog open={abierta} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Registrar la aplicación de Google</DialogTitle>
+          <DialogDescription>
+            Es un trámite único de esta instalación y lo hace quien instaló Mia. Al terminar,
+            el despacho conecta sus cuentas de Google con un botón. Toma unos quince minutos y
+            no tiene costo.
+          </DialogDescription>
+        </DialogHeader>
+
+        <ol className="space-y-4">
+          <Paso n={1} titulo="Abre un proyecto en Google Cloud Console y habilita las APIs">
+            <p>
+              Entra a console.cloud.google.com con la cuenta de Google del despacho. Crea un
+              proyecto nuevo o abre uno existente. En <b>APIs y servicios → Biblioteca</b>,
+              habilita <b>Google Drive API</b>. Si el despacho va a usar también correo y
+              agenda, habilita en el mismo sitio <b>Gmail API</b> y <b>Google Calendar API</b>.
+            </p>
+          </Paso>
+
+          <Paso n={2} titulo="Configura la pantalla de consentimiento de OAuth">
+            <p>
+              En <b>APIs y servicios → Pantalla de consentimiento de OAuth</b>, elige el tipo{" "}
+              <b>Externo</b> y escribe el nombre de la aplicación y el correo de contacto.
+            </p>
+            <p>
+              En el paso de permisos añade los de <b>solo lectura</b> que Mia usa:{" "}
+              <code className="break-all rounded bg-muted/60 px-1 py-0.5 text-meta">
+                .../auth/drive.readonly
+              </code>{" "}
+              para los archivos y, si habilitaste correo y agenda,{" "}
+              <code className="break-all rounded bg-muted/60 px-1 py-0.5 text-meta">
+                .../auth/gmail.metadata
+              </code>{" "}
+              y{" "}
+              <code className="break-all rounded bg-muted/60 px-1 py-0.5 text-meta">
+                .../auth/calendar.readonly
+              </code>
+              . Mia lee; no escribe ni borra nada en las cuentas del despacho.
+            </p>
+            <p>
+              En <b>Usuarios de prueba</b> agrega su propia cuenta de Google y las de los
+              abogados que vayan a conectarse. La aplicación queda en estado <b>Prueba</b>, y en
+              ese estado funciona de inmediato para esas cuentas: no hace falta esperar la
+              verificación de Google.
+            </p>
+          </Paso>
+
+          <Paso n={3} titulo="Crea la credencial de tipo «Aplicación web»">
+            <p>
+              En <b>APIs y servicios → Credenciales</b>, elige <b>Crear credenciales → ID de
+              cliente de OAuth</b> y como tipo de aplicación, <b>Aplicación web</b>.
+            </p>
+            <p>
+              En <b>URIs de redireccionamiento autorizados</b> pega esta dirección exacta de
+              esta instalación. Un carácter de diferencia hace que Google rechace la conexión:
+            </p>
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+              <code className="min-w-0 flex-1 break-all text-meta text-foreground">
+                {uriRetorno}
+              </code>
+              <BotonCopiar valor={uriRetorno} />
+            </div>
+          </Paso>
+
+          <Paso n={4} titulo="Pega las dos claves en el archivo .env de Mia y reinicia">
+            <p>
+              Google muestra un <b>ID de cliente</b> y un <b>Secreto de cliente</b>. Cópialos al
+              archivo <code className="rounded bg-muted/60 px-1 py-0.5 text-meta">.env</code> de
+              Mia, en estas dos líneas:
+            </p>
+            <pre className="overflow-x-auto rounded-lg border border-border bg-muted/40 px-3 py-2 text-meta text-foreground">
+              GOOGLE_OAUTH_CLIENT_ID=…{"\n"}GOOGLE_OAUTH_CLIENT_SECRET=…
+            </pre>
+            <p>Guarda el archivo y reinicia Mia: las claves se leen al arrancar.</p>
+          </Paso>
+
+          <Paso n={5} titulo="Comprueba que quedó">
+            <p>
+              Vuelve a esta pantalla. Esta tarjeta pasa sola a <b>Sin conectar</b> y aparece el
+              botón <b>Conectar</b>. Ese es el aviso de que el registro quedó bien hecho.
+            </p>
+          </Paso>
+        </ol>
+
+        <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-pretty text-meta text-muted-foreground">
+          Gmail y Google Calendar usan esta misma aplicación de Google: con este registro
+          quedan habilitados los tres, sin repetir el trámite.
+        </p>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ────────────────────── Estados que llegan del backend ────────────────────── */
 
 type MotorDetectado = { claude?: boolean; codex?: boolean; ollama?: boolean };
@@ -313,7 +495,11 @@ type WelcomeStatus = {
   faltan_llaves?: { busqueda?: boolean; respaldo?: boolean; openrouter?: boolean };
 };
 type Conexion = { proveedor: string; conectado: boolean; archivos?: boolean; disponible?: boolean };
-type MailboxStatus = { conexiones?: Conexion[] };
+type MailboxStatus = {
+  conexiones?: Conexion[];
+  /** URI de retorno de ESTA instalación (config.MAILBOX_OAUTH_REDIRECT_URI). */
+  uri_de_retorno?: string;
+};
 type ObsidianStatus = { installed: boolean; vault_configured: boolean };
 type NbStatus = { estado: string; instalado: boolean; autenticado: boolean };
 type HealthCaps = { capabilities?: { telegram?: { available?: boolean; reason?: string } } };
@@ -325,6 +511,7 @@ export default function GaleriaHerramientas() {
   const [nb, setNb] = useState<NbStatus | null>(null);
   const [caps, setCaps] = useState<HealthCaps["capabilities"] | null>(null);
   const [listo, setListo] = useState(false);
+  const [guiaGoogle, setGuiaGoogle] = useState(false);
 
   useEffect(() => {
     let vivo = true;
@@ -362,6 +549,13 @@ export default function GaleriaHerramientas() {
   const conexion = (p: string) => (mailbox?.conexiones || []).find((c) => c.proveedor === p);
   const ms = conexion("microsoft");
   const google = conexion("google");
+  // El registro de la app de Google es UN trámite para Gmail, Calendar y Drive (misma
+  // aplicación OAuth), así que las dos tarjetas afectadas abren la MISMA guía.
+  const guiaRegistro = { texto: "Ver los pasos", abrir: () => setGuiaGoogle(true) };
+  // Si el backend no trajo la URI (API anterior a 2026-08-20), se cae al MISMO valor de
+  // fábrica que usa config.py cuando el .env no fija MAILBOX_OAUTH_REDIRECT_URI: no es una
+  // dirección inventada, es el default declarado del producto.
+  const uriRetorno = mailbox?.uri_de_retorno || "http://localhost:8000/api/mailbox/oauth/callback";
 
   // ── El cerebro: qué motores de IA reconoce este equipo.
   // Verdad: GET /api/welcome/status → motor_detectado (welcome.py, shutil.which).
@@ -440,7 +634,11 @@ export default function GaleriaHerramientas() {
       ...(google?.conectado
         ? { tono: "conectada" as Tono, estado: "Conectada", ancla: "conector-correo", accion: "Administrar" }
         : google?.disponible === false
-          ? { tono: "ausente" as Tono, estado: "Esta instalación todavía no tiene registrada la aplicación de Google" }
+          ? {
+              tono: "ausente" as Tono,
+              estado: "Esta instalación todavía no tiene registrada la aplicación de Google",
+              guia: guiaRegistro,
+            }
           : { tono: "pendiente" as Tono, estado: "Sin conectar", ancla: "conector-correo", accion: "Conectar" }),
     },
     {
@@ -453,7 +651,11 @@ export default function GaleriaHerramientas() {
         : google?.conectado
           ? { tono: "pendiente" as Tono, estado: "Falta el permiso de archivos", ancla: "conector-correo", accion: "Añadir permiso" }
           : google?.disponible === false
-            ? { tono: "ausente" as Tono, estado: "Esta instalación todavía no tiene registrada la aplicación de Google" }
+            ? {
+                tono: "ausente" as Tono,
+                estado: "Esta instalación todavía no tiene registrada la aplicación de Google",
+                guia: guiaRegistro,
+              }
             : { tono: "ausente" as Tono, estado: "Llega con Google Workspace: conéctalo primero", ancla: "conector-correo", accion: "Ir a Google" }),
     },
   ];
@@ -531,6 +733,11 @@ export default function GaleriaHerramientas() {
         hint="Para enterarte de un término aunque no estés frente al computador."
         items={avisos}
         offset={9}
+      />
+      <GuiaRegistroGoogle
+        abierta={guiaGoogle}
+        onClose={() => setGuiaGoogle(false)}
+        uriRetorno={uriRetorno}
       />
     </div>
   );

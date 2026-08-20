@@ -158,6 +158,13 @@ async def status(request: Request):
         "conectado": bool(conexiones_db),
         "conexiones": conexiones,
         "analisis_contenido": analisis_contenido,
+        # URI de retorno EXACTA de ESTA instalación. Quien registra la aplicación en la
+        # consola del proveedor tiene que pegarla carácter por carácter: si difiere en una
+        # barra, el consentimiento falla con redirect_uri_mismatch. La guía de la galería
+        # de herramientas la muestra y la copia desde aquí en vez de cablearla —
+        # `MAILBOX_OAUTH_REDIRECT_URI` es configurable por instalación. No es un secreto:
+        # viaja en claro dentro de la propia URL de consentimiento.
+        "uri_de_retorno": config.MAILBOX_OAUTH_REDIRECT_URI,
     }
     if conexiones_db:
         primero = conexiones_db[0]["provider"]

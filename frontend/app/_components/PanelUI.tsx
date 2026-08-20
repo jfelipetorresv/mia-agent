@@ -251,6 +251,85 @@ export function StatCard({
 }
 
 /**
+ * LA MISMA REGLA DE `StatCard`, EN FORMATO DE BARRA (regla operativa §18 · null ≠ cero).
+ *
+ * Conocimiento no muestra tarjetas de cifra: muestra barras de progreso con su rótulo
+ * («40 % consolidado», «La aprobaste el 80 % de las veces»). Eran dos cifras escritas a
+ * mano con `|| 0`, que es exactamente el patrón que convierte «todavía no se ha medido»
+ * en una afirmación falsa sobre el trabajo del despacho: una guía que Mia nunca usó se
+ * leía como «la aprobaste el 0 % de las veces», que es un reproche inventado.
+ *
+ * Aquí la barra desaparece cuando no hay dato y queda el estado declarado con su razón,
+ * en la misma redacción de `StatCard` («Sin medir todavía · …»). `label` se pasa como
+ * literal a propósito: es lo que `execution/test_registro_metricas.py` inventaria para
+ * exigir que cada cifra visible tenga su definición en `validation/registro-metricas.json`.
+ * Por eso el porcentaje se inserta EN el rótulo, sustituyendo su «%»: la etiqueta que se
+ * registra («La aprobaste el % de las veces») es la misma frase que el abogado lee, sin
+ * partirla en trozos que ningún inventario podría cotejar.
+ */
+export function MetricaBarra({
+  label,
+  /** Fracción 0..1. `null`/`undefined`/no finito = no medido; NUNCA se pinta como 0 %. */
+  fraccion,
+  sinMedir,
+  sufijo,
+  bloque = false,
+  className,
+}: {
+  label: string;
+  fraccion?: number | null;
+  sinMedir: string;
+  /** Texto que acompaña a la cifra cuando SÍ hay dato (p. ej. «· Mia la usó 4 veces»). */
+  sufijo?: ReactNode;
+  /** `true` = barra a todo el ancho con el rótulo debajo (pie de tarjeta). */
+  bloque?: boolean;
+  className?: string;
+}) {
+  const medido = fraccion != null && Number.isFinite(fraccion);
+  if (!medido) {
+    return (
+      <div className={cn("text-pretty text-meta text-muted-foreground", className)}>
+        {label} · Sin medir todavía · {sinMedir}
+      </div>
+    );
+  }
+  const pct = Math.round(Math.max(0, Math.min(1, fraccion as number)) * 100);
+  const barra = (
+    <div
+      className={cn(
+        "h-1.5 rounded-full bg-muted shadow-neu-sunken",
+        bloque ? "w-full" : "w-24 shrink-0"
+      )}
+    >
+      <div
+        className="h-1.5 rounded-full bg-primary transition-all duration-200"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+  const rotulo = (
+    <span className={cn("text-pretty text-meta nums text-muted-foreground", bloque && "mt-1.5 block")}>
+      {label.replace("%", `${pct} %`)}
+      {sufijo}
+    </span>
+  );
+  if (bloque) {
+    return (
+      <div className={className}>
+        {barra}
+        {rotulo}
+      </div>
+    );
+  }
+  return (
+    <div className={cn("flex items-center gap-2", className)}>
+      {barra}
+      {rotulo}
+    </div>
+  );
+}
+
+/**
  * "Aquí todavía no hay nada, y esto es lo que puedes hacer."
  * El borde discontinuo es lo que distingue un vacío de un dato: la tarjeta
  * `dashed` del sistema existe exactamente para esto.

@@ -103,6 +103,24 @@
       "ancla": "label=\"Habilidades archivadas\"",
       "estimacion": false,
       "sin_medir": "Raya + «Sin dato ahora mismo»."
+    },
+    {
+      "etiqueta": "% consolidado",
+      "mide": "confidence_score(support, contra) del concepto en el wiki del despacho: acuerdo con prior de Laplace (support+1)/(support+2*contra+2), multiplicado por un factor de volumen. Es una HEURÍSTICA de cuánto ha resistido ese criterio el paso por las manos del abogado — no es probabilidad, no mide exactitud y nunca llega a 1,0.",
+      "fuente": "backend/mia/memory/wiki_manager.py::confidence_score, leído del frontmatter por list_concepts; expuesto en GET /api/wiki/concepts",
+      "archivo_ui": "frontend/app/memoria/page.tsx",
+      "ancla": "label=\"% consolidado\"",
+      "estimacion": false,
+      "sin_medir": "Un criterio con evidencia nunca da exactamente 0 (el suelo de volumen lo impide), así que 0/ausente = el concepto todavía no tiene la métrica escrita. Se muestra «Sin medir todavía · este criterio aún no ha pasado por tu aprobación»; nunca «0 % consolidado»."
+    },
+    {
+      "etiqueta": "La aprobaste el % de las veces",
+      "mide": "aprobados / veces que la guía se activó, sobre las trazas de ESA habilidad (GEPA._rates: outcome == 'approved' dividido entre el total de trazas). No distingue aprobar sin tocar de aprobar tras editar — eso es edit_rate, que esta cifra no muestra.",
+      "fuente": "backend/mia/memory/gepa.py::grade_all_skills -> approval_rate / activations",
+      "archivo_ui": "frontend/app/memoria/page.tsx",
+      "ancla": "label=\"La aprobaste el % de las veces\"",
+      "estimacion": false,
+      "sin_medir": "Sin activaciones no hay tasa: el 0.0 del backend viene de la división que no se hizo, no de un rechazo. Se muestra «Sin medir todavía · Mia todavía no ha usado esta guía en ningún asunto»; nunca «la aprobaste el 0 %»."
     }
   ]
 }

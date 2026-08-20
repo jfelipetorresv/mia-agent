@@ -21,8 +21,9 @@ esto en rojo el mismo día que aparece.
   1 · el registro carga y cada entrada trae sus campos obligatorios;
   2 · toda métrica del registro sigue viva: su `ancla` aparece en su `archivo_ui`
       (una definición que describe una etiqueta ya borrada es peor que ninguna);
-  3 · DIRECCIÓN QUE IMPORTA — toda `<StatCard label="…">` de las pantallas de métricas
-      tiene entrada en el registro. Una tarjeta nueva sin definición = ROJO;
+  3 · DIRECCIÓN QUE IMPORTA — toda cifra con rótulo literal de las pantallas de métricas
+      (`<StatCard label="…">`, `<MetricaBarra label="…">`) tiene entrada en el registro.
+      Una cifra nueva sin definición = ROJO;
   4 · toda métrica marcada `estimacion: true` declara en su pantalla que lo es
       (la palabra «estimad*» tiene que estar cerca de su ancla, no en un tooltip);
   5 · ninguna pantalla de métricas rellena un dato ausente con cero: se prohíbe el
@@ -59,7 +60,16 @@ VERBOSE = "--verbose" in sys.argv
 PANTALLAS_DE_METRICAS = (
     "frontend/app/dashboard/page.tsx",
     "frontend/app/configurar/page.tsx",
+    # Conocimiento: no tiene tarjetas de cifra, tiene barras con rótulo («% consolidado»,
+    # «La aprobaste el % de las veces»). Son cifras que el abogado lee y juzga igual que
+    # las del panel, así que entran al mismo inventario (2026-08-20).
+    "frontend/app/memoria/page.tsx",
 )
+
+# Los componentes que PINTAN una cifra con su rótulo literal. Cada uno declara su etiqueta
+# en un `label="…"`, y esa etiqueta es la llave del registro. Si mañana nace un tercero, se
+# añade aquí y sus cifras entran solas al inventario obligatorio.
+COMPONENTES_DE_CIFRA = ("StatCard", "MetricaBarra")
 
 CAMPOS = ("etiqueta", "mide", "fuente", "archivo_ui", "ancla", "estimacion", "sin_medir")
 
@@ -69,8 +79,15 @@ CAMPOS_VALUE = (
     "net_usd", "gross_usd", "cost_usd", "hours_saved", "hourly_rate_usd",
     "drafts_approved", "consultations", "weekly_approval_rate",
 )
+
+# Fracciones 0..1 que Conocimiento pinta como porcentaje. Un cero fabricado aquí no es un
+# dato ausente: es un JUICIO inventado sobre el despacho («la aprobaste el 0 % de las
+# veces» sobre una guía que Mia nunca usó, «0 % consolidado» sobre un criterio recién
+# nacido). Ambos vivían con `|| 0` hasta el 2026-08-20.
+CAMPOS_FRACCION = ("confidence", "approval_rate")
+
 _CERO_FABRICADO = re.compile(
-    r"\b(" + "|".join(CAMPOS_VALUE) + r")\b\s*(\?\?|\|\|)\s*0\b"
+    r"\b(" + "|".join(CAMPOS_VALUE + CAMPOS_FRACCION) + r")\b\s*(\?\?|\|\|)\s*0\b"
 )
 
 _results: list[tuple[str, bool]] = []
@@ -85,15 +102,16 @@ def check(nombre: str, ok: bool, detalle: str = "") -> bool:
     return ok
 
 
-def etiquetas_de_statcard(texto: str) -> list[str]:
-    """Extrae los `label="…"` de cada `<StatCard …/>` del archivo.
+def etiquetas_de_cifra(texto: str) -> list[str]:
+    """Extrae los `label="…"` de cada componente de cifra (`COMPONENTES_DE_CIFRA`).
 
-    Se recorta hasta el `/>` de cierre de la propia tarjeta para no capturar el label
-    de un componente vecino. Un `label={expresión}` se ignora a propósito: no es un
-    literal que se pueda inventariar, y hoy no existe ninguno.
+    Se recorta hasta el `/>` de cierre del propio componente para no capturar el label
+    de uno vecino. Un `label={expresión}` se ignora a propósito: no es un literal que se
+    pueda inventariar, y hoy no existe ninguno.
     """
     etiquetas: list[str] = []
-    for m in re.finditer(r"<StatCard\b", texto):
+    patron = r"<(?:" + "|".join(COMPONENTES_DE_CIFRA) + r")\b"
+    for m in re.finditer(patron, texto):
         fin = texto.find("/>", m.end())
         bloque = texto[m.end(): fin if fin != -1 else m.end() + 800]
         lab = re.search(r'label="([^"]+)"', bloque)
@@ -150,7 +168,7 @@ def run(root: Path, registro_path: Path) -> None:
         f = root / rel
         if not f.exists():
             continue
-        for et in etiquetas_de_statcard(f.read_text(encoding="utf-8")):
+        for et in etiquetas_de_cifra(f.read_text(encoding="utf-8")):
             vistas += 1
             if et not in registradas:
                 huerfanas.append(f"{rel}: «{et}» no tiene definición en el registro")

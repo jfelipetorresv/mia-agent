@@ -45,7 +45,7 @@ import { apiGet, apiSend, apiUploadMany, ApiError, plainMessage } from "@/lib/ap
 import GuideInterviewWizard from "../_components/GuideInterviewWizard";
 import MiDespachoSection from "../_components/MiDespachoSection";
 import { NotaMia } from "../_components/NotaMia";
-import { NeuIcon, SectionTitle } from "@/app/_components/PanelUI";
+import { MetricaBarra, NeuIcon, SectionTitle } from "@/app/_components/PanelUI";
 import { PageShell } from "@/app/_components/PageShell";
 import { Card, cardVariants } from "@/components/ui/card";
 import { staggerStyle } from "@/lib/motion";
@@ -248,16 +248,19 @@ function Wiki() {
                   </div>
                 </div>
               </div>
+              {/* null ≠ cero (regla operativa §18). `confidence` es una HEURÍSTICA con
+                  suelo por volumen: un criterio con evidencia nunca sale exactamente en
+                  0, así que un 0 solo puede significar que ese concepto todavía no tiene
+                  la métrica escrita. Pintarlo como «0 % consolidado» afirmaba de un
+                  criterio recién nacido que no ha resistido nada, que es un juicio, no
+                  un dato. */}
               <div className="mt-auto">
-                <div className="h-1.5 rounded-full bg-muted shadow-neu-sunken">
-                  <div
-                    className="h-1.5 rounded-full bg-primary transition-all duration-200"
-                    style={{ width: `${Math.round((c.confidence || 0) * 100)}%` }}
-                  />
-                </div>
-                <div className="mt-1.5 text-meta nums text-muted-foreground">
-                  {Math.round((c.confidence || 0) * 100)}% consolidado
-                </div>
+                <MetricaBarra
+                  label="% consolidado"
+                  fraccion={c.confidence ? c.confidence : null}
+                  sinMedir="este criterio aún no ha pasado por tu aprobación"
+                  bloque
+                />
               </div>
             </button>
           </li>
@@ -689,18 +692,18 @@ function Saber() {
                   </div>
                   <div className="mt-0.5 text-body text-muted-foreground">{p.summary}</div>
                   {skill ? (
-                    <div className="mt-2 flex items-center gap-2">
-                      <div className="h-1.5 w-24 shrink-0 rounded-full bg-muted shadow-neu-sunken">
-                        <div
-                          className="h-1.5 rounded-full bg-primary transition-all duration-200"
-                          style={{ width: `${Math.round((skill.approval_rate || 0) * 100)}%` }}
-                        />
-                      </div>
-                      <span className="text-meta nums text-muted-foreground">
-                        La aprobaste el {Math.round((skill.approval_rate || 0) * 100)}% de las veces · Mia la
-                        usó {skill.activations} {skill.activations === 1 ? "vez" : "veces"}
-                      </span>
-                    </div>
+                    // null ≠ cero (regla operativa §18). `approval_rate` es aprobados /
+                    // veces usada: sin usos, el backend devuelve 0.0 por la división que
+                    // no se hace, y esta línea lo leía como «la aprobaste el 0 % de las
+                    // veces» — un reproche sobre una guía que Mia nunca llegó a usar. Lo
+                    // que decide si hay medida son las activaciones, no la tasa.
+                    <MetricaBarra
+                      className="mt-2"
+                      label="La aprobaste el % de las veces"
+                      fraccion={skill.activations > 0 ? skill.approval_rate : null}
+                      sinMedir="Mia todavía no ha usado esta guía en ningún asunto"
+                      sufijo={` · Mia la usó ${skill.activations} ${skill.activations === 1 ? "vez" : "veces"}`}
+                    />
                   ) : null}
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     <Button size="sm" variant="ghost" onClick={() => openView(p)}>
