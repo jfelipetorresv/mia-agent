@@ -57,6 +57,13 @@ SOURCE_PREFIX = "drive:"                 # knowledge_chunks.source = 'drive:<sou
 ALLOWED_SUFFIXES = {".pdf", ".docx", ".txt", ".md"} | set(SUPPORTED_ANYDOC_EXTENSIONS)
 MAX_FOLDERS_PER_SCAN = 5000              # tope duro de carpetas visitadas por corrida (defensivo)
 MAX_SOURCES_PER_TENANT = 20             # tope de carpetas remotas registradas por despacho
+
+# Proveedores de carpetas remotas soportados y su nombre en llano (§G). Google Drive entró
+# al mismo nivel que OneDrive por decisión de Pipe 2026-08-19; el CLIENTE de Google vive en
+# connectors/google_drive.py, pero la allowlist, el motor de sync y los topes de esta misma
+# módulo se comparten para que los dos no puedan divergir. Migración 060 amplía el CHECK de
+# `remote_drive_sources.provider` a estos dos valores.
+DRIVE_PROVIDERS: dict[str, str] = {"microsoft": "OneDrive", "google": "Google Drive"}
 CRON_THROTTLE_HOURS = 1.0               # ventana del throttle del sync PROGRAMADO (bloque 3b)
 
 # Lock anti-duplicado por fuente, COMPARTIDO entre el sync manual (api/routes/remote_drive.py)
@@ -223,8 +230,11 @@ async def register_source(tenant_id: str, remote_item_id: str, label: str | None
     ya registrada → DuplicateSourceError; tope por despacho → SourceLimitError."""
     if kind not in ("knowledge", "matters"):
         raise ValueError("No reconozco ese tipo de carpeta.")
+    if provider not in DRIVE_PROVIDERS:
+        raise ValueError("No reconozco ese servicio de archivos en la nube.")
+    nombre = DRIVE_PROVIDERS[provider]
     if not remote_item_id or not str(remote_item_id).strip():
-        raise ValueError("Necesito la carpeta de OneDrive que quieres que Mia conozca.")
+        raise ValueError(f"Necesito la carpeta de {nombre} que quieres que Mia conozca.")
     remote_item_id = str(remote_item_id).strip()
     if kind == "matters":
         if not matter_id:
@@ -236,14 +246,14 @@ async def register_source(tenant_id: str, remote_item_id: str, label: str | None
             raise MatterNotFoundError("No encontré ese expediente en tu despacho.")
     else:
         matter_id = None
-    label = (label or "Carpeta de OneDrive")[:200]
+    label = (label or f"Carpeta de {nombre}")[:200]
 
     async with pool.tenant_connection(tenant_id) as conn:
         total = (await (await conn.execute(
             "SELECT count(*) FROM remote_drive_sources WHERE enabled")).fetchone())[0]
         if total >= MAX_SOURCES_PER_TENANT:
             raise SourceLimitError(
-                f"Llegaste al máximo de {MAX_SOURCES_PER_TENANT} carpetas de OneDrive. "
+                f"Llegaste al máximo de {MAX_SOURCES_PER_TENANT} carpetas en la nube. "
                 f"Quita alguna que ya no uses antes de agregar otra.")
         row = await (await conn.execute(
             "INSERT INTO remote_drive_sources (tenant_id, provider, remote_item_id, label, kind, matter_id) "
@@ -252,7 +262,7 @@ async def register_source(tenant_id: str, remote_item_id: str, label: str | None
             (tenant_id, provider, remote_item_id, label, kind, matter_id),
         )).fetchone()
     if row is None:
-        raise DuplicateSourceError("Esa carpeta de OneDrive ya está agregada.")
+        raise DuplicateSourceError(f"Esa carpeta de {nombre} ya está agregada.")
     return {"id": str(row[0]), "remote_item_id": remote_item_id, "label": label,
             "kind": kind, "matter_id": matter_id, "enabled": True, "provider": provider}
 
@@ -262,14 +272,17 @@ async def list_sources(tenant_id: str) -> list[dict]:
     async with pool.tenant_connection(tenant_id) as conn:
         rows = await (await conn.execute(
             "SELECT s.id, s.label, s.kind, s.matter_id, s.enabled, s.remote_item_id, s.created_at, "
-            "  s.last_synced_at AS last_sync "
+            "  s.last_synced_at AS last_sync, s.provider "
             "FROM remote_drive_sources s WHERE s.enabled ORDER BY s.created_at",
         )).fetchall()
     return [
+        # `provider` viaja SIEMPRE (no solo para el cliente): de él sale con qué conector se
+        # sincroniza la carpeta — OneDrive o Google Drive — y qué icono/nombre pinta la UI.
         {"id": str(r[0]), "label": r[1], "kind": r[2],
          "matter_id": str(r[3]) if r[3] else None, "enabled": r[4],
          "remote_item_id": r[5], "created_at": r[6].isoformat(),
-         "last_sync": r[7].isoformat() if r[7] else None}
+         "last_sync": r[7].isoformat() if r[7] else None,
+         "provider": r[8] or "microsoft"}
         for r in rows
     ]
 
@@ -278,13 +291,13 @@ async def get_source(tenant_id: str, source_id: str) -> dict | None:
     """Una fuente remota registrada del tenant, o None si no existe (o es ajena)."""
     async with pool.tenant_connection(tenant_id) as conn:
         row = await (await conn.execute(
-            "SELECT id, label, kind, matter_id, enabled, remote_item_id "
+            "SELECT id, label, kind, matter_id, enabled, remote_item_id, provider "
             "FROM remote_drive_sources WHERE id=%s::uuid AND enabled", (source_id,))).fetchone()
     if row is None:
         return None
     return {"id": str(row[0]), "label": row[1], "kind": row[2],
             "matter_id": str(row[3]) if row[3] else None, "enabled": row[4],
-            "remote_item_id": row[5]}
+            "remote_item_id": row[5], "provider": row[6] or "microsoft"}
 
 
 async def source_last_sync(tenant_id: str, source_id: str):
@@ -635,14 +648,21 @@ class RemoteDriveSync:
 
 # ── cron: sincronización PROGRAMADA de todas las fuentes de un tenant (bloque 3b) ────
 async def sync_tenant_sources(tenant_id: str, service: "GraphDriveService",
-                              *, throttle_hours: float = CRON_THROTTLE_HOURS) -> dict:
+                              *, throttle_hours: float = CRON_THROTTLE_HOURS,
+                              services: dict | None = None) -> dict:
     """Sincroniza TODAS las fuentes remotas HABILITADAS de un tenant — usado por el job
     programado del scheduler (`cron/scheduler.py::sync_remote_drive_all_tenants`).
 
+    MULTI-PROVEEDOR: cada fuente se sincroniza con el conector de SU proveedor. `service` es
+    el de Microsoft (posicional, se conserva por compatibilidad); `services` permite pasar el
+    mapa completo {"microsoft": ..., "google": GoogleDriveService()}. Un proveedor sin
+    servicio inyectado —o sin cuenta conectada— simplemente no aporta fuentes; las del otro
+    proveedor siguen sincronizándose.
+
     Fail-soft en dos niveles, igual criterio que LocalFolderSync/ObsidianSync:
-      · Tenant sin cuenta Microsoft conectada (o sin permiso Files.Read) → silencio total:
+      · Tenant sin NINGUNA cuenta conectada con permiso de archivos → silencio total:
         devuelve {"no_account": True} SIN tocar ninguna fuente. Es el estado normal de un
-        despacho que no conectó OneDrive, no un error.
+        despacho que no conectó ni OneDrive ni Google Drive, no un error.
       · Una fuente que falle (token vencido a mitad de corrida, carpeta borrada en OneDrive,
         error inesperado) se cuenta en 'failed' y NO detiene las demás fuentes del tenant.
 
@@ -654,9 +674,21 @@ async def sync_tenant_sources(tenant_id: str, service: "GraphDriveService",
     en otra corrida), esta fuente se salta en vez de duplicar la sincronización.
 
     Devuelve {"no_account": False, "synced", "skipped_throttle", "skipped_lock", "failed"}."""
-    conn = await service.connector_for(tenant_id)
-    if conn is None:
-        logger.debug("cron OneDrive: tenant %s sin cuenta Microsoft con permiso de archivos "
+    svc_by_provider = dict(services or {})
+    svc_by_provider.setdefault("microsoft", service)
+    # Un conector por proveedor, resuelto UNA vez (cada resolución refresca tokens).
+    conns: dict[str, object] = {}
+    for prov, svc in svc_by_provider.items():
+        if svc is None:
+            continue
+        try:
+            conns[prov] = await svc.connector_for(tenant_id)
+        except Exception:  # noqa: BLE001 — un proveedor roto no debe tapar al otro
+            logger.exception("cron carpetas en la nube: no pude resolver %s (tenant=%s)",
+                             prov, tenant_id)
+            conns[prov] = None
+    if not any(c is not None for c in conns.values()):
+        logger.debug("cron carpetas en la nube: tenant %s sin cuenta con permiso de archivos "
                      "— silencio", tenant_id)
         return {"no_account": True, "synced": 0, "skipped_throttle": 0,
                 "skipped_lock": 0, "failed": 0}
@@ -665,6 +697,11 @@ async def sync_tenant_sources(tenant_id: str, service: "GraphDriveService",
              "skipped_lock": 0, "failed": 0}
     for source in await list_sources(tenant_id):
         sid = str(source["id"])
+        conn = conns.get(source.get("provider") or "microsoft")
+        if conn is None:
+            # Esa carpeta es de un proveedor que este despacho no tiene conectado (o sin
+            # permiso de archivos): se salta en silencio, no es un fallo de la corrida.
+            continue
         # MEN4: `list_sources` YA trae `last_sync` (mismo `last_synced_at`) → sin round-trip
         # redundante por fuente a la DB.
         last_iso = source.get("last_sync")

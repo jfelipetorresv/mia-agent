@@ -1,16 +1,24 @@
 "use client";
 
-// Mia · "Carpetas en la nube (OneDrive)" del Panel de control (Fase 4 · Fase 3 backend).
-// Lista las carpetas de OneDrive registradas como CONOCIMIENTO del despacho
-// (kind="knowledge"), con sincronizar/quitar, y el botón que abre el navegador modal
-// para agregar una nueva.
+// Mia · "Carpetas en la nube" de Configuración (Fase 4 · Fase 3 backend).
+// Lista las carpetas registradas como CONOCIMIENTO del despacho (kind="knowledge"),
+// con sincronizar/quitar, y el botón que abre el navegador modal para agregar una nueva.
+//
+// Sirve a los DOS proveedores (decisión de Pipe 2026-08-19): `provider` elige OneDrive
+// (default, el contrato de siempre) o Google Drive. La lista se filtra por proveedor para
+// que cada bloque muestre lo suyo — las carpetas viejas, sin proveedor guardado, cuentan
+// como de OneDrive, que es de donde vienen.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Cloud, Loader2, Plus, RefreshCw } from "lucide-react";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import OneDriveFolderPicker, { type DriveSource } from "@/app/_components/OneDriveFolderPicker";
+import OneDriveFolderPicker, {
+  DRIVE_NAMES,
+  type DriveProvider,
+  type DriveSource,
+} from "@/app/_components/OneDriveFolderPicker";
 
 function apiMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : fallback;
@@ -31,7 +39,19 @@ function fmtRelative(iso?: string | null): string {
   return `hace ${diffDay} ${diffDay === 1 ? "día" : "días"}`;
 }
 
-export default function OneDriveSourcesSection() {
+// Las carpetas de CONOCIMIENTO de ESTE proveedor. Sin `provider` guardado ⇒ microsoft.
+function mine(sources: DriveSource[] | undefined, provider: DriveProvider): DriveSource[] {
+  return (sources || []).filter(
+    (s) => s.kind === "knowledge" && (s.provider || "microsoft") === provider,
+  );
+}
+
+export default function OneDriveSourcesSection({
+  provider = "microsoft",
+}: {
+  provider?: DriveProvider;
+} = {}) {
+  const servicio = DRIVE_NAMES[provider];
   const [sources, setSources] = useState<DriveSource[] | null>(null);
   const [msg, setMsg] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -41,12 +61,12 @@ export default function OneDriveSourcesSection() {
   const load = useCallback(async () => {
     try {
       const res = await apiGet<{ sources: DriveSource[] }>("/api/drive/sources");
-      setSources((res.sources || []).filter((s) => s.kind === "knowledge"));
+      setSources(mine(res.sources, provider));
     } catch (err) {
       setSources([]);
-      setMsg(apiMessage(err, "No se pudieron cargar las carpetas de OneDrive."));
+      setMsg(apiMessage(err, `No se pudieron cargar las carpetas de ${DRIVE_NAMES[provider]}.`));
     }
-  }, []);
+  }, [provider]);
 
   useEffect(() => {
     load();
@@ -78,7 +98,7 @@ export default function OneDriveSourcesSection() {
         const found = (res.sources || []).find((s) => s.id === id);
         if (found && found.last_sync && found.last_sync !== baseline) {
           stopPolling();
-          setSources((res.sources || []).filter((s) => s.kind === "knowledge"));
+          setSources(mine(res.sources, provider));
           setBusyId(null);
           setMsg("Listo. Revisé la carpeta.");
           return;
@@ -140,8 +160,8 @@ export default function OneDriveSourcesSection() {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        Carpetas de OneDrive que Mia consulta como conocimiento del despacho, sin instalar el programa de escritorio.
-        Solo lectura.
+        Carpetas de {servicio} que Mia consulta como conocimiento del despacho, sin instalar el programa de
+        escritorio. Solo lectura.
       </p>
       {msg ? (
         <p role="status" className="rounded-md bg-accent px-3 py-2 text-sm text-accent-foreground animate-fade-in">
@@ -152,7 +172,7 @@ export default function OneDriveSourcesSection() {
       {sources.length === 0 ? (
         <div className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-4">
           <Cloud className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
-          <p className="text-sm text-muted-foreground">Aún no has agregado ninguna carpeta de OneDrive.</p>
+          <p className="text-sm text-muted-foreground">Aún no has agregado ninguna carpeta de {servicio}.</p>
         </div>
       ) : (
         <ul className="space-y-2">
@@ -190,7 +210,13 @@ export default function OneDriveSourcesSection() {
         Añadir carpeta
       </Button>
 
-      <OneDriveFolderPicker open={pickerOpen} onOpenChange={setPickerOpen} kind="knowledge" onLinked={onLinked} />
+      <OneDriveFolderPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        kind="knowledge"
+        provider={provider}
+        onLinked={onLinked}
+      />
     </div>
   );
 }

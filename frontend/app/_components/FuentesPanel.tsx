@@ -104,6 +104,9 @@ export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
 
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [onedrivePickerOpen, setOnedrivePickerOpen] = useState(false);
+  // Google Drive entró al nivel de OneDrive (decisión de Pipe 2026-08-19): mismo modal,
+  // mismo flujo, otro proveedor.
+  const [googleDrivePickerOpen, setGoogleDrivePickerOpen] = useState(false);
   const [mailDialogOpen, setMailDialogOpen] = useState(false);
 
   const [unlinkTarget, setUnlinkTarget] = useState<Fuente | null>(null);
@@ -238,8 +241,8 @@ export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
     await refresh();
   }
 
-  async function onOneDriveLinked(source: { id: string }) {
-    setBanner({ type: "success", text: "Vinculé la carpeta de OneDrive. Estoy revisando sus documentos." });
+  async function onOneDriveLinked(source: { id: string }, servicio = "OneDrive") {
+    setBanner({ type: "success", text: `Vinculé la carpeta de ${servicio}. Estoy revisando sus documentos.` });
     try {
       // El registro de la fuente no dispara una revisión inicial por su cuenta —
       // hay que pedirla aparte (a diferencia de la carpeta local, que sí la dispara sola).
@@ -387,6 +390,7 @@ export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
         <DropdownMenuContent align="start" className="w-64">
           <DropdownMenuItem onClick={() => setFolderPickerOpen(true)}>Carpeta del equipo</DropdownMenuItem>
           <DropdownMenuItem onClick={() => setOnedrivePickerOpen(true)}>Carpeta de OneDrive</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setGoogleDrivePickerOpen(true)}>Carpeta de Google Drive</DropdownMenuItem>
           <DropdownMenuItem onClick={() => setMailDialogOpen(true)}>Correos del caso</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -405,6 +409,15 @@ export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
         kind="matters"
         matterId={matterId}
         onLinked={onOneDriveLinked}
+      />
+
+      <OneDriveFolderPicker
+        open={googleDrivePickerOpen}
+        onOpenChange={setGoogleDrivePickerOpen}
+        kind="matters"
+        matterId={matterId}
+        provider="google"
+        onLinked={(source) => onOneDriveLinked(source, "Google Drive")}
       />
 
       <MailSearchDialog matterId={matterId} open={mailDialogOpen} onOpenChange={setMailDialogOpen} onLinked={onMailLinked} />

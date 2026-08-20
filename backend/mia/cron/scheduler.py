@@ -210,19 +210,23 @@ async def sync_remote_drive_all_tenants() -> dict:
     Fail-soft en dos niveles: tenant sin cuenta Microsoft con permiso de archivos → silencio
     (estado normal, no error); una fuente o un tenant que falle no tumba a los demás.
     Devuelve {tenant_id: stats}."""
+    from ..connectors.google_drive import GoogleDriveService
     from ..connectors.graph_drive import GraphDriveService, sync_tenant_sources
 
     service = GraphDriveService()
+    google = GoogleDriveService()
     out: dict[str, dict] = {}
     try:
         for tenant_id in _enumerate_remote_drive_tenants():
             try:
-                out[tenant_id] = await sync_tenant_sources(tenant_id, service)
+                out[tenant_id] = await sync_tenant_sources(
+                    tenant_id, service, services={"google": google})
             except Exception as e:  # un tenant no debe tumbar a los demás
                 out[tenant_id] = {"error": str(e)}
-                logger.exception("sync de OneDrive remoto falló para tenant %s", tenant_id)
+                logger.exception("sync de carpetas en la nube falló para tenant %s", tenant_id)
     finally:
         await service.aclose()
+        await google.aclose()
     return out
 
 

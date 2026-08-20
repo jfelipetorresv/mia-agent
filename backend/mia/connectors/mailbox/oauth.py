@@ -48,7 +48,12 @@ PROVIDER_OAUTH: dict[str, dict] = {
                    "https://www.googleapis.com/auth/gmail.metadata",
                    "openid", "email"),
         # `access_type=offline` + `prompt=consent` fuerzan a Google a dar refresh_token.
-        "extra_authorize": {"access_type": "offline", "prompt": "consent"},
+        # `include_granted_scopes=true` es la AUTORIZACIÓN INCREMENTAL de Google: el
+        # consentimiento nuevo se SUMA a lo ya concedido en vez de reemplazarlo. Es lo que
+        # permite que un despacho con Gmail ya conectado añada el permiso de Google Drive
+        # sin perder el de correo (espejo de "Añadir permiso de archivos" en Microsoft).
+        "extra_authorize": {"access_type": "offline", "prompt": "consent",
+                            "include_granted_scopes": "true"},
     },
 }
 
@@ -64,13 +69,17 @@ _CONTENT_SCOPES: dict[str, tuple[str, ...]] = {
                "openid", "email"),
 }
 
-# Scopes para "drive" (Fase 1 de fuentes remotas — cimiento de OneDrive remoto selectivo,
-# feature que construye OTRA fase; aquí solo se prepara el scope). SOLO Microsoft: Google
-# no ofrece esta feature en este proyecto (Google Drive no es el conector en alcance).
-# Mínimo de lectura: Files.Read (no Files.Read.All — no hace falta leer TODO el drive,
-# el abogado elige qué carpeta compartir en la fase que consuma esto).
+# Scopes para "drive" (fuentes remotas selectivas). Microsoft → OneDrive; Google → Google
+# Drive (decisión de Pipe 2026-08-19: Google Drive entra al mismo nivel que OneDrive).
+# Mínimo de LECTURA en ambos:
+#   · Microsoft: Files.Read (no Files.Read.All — el abogado elige qué carpeta compartir).
+#   · Google: drive.readonly. Google NO publica un scope de "solo las carpetas que elija"
+#     equivalente a Files.Read; drive.readonly es el mínimo de SOLO LECTURA que permite
+#     navegar y descargar. La restricción a carpetas concretas la impone Mia (allowlist
+#     `remote_drive_sources`), no el proveedor — y eso se le dice al abogado en la UI.
 _DRIVE_SCOPES: dict[str, tuple[str, ...]] = {
     "microsoft": ("Files.Read",),
+    "google": ("https://www.googleapis.com/auth/drive.readonly",),
 }
 
 # Scopes base de IDENTIDAD/OFFLINE de Microsoft: `offline_access` es lo único que hace que
@@ -78,6 +87,12 @@ _DRIVE_SCOPES: dict[str, tuple[str, ...]] = {
 # que reconectar a mano). Se garantizan en CUALQUIER conjunto de features —incluida la de
 # solo "drive"— para que ninguna conexión quede sin refresh_token (SEC-2).
 _MS_BASE_SCOPES: tuple[str, ...] = ("offline_access", "openid", "email")
+
+# Google no tiene un scope equivalente a `offline_access` (el refresh token lo da
+# `access_type=offline`, ya fijado en extra_authorize); su base es solo IDENTIDAD, y se
+# garantiza igual que en Microsoft para que una conexión de solo "drive" siga identificando
+# la cuenta.
+_GOOGLE_BASE_SCOPES: tuple[str, ...] = ("openid", "email")
 
 # Features de conexión reconocidas. Cada una exige su propio scope mínimo — ver
 # `scopes_for`. "mail" es la base (CP-P3, siempre presente salvo que se pida solo
@@ -97,9 +112,8 @@ def _validate_features(provider: str, features: set[str]) -> None:
     unknown = features - set(FEATURES)
     if unknown:
         raise ValueError(f"funciones de conexión desconocidas: {sorted(unknown)}")
-    if "drive" in features and provider != "microsoft":
-        raise ValueError(f"la función 'drive' no está disponible para {provider!r} "
-                         f"(solo Microsoft / OneDrive)")
+    if "drive" in features and provider not in _DRIVE_SCOPES:
+        raise ValueError(f"la función 'drive' no está disponible para {provider!r}")
 
 
 def scopes_for(provider: str, features: Iterable[str] = ("mail",)) -> tuple[str, ...]:
@@ -110,8 +124,10 @@ def scopes_for(provider: str, features: Iterable[str] = ("mail",)) -> tuple[str,
       - "mail_content": añade la lectura del CUERPO del correo (CP-P4, opt-in). En
         Google, gmail.readonly reemplaza a gmail.metadata (metadata no trae cuerpo);
         en Microsoft, Mail.Read ya lo cubre (no cambia scopes, no hace falta reconsentir).
-      - "drive" (SOLO Microsoft): añade Files.Read — cimiento de OneDrive remoto
-        selectivo (Fase 1; la feature que lo CONSUME la construye otra fase).
+      - "drive": añade el permiso de archivos de SOLO LECTURA del proveedor — Files.Read
+        en Microsoft (OneDrive) y drive.readonly en Google (Google Drive). Es lo que
+        habilita las carpetas remotas selectivas de `connectors/graph_drive.py` y
+        `connectors/google_drive.py`.
 
     Sin features reconocidas (p.ej. conjunto vacío) cae al mínimo de "mail"."""
     feats = set(features)
@@ -130,14 +146,17 @@ def scopes_for(provider: str, features: Iterable[str] = ("mail",)) -> tuple[str,
     elif "mail" in feats:
         add(_cfg(provider)["scopes"])
     if "drive" in feats:
-        add(_DRIVE_SCOPES["microsoft"])
+        add(_DRIVE_SCOPES[provider])
     if not scopes:   # ninguna feature reconocida aportó scopes → mínimo de siempre
         add(_cfg(provider)["scopes"])
-    # Microsoft: garantiza SIEMPRE identidad + offline_access (refresh_token), aunque se pida
-    # solo "drive". Van al final: en "mail"/"mail_content" ya están incluidos (dedupe → sin
-    # cambio de orden ni de contenido); solo aportan algo cuando la única feature es "drive".
+    # Garantiza SIEMPRE la base de identidad (y, en Microsoft, offline_access → refresh_token),
+    # aunque se pida solo "drive". Van al final: en "mail"/"mail_content" ya están incluidos
+    # (dedupe → sin cambio de orden ni de contenido); solo aportan algo cuando la única
+    # feature es "drive".
     if provider == "microsoft":
         add(_MS_BASE_SCOPES)
+    elif provider == "google":
+        add(_GOOGLE_BASE_SCOPES)
     return tuple(scopes)
 
 

@@ -196,9 +196,19 @@ export default function CarpetasSection() {
         <SectionTitle
           icon={Cloud}
           title="Carpetas en la nube (OneDrive)"
-          hint="Para carpetas de OneDrive que no tienes sincronizadas en este equipo. Necesitas tu cuenta de Microsoft conectada con permiso de archivos (arriba, en Conexiones)."
+          hint="Para carpetas de OneDrive que no tienes sincronizadas en este equipo. Requiere tu cuenta de Microsoft conectada con permiso de archivos (en Conexiones)."
         />
         <OneDriveSourcesSection />
+      </div>
+
+      {/* Carpetas en la nube (Google Drive) — mismo mecanismo, el otro proveedor. */}
+      <div>
+        <SectionTitle
+          icon={Cloud}
+          title="Carpetas en la nube (Google Drive)"
+          hint="Para carpetas de Google Drive que no tienes sincronizadas en este equipo. Requiere tu cuenta de Google conectada con permiso de archivos (en Conexiones)."
+        />
+        <OneDriveSourcesSection provider="google" />
       </div>
     </div>
   );

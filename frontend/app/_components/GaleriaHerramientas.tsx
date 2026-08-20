@@ -13,8 +13,12 @@
 // tenga. Cada tarjeta de aquí abajo lleva, en su comentario, el endpoint real que
 // le da el estado. Si una herramienta no es consultable, se dice lo que SÍ es
 // cierto ("se configura aquí"), nunca un estado inventado. En particular:
-//   · Google Drive NO aparece — el permiso de archivos solo existe para Microsoft
-//     (`features=mail,drive` en MailboxSection); Google se conecta solo por correo.
+//   · Google Drive SÍ aparece desde 2026-08-19 (decisión de Pipe): el permiso de
+//     archivos existe ya para los dos proveedores (`features=mail,drive` en
+//     MailboxSection compone Files.Read en Microsoft y drive.readonly en Google), y
+//     su estado sale del MISMO campo `conexiones[].archivos` de /api/mailbox/status.
+//     Mientras la instalación no tenga registrada la aplicación de Google, la tarjeta
+//     lo dice con esas palabras en vez de ofrecer un botón que acabaría en error.
 //   · Los "ayudantes externos" (Agent Hub) no llevan logo de marca: el backend los
 //     nombra de forma neutra a propósito (agent_hub.py::CONNECTORS) y esta pantalla
 //     no le pone una marca encima a un nombre que el backend decidió ocultar.
@@ -79,6 +83,18 @@ function LogoGmail({ className }: LogoProps) {
       <path fill="#FBBC04" d="M5 5l7 5.3L19 5v3.4l-7 5.3-7-5.3V5Z" />
       <path fill="#EA4335" d="M5 5l7 5.3L19 5H5Z" />
       <path fill="#C5221F" d="M5 19V8.4l7 5.3 7-5.3V19H5Z" opacity=".08" />
+    </svg>
+  );
+}
+
+function LogoGoogleDrive({ className }: LogoProps) {
+  // El triángulo tricolor de Drive: tres caras, tres colores de marca.
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden focusable="false">
+      <path fill="#0066DA" d="M8.4 3.4h7.2l-3.6 6.3-3.6 6.2L4.8 9.6 8.4 3.4Z" opacity=".9" />
+      <path fill="#00AC47" d="M4.8 9.6 8.4 15.8h11.5l-3.6 4.8H6.9L1.9 14.4l2.9-4.8Z" />
+      <path fill="#FFBA00" d="M15.6 3.4 22.1 14.4l-2.9 4.9-5.8-9.6 2.2-6.3Z" />
+      <path fill="#EA4335" d="M12 9.7 8.4 15.8h7.2L12 9.7Z" opacity=".35" />
     </svg>
   );
 }
@@ -392,7 +408,7 @@ export default function GaleriaHerramientas() {
   ];
 
   // ── Correo y archivos. Verdad: GET /api/mailbox/status.
-  // Google Drive NO figura: el permiso de archivos solo existe para Microsoft.
+  // Los cuatro estados salen de conexiones[].conectado / .archivos / .disponible.
   const oficina: Herramienta[] = [
     {
       id: "microsoft",
@@ -426,6 +442,19 @@ export default function GaleriaHerramientas() {
         : google?.disponible === false
           ? { tono: "ausente" as Tono, estado: "Esta instalación todavía no tiene registrada la aplicación de Google" }
           : { tono: "pendiente" as Tono, estado: "Sin conectar", ancla: "conector-correo", accion: "Conectar" }),
+    },
+    {
+      id: "google-drive",
+      nombre: "Google Drive",
+      gana: "Vincula carpetas de Google Drive para que Mia lea expedientes sin bajarlos.",
+      logo: LogoGoogleDrive,
+      ...(google?.conectado && google?.archivos
+        ? { tono: "conectada" as Tono, estado: "Con permiso de archivos", ancla: "conector-correo", accion: "Administrar" }
+        : google?.conectado
+          ? { tono: "pendiente" as Tono, estado: "Falta el permiso de archivos", ancla: "conector-correo", accion: "Añadir permiso" }
+          : google?.disponible === false
+            ? { tono: "ausente" as Tono, estado: "Esta instalación todavía no tiene registrada la aplicación de Google" }
+            : { tono: "ausente" as Tono, estado: "Llega con Google Workspace: conéctalo primero", ancla: "conector-correo", accion: "Ir a Google" }),
     },
   ];
 

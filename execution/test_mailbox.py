@@ -533,9 +533,13 @@ async def run_gate() -> None:
         except ValueError:
             return True
 
-    check("mp-c9b · oauth.scopes_for: 'drive' (Microsoft) añade Files.Read; Google lo rechaza",
+    # 2026-08-19: 'drive' existe en los dos proveedores (Google Drive entró al nivel de
+    # OneDrive). Cada uno pide SU permiso mínimo de SOLO LECTURA.
+    check("mp-c9b · oauth.scopes_for: 'drive' pide Files.Read en Microsoft y drive.readonly en Google",
           "Files.Read" in oauth.scopes_for("microsoft", features=("mail", "drive"))
-          and _raises_value_error(lambda: oauth.scopes_for("google", features=("drive",))))
+          and "https://www.googleapis.com/auth/drive.readonly"
+          in oauth.scopes_for("google", features=("drive",))
+          and _raises_value_error(lambda: oauth.scopes_for("dropbox", features=("drive",))))
     check("mp-c9c · oauth.scopes_for: sin features reconocidas cae al mínimo de 'mail'",
           oauth.scopes_for("microsoft", features=()) == oauth.scopes_for("microsoft", features=("mail",)))
 

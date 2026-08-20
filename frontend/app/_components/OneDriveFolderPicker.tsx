@@ -1,10 +1,14 @@
 "use client";
 
-// Mia · navegador modal de carpetas de OneDrive (Fase 4 "fuentes remotas" — Ola 5).
+// Mia · navegador modal de carpetas en la nube (Fase 4 "fuentes remotas" — Ola 5).
 // Empieza en la raíz, deja entrar a subcarpetas (breadcrumb) y registra la carpeta
-// elegida vía POST /api/drive/sources. Solo lectura — nunca cambia nada en el OneDrive
+// elegida vía POST /api/drive/sources. Solo lectura — nunca cambia nada en la nube
 // del abogado. Se reutiliza en Configuración (kind="knowledge") y en la pantalla
 // del asunto (kind="matters" + matterId).
+//
+// DOS PROVEEDORES, UN SOLO COMPONENTE (decisión de Pipe 2026-08-19): `provider`
+// elige OneDrive (default, contrato de siempre) o Google Drive. Solo cambian el
+// nombre que ve el abogado y el `?provider=` de la ruta; el flujo es el mismo.
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -29,7 +33,22 @@ export type DriveSource = {
   remote_item_id: string;
   created_at: string;
   last_sync: string | null;
+  /** "microsoft" (OneDrive) o "google" (Google Drive). */
+  provider?: DriveProvider;
 };
+
+export type DriveProvider = "microsoft" | "google";
+
+/** Nombre en llano del servicio, y de dónde arranca la navegación. */
+export const DRIVE_NAMES: Record<DriveProvider, string> = {
+  microsoft: "OneDrive",
+  google: "Google Drive",
+};
+const DRIVE_ROOT_NAMES: Record<DriveProvider, string> = {
+  microsoft: "Mi OneDrive",
+  google: "Mi unidad",
+};
+const rootCrumb = (p: DriveProvider): Crumb => ({ id: null, name: DRIVE_ROOT_NAMES[p] });
 
 type DriveItem = { id: string; name: string; is_folder: boolean; size?: number; etag?: string; modified?: string };
 type Crumb = { id: string | null; name: string };
@@ -44,11 +63,11 @@ type Props = {
   kind: "knowledge" | "matters";
   matterId?: string;
   onLinked: (source: DriveSource) => void;
-  /** A dónde enviar al abogado si no hay cuenta de Microsoft con permiso de archivos. */
+  /** A dónde enviar al abogado si no hay cuenta con permiso de archivos. */
   connectHref?: string;
+  /** Servicio a navegar. Default "microsoft" (OneDrive), el contrato de siempre. */
+  provider?: DriveProvider;
 };
-
-const ROOT: Crumb = { id: null, name: "Mi OneDrive" };
 
 export default function OneDriveFolderPicker({
   open,
@@ -57,8 +76,10 @@ export default function OneDriveFolderPicker({
   matterId,
   onLinked,
   connectHref = "/configurar#conexiones",
+  provider = "microsoft",
 }: Props) {
-  const [crumbs, setCrumbs] = useState<Crumb[]>([ROOT]);
+  const servicio = DRIVE_NAMES[provider];
+  const [crumbs, setCrumbs] = useState<Crumb[]>([rootCrumb(provider)]);
   const [items, setItems] = useState<DriveItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [noAccount, setNoAccount] = useState(false);
@@ -73,7 +94,7 @@ export default function OneDriveFolderPicker({
     setError("");
     setNoAccount(false);
     try {
-      const q = itemId ? `?item_id=${encodeURIComponent(itemId)}` : "";
+      const q = `?provider=${provider}${itemId ? `&item_id=${encodeURIComponent(itemId)}` : ""}`;
       const res = await apiGet<{ items: DriveItem[] }>(`/api/drive/browse${q}`);
       setItems(res.items || []);
     } catch (err) {
@@ -81,20 +102,22 @@ export default function OneDriveFolderPicker({
       if (err instanceof ApiError && err.status === 503) {
         setNoAccount(true);
       } else {
-        setError(apiMessage(err, "No pude leer tu OneDrive en este momento. Intenta de nuevo en unos minutos."));
+        setError(
+          apiMessage(err, `No pude leer tu ${DRIVE_NAMES[provider]} en este momento. Intenta de nuevo en unos minutos.`),
+        );
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [provider]);
 
   useEffect(() => {
     if (open) {
-      setCrumbs([ROOT]);
+      setCrumbs([rootCrumb(provider)]);
       setLinkMsg("");
       load(null);
     }
-  }, [open, load]);
+  }, [open, load, provider]);
 
   function enter(item: DriveItem) {
     if (!item.is_folder) return;
@@ -119,6 +142,7 @@ export default function OneDriveFolderPicker({
         label: current.name,
         kind,
         matter_id: kind === "matters" ? matterId : undefined,
+        provider,
       });
       onLinked(source);
       onOpenChange(false);
@@ -131,21 +155,27 @@ export default function OneDriveFolderPicker({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !linking && onOpenChange(o)}>
-      <DialogContent aria-label="Elegir carpeta de OneDrive" className="max-w-lg">
+      <DialogContent aria-label={`Elegir carpeta de ${servicio}`} className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Elegir carpeta de OneDrive</DialogTitle>
+          <DialogTitle>Elegir carpeta de {servicio}</DialogTitle>
           <DialogDescription>
-            Navega hasta la carpeta que quieres que Mia revise. Solo lectura: Mia nunca cambia ni borra nada en tu
-            OneDrive.
+            Navega hasta la carpeta que quieres que Mia revise. Solo lectura: Mia nunca cambia ni borra nada en tu{" "}
+            {servicio}.
+            {provider === "google"
+              ? " Los documentos creados dentro de Google (Documentos, Hojas de cálculo, Presentaciones) no se leen todavía: Mia trabaja con los archivos PDF, Word, texto y similares que estén en la carpeta."
+              : ""}
           </DialogDescription>
         </DialogHeader>
 
         {noAccount ? (
           <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
-            <p>Conecta tu cuenta de Microsoft con permiso de archivos desde el Panel de control.</p>
+            <p>
+              Para leer esta carpeta, Mia necesita tu cuenta de {provider === "google" ? "Google" : "Microsoft"} conectada
+              con permiso de archivos. Se hace una sola vez, en Conexiones.
+            </p>
             <Button asChild size="sm" variant="outline" className="mt-2">
               <Link href={connectHref} onClick={() => onOpenChange(false)}>
-                Ir al Panel de control
+                Ir a Conexiones
               </Link>
             </Button>
           </div>

@@ -74,8 +74,15 @@ async def run_gate() -> None:
         except ValueError:
             return True
 
-    check("mx-04 · drive: Google la rechaza (solo Microsoft/OneDrive)",
-          _raises_value_error(lambda: oauth.scopes_for("google", features=("mail", "drive"))))
+    # 2026-08-19 · decisión de Pipe: Google Drive dejó de estar fuera de alcance. La feature
+    # 'drive' ahora existe en los DOS proveedores, y en Google se suma al correo igual que
+    # Files.Read se suma en Microsoft (mx-03) — nunca lo reemplaza.
+    check("mx-04 · drive: Google añade drive.readonly AL LADO de mail (no lo reemplaza)",
+          set(oauth.scopes_for("google", features=("mail", "drive")))
+          == set(oauth.scopes_for("google", features=("mail",)))
+          | {"https://www.googleapis.com/auth/drive.readonly"})
+    check("mx-04b · drive: un proveedor sin archivos en la nube se sigue rechazando",
+          _raises_value_error(lambda: oauth.scopes_for("dropbox", features=("drive",))))
     check("mx-05 · feature desconocida: se rechaza (ValueError, no silencio)",
           _raises_value_error(lambda: oauth.scopes_for("microsoft", features=("volar",))))
     check("mx-06 · authorize_url: features compone la URL con Files.Read cuando se pide drive",

@@ -55,5 +55,6 @@
   "056_durable_learning_once.sql": "ab1e89e5947b58aade754f568857cc2cf18862dc9cb7a730c1cc4aaceb1a8ba5",
   "057_legal_ledger_history.sql": "151c9b6051d8fde7b437799554faad447ae911eb2161d91184eec9f01b30b97b",
   "058_cumulative_check_vocabularies.sql": "5eca8b74612cb00b074c3f0820f2b629f2f77fffa2092c94808310070e9e4561",
-  "059_packs_handoff_cost_status.sql": "18019ca3c194a950531a199c6a1e5f296669373ad53bd591c0cc00570c8724d2"
+  "059_packs_handoff_cost_status.sql": "18019ca3c194a950531a199c6a1e5f296669373ad53bd591c0cc00570c8724d2",
+  "060_google_drive_sources.sql": "b404896eae31464dc24013bc8d59535536d374058643bc51cf54ae0494b5e979"
 }

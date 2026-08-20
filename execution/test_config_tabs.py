@@ -166,8 +166,25 @@ def main() -> int:
     check("la galería lee el estado REAL de los endpoints que ya existían",
           all(ep in galeria for ep in ("/api/welcome/status", "/api/mailbox/status",
                                        "/api/obsidian/status", "/api/notebooklm/status", "/health")))
-    check("la galería no promete un conector de Google Drive",
-          'nombre: "Google Drive"' not in galeria)
+    # 2026-08-19 · decisión de Pipe: Google Drive SÍ es conector de Mia, al nivel de
+    # OneDrive. El check se invierte, pero solo vale si el conector es REAL: la tarjeta
+    # tiene que leer el estado del mismo campo `archivos` que ya reporta
+    # /api/mailbox/status, y el backend tiene que traer de verdad el cliente de Drive y su
+    # scope de solo lectura. Si mañana se borra el conector, este gate cae.
+    check("la galería ofrece Google Drive con el estado real de conexiones[].archivos",
+          'nombre: "Google Drive"' in galeria and "google?.archivos" in galeria)
+    google_drive_py = ROOT / "backend" / "mia" / "connectors" / "google_drive.py"
+    check("el conector de Google Drive existe y pide solo lectura (drive.readonly)",
+          google_drive_py.exists()
+          and "drive.readonly" in google_drive_py.read_text(encoding="utf-8"))
+    oauth_py = (ROOT / "backend" / "mia" / "connectors" / "mailbox" / "oauth.py").read_text(encoding="utf-8")
+    check("el permiso de archivos de Google se pide como scope incremental",
+          "https://www.googleapis.com/auth/drive.readonly" in oauth_py
+          and "include_granted_scopes" in oauth_py)
+    # Honestidad: mientras la instalación no registre la aplicación de Google, la tarjeta
+    # dice eso, no un estado inventado.
+    check("la galería dice la verdad si falta registrar la aplicación de Google",
+          "todavía no tiene registrada la aplicación de Google" in galeria)
     check("cada pestaña dice para qué sirve (TAB_HINTS)", "TAB_HINTS" in configurar)
 
     # 9. P3 · Badge (<div>) dentro de <p> en /configurar#conexiones: HTML inválido

@@ -42,9 +42,10 @@ export default function MailboxSection() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [incluirContenido, setIncluirContenido] = useState(false);
-  // Fase 3 "fuentes remotas": al conectar Microsoft, ofrece incluir permiso de archivos
-  // (para poder vincular carpetas de OneDrive más adelante). Solo aplica a Microsoft.
-  const [incluirOneDrive, setIncluirOneDrive] = useState(false);
+  // Fuentes remotas: al conectar, ofrece incluir el permiso de archivos (para poder
+  // vincular carpetas de la nube más adelante). Desde 2026-08-19 aplica a los DOS
+  // proveedores: OneDrive en Microsoft, Google Drive en Google.
+  const [incluirArchivos, setIncluirArchivos] = useState(false);
 
   const load = useCallback(async () => {
     setMsg("");
@@ -77,7 +78,7 @@ export default function MailboxSection() {
     setMsg("");
     try {
       const feats = [incluirContenido ? "mail_content" : "mail"];
-      if (provider === "microsoft" && incluirOneDrive) feats.push("drive");
+      if (incluirArchivos) feats.push("drive");
       const q = `?features=${feats.join(",")}`;
       const res = await apiSend<{ url: string }>("POST", `/api/mailbox/connect/${provider}${q}`);
       window.location.href = res.url;
@@ -87,16 +88,20 @@ export default function MailboxSection() {
     }
   }
 
-  // M3: agrega el permiso de archivos de OneDrive a una cuenta Microsoft YA conectada, sin
-  // desconectarla. Conserva las funciones ya otorgadas (en Microsoft, "mail" y su contenido
-  // comparten scopes) y añade "drive"; redirige al consentimiento.
-  async function addDrivePermission() {
-    setBusy("microsoft-drive");
+  // M3: agrega el permiso de archivos (OneDrive o Google Drive) a una cuenta YA conectada,
+  // sin desconectarla. CONSERVA lo ya otorgado: si la cuenta tenía permiso para leer el
+  // contenido de los correos, se vuelve a pedir "mail_content" — pedir solo "mail" bajaría
+  // Gmail a metadata. En Google, además, el consentimiento es incremental
+  // (include_granted_scopes) y suma en vez de reemplazar.
+  async function addDrivePermission(c: Conexion) {
+    setBusy(`${c.proveedor}-drive`);
     setMsg("");
+    const conContenido = (c.funciones || []).some((f) => f.includes("contenido"));
+    const feats = conContenido ? "mail_content,drive" : "mail,drive";
     try {
       const res = await apiSend<{ url: string }>(
         "POST",
-        "/api/mailbox/connect/microsoft?features=mail,drive",
+        `/api/mailbox/connect/${c.proveedor}?features=${feats}`,
       );
       window.location.href = res.url;
     } catch (err) {
@@ -104,6 +109,10 @@ export default function MailboxSection() {
       setBusy(null);
     }
   }
+
+  // Nombre en llano del servicio de archivos de cada proveedor (§G: nunca "scope").
+  const nombreArchivos = (proveedor: string) =>
+    proveedor === "google" ? "Google Drive" : "OneDrive";
 
   async function disconnect(provider: string, nombre: string) {
     if (!window.confirm(`¿Desconectar ${nombre}? Mia dejará de avisarte de sus eventos y correos urgentes.`)) return;
@@ -191,10 +200,10 @@ export default function MailboxSection() {
             Mia revisará su calendario y correo para avisarte. Los plazos siempre quedan pendientes de tu
             confirmación — tú validas cada fecha.
           </p>
-          {c.proveedor === "microsoft" && !c.archivos ? (
+          {!c.archivos ? (
             <p className="mt-2 text-sm text-muted-foreground">
-              ¿Quieres que Mia también pueda vincular carpetas de tu OneDrive (del despacho o de un caso)?
-              Puedes darle ese permiso sin desconectar tu cuenta.
+              Para vincular carpetas de tu {nombreArchivos(c.proveedor)} (del despacho o de un caso), Mia
+              necesita el permiso de archivos. Puedes dárselo sin desconectar tu cuenta.
             </p>
           ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
@@ -206,9 +215,9 @@ export default function MailboxSection() {
             >
               Desconectar
             </Button>
-            {c.proveedor === "microsoft" && !c.archivos ? (
-              <Button size="sm" variant="outline" onClick={addDrivePermission} disabled={busy !== null}>
-                {busy === "microsoft-drive" ? "Abriendo…" : "Añadir permiso de archivos"}
+            {!c.archivos ? (
+              <Button size="sm" variant="outline" onClick={() => addDrivePermission(c)} disabled={busy !== null}>
+                {busy === `${c.proveedor}-drive` ? "Abriendo…" : "Añadir permiso de archivos"}
               </Button>
             ) : null}
           </div>
@@ -234,17 +243,19 @@ export default function MailboxSection() {
               correos completos a un expediente cuando tú lo pidas — apagado por defecto)
             </span>
           </label>
-          {disponibles.some((c) => c.proveedor === "microsoft") ? (
-            <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={incluirOneDrive}
-                onChange={(e) => setIncluirOneDrive(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
-              />
-              <span>Incluir mis archivos de OneDrive (solo Microsoft — para poder vincular carpetas del despacho o de un caso)</span>
-            </label>
-          ) : null}
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={incluirArchivos}
+              onChange={(e) => setIncluirArchivos(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
+            />
+            <span>
+              Incluir mis archivos en la nube — OneDrive con Microsoft, Google Drive con Google — para poder
+              vincular carpetas del despacho o de un caso. Mia solo recorre las carpetas que tú elijas, y solo
+              las lee.
+            </span>
+          </label>
           <div className="flex flex-wrap gap-2">
             {disponibles.map((c) => (
               <Button key={c.proveedor} onClick={() => connect(c.proveedor)} disabled={busy !== null}>

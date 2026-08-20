@@ -62,14 +62,30 @@ def _parse_features(raw: str) -> set[str]:
     return feats
 
 
-def _funciones_en_llano(scopes: tuple[str, ...]) -> list[str]:
+# Scope de archivos por proveedor y su nombre en llano. Es la MISMA verdad que compone
+# `oauth._DRIVE_SCOPES`; aquí se lee para reportar el estado, nunca para pedir permisos.
+_DRIVE_SCOPE_BY_PROVIDER = {
+    "microsoft": "Files.Read",
+    "google": "https://www.googleapis.com/auth/drive.readonly",
+}
+_DRIVE_LABELS = {"microsoft": "OneDrive", "google": "Google Drive"}
+
+
+def _tiene_archivos(provider: str, scopes: tuple[str, ...]) -> bool:
+    """¿Esta conexión otorgó el permiso de archivos de su proveedor? Es lo que decide si Mia
+    puede vincular carpetas de OneDrive / Google Drive."""
+    scope = _DRIVE_SCOPE_BY_PROVIDER.get(provider)
+    return bool(scope) and scope in (scopes or ())
+
+
+def _funciones_en_llano(provider: str, scopes: tuple[str, ...]) -> list[str]:
     """Traduce los scopes técnicos otorgados a una lista en lenguaje llano (§G): nunca
     'scope', 'OAuth' ni 'Graph' — solo lo que el abogado autorizó, en sus palabras."""
     out = ["calendario y correo"]
     if any("gmail.readonly" in s for s in scopes):
         out = ["calendario y correo, incluido el contenido de correos"]
-    if "Files.Read" in scopes:
-        out.append("archivos de OneDrive")
+    if _tiene_archivos(provider, scopes):
+        out.append(f"archivos de {_DRIVE_LABELS.get(provider, 'la nube')}")
     return out
 
 
@@ -126,10 +142,11 @@ async def status(request: Request):
             "proveedor": p,
             "proveedor_nombre": _PROVIDER_LABELS[p],
             "conectado": p in by_provider,
-            "funciones": _funciones_en_llano(by_provider[p]["scopes"]) if p in by_provider else [],
-            # ¿Esta conexión ya otorgó permiso de archivos de OneDrive? Lo consume la UI para
-            # ofrecer "Añadir permiso de archivos" en una cuenta Microsoft YA conectada (M3).
-            "archivos": ("Files.Read" in by_provider[p]["scopes"]) if p in by_provider else False,
+            "funciones": _funciones_en_llano(p, by_provider[p]["scopes"]) if p in by_provider else [],
+            # ¿Esta conexión ya otorgó permiso de archivos (OneDrive / Google Drive)? Lo
+            # consume la UI para ofrecer "Añadir permiso de archivos" en una cuenta YA
+            # conectada (M3) — desde 2026-08-19 también para Google.
+            "archivos": _tiene_archivos(p, by_provider[p]["scopes"]) if p in by_provider else False,
             # Honestidad de UI (F3): la app OAuth de la instalación puede no estar registrada
             # todavía. La UI solo ofrece "Conectar" cuando de verdad se puede — el mismo
             # criterio con el que POST /connect responde 503.
@@ -172,7 +189,9 @@ async def connect(provider: str, request: Request, response: Response):
                    f"registre la conexión (guía en Configuración).")
     # ?features=mail,mail_content,drive compone los scopes pedidos (default "mail"). En
     # Google, "mail_content" exige reconsentir (gmail.readonly); en Microsoft Mail.Read ya
-    # lo cubre. "drive" (cimiento de OneDrive remoto, solo Microsoft) valida en scopes_for.
+    # lo cubre. "drive" (carpetas en la nube: Files.Read en Microsoft, drive.readonly en
+    # Google) valida en scopes_for. En Google, `include_granted_scopes=true` hace que añadir
+    # el permiso de archivos SUME al de correo ya concedido en vez de reemplazarlo.
     features = _parse_features(request.query_params.get("features") or "")
     nonce = secrets.token_urlsafe(24)
     state = sign_state(tenant_id, provider, nonce)
