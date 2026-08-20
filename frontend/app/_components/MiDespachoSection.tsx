@@ -206,10 +206,9 @@ export default function MiDespachoSection() {
 
   return (
     <div className="animate-slide-up space-y-5">
-      <p className="text-sm text-muted-foreground">
-        Es lo mismo que respondiste al conocer a Mia — edítalo aquí sin repetir la entrevista.
-      </p>
-
+      {/* La línea que explicaba de dónde salen estos datos ("es lo mismo que
+          respondiste al conocer a Mia") vive ahora en la nota de Mia que abre la
+          pestaña — bloque 4 del rediseño. Tenerla dos veces era ruido. */}
       <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
         <h3 className="text-sm font-semibold">Identidad</h3>
         <TextField label="Nombre de la firma u organización" value={firm.firm} onChange={(v) => setFirm({ ...firm, firm: v })} />
