@@ -14,6 +14,17 @@
 //   2 · lo que Mia le sugiere o le falta  (puesta a punto, guías, consejos)
 //   3 · lo informativo                    (el mes, en una sola rejilla)
 //
+// BLOQUE 2 DEL REDISEÑO (2026-08-19): esa misma jerarquía deja de expresarse
+// como una COLUMNA de seis secciones —que obligaba a bajar dos pantallas para
+// enterarse de que había un borrador esperando— y pasa a una REJILLA bento:
+//
+//   · fila superior     cifras del mes, tarjetas compactas
+//   · columna principal lo que pide su decisión (celda dominante) y su día
+//   · columna lateral   recordatorios, puesta a punto y guías
+//
+// No cambia ni una fuente de datos ni un estado: es re-composición visual. Lo
+// que cambia es qué se ve primero, que era el defecto de la pantalla.
+//
 // Los formularios (tarifa, tope, conexiones, carpetas) siguen viviendo en
 // Configuración: aquí solo se avisa y se enlaza, nunca se edita.
 //
@@ -33,7 +44,6 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowRight,
-  BarChart3,
   BellRing,
   BookOpen,
   CalendarClock,
@@ -41,6 +51,8 @@ import {
   ChevronRight,
   Clock,
   Compass,
+  Folder,
+  Layers,
   ListChecks,
   MessageSquare,
   Sparkles,
@@ -64,7 +76,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageShell } from "@/app/_components/PageShell";
-import { EmptyHint, SectionTitle, StatCard, fmtHora } from "@/app/_components/PanelUI";
+import { EmptyHint, NeuIcon, PanelCard, StatCard, fmtHora } from "@/app/_components/PanelUI";
 import { staggerStyle } from "@/lib/motion";
 
 /**
@@ -123,6 +135,15 @@ type DailyRow = { matter: Matter; briefing: DailyBriefing };
 const DAILY_MAX = 5;
 
 /**
+ * Cuántos asuntos y proyectos caben en la celda grande del Panel.
+ *
+ * No es un límite de datos —la lista ya llegó entera en la misma petición—
+ * sino de LECTURA: seis filas es lo que se recorre de un vistazo. Lo que queda
+ * fuera se dice con números y se enlaza a Asuntos y Proyectos, que es su sitio.
+ */
+const MATTERS_MAX = 6;
+
+/**
  * Rejilla que se adapta al número REAL de tarjetas.
  *
  * El defecto que corrige: había dos rejillas declaradas `sm:grid-cols-4` con
@@ -130,13 +151,31 @@ const DAILY_MAX = 5;
  * dos veces. Media pantalla en blanco no era falta de datos: era una rejilla
  * pidiendo cuatro columnas para dos cosas. Las clases van literales para que
  * el compilador de Tailwind las encuentre al escanear el archivo.
+ *
+ * El hueco es `gap-block` (--space-block): la rejilla del Panel y la separación
+ * entre sus celdas salen del mismo token, no de un `gap-4` suelto.
  */
 function gridFor(count: number): string {
-  if (count <= 1) return "grid gap-4";
-  if (count === 2) return "grid gap-4 sm:grid-cols-2";
-  if (count === 3) return "grid gap-4 sm:grid-cols-2 lg:grid-cols-3";
-  return "grid gap-4 sm:grid-cols-2 lg:grid-cols-4";
+  if (count <= 1) return "grid gap-block";
+  if (count === 2) return "grid gap-block sm:grid-cols-2";
+  if (count === 3) return "grid gap-block sm:grid-cols-3";
+  return "grid gap-block sm:grid-cols-2 xl:grid-cols-4";
 }
+
+/** El rótulo del tipo de fila, en el idioma del oficio (nunca el `kind` crudo). */
+function tipoDe(m: Matter): string {
+  return m.kind === "proyecto" ? "Proyecto" : "Asunto";
+}
+
+/**
+ * Una fila DENTRO de una celda del Panel.
+ *
+ * En una rejilla bento el contenido de una tarjeta no puede ser otra tarjeta
+ * elevada: dos relieves anidados compiten y la celda pierde su borde. La fila
+ * interior se esculpe hacia adentro (bajo relieve), que es el otro término del
+ * mismo vocabulario, y así la celda sigue siendo la única superficie que flota.
+ */
+const FILA = "rounded-xl bg-muted/40 px-4 py-3 shadow-neu-sunken";
 
 /** Redondea a dos decimales SIN convertir a texto, para que `StatCard` la alinee. */
 function money(n: number): number {
@@ -187,24 +226,25 @@ function etiquetaLegible(label?: string): boolean {
  * Esqueleto con la FORMA FINAL de la pantalla, no un cuadro genérico.
  *
  * Un rectángulo que no se parece a lo que va a llegar produce un salto de
- * layout al cargar. Estas piezas ocupan el sitio del bloque de decisión, de dos
- * listas y de la rejilla del mes, que es lo que de verdad aparece después.
+ * layout al cargar. Estas piezas ocupan el sitio de la fila de cifras, de la
+ * columna principal y de la lateral, que es la rejilla que aparece después.
  */
 function PanelSkeleton() {
   return (
-    <div className="space-y-section">
-      <Skeleton className="h-28 w-full rounded-lg" />
-      <div className="space-y-4">
-        <Skeleton className="h-7 w-48" />
-        <Skeleton className="h-16 w-full rounded-lg" />
-        <Skeleton className="h-16 w-full rounded-lg" />
+    <div className="space-y-block">
+      <div className="grid gap-block sm:grid-cols-2 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-28 rounded-lg" />
+        ))}
       </div>
-      <div className="space-y-4">
-        <Skeleton className="h-7 w-56" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-24 rounded-lg" />
-          ))}
+      <div className="grid gap-block lg:grid-cols-3">
+        <div className="space-y-block lg:col-span-2">
+          <Skeleton className="h-56 w-full rounded-lg" />
+          <Skeleton className="h-40 w-full rounded-lg" />
+        </div>
+        <div className="space-y-block">
+          <Skeleton className="h-40 w-full rounded-lg" />
+          <Skeleton className="h-32 w-full rounded-lg" />
         </div>
       </div>
     </div>
@@ -229,6 +269,10 @@ export default function DashboardPage() {
   const [expandedRx, setExpandedRx] = useState<string | null>(null);
   const [rxMsg, setRxMsg] = useState("");
   const [rxBusy, setRxBusy] = useState<string | null>(null);
+  // La lista completa que YA se pide (misma petición, mismo dato): alimenta la
+  // tarjeta grande "Tus asuntos y proyectos". Antes solo se guardaba el filtro
+  // de los que tenían borrador, así que el resto del dato llegaba y se tiraba.
+  const [allMatters, setAllMatters] = useState<Matter[]>([]);
   const [pendingMatters, setPendingMatters] = useState<Matter[]>([]);
   const [dailyRows, setDailyRows] = useState<DailyRow[]>([]);
   const [dailyLoaded, setDailyLoaded] = useState(false);
@@ -281,6 +325,7 @@ export default function DashboardPage() {
       setSetup(setupStatus);
       setHealth(healthSummary);
       setBudget(budgetStatus);
+      setAllMatters(list);
       setPendingMatters(list.filter((m) => m.pending_review));
       setLoaded(true);
 
@@ -412,6 +457,12 @@ export default function DashboardPage() {
   const mostrarDia =
     dailyLoaded && (dailyRows.length > 0 || dailyRecorte > 0 || dailySinRespuesta > 0);
 
+  // Las filas de la lista principal. Se muestran las primeras seis —el resto
+  // vive en Asuntos y en Proyectos, que es su sitio— y el recorte se dice con
+  // números, nunca en silencio.
+  const mattersVisibles = allMatters.slice(0, MATTERS_MAX);
+  const mattersRecorte = Math.max(0, allMatters.length - MATTERS_MAX);
+
   return (
     <>
       {/* El lavado de marca va en una capa FIJA por detrás de todo: aplicado al
@@ -421,7 +472,8 @@ export default function DashboardPage() {
       <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 bg-aurora" />
 
       <PageShell
-        width="wide"
+        width="full"
+        className="max-w-[1200px]"
         title="Panel del despacho"
         subtitle={loaded ? `${subActivos} · ${subDecisiones}` : "Reuniendo lo de hoy…"}
       >
@@ -430,13 +482,13 @@ export default function DashboardPage() {
         ) : (
           <>
             {/* ── Tope de gasto alcanzado ─────────────────────────────────
-                Va lo primero porque no es un aviso: mientras siga así, Mia
-                no trabaja. */}
+                Va lo primero, fuera de la rejilla y a todo el ancho, porque no
+                es un aviso: mientras siga así, Mia no trabaja. */}
             {budget?.over_budget ? (
               <Card
                 variant="raised"
                 padding="md"
-                className="mb-section animate-slide-up border-warning/30 bg-warning/10"
+                className="mb-block animate-slide-up border-warning/30 bg-warning/10"
               >
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
@@ -455,366 +507,220 @@ export default function DashboardPage() {
               </Card>
             ) : null}
 
-            {/* ── 1 · Para tu decisión ────────────────────────────────────
-                SIEMPRE presente. Antes desaparecía entera cuando no había
-                nada, y ese hueco era buena parte de la sensación de vacío:
-                "no hay nada pendiente" es una respuesta, no una ausencia. */}
-            <Card
-              variant="raised"
-              padding="md"
-              className={`animate-slide-up ${hayDecisiones ? "border-cta/30 bg-cta/5" : ""}`}
-            >
-              <div className="flex items-start gap-3">
-                <span
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${
-                    hayDecisiones ? "bg-cta/15 text-cta-strong" : "bg-muted text-muted-foreground"
-                  }`}
+            {/* ── LA REJILLA ──────────────────────────────────────────────
+                Dos tercios de área principal y un tercio de carril lateral: las
+                cifras del mes arriba, la lista de trabajo debajo, y a la derecha
+                lo que espera una decisión y lo que Mia recuerda.
+
+                LA USABILIDAD MANDA SOBRE LA MAQUETA. En la referencia el primer
+                renglón es todo métrica; aquí el primer renglón de la derecha
+                —a la misma altura que las cifras, o sea lo primero que el ojo
+                encuentra— es "Para tu decisión", porque una métrica no se
+                acciona y un borrador esperando sí. La rejilla es la misma; lo
+                que cambia es qué ocupa el sitio de honor.
+
+                `items-start` para que una celda alta no estire a su vecina; por
+                debajo de `lg` la rejilla se apila y el orden del documento es el
+                orden de importancia. */}
+            <div className="grid items-start gap-block lg:grid-cols-3">
+              {/* ── Área principal ────────────────────────────────────── */}
+              <div className="flex flex-col gap-block lg:col-span-2">
+                {/* Las cifras del mes. Se leen de un vistazo y sin decidir nada;
+                    antes cerraban el Panel, a dos pantallas de scroll. */}
+                <section aria-labelledby="panel-mes">
+                  <h2 id="panel-mes" className="mb-3 text-section">
+                    Lo que llevas este mes
+                  </h2>
+
+                  {/* Si las cifras no llegaron se dice UNA vez arriba, en llano
+                      y sin alarma, y cada tarjeta queda marcada "sin dato". Lo
+                      que no se hace nunca es rellenar con ceros: "0 borradores
+                      aprobados" es una afirmación sobre el mes del abogado, no
+                      una ausencia. */}
+                  {!cifrasOk ? (
+                    <p className="mb-3 text-pretty text-body text-muted-foreground">
+                      No pude consultar las cifras de este mes ahora mismo. Vuelve a abrir el Panel
+                      en un momento; lo que hayas hecho está guardado.
+                    </p>
+                  ) : null}
+
+                  <div className={gridFor(tarjetasMes)}>
+                    <StatCard
+                      icon={CheckCircle2}
+                      label="Borradores aprobados"
+                      value={s?.value?.drafts_approved}
+                      delay={0}
+                    />
+                    <StatCard
+                      icon={Clock}
+                      label="Horas ahorradas (estimado)"
+                      value={s?.value?.hours_saved}
+                      delay={1}
+                    />
+                    <StatCard
+                      icon={MessageSquare}
+                      label="Consultas resueltas"
+                      value={s?.value?.consultations}
+                      delay={2}
+                    />
+                    {budget ? (
+                      <StatCard
+                        icon={Wallet}
+                        label="Gasto de IA del mes (USD)"
+                        value={money(budget.spent_this_month_usd)}
+                        delay={3}
+                      />
+                    ) : null}
+                  </div>
+
+                  {/* La línea de apoyo de las cifras: qué significan en dinero y
+                      dónde se ajusta el cálculo. Va debajo y visible, no
+                      escondida tras un icono de ayuda. */}
+                  <p className="mt-3 text-pretty text-body text-muted-foreground">
+                    {s?.value?.net_usd != null
+                      ? `Valor neto estimado: USD ${s.value.net_usd.toFixed(2)}.`
+                      : "Valor neto estimado: sin dato ahora mismo."}
+                    {budget?.unlimited ? " No tienes un tope de gasto fijado." : null}
+                    {!budget?.unlimited && budget?.remaining_usd != null
+                      ? ` Te quedan USD ${budget.remaining_usd.toFixed(2)} del tope de este mes.`
+                      : null}{" "}
+                    <Link
+                      href="/configurar#valor"
+                      className="font-medium text-primary underline underline-offset-2 hover:text-cta-strong"
+                    >
+                      Ajustar el cálculo
+                    </Link>
+                  </p>
+                </section>
+
+                {/* ── Tu trabajo abierto ──────────────────────────────────
+                    La celda grande de la maqueta. No es una fuente nueva: es la
+                    MISMA lista que el Panel ya pedía y de la que solo se quedaba
+                    con el filtro de los borradores. Cada fila es un enlace
+                    entero —objetivo de clic generoso, no un texto de 3 mm— y
+                    lleva su icono en bajo relieve, su tipo en el idioma del
+                    oficio y su distintivo a la derecha. */}
+                <PanelCard
+                  icon={Folder}
+                  title="Tu trabajo abierto"
+                  hint="Tus asuntos y proyectos. Abre cualquiera para ver su expediente."
+                  tone="primary"
+                  className="animate-slide-up"
+                  actions={
+                    allMatters.length > 0 ? (
+                      <Button asChild size="sm" variant="ghost" className="gap-1.5">
+                        <Link href="/">
+                          Ver todos
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                    ) : null
+                  }
                 >
-                  {hayDecisiones ? (
-                    <ListChecks className="h-4 w-4" />
+                  {!mattersOk ? (
+                    <p className="text-pretty text-body text-muted-foreground">
+                      No pude consultar tus asuntos y proyectos ahora mismo. Vuelve a abrir el Panel
+                      en un momento.
+                    </p>
+                  ) : allMatters.length === 0 ? (
+                    <EmptyHint icon={Folder}>
+                      Todavía no tienes asuntos ni proyectos abiertos. Crea el primero y Mia empieza
+                      a leer su expediente.{" "}
+                      <Link
+                        href="/"
+                        className="font-medium text-primary underline underline-offset-2"
+                      >
+                        Crear mi primer asunto
+                      </Link>
+                    </EmptyHint>
                   ) : (
-                    <CheckCircle2 className="h-4 w-4" />
-                  )}
-                </span>
-
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-section">Para tu decisión</h2>
-
-                  {/* "Nada espera tu decisión" solo se afirma cuando se pudo
-                      comprobar. Si alguna fuente no respondió, se dice eso: es
-                      la diferencia entre un despacho al día y un Panel ciego. */}
-                  {decisiones === 0 && !decisionesParcial ? (
-                    <p className="mt-1 text-pretty text-body text-muted-foreground">
-                      Nada espera tu decisión hoy. Cuando Mia deje un borrador listo o tenga una
-                      sugerencia para tu despacho, aparecerá aquí.
-                    </p>
-                  ) : null}
-
-                  {decisiones === null || decisionesParcial ? (
-                    <p className="mt-1 text-pretty text-body text-muted-foreground">
-                      {decisiones === null
-                        ? "No pude consultar qué espera tu decisión ahora mismo."
-                        : "No pude consultar una parte de lo pendiente, así que esta lista puede estar incompleta."}{" "}
-                      Vuelve a abrir el Panel en un momento.
-                    </p>
-                  ) : null}
-
-                  {pendingMatters.length > 0 ? (
                     <>
-                      <p className="mt-1 text-body text-muted-foreground">
-                        {pendingMatters.length === 1
-                          ? "Tienes un borrador esperando tu revisión:"
-                          : `Tienes ${pendingMatters.length} borradores esperando tu revisión:`}
-                      </p>
-                      <ul className="mt-2 space-y-1.5">
-                        {pendingMatters.slice(0, 5).map((m) => (
+                      <ul className="space-y-2">
+                        {mattersVisibles.map((m, i) => (
                           <li key={m.id}>
                             <Link
-                              href={rutaRevisar(m)}
-                              className="group flex items-center gap-1.5 text-body font-medium text-foreground hover:text-primary"
+                              href={rutaDe(m)}
+                              className={`group flex items-center gap-3 py-3.5 transition-colors hover:bg-muted/70 ${FILA}`}
+                              style={staggerStyle(i)}
                             >
-                              {m.name}
-                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                              <NeuIcon
+                                icon={m.kind === "proyecto" ? Layers : Folder}
+                                tone={m.pending_review ? "cta" : "primary"}
+                                size="sm"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-body font-medium text-foreground group-hover:text-primary">
+                                  {m.name}
+                                </span>
+                                <span className="mt-0.5 block truncate text-body text-muted-foreground">
+                                  {tipoDe(m)}
+                                  {m.status === "active" ? " · en curso" : null}
+                                </span>
+                              </span>
+                              {m.pending_review ? (
+                                <Badge className="shrink-0 border-cta/30 bg-cta/15 text-cta-strong">
+                                  Borrador para revisar
+                                </Badge>
+                              ) : null}
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                             </Link>
                           </li>
                         ))}
                       </ul>
-                      {pendingMatters.length > 5 ? (
-                        <p className="mt-1.5 text-meta text-muted-foreground">
-                          Se muestran los primeros 5 de {pendingMatters.length}.
+                      {mattersRecorte > 0 ? (
+                        <p className="mt-3 text-pretty text-body text-muted-foreground">
+                          Se muestran {mattersVisibles.length} de {allMatters.length}. Los ves todos
+                          en{" "}
+                          <Link
+                            href="/"
+                            className="font-medium text-primary underline underline-offset-2"
+                          >
+                            Asuntos
+                          </Link>{" "}
+                          y{" "}
+                          <Link
+                            href="/proyectos"
+                            className="font-medium text-primary underline underline-offset-2"
+                          >
+                            Proyectos
+                          </Link>
+                          .
                         </p>
                       ) : null}
                     </>
-                  ) : null}
+                  )}
+                </PanelCard>
 
-                  {(propuestas ?? 0) > 0 ? (
+                {/* ── Recomendaciones de Mia ──────────────────────────── */}
+                <PanelCard
+                  icon={Sparkles}
+                  title="Recomendaciones de Mia"
+                  hint="Del diagnóstico semanal, con evidencia real de la actividad del despacho."
+                  tone="primary"
+                  className="animate-slide-up"
+                  style={staggerStyle(2)}
+                >
+                  {rxMsg ? (
                     <p
-                      className={`${pendingMatters.length > 0 ? "mt-3" : "mt-1"} text-body text-muted-foreground`}
+                      role="alert"
+                      className="mb-3 rounded-md bg-warning/10 px-3 py-2 text-body text-warning"
                     >
-                      {pendingMatters.length > 0 ? "Además, " : ""}Mia tiene {propuestas}{" "}
-                      {propuestas === 1 ? "sugerencia de mejora" : "sugerencias de mejora"} para tu
-                      aprobación en{" "}
-                      <Link
-                        href="/memoria"
-                        className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
-                      >
-                        Conocimiento
-                      </Link>
-                      .
+                      {rxMsg}
                     </p>
                   ) : null}
-
-                  {pendingMatters.length > 0 ? (
-                    <Button asChild variant="cta" size="sm" className="mt-4 gap-1.5">
-                      <Link href={pendientesSoloProyectos ? "/proyectos" : "/"}>
-                        {pendientesSoloProyectos ? "Ver proyectos" : "Ver asuntos"}
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </Link>
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            </Card>
-
-            {/* ── 2 · Al día en tu trabajo ────────────────────────────────
-                Este resumen ya existía, pero enterrado tras un botón DENTRO
-                de cada asunto: el abogado tenía que entrar uno por uno para
-                enterarse. Sale del expediente y no pasa por ningún modelo,
-                así que ninguna línea de aquí es una afirmación generada.
-
-                El rótulo dice "tu trabajo" y no "tus asuntos" porque la lista
-                trae asuntos Y proyectos: llamarlos a todos asuntos borraría
-                justo la distinción que el producto sostiene. */}
-            {mostrarDia ? (
-              <section className="mt-section">
-                <SectionTitle
-                  icon={CalendarClock}
-                  title="Al día en tu trabajo"
-                  hint="Lo que quedó abierto en tus asuntos y proyectos y espera algo tuyo."
-                />
-                <ul className="space-y-3">
-                  {dailyRows.map((row, i) => (
-                    <li key={row.matter.id}>
-                      <Card padding="md" className="animate-slide-up" style={staggerStyle(i)}>
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <Link
-                            href={rutaDe(row.matter)}
-                            className="group flex min-w-0 items-center gap-1.5 text-section hover:text-primary"
-                          >
-                            <span className="truncate">{row.matter.name}</span>
-                            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                          </Link>
-                          <Badge variant="warning" className="bg-warning/15 text-warning">
-                            {row.briefing.requieren_decision}{" "}
-                            {row.briefing.requieren_decision === 1 ? "pendiente" : "pendientes"}
-                          </Badge>
-                        </div>
-                        <ul className="mt-3 space-y-1.5">
-                          {row.briefing.items
-                            .filter((it) => it.requiere_decision)
-                            .slice(0, 4)
-                            .map((it) => (
-                              <li
-                                key={it.ref}
-                                className="text-pretty text-body text-muted-foreground"
-                              >
-                                · {it.texto}
-                              </li>
-                            ))}
-                        </ul>
-                      </Card>
-                    </li>
-                  ))}
-                </ul>
-
-                {/* Cuando el tope dejó fuera trabajo pero nada de lo revisado
-                    pedía algo, la sección seguiría teniendo que existir: si no,
-                    el recorte desaparecería con ella. */}
-                {dailyRows.length === 0 ? (
-                  <p className="text-pretty text-body text-muted-foreground">
-                    De lo que alcancé a mirar, nada espera algo tuyo.
-                  </p>
-                ) : null}
-
-                {/* EL RECORTE SE DICE CON NÚMEROS. Antes esta línea se
-                    condicionaba a `matters_active`, que el servidor cuenta solo
-                    sobre asuntos, mientras la lista recortada eran asuntos +
-                    proyectos: con 3 asuntos y 4 proyectos activos el Panel
-                    mostraba 5 y ocultaba 2 sin decir nada. Ahora la condición y
-                    la cifra salen de la MISMA lista que se recortó. */}
-                {dailyRecorte > 0 ? (
-                  <p className="mt-3 text-pretty text-meta text-muted-foreground">
-                    Tienes {dailyTotal} asuntos y proyectos abiertos: aquí se miran los{" "}
-                    {dailyRevisados} más recientes y quedan {dailyRecorte} sin mirar. Los ves todos
-                    en{" "}
-                    <Link href="/" className="font-medium hover:underline">
-                      Asuntos
-                    </Link>{" "}
-                    y{" "}
-                    <Link href="/proyectos" className="font-medium hover:underline">
-                      Proyectos
-                    </Link>
-                    .
-                  </p>
-                ) : null}
-
-                {dailySinRespuesta > 0 ? (
-                  <p className="mt-2 text-pretty text-meta text-muted-foreground">
-                    De los {dailyRevisados} que miré,{" "}
-                    {dailySinRespuesta === 1
-                      ? "1 no respondió ahora mismo"
-                      : `${dailySinRespuesta} no respondieron ahora mismo`}
-                    , así que puede faltar algo en esta lista.
-                  </p>
-                ) : null}
-              </section>
-            ) : null}
-
-            {/* ── 3 · Recordatorios ───────────────────────────────────── */}
-            <section className="mt-section">
-              <SectionTitle icon={BellRing} title="Recordatorios" />
-              {reminderMsg ? (
-                <p className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-body text-warning">
-                  {reminderMsg}
-                </p>
-              ) : null}
-              {reminders.length === 0 ? (
-                <EmptyHint icon={BellRing}>
-                  No tienes recordatorios pendientes. Pídelos en el chat: «recuérdame presentar la
-                  contestación mañana a las 9».
-                </EmptyHint>
-              ) : (
-                <ul className="space-y-2">
-                  {reminders.map((r, i) => (
-                    <li key={r.id}>
-                      <Card
-                        padding="sm"
-                        className="flex animate-slide-up items-center justify-between gap-3"
-                        style={staggerStyle(i)}
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate text-body font-medium">{r.text}</div>
-                          <div className="mt-0.5 text-body text-muted-foreground">
-                            Para el {fmtHora(r.due_at)}
-                            {r.is_procedural ? (
-                              <span className="ml-1.5 font-medium text-warning">
-                                · plazo procesal: confirma tú la fecha
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="shrink-0"
-                          onClick={() => cancelReminder(r.id)}
-                        >
-                          Cancelar
-                        </Button>
-                      </Card>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            {/* ── 4 · Termina de preparar a Mia ───────────────────────────
-                El servidor ya redacta el título, el detalle y el enlace de
-                cada paso en lenguaje llano: aquí no se inventa ni una
-                palabra, se pinta lo que manda. Desaparece sola al terminar. */}
-            {mostrarSetup ? (
-              <section className="mt-section">
-                <SectionTitle
-                  icon={Compass}
-                  title="Termina de preparar a Mia"
-                  hint={setup?.mensaje}
-                />
-                <ul className="space-y-2">
-                  {pasosPendientes.map((paso, i) => (
-                    <li key={paso.id}>
-                      <Card
-                        padding="sm"
-                        className="flex animate-slide-up flex-wrap items-center justify-between gap-3"
-                        style={staggerStyle(i)}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-body font-medium">{paso.titulo}</div>
-                          <p className="mt-0.5 text-pretty text-body text-muted-foreground">
-                            {paso.detalle}
-                          </p>
-                        </div>
-                        {paso.enlace ? (
-                          <Button asChild size="sm" variant="secondary" className="shrink-0 gap-1.5">
-                            <Link href={paso.enlace}>
-                              Ir al paso
-                              <ArrowRight className="h-3.5 w-3.5" />
-                            </Link>
-                          </Button>
-                        ) : null}
-                      </Card>
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-3 text-meta text-muted-foreground">
-                  Todo es opcional y puedes retomarlo cuando quieras desde{" "}
-                  <Link href="/configurar" className="font-medium hover:underline">
-                    Configuración
-                  </Link>
-                  .
-                </p>
-              </section>
-            ) : null}
-
-            {/* ── 5 · Tus guías de trabajo ────────────────────────────────
-                Solo aparece si hay algo que verificar: es la regla de la casa
-                (ninguna cita sin verificación) convertida en tarjeta. */}
-            {guiasPorRevisar > 0 ? (
-              <section className="mt-section">
-                <SectionTitle icon={BookOpen} title="Tus guías de trabajo" />
-                <Card padding="md" className="animate-slide-up">
-                  <p className="text-pretty text-body">
-                    {health?.revisar ? (
-                      <>
-                        <span className="font-medium">
-                          {health.revisar} {health.revisar === 1 ? "guía" : "guías"}
-                        </span>{" "}
-                        {health.revisar === 1 ? "tiene" : "tienen"} citas por verificar
-                        {health?.sin_revisar ? " y " : "."}
-                      </>
-                    ) : null}
-                    {health?.sin_revisar ? (
-                      <>
-                        <span className="font-medium">
-                          {health.sin_revisar} {health.sin_revisar === 1 ? "guía" : "guías"}
-                        </span>{" "}
-                        {health.sin_revisar === 1 ? "no se ha revisado" : "no se han revisado"} nunca.
-                      </>
-                    ) : null}
-                  </p>
-                  <p className="mt-1 text-body text-muted-foreground">
-                    Mia no usa una cita que no haya podido comprobar: revisarlas mejora lo que
-                    redacta.
-                  </p>
-                  <Button asChild size="sm" variant="secondary" className="mt-4 gap-1.5">
-                    <Link href="/memoria">
-                      Revisar mis guías
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </Link>
-                  </Button>
-                </Card>
-              </section>
-            ) : null}
-
-            {/* ── 6 · Recomendaciones de Mia ──────────────────────────── */}
-            <section className="mt-section">
-              <SectionTitle
-                icon={Sparkles}
-                title="Recomendaciones de Mia"
-                hint="Del diagnóstico semanal, con evidencia real de la actividad del despacho."
-              />
-              {rxMsg ? (
-                <p
-                  role="alert"
-                  className="mb-3 rounded-md bg-warning/10 px-3 py-2 text-body text-warning"
-                >
-                  {rxMsg}
-                </p>
-              ) : null}
-              {!prescriptionsLoaded ? (
-                <Skeleton className="h-24 w-full rounded-lg" />
-              ) : prescriptions.length === 0 ? (
-                <EmptyHint icon={Sparkles}>
-                  Mia aún no tiene recomendaciones — necesita más actividad para hablar con
-                  evidencia.
-                </EmptyHint>
-              ) : (
-                <ul className="space-y-3">
-                  {prescriptions.map((p, i) => {
-                    const expanded = expandedRx === p.id;
-                    return (
-                      <li key={p.id}>
-                        <Card padding="md" className="animate-slide-up" style={staggerStyle(i)}>
-                          <div className="flex flex-wrap items-start justify-between gap-3">
+                  {!prescriptionsLoaded ? (
+                    <Skeleton className="h-24 w-full rounded-lg" />
+                  ) : prescriptions.length === 0 ? (
+                    <EmptyHint icon={Sparkles}>
+                      Mia aún no tiene recomendaciones — necesita más actividad para hablar con
+                      evidencia. Sigue trabajando con ella y aquí aparecerán.
+                    </EmptyHint>
+                  ) : (
+                    <ul className="space-y-3">
+                      {prescriptions.map((p) => {
+                        const expanded = expandedRx === p.id;
+                        return (
+                          <li key={p.id} className={FILA}>
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-section">{p.headline}</span>
@@ -841,122 +747,398 @@ export default function DashboardPage() {
                                 </p>
                               ) : null}
                             </div>
-                          </div>
-                          {p.evidence?.length ? (
-                            <div className="mt-3">
-                              <button
-                                type="button"
-                                aria-expanded={expanded}
-                                onClick={() => setExpandedRx(expanded ? null : p.id)}
-                                className="text-label text-muted-foreground transition-colors hover:text-foreground"
+                            {p.evidence?.length ? (
+                              <div className="mt-3">
+                                <button
+                                  type="button"
+                                  aria-expanded={expanded}
+                                  onClick={() => setExpandedRx(expanded ? null : p.id)}
+                                  className="text-body font-medium text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+                                >
+                                  {expanded ? "Ocultar en qué me baso" : "Ver en qué me baso"}
+                                </button>
+                                {expanded ? (
+                                  <ul className="mt-2 animate-fade-in space-y-1 rounded-md bg-background/60 px-3 py-2 text-body text-muted-foreground">
+                                    {p.evidence.map((line, j) => (
+                                      <li key={j}>· {line}</li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => decidePrescription(p.id, "accept")}
+                                disabled={rxBusy === p.id}
                               >
-                                {expanded ? "Ocultar evidencia" : "Ver evidencia"}
-                              </button>
-                              {expanded ? (
-                                <ul className="mt-2 animate-fade-in space-y-1 rounded-md bg-muted/60 px-3 py-2 text-body text-muted-foreground">
-                                  {p.evidence.map((line, j) => (
-                                    <li key={j}>· {line}</li>
-                                  ))}
-                                </ul>
+                                Lo haré
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => decidePrescription(p.id, "dismiss")}
+                                disabled={rxBusy === p.id}
+                              >
+                                Descartar
+                              </Button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </PanelCard>
+              </div>
+
+              {/* ── Carril lateral ────────────────────────────────────────
+                  Lo que espera una decisión suya y lo que Mia le recuerda. */}
+              <aside className="flex flex-col gap-block">
+                {/* Para tu decisión · SIEMPRE presente y en el sitio de honor.
+                    Antes desaparecía entera cuando no había nada, y ese hueco
+                    era buena parte de la sensación de vacío: "no hay nada
+                    pendiente" es una respuesta, no una ausencia. */}
+                <PanelCard
+                  icon={hayDecisiones ? ListChecks : CheckCircle2}
+                  title="Para tu decisión"
+                  hint={
+                    hayDecisiones
+                      ? "Lo único de este panel que no avanza sin ti."
+                      : undefined
+                  }
+                  tone={hayDecisiones ? "cta" : "muted"}
+                  emphasis
+                  className="animate-slide-up"
+                >
+                  {/* "Nada espera tu decisión" solo se afirma cuando se pudo
+                      comprobar. Si alguna fuente no respondió, se dice eso: es
+                      la diferencia entre un despacho al día y un Panel ciego. */}
+                  {decisiones === 0 && !decisionesParcial ? (
+                    <p className="text-pretty text-body text-muted-foreground">
+                      Nada espera tu decisión hoy. Cuando Mia deje un borrador listo o tenga una
+                      sugerencia para tu despacho, aparecerá aquí.
+                    </p>
+                  ) : null}
+
+                  {decisiones === null || decisionesParcial ? (
+                    <p className="text-pretty text-body text-muted-foreground">
+                      {decisiones === null
+                        ? "No pude consultar qué espera tu decisión ahora mismo."
+                        : "No pude consultar una parte de lo pendiente, así que esta lista puede estar incompleta."}{" "}
+                      Vuelve a abrir el Panel en un momento.
+                    </p>
+                  ) : null}
+
+                  {pendingMatters.length > 0 ? (
+                    <>
+                      <p className="text-pretty text-body text-muted-foreground">
+                        {pendingMatters.length === 1
+                          ? "Tienes un borrador esperando tu revisión:"
+                          : `Tienes ${pendingMatters.length} borradores esperando tu revisión:`}
+                      </p>
+                      <ul className="mt-3 space-y-2">
+                        {pendingMatters.slice(0, 5).map((m) => (
+                          <li key={m.id}>
+                            <Link
+                              href={rutaRevisar(m)}
+                              className={`group flex items-center gap-3 py-3.5 text-body font-medium text-foreground transition-colors hover:bg-muted/70 hover:text-primary ${FILA}`}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate">{m.name}</span>
+                                <span className="mt-0.5 block text-body font-normal text-muted-foreground">
+                                  Revisar el borrador
+                                </span>
+                              </span>
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                      {pendingMatters.length > 5 ? (
+                        <p className="mt-2 text-body text-muted-foreground">
+                          Se muestran los primeros 5 de {pendingMatters.length}.
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  {(propuestas ?? 0) > 0 ? (
+                    <p
+                      className={`${pendingMatters.length > 0 ? "mt-3" : ""} text-pretty text-body text-muted-foreground`}
+                    >
+                      {pendingMatters.length > 0 ? "Además, " : ""}Mia tiene {propuestas}{" "}
+                      {propuestas === 1 ? "sugerencia de mejora" : "sugerencias de mejora"} para tu
+                      aprobación en{" "}
+                      <Link
+                        href="/memoria"
+                        className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                      >
+                        Conocimiento
+                      </Link>
+                      .
+                    </p>
+                  ) : null}
+
+                  {pendingMatters.length > 0 ? (
+                    <Button asChild variant="cta" size="sm" className="mt-4 gap-1.5">
+                      <Link href={pendientesSoloProyectos ? "/proyectos" : "/"}>
+                        {pendientesSoloProyectos ? "Ver proyectos" : "Ver asuntos"}
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  ) : null}
+                </PanelCard>
+
+                {/* Recordatorios · las fechas del despacho. */}
+                <PanelCard
+                  icon={CalendarClock}
+                  title="Recordatorios"
+                  hint="Lo que pediste que Mia no dejara pasar."
+                  tone="primary"
+                  className="animate-slide-up"
+                  style={staggerStyle(1)}
+                >
+                  {reminderMsg ? (
+                    <p className="mb-2 rounded-md bg-warning/10 px-3 py-2 text-body text-warning">
+                      {reminderMsg}
+                    </p>
+                  ) : null}
+                  {reminders.length === 0 ? (
+                    <EmptyHint icon={BellRing}>
+                      No tienes recordatorios pendientes. Pídelos en{" "}
+                      <Link
+                        href="/chat"
+                        className="font-medium text-primary underline underline-offset-2"
+                      >
+                        el chat
+                      </Link>
+                      : «recuérdame presentar la contestación mañana a las 9».
+                    </EmptyHint>
+                  ) : (
+                    <ul className="space-y-2">
+                      {reminders.map((r, i) => (
+                        <li
+                          key={r.id}
+                          className={`flex items-start gap-3 ${FILA}`}
+                          style={staggerStyle(i)}
+                        >
+                          <NeuIcon
+                            icon={BellRing}
+                            tone={r.is_procedural ? "warning" : "primary"}
+                            size="sm"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-pretty text-body font-medium">{r.text}</div>
+                            <div className="mt-0.5 text-pretty text-body text-muted-foreground">
+                              Para el {fmtHora(r.due_at)}
+                              {r.is_procedural ? (
+                                <span className="ml-1.5 font-medium text-warning">
+                                  · plazo procesal: confirma tú la fecha
+                                </span>
                               ) : null}
                             </div>
-                          ) : null}
-                          <div className="mt-4 flex flex-wrap gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => decidePrescription(p.id, "accept")}
-                              disabled={rxBusy === p.id}
-                            >
-                              Lo haré
-                            </Button>
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => decidePrescription(p.id, "dismiss")}
-                              disabled={rxBusy === p.id}
+                              className="-ml-2 mt-1"
+                              onClick={() => cancelReminder(r.id)}
                             >
-                              Descartar
+                              Cancelar
                             </Button>
                           </div>
-                        </Card>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </section>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </PanelCard>
 
-            {/* ── 7 · Este mes (lo informativo, al final) ─────────────────
-                Se retiró la rejilla "En el despacho": "asuntos activos" ya se
-                dice en el encabezado y "documentos" es un total, no algo del
-                mes — mezclarlo aquí le haría leer al abogado una cifra
-                mensual que no lo es. Queda UNA rejilla, llena de verdad. */}
-            <section className="mt-section">
-              <SectionTitle icon={BarChart3} title="Este mes" />
+                {/* Al día en tu trabajo · Este resumen ya existía, pero enterrado
+                    tras un botón DENTRO de cada asunto: el abogado tenía que
+                    entrar uno por uno para enterarse. Sale del expediente y no
+                    pasa por ningún modelo, así que ninguna línea de aquí es una
+                    afirmación generada.
 
-              {/* Si las cifras no llegaron se dice UNA vez arriba, en llano y
-                  sin alarma, y cada tarjeta queda marcada "sin dato". Lo que no
-                  se hace nunca es rellenar con ceros: "0 borradores aprobados"
-                  es una afirmación sobre el mes del abogado, no una ausencia. */}
-              {!cifrasOk ? (
-                <p className="mb-3 text-pretty text-body text-muted-foreground">
-                  No pude consultar las cifras de este mes ahora mismo. Vuelve a abrir el Panel en
-                  un momento; lo que hayas hecho está guardado.
-                </p>
-              ) : null}
+                    El rótulo dice "tu trabajo" y no "tus asuntos" porque la lista
+                    trae asuntos Y proyectos: llamarlos a todos asuntos borraría
+                    justo la distinción que el producto sostiene. */}
+                {mostrarDia ? (
+                  <PanelCard
+                    icon={ListChecks}
+                    title="Al día en tu trabajo"
+                    hint="Lo que quedó abierto y espera algo tuyo."
+                    tone="primary"
+                    className="animate-slide-up"
+                    style={staggerStyle(2)}
+                  >
+                    <ul className="space-y-3">
+                      {dailyRows.map((row) => (
+                        <li key={row.matter.id} className={FILA}>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <Link
+                              href={rutaDe(row.matter)}
+                              className="group flex min-w-0 items-center gap-1.5 text-body font-medium hover:text-primary"
+                            >
+                              <span className="truncate">{row.matter.name}</span>
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                            </Link>
+                            <Badge variant="warning" className="bg-warning/15 text-warning">
+                              {row.briefing.requieren_decision}{" "}
+                              {row.briefing.requieren_decision === 1 ? "pendiente" : "pendientes"}
+                            </Badge>
+                          </div>
+                          <ul className="mt-2 space-y-1.5">
+                            {row.briefing.items
+                              .filter((it) => it.requiere_decision)
+                              .slice(0, 4)
+                              .map((it) => (
+                                <li
+                                  key={it.ref}
+                                  className="text-pretty text-body text-muted-foreground"
+                                >
+                                  · {it.texto}
+                                </li>
+                              ))}
+                          </ul>
+                        </li>
+                      ))}
+                    </ul>
 
-              <div className={gridFor(tarjetasMes)}>
-                <StatCard
-                  icon={CheckCircle2}
-                  label="Borradores aprobados"
-                  value={s?.value?.drafts_approved}
-                  delay={0}
-                />
-                <StatCard
-                  icon={Clock}
-                  label="Horas ahorradas (estimado)"
-                  value={s?.value?.hours_saved}
-                  delay={1}
-                />
-                <StatCard
-                  icon={MessageSquare}
-                  label="Consultas resueltas"
-                  value={s?.value?.consultations}
-                  delay={2}
-                />
-                {budget ? (
-                  <StatCard
-                    icon={Wallet}
-                    label="Gasto de IA del mes (USD)"
-                    value={money(budget.spent_this_month_usd)}
-                    delay={3}
-                  />
+                    {/* Cuando el tope dejó fuera trabajo pero nada de lo revisado
+                        pedía algo, la celda seguiría teniendo que existir: si no,
+                        el recorte desaparecería con ella. */}
+                    {dailyRows.length === 0 ? (
+                      <p className="text-pretty text-body text-muted-foreground">
+                        De lo que alcancé a mirar, nada espera algo tuyo.
+                      </p>
+                    ) : null}
+
+                    {/* EL RECORTE SE DICE CON NÚMEROS. Antes esta línea se
+                        condicionaba a `matters_active`, que el servidor cuenta
+                        solo sobre asuntos, mientras la lista recortada eran
+                        asuntos + proyectos: con 3 asuntos y 4 proyectos activos
+                        el Panel mostraba 5 y ocultaba 2 sin decir nada. Ahora la
+                        condición y la cifra salen de la MISMA lista recortada. */}
+                    {dailyRecorte > 0 ? (
+                      <p className="mt-3 text-pretty text-body text-muted-foreground">
+                        Tienes {dailyTotal} asuntos y proyectos abiertos: aquí se miran los{" "}
+                        {dailyRevisados} más recientes y quedan {dailyRecorte} sin mirar.
+                      </p>
+                    ) : null}
+
+                    {dailySinRespuesta > 0 ? (
+                      <p className="mt-2 text-pretty text-body text-muted-foreground">
+                        De los {dailyRevisados} que miré,{" "}
+                        {dailySinRespuesta === 1
+                          ? "1 no respondió ahora mismo"
+                          : `${dailySinRespuesta} no respondieron ahora mismo`}
+                        , así que puede faltar algo en esta lista.
+                      </p>
+                    ) : null}
+                  </PanelCard>
                 ) : null}
-              </div>
 
-              <p className="mt-3 text-pretty text-body text-muted-foreground">
-                {s?.value?.net_usd != null
-                  ? `Valor neto estimado: USD ${s.value.net_usd.toFixed(2)}.`
-                  : "Valor neto estimado: sin dato ahora mismo."}
-                {budget?.unlimited ? " No tienes un tope de gasto fijado." : null}
-                {!budget?.unlimited && budget?.remaining_usd != null
-                  ? ` Te quedan USD ${budget.remaining_usd.toFixed(2)} del tope de este mes.`
-                  : null}{" "}
-                <Link href="/configurar#valor" className="font-medium text-primary hover:underline">
-                  Ajustar el cálculo en Configuración
-                </Link>
-              </p>
+                {/* Termina de preparar a Mia · El servidor ya redacta el título,
+                    el detalle y el enlace de cada paso en lenguaje llano: aquí no
+                    se inventa ni una palabra, se pinta lo que manda. Desaparece
+                    sola al terminar. */}
+                {mostrarSetup ? (
+                  <PanelCard
+                    icon={Compass}
+                    title="Termina de preparar a Mia"
+                    hint={setup?.mensaje}
+                    tone="primary"
+                    className="animate-slide-up"
+                    style={staggerStyle(3)}
+                  >
+                    <ul className="space-y-2">
+                      {pasosPendientes.map((paso) => (
+                        <li key={paso.id} className={FILA}>
+                          <div className="min-w-0">
+                            <div className="text-body font-medium">{paso.titulo}</div>
+                            <p className="mt-0.5 text-pretty text-body text-muted-foreground">
+                              {paso.detalle}
+                            </p>
+                          </div>
+                          {paso.enlace ? (
+                            <Button asChild size="sm" variant="secondary" className="mt-3 gap-1.5">
+                              <Link href={paso.enlace}>
+                                Ir al paso
+                                <ArrowRight className="h-3.5 w-3.5" />
+                              </Link>
+                            </Button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-3 text-pretty text-body text-muted-foreground">
+                      Todo es opcional y puedes retomarlo cuando quieras desde{" "}
+                      <Link
+                        href="/configurar"
+                        className="font-medium text-primary underline underline-offset-2"
+                      >
+                        Configuración
+                      </Link>
+                      .
+                    </p>
+                  </PanelCard>
+                ) : null}
 
-              {/* Lo que Mia hace sola, en una línea discreta: es tranquilizador
-                  saber que hay algo corriendo, pero no es trabajo del abogado. */}
-              {tareas.length > 0 ? (
-                <p className="mt-2 text-meta text-muted-foreground">
-                  Mia trabaja en segundo plano: {tareas.length}{" "}
-                  {tareas.length === 1 ? "tarea programada" : "tareas programadas"}
-                  {proximaTarea ? ` · la próxima, el ${fmtHora(proximaTarea)}` : null}.
-                </p>
-              ) : null}
-            </section>
+                {/* Tus guías de trabajo · Solo aparece si hay algo que verificar:
+                    es la regla de la casa (ninguna cita sin verificación)
+                    convertida en tarjeta. */}
+                {guiasPorRevisar > 0 ? (
+                  <PanelCard
+                    icon={BookOpen}
+                    title="Tus guías de trabajo"
+                    tone="primary"
+                    className="animate-slide-up"
+                    style={staggerStyle(4)}
+                  >
+                    <p className="text-pretty text-body">
+                      {health?.revisar ? (
+                        <>
+                          <span className="font-medium">
+                            {health.revisar} {health.revisar === 1 ? "guía" : "guías"}
+                          </span>{" "}
+                          {health.revisar === 1 ? "tiene" : "tienen"} citas por verificar
+                          {health?.sin_revisar ? " y " : "."}
+                        </>
+                      ) : null}
+                      {health?.sin_revisar ? (
+                        <>
+                          <span className="font-medium">
+                            {health.sin_revisar} {health.sin_revisar === 1 ? "guía" : "guías"}
+                          </span>{" "}
+                          {health.sin_revisar === 1 ? "no se ha revisado" : "no se han revisado"}{" "}
+                          nunca.
+                        </>
+                      ) : null}
+                    </p>
+                    <p className="mt-1 text-pretty text-body text-muted-foreground">
+                      Mia no usa una cita que no haya podido comprobar: revisarlas mejora lo que
+                      redacta.
+                    </p>
+                    <Button asChild size="sm" variant="secondary" className="mt-4 gap-1.5">
+                      <Link href="/memoria">
+                        Revisar mis guías
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  </PanelCard>
+                ) : null}
+
+                {/* Lo que Mia hace sola, en una línea discreta al pie del carril:
+                    es tranquilizador saber que hay algo corriendo, pero no es
+                    trabajo del abogado y no merece una celda propia. */}
+                {tareas.length > 0 ? (
+                  <p className="px-1 text-pretty text-meta text-muted-foreground">
+                    Mia trabaja en segundo plano: {tareas.length}{" "}
+                    {tareas.length === 1 ? "tarea programada" : "tareas programadas"}
+                    {proximaTarea ? ` · la próxima, el ${fmtHora(proximaTarea)}` : null}.
+                  </p>
+                ) : null}
+              </aside>
+            </div>
           </>
         )}
       </PageShell>

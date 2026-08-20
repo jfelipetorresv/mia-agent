@@ -10,8 +10,9 @@
 // componentes cubren el Panel y Configuración de un golpe, así que las dos
 // pantallas se corrigen por HERENCIA, sin reescribir ninguna de las dos.
 
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, CSSProperties, ReactNode } from "react";
 import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { staggerStyle } from "@/lib/motion";
 
 // La cabecera de sección ahora vive en su propio archivo (era una de las dos
@@ -39,6 +40,116 @@ export function fmtHora(s?: string | null): string {
   } catch {
     return "—";
   }
+}
+
+/**
+ * EL ICONO EN BAJO RELIEVE
+ * ========================
+ *
+ * El vocabulario del sistema esculpe el contenedor del icono HACIA ADENTRO
+ * mientras la tarjeta que lo contiene emerge: es ese contraste (relieve fuera,
+ * bajo relieve dentro) el que da la profundidad, no la sombra por sí sola. Se
+ * escribía a mano en cada pantalla con seis recetas distintas de fondo y radio.
+ *
+ * `rounded-xl` (12px) y no el radio de tarjeta: un chip de 40px con radio de
+ * SUPERFICIE se lee como una tarjeta diminuta dentro de otra tarjeta.
+ *
+ * `tone` distingue el icono que ACOMPAÑA (`muted`, el defecto), el que señala
+ * algo que pide acción (`cta`) y el que avisa (`warning`). No hay más: el color
+ * de un icono es semántica, no decoración.
+ */
+export function NeuIcon({
+  icon: Icon,
+  tone = "muted",
+  size = "md",
+  className,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  tone?: "muted" | "primary" | "cta" | "warning";
+  size?: "sm" | "md";
+  className?: string;
+}) {
+  const tones = {
+    muted: "text-muted-foreground",
+    primary: "text-primary",
+    cta: "text-cta-strong",
+    warning: "text-warning",
+  } as const;
+
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-xl bg-muted/50 shadow-neu-sunken",
+        size === "sm" ? "h-9 w-9" : "h-10 w-10",
+        tones[tone],
+        className
+      )}
+    >
+      <Icon className={size === "sm" ? "h-4 w-4" : "h-[1.125rem] w-[1.125rem]"} />
+    </span>
+  );
+}
+
+/**
+ * UNA CELDA DEL PANEL (bento)
+ * ===========================
+ *
+ * El Panel dejó de ser una lista vertical de secciones para ser una rejilla de
+ * tarjetas: cada bloque de contenido vive DENTRO de su propia superficie, con
+ * su cabecera de icono en bajo relieve. Antes cada sección repetía a mano el
+ * par «cabecera + tarjetas sueltas debajo», que a rejilla no se traduce (los
+ * bloques quedaban con alturas y fondos distintos en la misma fila).
+ *
+ * `emphasis` es la jerarquía dominante: la celda que el abogado tiene que mirar
+ * primero (lo que espera su decisión) se eleva y se tiñe. Una sola por pantalla.
+ */
+export function PanelCard({
+  icon,
+  title,
+  hint,
+  tone = "muted",
+  emphasis = false,
+  actions,
+  className,
+  style,
+  children,
+}: {
+  icon?: ComponentType<{ className?: string }>;
+  title: string;
+  hint?: string;
+  tone?: "muted" | "primary" | "cta" | "warning";
+  emphasis?: boolean;
+  actions?: ReactNode;
+  className?: string;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  return (
+    <Card
+      variant="raised"
+      padding="md"
+      className={cn(
+        "flex h-full flex-col bg-card/80 backdrop-blur-md",
+        emphasis && "border-cta/30 bg-cta/5",
+        className
+      )}
+      style={style}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          {icon ? <NeuIcon icon={icon} tone={tone} size="sm" /> : null}
+          <div className="min-w-0">
+            <h2 className={cn("text-pretty", emphasis ? "text-title" : "text-section")}>{title}</h2>
+            {hint ? (
+              <p className="mt-1 text-pretty text-body text-muted-foreground">{hint}</p>
+            ) : null}
+          </div>
+        </div>
+        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      </div>
+      <div className="mt-4 min-w-0 flex-1">{children}</div>
+    </Card>
+  );
 }
 
 /**
@@ -83,14 +194,18 @@ export function StatCard({
   return (
     <Card
       padding="sm"
-      interactive
-      className="animate-slide-up"
+      // SIN `interactive`: la tarjeta se levantaba al pasar el ratón y no lleva
+      // a ningún sitio. Una superficie que reacciona promete una acción, y aquí
+      // no había ninguna — el enlace de detalle vive bajo la rejilla, escrito.
+      className="h-full animate-slide-up bg-card/80 backdrop-blur-md"
       // Cadencia única del producto (45 ms por peldaño). Antes este retraso se
       // calculaba a mano aquí y en otros cuatro sitios, con cuatro cadencias
       // distintas.
       style={staggerStyle(delay)}
     >
-      <Icon className="mb-2 h-4 w-4 text-primary" />
+      {/* El icono baja a bajo relieve (vocabulario del sistema): la tarjeta
+          emerge y su icono se hunde. Antes era un glifo suelto sobre el fondo. */}
+      <NeuIcon icon={Icon} tone="primary" size="sm" className="mb-3" />
       {value == null || !Number.isFinite(value) ? (
         <>
           {/* La raya ocupa el sitio de la cifra para que la rejilla no salte,
@@ -108,7 +223,7 @@ export function StatCard({
             {value}
             {suffix}
           </div>
-          <div className="mt-1 text-label text-muted-foreground">{label}</div>
+          <div className="mt-1 text-pretty text-label text-muted-foreground">{label}</div>
         </>
       )}
     </Card>
