@@ -64,6 +64,7 @@ from ...policy import budget as policy_budget
 from ._common import assert_owns_matter, load_profile_snapshot, MAX_UPLOAD_BYTES, _is_uuid, sse
 from . import delegation as delegation_routes
 from .hitl import _resume, ArgumentSelection
+from . import hitl as hitl_routes
 from .stream import SSE_PING_SECONDS, StreamBody, stream_matter
 
 router = APIRouter(prefix="/api", tags=["ux"])
@@ -527,6 +528,11 @@ async def get_draft(matter_id: str, request: Request):
             if isinstance(md.get("strategy_pack"), dict) else None,
             "argument_selection": md.get("argument_selection")
             if isinstance(md.get("argument_selection"), dict) else None,
+            # Cómo quedó cada comentario del abogado en la última corrección acotada
+            # (pasaje nuevo, en qué cambió y el aviso si algo más se movió). None si
+            # este asunto nunca pasó por comentarios.
+            "comentarios_resueltos": md.get("comentarios_resueltos")
+            if isinstance(md.get("comentarios_resueltos"), dict) else None,
             "stage_failed": md.get("stage_failed")}
 
 
@@ -629,6 +635,13 @@ async def approve_draft(matter_id: str, request: Request, body: ApproveBody | No
 async def reject_draft(matter_id: str, request: Request, body: RejectBody | None = None):
     reason = body.reason if body else ""
     return await _resume(request, matter_id, {"decision": "rejected", "feedback": reason})
+
+
+@router.post("/matters/{matter_id}/draft/comentarios")
+async def comentarios_draft(matter_id: str, request: Request,
+                            body: hitl_routes.ComentariosBody):
+    """Alias /api de la corrección por comentarios anclados (la pantalla de revisión)."""
+    return await hitl_routes.resume_con_comentarios(request, matter_id, body)
 
 
 @router.get("/matters/{matter_id}/final.docx")

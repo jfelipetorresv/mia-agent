@@ -38,6 +38,25 @@ class EditBody(BaseModel):
     attested: Literal[True]
 
 
+class Comentario(BaseModel):
+    """Un comentario del abogado anclado a un pasaje del borrador (estilo Docs).
+
+    El ancla es el TEXTO citado más su contexto, no un offset: el documento se reescribe
+    y los offsets mienten. `parrafo_indice` es solo una pista para desempatar.
+    """
+    id: str = ""
+    texto_citado: str = Field(min_length=1, max_length=2000)
+    instruccion: str = Field(min_length=1, max_length=1000)
+    parrafo_indice: int = -1
+    contexto_antes: str = ""
+    contexto_despues: str = ""
+
+
+class ComentariosBody(BaseModel):
+    draft_hash: str = Field(min_length=64, max_length=64)
+    comentarios: list[Comentario] = Field(min_length=1, max_length=20)
+
+
 class ArgumentSelection(BaseModel):
     include: list[str] = Field(default_factory=list)
     exclude: list[str] = Field(default_factory=list)
@@ -143,6 +162,67 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
         "Mia está finalizando el borrador…", eventos, tenant_id, matter_id,
         error_msg="No se pudo finalizar el borrador. Intenta de nuevo.",
     ))
+
+
+async def resume_con_comentarios(request: Request, matter_id: str,
+                                 body: ComentariosBody) -> EventSourceResponse:
+    """Corrección acotada: el abogado comentó pasajes concretos y Mia arregla SOLO esos.
+
+    Es un camino propio, no una variante del rechazo: rechazar cierra el turno (el
+    borrador se conserva, el motivo va a la traza y no hay nueva redacción), mientras que
+    comentar reanuda el grafo hacia una pasada de corrección y devuelve a esta misma
+    revisión con el borrador corregido. Colgarlo del rechazo habría cambiado el
+    significado de una decisión que ya está cableada en el ledger y en las trazas.
+    """
+    tenant_id = getattr(request.state, "tenant_id", None)
+    if not tenant_id:
+        raise HTTPException(status_code=401, detail="Sin contexto de tenant")
+    await assert_owns_matter(tenant_id, matter_id)
+    # Los comentarios están anclados al TEXTO de la versión que el abogado vio: sobre
+    # otra versión no significan nada. Misma huella, mismo 409 en llano que aprobar.
+    await _require_current_draft_hash(tenant_id, matter_id, body.draft_hash)
+    command = {
+        "decision": "comments",
+        "draft_hash": body.draft_hash,
+        "comentarios": [c.model_dump() for c in body.comentarios],
+    }
+
+    async def eventos():
+        async with open_checkpointer() as cp:
+            graph = build_matter_graph(cp)
+            cfg = {"configurable": {"thread_id": thread_id_for(tenant_id, matter_id)}}
+            await require_awaiting_review(graph, cfg)
+            async for _ in graph.astream(Command(resume=command), cfg,
+                                         stream_mode="updates"):
+                pass
+            state = await graph.aget_state(cfg)
+        values = (state.values or {}) if state else {}
+        md = values.get("metadata") or {}
+        informe = md.get("comentarios_resueltos") or {}
+        nuevo = values.get("draft") or ""
+        async with pool.tenant_connection(tenant_id) as conn:
+            # El borrador corregido vuelve a esperar la revisión del abogado.
+            await conn.execute(
+                "UPDATE matters SET pending_review = TRUE, "
+                "pending_review_notified_at = NULL WHERE id = %s::uuid", (matter_id,))
+        yield sse("done",
+                  informe.get("resumen") or "Apliqué tus comentarios al borrador.",
+                  draft=nuevo,
+                  draft_hash=legal_ledger.content_hash(nuevo),
+                  status="comentarios_aplicados",
+                  comentarios=informe.get("comentarios") or [],
+                  avisos=informe.get("avisos") or [],
+                  verification=md.get("verification"))
+
+    return EventSourceResponse(turno_sse(
+        "Mia está aplicando tus comentarios…", eventos, tenant_id, matter_id,
+        error_msg="No se pudieron aplicar tus comentarios. Intenta de nuevo.",
+    ))
+
+
+@router.post("/matters/{matter_id}/comentarios")
+async def comentarios(matter_id: str, request: Request, body: ComentariosBody):
+    return await resume_con_comentarios(request, matter_id, body)
 
 
 @router.post("/matters/{matter_id}/approve")

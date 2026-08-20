@@ -18,6 +18,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import CitationReview, { type Verification } from "../../../_components/CitationReview";
+import ComentariosBorrador, {
+  type ComentarioBorrador,
+  type InformeComentarios,
+} from "../../../_components/ComentariosBorrador";
 import { depositarAvisoDeCosto } from "../../../_components/AvisoDeCosto";
 import { renderInline } from "@/components/MiaMarkdown";
 import { PageShell } from "@/app/_components/PageShell";
@@ -48,6 +52,7 @@ type DraftResponse = {
   argumentos?: Argumento[] | null;
   descartes?: Descarte[] | null;
   argument_selection?: { include?: string[]; exclude?: string[] } | Record<string, boolean> | null;
+  comentarios_resueltos?: InformeComentarios | null;
 };
 
 // El resaltado de [VERIFICAR…] —la señal de "esto lo confirmas tú"— vive en
@@ -159,6 +164,14 @@ type LearningReceipt = {
   learning?: { status?: "queued" | "partially_queued" | "blocked" | "completed" | "needs_attention" | "not_applicable" };
   final_ready?: boolean;
   final_status?: string;
+  // Solo cuando la operación fue «aplicar mis comentarios»: el borrador corregido y
+  // el informe de qué cambió en cada punto.
+  message?: string;
+  draft?: string;
+  draft_hash?: string;
+  comentarios?: InformeComentarios["comentarios"];
+  avisos?: InformeComentarios["avisos"];
+  verification?: Verification | null;
 };
 
 async function resumeDraft(path: string, body: unknown): Promise<LearningReceipt> {
@@ -300,6 +313,12 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
   const [argumentos, setArgumentos] = useState<Argumento[]>([]);
   const [descartes, setDescartes] = useState<Descarte[]>([]);
   const [argSelected, setArgSelected] = useState<Record<string, boolean>>({});
+  // Comentarios anclados: lo que el abogado marcó en el texto y aún no ha enviado, y
+  // el informe de la última corrección (cómo quedó cada punto y qué más se movió).
+  const [comentarios, setComentarios] = useState<ComentarioBorrador[]>([]);
+  const [comentariosBusy, setComentariosBusy] = useState(false);
+  const [comentariosError, setComentariosError] = useState("");
+  const [informeComentarios, setInformeComentarios] = useState<InformeComentarios | null>(null);
 
   useEffect(() => {
     apiGet<{ jurisdictions?: string[] }>(`/api/matters/${matterId}`)
@@ -317,6 +336,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
         setArgumentos(args);
         setDescartes(drops);
         setArgSelected(initialSelection(args, d.argument_selection));
+        setInformeComentarios(d.comentarios_resueltos || null);
       })
       .catch(() => {
         router.push(`/asuntos/${matterId}?sin_borrador=true`);
@@ -360,7 +380,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
   }, []);
 
   async function approve() {
-    if (busy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada || noneSelected) return;
+    if (busy || comentariosBusy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada || noneSelected) return;
     setBusy(true);
     setActionMsg("");
     try {
@@ -404,6 +424,49 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
       // revisión independiente pendiente). Tragarlo dejaba al abogado reintentando
       // algo que reintentar no arregla.
       setActionMsg(plainMessage(e, "No se pudo confirmar el borrador. Intenta de nuevo."));
+    }
+  }
+
+  // Enviar los comentarios NO aprueba ni rechaza: pide una corrección acotada y el
+  // borrador corregido vuelve a esta misma pantalla, con el informe de qué cambió.
+  async function enviarComentarios() {
+    if (comentariosBusy || !draftHash) return;
+    const utiles = comentarios.filter((c) => c.instruccion.trim().length > 0);
+    if (utiles.length === 0) return;
+    setComentariosBusy(true);
+    setComentariosError("");
+    try {
+      const receipt = await resumeDraft(`/api/matters/${matterId}/draft/comentarios`, {
+        draft_hash: draftHash,
+        comentarios: utiles.map((c) => ({
+          id: c.id,
+          texto_citado: c.texto_citado,
+          parrafo_indice: c.parrafo_indice,
+          contexto_antes: c.contexto_antes,
+          contexto_despues: c.contexto_despues,
+          instruccion: c.instruccion.trim(),
+        })),
+      });
+      if (receipt.draft) {
+        setDraft(receipt.draft);
+        setText(receipt.draft);
+      }
+      if (receipt.draft_hash) setDraftHash(receipt.draft_hash);
+      if (receipt.verification !== undefined) setVerification(receipt.verification || null);
+      setInformeComentarios({
+        comentarios: receipt.comentarios || [],
+        avisos: receipt.avisos || [],
+        resumen: receipt.message || "",
+      });
+      setComentarios([]);
+      // El borrador cambió: las constancias de esta pantalla se refieren a una versión
+      // que ya no está a la vista. Se vuelven a pedir.
+      setCitasVerificadas(false);
+      setRevisionAtestada(false);
+    } catch (e) {
+      setComentariosError(plainMessage(e, "No se pudieron aplicar tus comentarios. Intenta de nuevo."));
+    } finally {
+      setComentariosBusy(false);
     }
   }
 
@@ -501,7 +564,13 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
       </div>
 
       <div className="flex-1 overflow-auto px-6 py-10 md:px-8">
-        <div className="mx-auto max-w-3xl animate-slide-up" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
+        {/* Con el carril de comentarios a la derecha, la columna de lectura sola ya no
+            define el ancho: `max-w-5xl` deja el borrador cómodo y el carril completo.
+            En modo edición no hay carril y se conserva el ancho de siempre. */}
+        <div
+          className={cn("mx-auto animate-slide-up", editing ? "max-w-3xl" : "max-w-5xl")}
+          style={{ animationDelay: "60ms", animationFillMode: "backwards" }}
+        >
           <EscalamientoBanner categorias={detonadores} />
           {hasMatrix ? (
             <ArgumentMatrix
@@ -555,9 +624,19 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
               </div>
             </div>
           ) : (
-            <div className={cn(cardVariants(), "whitespace-pre-wrap p-8 font-serif text-body leading-relaxed")}>
-              {renderDraft(text)}
-            </div>
+            <ComentariosBorrador
+              draft={text}
+              comentarios={comentarios}
+              onChange={setComentarios}
+              onEnviar={enviarComentarios}
+              enviando={comentariosBusy}
+              error={comentariosError}
+              informe={informeComentarios}
+            >
+              <div className={cn(cardVariants(), "whitespace-pre-wrap p-8 font-serif text-body leading-relaxed")}>
+                {renderDraft(text)}
+              </div>
+            </ComentariosBorrador>
           )}
           {verification ? <VerificationReport v={verification} /> : null}
         </div>
@@ -606,7 +685,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
             variant="cta"
             size="lg"
             onClick={approve}
-            disabled={busy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada || noneSelected}
+            disabled={busy || comentariosBusy || gateCitasPendiente || versionVacia || !draftHash || !revisionAtestada || noneSelected}
             className="gap-2"
           >
             <Check className="h-4 w-4" />
@@ -616,7 +695,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
             variant="outline"
             size="lg"
             onClick={() => setEditing((v) => !v)}
-            disabled={busy}
+            disabled={busy || comentariosBusy}
             className="gap-2"
           >
             <Pencil className="h-4 w-4" />
@@ -626,7 +705,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
             variant="ghost"
             size="lg"
             onClick={() => setRejectOpen(true)}
-            disabled={busy}
+            disabled={busy || comentariosBusy}
             className="gap-2 text-muted-foreground hover:text-destructive"
           >
             <X className="h-4 w-4" />

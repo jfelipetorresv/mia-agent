@@ -76,6 +76,7 @@ from ..policy import budget as policy_budget
 from ..policy import turn_budget
 from ..jurisdiction.pack import GENERIC_CODE
 from . import barreras_harness
+from . import comentarios as comentarios_borrador
 from . import (context_recovery, delegate_intent, delegate_proposal, delegation,
                handoff as matter_handoff, packs as legal_packs, reasoning_filter,
                research, retrieval, stage_gate, untrusted, verification)
@@ -144,9 +145,12 @@ def _route_after_hitl(state: MatterState) -> str:
     No es el bucle automático draft↔gate (F1.5, 66% del costo): una sola pasada
     extra de redacción + verificador, y otra vez HITL. El flag one-shot vive en
     metadata.selection_redraft_used.
+
+    Los COMENTARIOS ANCLADOS del abogado (estilo Docs) usan exactamente este mismo
+    camino: una pasada de corrección acotada + verificador y otra vez a la revisión.
     """
     md = state.get("metadata") or {}
-    if md.get("needs_selection_redraft"):
+    if md.get("needs_selection_redraft") or md.get("needs_comment_redraft"):
         return "draft"
     return "finalize"
 
@@ -1986,8 +1990,18 @@ class MatterGraphBuilder:
         if packet:
             user_parts.append(packet)
             
+        # CORRECCIÓN POR COMENTARIOS ANCLADOS: si el abogado dejó comentarios sobre
+        # pasajes concretos, este draft NO rehace el escrito — corrige esos puntos y
+        # conserva el resto idéntico. La instrucción se compone en `agents.comentarios`.
+        comentarios_activos = md_in.get("comentarios_pendientes") if isinstance(
+            md_in.get("comentarios_pendientes"), list) else None
+        base_comentarios = str(md_in.get("comentarios_texto_base")
+                               or state.get("draft") or "")
         gate_feedback = md_in.get("gate_feedback")
-        if gate_feedback:
+        if comentarios_activos and base_comentarios.strip():
+            user_parts.append(comentarios_borrador.instruccion_de_correccion(
+                base_comentarios, comentarios_activos))
+        elif gate_feedback:
             user_parts.append(f"El gate de calidad rechazó el borrador anterior:\n{gate_feedback}\n\nReescribe el borrador corrigiendo las citas y asegurando respaldo literal exacto.")
         else:
             user_parts.append("Redacta el borrador del escrito.")
@@ -1999,10 +2013,16 @@ class MatterGraphBuilder:
         user_parts.append(selected_instruction)
         chosen_ids = {a.id for a in chosen}
 
+        # La corrección por comentarios usa la instrucción de sistema de CORRECCIÓN
+        # («incorpora las indicaciones conservando lo que no se pidió cambiar»), no la
+        # de redacción desde cero: pedirle "redacta el borrador" a quien debe tocar dos
+        # párrafos es invitarlo a rehacer el documento.
+        node_task = "edit" if (comentarios_activos and base_comentarios.strip()) else "draft"
+
         def _messages(parts: list[str], index: str = pb_index) -> list[dict]:
             return [
                 {"role": "system", "content": prompt_builder.build_graph_system(
-                    state, "draft", matter_context=_matter_context_for(state),
+                    state, node_task, matter_context=_matter_context_for(state),
                     playbook_index=index, persona_voice=_persona_voice(state))},
                 {"role": "user", "content": "\n\n".join(parts)},
             ]
@@ -2023,7 +2043,13 @@ class MatterGraphBuilder:
             parts = [f"Diagnóstico:\n{diag_small}", profile_txt]
             if packet:
                 parts.append(packet)
-            parts.append("Redacta el borrador del escrito.")
+            if comentarios_activos and base_comentarios.strip():
+                # Si hay comentarios, ELLOS son la tarea del turno: recortar el prompt
+                # jamás puede convertir «corrige estos dos párrafos» en «redacta otra vez».
+                parts.append(comentarios_borrador.instruccion_de_correccion(
+                    base_comentarios, comentarios_activos))
+            else:
+                parts.append("Redacta el borrador del escrito.")
             parts.append(selected_instruction)
             return _messages(parts, index=index_small)
 
@@ -2048,6 +2074,20 @@ class MatterGraphBuilder:
                         if a.id not in chosen_ids],
         }
         md.pop("needs_selection_redraft", None)
+        md["needs_comment_redraft"] = False
+        # Resolución de los comentarios: qué quedó en cada pasaje comentado y —sobre todo—
+        # qué MÁS se movió sin que el abogado lo pidiera. Es un AVISO honesto, no un
+        # bloqueo: la corrección sigue su curso y el abogado decide. La segunda pasada del
+        # gate (§19) corre aparte sobre `texto_anterior`, que ya quedó escrito arriba.
+        if comentarios_activos and base_comentarios.strip():
+            try:
+                md["comentarios_resueltos"] = comentarios_borrador.resoluciones(
+                    base_comentarios, draft, comentarios_activos)
+            except Exception:  # noqa: BLE001 — informar del cambio nunca tumba el turno
+                logger.warning("no se pudo resolver el informe de comentarios",
+                               exc_info=True)
+            md.pop("comentarios_pendientes", None)
+            md.pop("comentarios_texto_base", None)
         # Transparencia (solo cuando SÍ se usó): que la traza y la pantalla puedan decir que
         # este borrador nació con la pasada adversarial de la Sala. Si no hubo dictamen, la
         # clave ni se escribe → la metadata queda idéntica a la de siempre.
@@ -2505,7 +2545,24 @@ class MatterGraphBuilder:
             decision = {"decision": "rejected", "feedback": "La versión editada no es válida.",
                         "rejected_by_gate": "edited_text"}
             dec = "rejected"
-        if dec not in ("approved", "rejected", "editing"):
+        # COMENTARIOS ANCLADOS: el abogado no aprueba ni rechaza — pide corregir puntos
+        # concretos. Es una decisión válida y NO produce documento final: vuelve a draft
+        # con la corrección acotada y regresa a esta misma revisión.
+        if dec == "comments":
+            anclados = comentarios_borrador.anclar(
+                (decision or {}).get("comentarios"), draft)
+            if not anclados:
+                decision = {"decision": "rejected",
+                            "feedback": "No llegó ningún comentario que aplicar.",
+                            "rejected_by_gate": "comentarios"}
+                dec = "rejected"
+            elif supplied_hash != draft_hash:
+                # El ancla es TEXTO de ESTA versión: sobre otra versión no significa nada.
+                decision = {"decision": "rejected",
+                            "feedback": "Los comentarios se hicieron sobre otra versión del borrador.",
+                            "rejected_by_gate": "draft_hash"}
+                dec = "rejected"
+        if dec not in ("approved", "rejected", "editing", "comments"):
             dec = "rejected"  # fail-closed: sin decisión válida no se aprueba
         status = dec
         # El ledger no reemplaza el checkpoint: deja evidencia durable del texto y
@@ -2538,6 +2595,18 @@ class MatterGraphBuilder:
                             "rejected_by_gate": "legal_ledger"}
         md["draft_hash"] = draft_hash
         md["hitl_decision"] = decision
+        if dec == "comments":
+            # El re-draft por comentarios es una pasada cara autorizada por el abogado:
+            # la pidió él, punto por punto. Se guarda lo ANCLADO (no lo que llegó crudo)
+            # para que el redactor vea el pasaje tal como está hoy en el documento.
+            md["comentarios_pendientes"] = anclados
+            md["comentarios_texto_base"] = draft
+            md["comentarios_rondas"] = int(md.get("comentarios_rondas") or 0) + 1
+            md["needs_comment_redraft"] = True
+            md["authorize_expensive_pass"] = True
+            md.pop("comentarios_resueltos", None)
+            return {"hitl_status": "pending", "metadata": md}
+        md["needs_comment_redraft"] = False
         incoming_sel = (decision or {}).get("argument_selection")
         if isinstance(incoming_sel, dict):
             md["argument_selection"] = incoming_sel
