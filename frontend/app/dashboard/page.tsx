@@ -93,6 +93,8 @@ type Stats = {
     net_usd?: number;
     drafts_approved?: number;
     consultations?: number;
+    draft_minutes?: number;
+    turn_minutes?: number;
   };
   scheduler_jobs?: { label: string; next_run: string | null; last_run: string | null }[];
   connectors?: { models?: string[] };
@@ -545,22 +547,43 @@ export default function DashboardPage() {
                   ) : null}
 
                   <div className={gridFor(tarjetasMes)}>
+                    {/* HONESTIDAD DE MÉTRICAS (regla operativa §18: «toda métrica con
+                        nombre evaluativo declara qué mide literalmente; la etiqueta es
+                        parte de la métrica»). Las tres primeras etiquetas prometían más
+                        de lo que el servidor cuenta, y la definición literal de cada una
+                        está congelada en `validation/registro-metricas.json`:
+
+                        · «Borradores aprobados» → el servidor NO sabe si los aprobaste:
+                          cuenta los turnos del mes cuyo texto final es un escrito largo
+                          (≥3.000 caracteres) y que no rechazaste. Ahora dice lo que mide.
+                        · «Consultas resueltas» → «resuelta» es un juicio sobre el
+                          resultado que nadie comprueba; lo que se cuenta es que Mia las
+                          atendió y tú no las rechazaste.
+                        · «Horas ahorradas» ya se declaraba estimada, pero sin decir según
+                          qué. La base del cálculo va ahora en la propia tarjeta. */}
                     <StatCard
                       icon={CheckCircle2}
-                      label="Borradores aprobados"
+                      label="Escritos que Mia preparó"
                       value={s?.value?.drafts_approved}
+                      nota="Textos largos que no rechazaste"
                       delay={0}
                     />
                     <StatCard
                       icon={Clock}
                       label="Horas ahorradas (estimado)"
                       value={s?.value?.hours_saved}
+                      nota={
+                        s?.value?.draft_minutes != null && s?.value?.turn_minutes != null
+                          ? `Estimado: ${s.value.draft_minutes} min por escrito y ${s.value.turn_minutes} min por consulta`
+                          : "Estimado según los minutos que configuraste por escrito y por consulta"
+                      }
                       delay={1}
                     />
                     <StatCard
                       icon={MessageSquare}
-                      label="Consultas resueltas"
+                      label="Consultas atendidas"
                       value={s?.value?.consultations}
+                      nota="Preguntas que Mia respondió y no rechazaste"
                       delay={2}
                     />
                     {budget ? (
@@ -568,6 +591,7 @@ export default function DashboardPage() {
                         icon={Wallet}
                         label="Gasto de IA del mes (USD)"
                         value={money(budget.spent_this_month_usd)}
+                        nota="No incluye la indexación de documentos"
                         delay={3}
                       />
                     ) : null}
@@ -578,8 +602,8 @@ export default function DashboardPage() {
                       escondida tras un icono de ayuda. */}
                   <p className="mt-3 text-pretty text-body text-muted-foreground">
                     {s?.value?.net_usd != null
-                      ? `Valor neto estimado: USD ${s.value.net_usd.toFixed(2)}.`
-                      : "Valor neto estimado: sin dato ahora mismo."}
+                      ? `Valor neto estimado: USD ${s.value.net_usd.toFixed(2)} — es una estimación: las horas ahorradas por tu tarifa, menos el gasto de IA del mes.`
+                      : "Valor neto estimado: sin medir todavía, no pude consultar las cifras del mes."}
                     {budget?.unlimited ? " No tienes un tope de gasto fijado." : null}
                     {!budget?.unlimited && budget?.remaining_usd != null
                       ? ` Te quedan USD ${budget.remaining_usd.toFixed(2)} del tope de este mes.`

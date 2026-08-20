@@ -144,7 +144,8 @@ type DashboardStats = {
   };
   scheduler_jobs?: { label: string; next_run?: string | null; last_run?: string | null }[];
   second_brain?: {
-    weekly_approval_rate?: number;
+    /** `null` = la consolidación semanal no ha corrido nunca: NO es 0 %. */
+    weekly_approval_rate?: number | null;
     concepts_count?: number;
     skills_active?: number;
     skills_archived?: number;
@@ -625,7 +626,23 @@ export default function ConfigurarPage() {
                 Cómo va el conocimiento que Mia construye de tu despacho y sus procesos de fondo.
               </p>
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <StatCard icon={HeartPulse} label="Aprobación semanal" value={Math.round((brain.weekly_approval_rate || 0) * 100)} suffix="%" delay={0} />
+                {/* NO MEDIBLE, no 0 %: `|| 0` convertía «la consolidación semanal
+                    todavía no ha corrido» en «aprobaste el 0 % de lo que Mia propuso»,
+                    que es una afirmación falsa sobre el despacho. El servidor ahora
+                    manda null mientras no haya medición y aquí se dice por qué. */}
+                <StatCard
+                  icon={HeartPulse}
+                  label="Aprobación semanal"
+                  value={
+                    brain.weekly_approval_rate == null
+                      ? null
+                      : Math.round(brain.weekly_approval_rate * 100)
+                  }
+                  suffix="%"
+                  sinMedir="la primera consolidación semanal aún no ha corrido"
+                  nota="Cuánto de lo que Mia propuso aprobaste"
+                  delay={0}
+                />
                 <StatCard icon={BookOpen} label="Conceptos" value={brain.concepts_count} delay={1} />
                 <StatCard icon={Lightbulb} label="Habilidades activas" value={brain.skills_active} delay={2} />
                 <StatCard icon={FileText} label="Habilidades archivadas" value={brain.skills_archived} delay={3} />

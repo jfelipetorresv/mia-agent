@@ -567,3 +567,27 @@ UI, los tres iguales).
 
 **Aplica en:** todo test que dependa de una política/config global: se fija en el test lo
 que el test afirma probar; el default se prueba aparte y por igualdad de las tres capas.
+
+# 2026-08-19: La etiqueta es parte de la métrica — se congela con su definición literal
+
+**Error:** cuatro cifras del Panel prometían más de lo que el código cuenta.
+«Borradores **aprobados**» eran turnos no rechazados con texto ≥ 3.000 caracteres (Mia
+nunca supo si el abogado los aprobó); «Consultas **resueltas**» eran consultas atendidas;
+«Aprobación semanal» pintaba **0 %** cuando la consolidación no había corrido nunca
+(`dreams_metrics.get("approval_rate", 0)`), que no es «no medido» sino «no aprobaste
+nada»; y `ValorGastoSection` fabricaba «USD 0,00 de valor neto» con `?? 0` cuando el
+servidor no respondía. Misma familia que los dos P0 previos: el aviso de «lo resolví con
+crédito de pago» sobre un turno gratis, y los tests verdes que no corrían nada.
+
+**Fix:** (1) las etiquetas dicen lo que se mide («Escritos que Mia preparó», «Consultas
+atendidas») con una línea de apoyo VISIBLE —no un tooltip— que declara la base del
+estimado; (2) estado **NO MEDIBLE** en `StatCard` (`sinMedir` → «Sin medir todavía · <la
+razón>»), extendiendo la regla null ≠ cero que el Panel ya tenía en vez de duplicarla;
+(3) el registro `validation/registro-metricas.json` (etiqueta → qué mide LITERALMENTE →
+fuente → ancla en la UI) congelado por `execution/test_registro_metricas.py`, que se pone
+rojo si aparece una cifra sin definición, si una definición queda huérfana, si un estimado
+no se declara junto a su cifra o si vuelve el `?? 0` sobre las cifras del mes.
+
+**Aplica en:** toda cifra nueva que Mia le muestre al abogado. La regla no es de caso sino
+de inventario: la definición literal se escribe ANTES de que la cifra se pinte, y el gate
+lo comprueba. Regla operativa §18 del vault de Pipe.

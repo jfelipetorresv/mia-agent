@@ -111,20 +111,47 @@ export default function ValorGastoSection({
           <TrendingUp className="h-4 w-4 text-success" />
           Valor entregado este mes
         </div>
-        <div className="mt-2 text-3xl font-semibold tracking-tight">
-          USD {Number(value?.net_usd ?? 0).toFixed(2)}
-          <span className="ml-2 text-sm font-normal text-muted-foreground">de valor neto estimado</span>
-        </div>
-        <p className="mt-3 text-sm text-muted-foreground">
-          {Number(value?.hours_saved ?? 0).toFixed(1)} horas ahorradas (estimado) ×
-          USD {Number(value?.hourly_rate_usd ?? 0).toFixed(0)}/hora =
-          USD {Number(value?.gross_usd ?? 0).toFixed(2)}, menos
-          USD {Number(value?.cost_usd ?? 0).toFixed(2)} de costo de la inteligencia artificial.
-        </p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Este mes: {value?.drafts_approved ?? 0} borradores aprobados y {value?.consultations ?? 0} consultas.
-          El cálculo usa estimados configurables{value?.is_default_config ? " (valores de fábrica)" : ""}.
-        </p>
+        {/* NO MEDIBLE (regla operativa §18): sin cifras del servidor, `?? 0` pintaba
+            «USD 0,00 de valor neto» y «0 borradores» — un cero inventado que afirma
+            que Mia no entregó nada este mes. Un cero REAL sí se pinta como 0; lo que
+            no se hace es fabricarlo cuando el dato no llegó. */}
+        {value == null ? (
+          <>
+            <div className="mt-2 text-3xl font-semibold tracking-tight text-muted-foreground">
+              Sin medir todavía
+            </div>
+            <p className="mt-3 text-sm text-muted-foreground">
+              No pude consultar las cifras de este mes ahora mismo. Vuelve a abrir esta
+              pantalla en un momento; lo que hayas hecho está guardado.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="mt-2 text-3xl font-semibold tracking-tight">
+              USD {Number(value.net_usd ?? 0).toFixed(2)}
+              <span className="ml-2 text-sm font-normal text-muted-foreground">de valor neto estimado</span>
+            </div>
+            <p className="mt-3 text-sm text-muted-foreground">
+              {Number(value.hours_saved ?? 0).toFixed(1)} horas ahorradas (estimado) ×
+              USD {Number(value.hourly_rate_usd ?? 0).toFixed(0)}/hora =
+              USD {Number(value.gross_usd ?? 0).toFixed(2)}, menos
+              USD {Number(value.cost_usd ?? 0).toFixed(2)} de gasto de inteligencia artificial.
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Este mes: {value.drafts_approved ?? 0} escritos que Mia preparó y{" "}
+              {value.consultations ?? 0} consultas atendidas — son los turnos que no
+              rechazaste, contados por el largo de su texto final; Mia no sabe cuáles
+              radicaste.
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Es una estimación: las horas salen de los minutos que configuraste por
+              escrito y por consulta
+              {value.is_default_config ? " (hoy, los valores de fábrica)" : ""}. El gasto
+              de IA no incluye la indexación de documentos, así que se queda corto antes
+              que inflarse.
+            </p>
+          </>
+        )}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Label htmlFor="hourly-rate" className="text-sm text-muted-foreground">
             Tu tarifa horaria (USD):

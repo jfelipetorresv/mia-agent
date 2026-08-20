@@ -2055,7 +2055,12 @@ async def dashboard_stats(request: Request):
             "models": _available_models(),
         },
         "second_brain": {
-            "weekly_approval_rate": dreams_metrics.get("approval_rate", 0),
+            # NO MEDIBLE (regla operativa §18 · honestidad de métricas): mientras la
+            # consolidación semanal no haya corrido nunca, NO hay tasa de aprobación —
+            # y `0` no es «no hay dato», es «nunca aprobaste nada», una afirmación
+            # falsa sobre el trabajo del abogado. Se devuelve None y el panel dice
+            # «Sin medir todavía» con su razón (misma regla null ≠ cero del Panel).
+            "weekly_approval_rate": dreams_metrics.get("approval_rate"),
             "concepts_count": concepts_count,
             "skills_active": playbooks_active,
             "skills_archived": playbooks_archived,

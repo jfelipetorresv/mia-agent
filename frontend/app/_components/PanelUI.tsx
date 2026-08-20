@@ -183,6 +183,8 @@ export function StatCard({
   value,
   suffix = "",
   delay = 0,
+  sinMedir,
+  nota,
 }: {
   icon: ComponentType<{ className?: string }>;
   label: string;
@@ -190,6 +192,19 @@ export function StatCard({
   value?: number | null;
   suffix?: string;
   delay?: number;
+  /**
+   * ESTADO «NO MEDIBLE» (regla operativa §18 · la etiqueta es parte de la métrica).
+   *
+   * `value == null` tiene DOS causas que el abogado no puede distinguir y que no
+   * significan lo mismo: «no pude consultarlo ahora» (fallo momentáneo, vuelve a
+   * abrir) y «esto todavía no se ha medido» (el proceso que produce el dato no ha
+   * corrido nunca). La segunda se declara con su RAZÓN, porque sin ella la única
+   * salida honesta era una raya muda — y la deshonesta, un 0 que afirma algo falso
+   * sobre el trabajo del despacho. Un cero REAL sigue pintándose como 0.
+   */
+  sinMedir?: string;
+  /** Base del cálculo cuando la cifra es una estimación («estimado según X»). */
+  nota?: string;
 }) {
   return (
     <Card
@@ -215,7 +230,9 @@ export function StatCard({
             —
           </div>
           <div className="mt-1 text-label text-muted-foreground">{label}</div>
-          <div className="mt-1 text-meta text-muted-foreground">Sin dato ahora mismo</div>
+          <div className="mt-1 text-pretty text-meta text-muted-foreground">
+            {sinMedir ? `Sin medir todavía · ${sinMedir}` : "Sin dato ahora mismo"}
+          </div>
         </>
       ) : (
         <>
@@ -224,6 +241,9 @@ export function StatCard({
             {suffix}
           </div>
           <div className="mt-1 text-pretty text-label text-muted-foreground">{label}</div>
+          {nota ? (
+            <div className="mt-1 text-pretty text-meta text-muted-foreground">{nota}</div>
+          ) : null}
         </>
       )}
     </Card>

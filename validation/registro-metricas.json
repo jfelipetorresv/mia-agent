@@ -1,0 +1,108 @@
+{
+  "_doc": [
+    "REGISTRO DE DEFINICIONES LITERALES DE LAS MÉTRICAS QUE MIA LE MUESTRA AL ABOGADO.",
+    "",
+    "Por qué existe (regla operativa §18, portada del harness de Lexia el 2026-08-19):",
+    "«toda métrica con nombre evaluativo declara qué mide literalmente: la etiqueta es",
+    "parte de la métrica». Dos P0 de este tipo ya se pagaron en Mia — un aviso que decía",
+    "«lo resolví con crédito de pago» cuando el turno había caído al motor local gratis, y",
+    "tests en verde que no corrían nada. La forma de que no vuelva no es recordarlo: es",
+    "que cada cifra visible tenga aquí su definición y que un gate lo compruebe.",
+    "",
+    "Congelado por: execution/test_registro_metricas.py (AVISO en su mensaje, verde/rojo",
+    "de verdad en su código de salida). Una métrica nueva en el panel sin entrada aquí",
+    "pone el gate en rojo; una entrada cuyo ancla ya no aparece en la pantalla también.",
+    "",
+    "Campos de cada entrada:",
+    "  etiqueta   → lo que el abogado LEE en pantalla.",
+    "  mide       → lo que el código cuenta LITERALMENTE, sin adornos.",
+    "  fuente     → archivo:línea (o función) del backend que produce el número.",
+    "  archivo_ui → archivo del frontend que lo pinta.",
+    "  ancla      → literal que debe existir en `archivo_ui` (detecta etiquetas muertas).",
+    "  estimacion → true si la cifra es un estimado; entonces la UI debe declararlo.",
+    "  sin_medir  → qué se muestra cuando el dato no existe (nunca 0, nunca una raya muda)."
+  ],
+  "metricas": [
+    {
+      "etiqueta": "Escritos que Mia preparó",
+      "mide": "Turnos del mes (trazas mia.trace.v*) que no fueron rechazados y cuyo texto final tiene >= 3.000 caracteres. NO significa que el abogado los haya aprobado ni radicado: el servidor no lo sabe.",
+      "fuente": "backend/mia/metrics/value.py::summarize_traces -> drafts; expuesto como value.drafts_approved en backend/mia/api/routes/ux.py",
+      "archivo_ui": "frontend/app/dashboard/page.tsx",
+      "ancla": "label=\"Escritos que Mia preparó\"",
+      "estimacion": false,
+      "sin_medir": "Raya + «Sin dato ahora mismo» (StatCard); nunca 0."
+    },
+    {
+      "etiqueta": "Horas ahorradas (estimado)",
+      "mide": "(escritos x draft_minutes + consultas x turn_minutes) / 60, con los minutos configurados por el despacho (o los de fábrica). Es una heurística declarada, no tiempo cronometrado.",
+      "fuente": "backend/mia/api/routes/ux.py -> hours_saved (vcfg draft_minutes/turn_minutes de routes/value.py)",
+      "archivo_ui": "frontend/app/dashboard/page.tsx",
+      "ancla": "label=\"Horas ahorradas (estimado)\"",
+      "estimacion": true,
+      "sin_medir": "Raya + «Sin dato ahora mismo»; la base del estimado va en la propia tarjeta."
+    },
+    {
+      "etiqueta": "Consultas atendidas",
+      "mide": "Turnos del mes no rechazados cuyo texto final tiene menos de 3.000 caracteres. «Atendidas» = Mia respondió; nadie comprueba que quedaran resueltas.",
+      "fuente": "backend/mia/metrics/value.py::summarize_traces -> turns; expuesto como value.consultations",
+      "archivo_ui": "frontend/app/dashboard/page.tsx",
+      "ancla": "label=\"Consultas atendidas\"",
+      "estimacion": false,
+      "sin_medir": "Raya + «Sin dato ahora mismo»; nunca 0."
+    },
+    {
+      "etiqueta": "Gasto de IA del mes (USD)",
+      "mide": "Suma de cost_usd de turn_usage del mes en curso (UTC), excluyendo source='eval'. NO incluye embeddings (voyage no pasa por call_llm): subreporta el gasto, nunca lo infla. Los turnos de suscripción cuestan cuota, no dólares, y no suman aquí.",
+      "fuente": "backend/mia/api/routes/ux.py -> real_cost_usd / cost_month_usd; tope en backend/mia/api/routes/policy/budget.py",
+      "archivo_ui": "frontend/app/dashboard/page.tsx",
+      "ancla": "label=\"Gasto de IA del mes (USD)\"",
+      "estimacion": false,
+      "sin_medir": "La tarjeta no se pinta si /api/policy/budget no responde."
+    },
+    {
+      "etiqueta": "Valor neto estimado",
+      "mide": "horas ahorradas (estimadas) x tarifa horaria del despacho - gasto de IA del mes. Todo su lado izquierdo es una estimación configurable.",
+      "fuente": "backend/mia/api/routes/ux.py -> net_usd = gross_usd - cost_month_usd",
+      "archivo_ui": "frontend/app/_components/ValorGastoSection.tsx",
+      "ancla": "de valor neto estimado",
+      "estimacion": true,
+      "sin_medir": "«Sin medir todavía» + la razón; nunca USD 0,00 fabricado."
+    },
+    {
+      "etiqueta": "Aprobación semanal",
+      "mide": "approval_rate de la última consolidación semanal (sueños) guardada en la configuración del despacho. Es la fracción de lo que Mia propuso que el abogado aprobó ESA semana, no del mes ni de la historia.",
+      "fuente": "backend/mia/api/routes/ux.py -> second_brain.weekly_approval_rate (dreams.last_metrics.approval_rate)",
+      "archivo_ui": "frontend/app/configurar/page.tsx",
+      "ancla": "label=\"Aprobación semanal\"",
+      "estimacion": false,
+      "sin_medir": "null del servidor -> «Sin medir todavía · la primera consolidación semanal aún no ha corrido». Nunca 0 %."
+    },
+    {
+      "etiqueta": "Conceptos",
+      "mide": "Número de conceptos en la wiki del despacho (WikiManager.list_concepts). Conteo directo, sin juicio de calidad.",
+      "fuente": "backend/mia/api/routes/ux.py -> concepts_count",
+      "archivo_ui": "frontend/app/configurar/page.tsx",
+      "ancla": "label=\"Conceptos\"",
+      "estimacion": false,
+      "sin_medir": "Raya + «Sin dato ahora mismo»."
+    },
+    {
+      "etiqueta": "Habilidades activas",
+      "mide": "Playbooks del despacho en estado activo. Conteo directo; «activa» no implica que se haya usado.",
+      "fuente": "backend/mia/api/routes/ux.py -> playbooks_active",
+      "archivo_ui": "frontend/app/configurar/page.tsx",
+      "ancla": "label=\"Habilidades activas\"",
+      "estimacion": false,
+      "sin_medir": "Raya + «Sin dato ahora mismo»."
+    },
+    {
+      "etiqueta": "Habilidades archivadas",
+      "mide": "Playbooks del despacho en estado archivado. Conteo directo.",
+      "fuente": "backend/mia/api/routes/ux.py -> playbooks_archived",
+      "archivo_ui": "frontend/app/configurar/page.tsx",
+      "ancla": "label=\"Habilidades archivadas\"",
+      "estimacion": false,
+      "sin_medir": "Raya + «Sin dato ahora mismo»."
+    }
+  ]
+}
