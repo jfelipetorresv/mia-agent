@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, DatabaseBackup, Download, Loader2, ShieldCheck } from "lucide-react";
+import { CheckCircle2, DatabaseBackup, Download, History, KeyRound, Loader2, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { SectionTitle, fmtHora } from "@/app/_components/PanelUI";
+import { Card } from "@/components/ui/card";
+import { NeuIcon, SectionTitle, fmtHora } from "@/app/_components/PanelUI";
 import { apiGet } from "@/lib/api";
 import { shellInvoke } from "@/lib/shell";
 
@@ -143,24 +144,27 @@ export default function ProteccionDatosSection() {
         hint="Una llave privada permite recuperar Mia en otro equipo; las copias se cifran y se comprueban antes de darlas por buenas."
       />
 
-      {error ? <p className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p> : null}
-      {message ? <p className="mb-4 rounded-md bg-primary/10 px-3 py-2 text-sm text-primary">{message}</p> : null}
+      {error ? <p role="alert" className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-body text-destructive">{error}</p> : null}
+      {message ? <p role="status" className="mb-4 rounded-md bg-primary/10 px-3 py-2 text-body text-primary">{message}</p> : null}
 
       <div className="space-y-4">
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <Card variant="raised" padding="md" className="bg-card/80 backdrop-blur-md">
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 font-medium">
-                Llave de recuperación
-                {status?.recovery_key_saved ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-success">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Guardada
-                  </span>
-                ) : null}
+            <div className="flex min-w-0 items-start gap-3">
+              <NeuIcon icon={KeyRound} size="sm" />
+              <div className="min-w-0">
+                <h3 className="flex items-center gap-2 text-section">
+                  Llave de recuperación
+                  {status?.recovery_key_saved ? (
+                    <span className="inline-flex items-center gap-1 text-meta font-medium text-success">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Guardada
+                    </span>
+                  ) : null}
+                </h3>
+                <p className="mt-1 max-w-xl text-pretty text-body text-muted-foreground">
+                  Es la única forma de abrir tus copias si cambias de equipo. Guárdala en un gestor de contraseñas o memoria USB segura. No la compartas.
+                </p>
               </div>
-              <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-                Es la única forma de abrir tus copias si cambias de equipo. Guárdala en un gestor de contraseñas o memoria USB segura. No la compartas.
-              </p>
             </div>
             <Button variant="outline" className="shrink-0 gap-2" onClick={downloadKey} disabled={busy !== null}>
               {busy === "key" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -170,26 +174,27 @@ export default function ProteccionDatosSection() {
 
           {awaitingConfirmation ? (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3">
-              <p className="text-sm">Confirma solo después de comprobar que el archivo quedó guardado.</p>
+              <p className="text-body">Confirma solo después de comprobar que el archivo quedó guardado.</p>
               <Button size="sm" onClick={confirmKey} disabled={busy !== null}>
                 {busy === "confirm" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Ya la guardé
               </Button>
             </div>
           ) : null}
-        </div>
+        </Card>
 
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <Card variant="raised" padding="md" className="bg-card/80 backdrop-blur-md">
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 font-medium">
-                <DatabaseBackup className="h-4 w-4 text-primary" /> Copia de seguridad
+            <div className="flex min-w-0 items-start gap-3">
+              <NeuIcon icon={DatabaseBackup} size="sm" />
+              <div className="min-w-0">
+                <h3 className="text-section">Copia de seguridad</h3>
+                <p className="mt-1 text-body text-muted-foreground">
+                  {status?.last_backup_at
+                    ? `Última copia comprobada: ${fmtHora(status.last_backup_at)}.`
+                    : "Todavía no hay una copia comprobada."}
+                </p>
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {status?.last_backup_at
-                  ? `Última copia comprobada: ${fmtHora(status.last_backup_at)}.`
-                  : "Todavía no hay una copia comprobada."}
-              </p>
             </div>
             <Button
               className="shrink-0 gap-2"
@@ -205,22 +210,23 @@ export default function ProteccionDatosSection() {
             </Button>
           </div>
           {!status?.recovery_key_saved ? (
-            <p className="mt-3 text-xs text-muted-foreground">Primero guarda y confirma la llave de recuperación.</p>
+            <p className="mt-3 text-meta text-muted-foreground">Primero guarda y confirma la llave de recuperación.</p>
           ) : null}
-        </div>
+        </Card>
 
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        <Card variant="raised" padding="md" className="bg-card/80 backdrop-blur-md">
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 font-medium">
-                <DatabaseBackup className="h-4 w-4 text-primary" /> Recuperar desde una copia
-              </div>
-              <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+            <div className="flex min-w-0 items-start gap-3">
+              <NeuIcon icon={History} size="sm" tone="warning" />
+              <div className="min-w-0">
+                <h3 className="text-section">Recuperar desde una copia</h3>
+                <p className="mt-1 max-w-xl text-pretty text-body text-muted-foreground">
                 Reemplaza los datos actuales por los de una copia comprobada. La recuperación se
                 aplica al reiniciar Mia, con una copia previa del estado actual. Para traer una
                 copia de otro equipo, ponla en la carpeta de copias de Mia junto con tu llave de
                 recuperación importada.
-              </p>
+                </p>
+              </div>
             </div>
             <Button variant="outline" className="shrink-0 gap-2" onClick={openRestore} disabled={busy !== null}>
               Recuperar…
@@ -278,10 +284,10 @@ export default function ProteccionDatosSection() {
               </div>
             )
           ) : null}
-        </div>
+        </Card>
       </div>
-      <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-        <h3 className="text-sm font-semibold tracking-tight">Salidas de documentos finales</h3>
+      <Card variant="raised" padding="md" className="mt-section space-y-3 bg-card/80 backdrop-blur-md">
+        <h3 className="text-section">Salidas de documentos finales</h3>
         <p className="text-sm text-muted-foreground">
           Cada descarga de un escrito final queda registrada. Aquí ves la auditoría, no el documento.
         </p>
@@ -299,7 +305,7 @@ export default function ProteccionDatosSection() {
             ))}
           </ul>
         )}
-      </div>
+      </Card>
     </section>
   );
 }

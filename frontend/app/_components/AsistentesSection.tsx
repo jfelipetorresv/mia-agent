@@ -180,17 +180,26 @@ export default function AsistentesSection() {
                   </Button>
                 }
               >
+                {/* P3 · `Badge` es un <div>: dentro de un <p> el navegador CIERRA el
+                    párrafo antes de él, así que el HTML del servidor y el del cliente
+                    dejaban de coincidir (aviso de hidratación en /configurar#conexiones)
+                    y la razón honesta se salía del renglón. El contenedor pasa a <div>
+                    y el texto conserva su propio <span>. */}
                 {!agente.listo ? (
-                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Badge variant="outline">No listo</Badge>
-                    {agente.razon || "Mia no pudo confirmar cómo invocarlo en este equipo."}
-                  </p>
+                  <div className="flex items-start gap-2 text-body text-muted-foreground">
+                    <Badge variant="outline" className="shrink-0">No listo</Badge>
+                    <span className="text-pretty">
+                      {agente.razon || "Mia no pudo confirmar cómo invocarlo en este equipo."}
+                    </span>
+                  </div>
                 ) : !agente.instalado ? (
-                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Badge variant="outline">No instalado</Badge>
-                    No está en este equipo. Cuando el programa esté instalado, Mia
-                    confirmará cómo invocarlo y podrás activarlo.
-                  </p>
+                  <div className="flex items-start gap-2 text-body text-muted-foreground">
+                    <Badge variant="outline" className="shrink-0">No instalado</Badge>
+                    <span className="text-pretty">
+                      No está en este equipo. Cuando el programa esté instalado, Mia
+                      confirmará cómo invocarlo y podrás activarlo.
+                    </span>
+                  </div>
                 ) : null}
               </ConnectorCard>
             </li>

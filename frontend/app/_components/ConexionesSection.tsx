@@ -10,7 +10,9 @@ import { ApiError, apiGet, apiSend, plainMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ConnectorCard, fmt } from "@/app/_components/PanelUI";
+import { cardVariants } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { ConnectorCard, NeuIcon, fmt } from "@/app/_components/PanelUI";
 import ConnectedSystemsSection from "@/app/_components/ConnectedSystemsSection";
 import MailboxSectionLoader from "@/app/_components/MailboxSectionLoader";
 import FolderPicker from "@/app/_components/FolderPicker";
@@ -306,6 +308,7 @@ export default function ConexionesSection({
   return (
     <div className="space-y-4">
       {caps ? (
+        <div id="conector-capacidades" className="scroll-mt-24">
         <ConnectorCard
           icon={Layers}
           title="Capacidades de esta instalación"
@@ -318,8 +321,10 @@ export default function ConexionesSection({
             <li>Telegram: {caps.telegram?.available ? "puente listo (opt-in)" : (caps.telegram?.reason || "sin configurar")}</li>
           </ul>
         </ConnectorCard>
+        </div>
       ) : null}
       {/* Espacio de notas (Obsidian) */}
+      <div id="conector-notas" className="scroll-mt-24">
       <ConnectorCard
         icon={NotebookPen}
         title="Tu espacio de notas"
@@ -377,6 +382,7 @@ export default function ConexionesSection({
           </Button>
         </div>
       </ConnectorCard>
+      </div>
 
       <FolderPicker
         open={vaultPickerOpen}
@@ -456,14 +462,17 @@ export default function ConexionesSection({
       <ConnectedSystemsSection />
 
       {/* Calendario y correo */}
+      <div id="conector-correo" className="scroll-mt-24">
       <ConnectorCard icon={Mail} title="Calendario y correo" subtitle="Microsoft 365 o Google Workspace">
         <p className="mb-3 text-sm text-muted-foreground">
           Conecta tu cuenta para que Mia avise de eventos y correos urgentes.
         </p>
         <MailboxSectionLoader />
       </ConnectorCard>
+      </div>
 
       {/* Motor de IA */}
+      <div id="conector-motor" className="scroll-mt-24">
       <ConnectorCard icon={Settings2} title="Motor de IA" subtitle="Con qué trabaja Mia. Puedes cambiarlo cuando quieras.">
         <select
           value={policy?.politica || ""}
@@ -485,6 +494,7 @@ export default function ConexionesSection({
         ) : null}
         {policyMsg ? <p className="mt-2 text-sm text-muted-foreground">{policyMsg}</p> : null}
       </ConnectorCard>
+      </div>
 
       {/* Consultar mi NotebookLM (CP-NLM) */}
       {(() => {
@@ -493,6 +503,7 @@ export default function ConexionesSection({
         const estado = nbStatus?.estado;
         const conectado = estado === "conectado";
         return (
+          <div id="conector-notebooklm" className="scroll-mt-24">
           <ConnectorCard
             icon={BookOpen}
             title="Consultar mi NotebookLM"
@@ -642,15 +653,14 @@ export default function ConexionesSection({
             )}
             {nbMsg ? <p className="mt-2 text-sm text-muted-foreground">{nbMsg}</p> : null}
           </ConnectorCard>
+          </div>
         );
       })()}
 
       {/* Memoria ampliada (avanzado) — plegada: casi nadie la necesita el día 1. */}
-      <details className="group rounded-xl border border-border bg-card shadow-sm">
+      <details className={cn(cardVariants(), "group")}>
         <summary className="flex cursor-pointer items-center gap-3 px-5 py-4 text-sm font-medium [&::-webkit-details-marker]:hidden">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <Layers className="h-4 w-4" />
-          </span>
+          <NeuIcon icon={Layers} size="sm" />
           <span className="flex-1">
             Memoria ampliada
             <span className="ml-2 text-xs font-normal text-muted-foreground">(opcional, avanzado)</span>

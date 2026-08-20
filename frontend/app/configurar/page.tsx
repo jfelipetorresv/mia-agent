@@ -16,6 +16,30 @@
 // dashboard/page.tsx, FuentesPanel.tsx, OneDriveFolderPicker.tsx) siguen
 // apuntando a /configurar#conexiones, #carpetas, #valor — por eso el mapa
 // hash→tab conserva esos mismos ids.
+//
+// BLOQUE 3 DEL REDISEÑO LUXURY (2026-08-19) · DE OCHO PESTAÑAS A CINCO
+// ====================================================================
+// Ocho pestañas densas obligaban al abogado a adivinar en cuál vivía cada cosa
+// ("¿el Banco de oro es calidad o es valor?", "¿el tema de la pantalla es
+// sistema o es protección?"). Tres de ellas eran, en realidad, la mitad de otra:
+//
+//   Carpetas    → es una FUENTE que Mia puede usar, exactamente igual que el
+//                 correo o las notas: vive dentro de Conexiones.
+//   Calidad     → el Banco de oro es cómo compruebas que el trabajo automático
+//                 no empeora: vive junto a las Automatizaciones.
+//   Protección  → guardar la llave y el tema de la interfaz son las dos cosas
+//   + Sistema     que dependen de ESTE computador: viven juntas.
+//
+// No se eliminó ninguna funcionalidad: cada sección conserva su `id`, así que
+// TODOS los anclas históricos (#carpetas, #calidad, #proteccion, #asistentes)
+// siguen resolviendo — ahora abriendo su pestaña nueva y bajando a la sección.
+// Cada pestaña estrena una línea que dice para qué sirve, en el idioma del
+// oficio, porque el nombre solo no alcanzaba.
+//
+// Encabezando Conexiones va la GALERÍA DE HERRAMIENTAS (GaleriaHerramientas):
+// el reconocimiento a primera vista que pidió Pipe — Outlook, Gmail, OneDrive,
+// Obsidian, Claude, Codex, Ollama, NotebookLM, Telegram — con el estado REAL de
+// los endpoints que ya existían y un enlace a la tarjeta donde se hace la acción.
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -35,12 +59,13 @@ import {
   Moon,
   PartyPopper,
   PiggyBank,
+  Plug,
   Repeat,
-  ShieldCheck,
   Settings2,
   Sun,
   Laptop,
 } from "lucide-react";
+import type { ComponentType } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -57,7 +82,17 @@ import ConexionesSection from "@/app/_components/ConexionesSection";
 import CarpetasSection from "@/app/_components/CarpetasSection";
 import ValorGastoSection from "@/app/_components/ValorGastoSection";
 import ProteccionDatosSection from "@/app/_components/ProteccionDatosSection";
-import { SectionTitle, StatCard, fmt } from "@/app/_components/PanelUI";
+import GaleriaHerramientas from "@/app/_components/GaleriaHerramientas";
+import { NeuIcon, SectionTitle, StatCard, fmt } from "@/app/_components/PanelUI";
+
+// Las tres apariencias. Vivían como tres <button> copiados con las clases
+// escritas a mano (rounded-2xl, shadow-sm, border-border…): tres recetas del
+// mismo objeto. Ahora son datos sobre la primitiva `Card` del sistema.
+const TEMAS: { id: Theme; icon: ComponentType<{ className?: string }>; nombre: string; detalle: string }[] = [
+  { id: "light", icon: Sun, nombre: "Claro", detalle: "Limpio y tridimensional" },
+  { id: "dark", icon: Moon, nombre: "Oscuro", detalle: "Profundo y de alto contraste" },
+  { id: "system", icon: Laptop, nombre: "El de tu equipo", detalle: "Cambia solo con tu computador" },
+];
 
 type Guia = {
   que_es: string;
@@ -123,33 +158,54 @@ const ESTADO_TEXTO: Record<Paso["estado"], string> = {
   omitido: "Para después",
 };
 
-// Los 5 subtabs de la página. Los ids coinciden con los anclas históricos
-// (#conexiones, #carpetas, #automatizaciones, #valor) para que ningún enlace
-// externo (setup.py, dashboard, FuentesPanel, OneDriveFolderPicker) se rompa.
-type TabId =
-  | "primeros-pasos"
-  | "conexiones"
-  | "carpetas"
-  | "automatizaciones"
-  | "valor"
-  | "calidad"
-  | "proteccion"
-  | "sistema";
+// Las 5 pestañas de la página, con la línea que dice para qué sirve cada una.
+// Los ids son los cuatro anclas históricos más `sistema`: ningún enlace externo
+// (setup.py, dashboard, FuentesPanel, OneDriveFolderPicker, ProtectionReminder)
+// se rompe, porque el mapa de abajo traduce TODOS los hash de siempre.
+type TabId = "primeros-pasos" | "conexiones" | "automatizaciones" | "valor" | "sistema";
 
-const HASH_TO_TAB: Record<string, TabId> = {
-  "#primeros-pasos": "primeros-pasos",
-  "#conexiones": "conexiones",
-  "#carpetas": "carpetas",
-  "#automatizaciones": "automatizaciones",
-  "#valor": "valor",
-  "#calidad": "calidad",
-  "#proteccion": "proteccion",
-  "#sistema": "sistema",
+// hash → { pestaña, sección a la que bajar }. Los anclas de las tres secciones
+// que dejaron de tener pestaña propia (#carpetas, #calidad, #proteccion) abren
+// su pestaña nueva y hacen scroll a la sección, que conserva su `id` intacto.
+const HASH_TO_TAB: Record<string, { tab: TabId; anchor?: string }> = {
+  "#primeros-pasos": { tab: "primeros-pasos" },
+  "#conexiones": { tab: "conexiones" },
+  "#carpetas": { tab: "conexiones", anchor: "carpetas" },
+  "#asistentes": { tab: "conexiones", anchor: "asistentes" },
+  "#automatizaciones": { tab: "automatizaciones" },
+  "#calidad": { tab: "automatizaciones", anchor: "calidad" },
+  "#valor": { tab: "valor" },
+  "#proteccion": { tab: "sistema", anchor: "proteccion" },
+  "#sistema": { tab: "sistema" },
+};
+
+const TAB_HINTS: Record<TabId, string> = {
+  "primeros-pasos": "Lo que falta para dejar a Mia lista para trabajar contigo.",
+  conexiones:
+    "Todo lo que Mia puede usar: el motor con el que piensa, tu correo, tus carpetas, tus notas y los ayudantes de tu equipo. Nada se activa si tú no lo decides.",
+  automatizaciones:
+    "Lo que Mia hace sola, cada cuánto lo hace, y el examen con el que compruebas que su trabajo no empeora.",
+  valor: "Cuánto trabajo te ahorró Mia este mes, cuánto costó y qué está haciendo por dentro.",
+  sistema: "Cómo se ve Mia en este computador y cómo se protege lo que guardas aquí.",
 };
 
 function tabFromHash(): TabId | null {
   if (typeof window === "undefined") return null;
-  return HASH_TO_TAB[window.location.hash] ?? null;
+  return HASH_TO_TAB[window.location.hash]?.tab ?? null;
+}
+
+function anchorFromHash(): string | null {
+  if (typeof window === "undefined") return null;
+  return HASH_TO_TAB[window.location.hash]?.anchor ?? null;
+}
+
+// La sección solo existe en el DOM DESPUÉS de que su pestaña se activa: por eso
+// el scroll se aplaza un frame en vez de hacerse en el mismo turno del render.
+function scrollToAnchor(id: string | null) {
+  if (!id || typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 export default function ConfigurarPage() {
@@ -193,10 +249,18 @@ export default function ConfigurarPage() {
     function onHashChange() {
       const id = tabFromHash();
       if (id) setTab(id);
+      scrollToAnchor(anchorFromHash());
     }
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
+
+  // Llegada CON hash a una sección sin pestaña propia (#carpetas, #calidad,
+  // #proteccion): la pestaña ya quedó elegida por el inicializador perezoso;
+  // aquí solo hay que bajar a la sección cuando el contenido ya está montado.
+  useEffect(() => {
+    if (s) scrollToAnchor(anchorFromHash());
+  }, [s]);
 
   useEffect(() => {
     if (!s || hashOnMount.current || tabChangedByUser.current) return;
@@ -384,33 +448,27 @@ export default function ConfigurarPage() {
             )}
           </TabsTrigger>
           <TabsTrigger value="conexiones" className="gap-1.5">
-            <Settings2 className="h-4 w-4" />
+            <Plug className="h-4 w-4" />
             Conexiones
-          </TabsTrigger>
-          <TabsTrigger value="carpetas" className="gap-1.5">
-            Carpetas
           </TabsTrigger>
           <TabsTrigger value="automatizaciones" className="gap-1.5">
             <Repeat className="h-4 w-4" />
-            Automatizaciones
+            Trabajo automático
           </TabsTrigger>
           <TabsTrigger value="valor" className="gap-1.5">
             <PiggyBank className="h-4 w-4" />
             Valor y gasto
           </TabsTrigger>
-          <TabsTrigger value="calidad" className="gap-1.5">
-            <Award className="h-4 w-4" />
-            Calidad
-          </TabsTrigger>
-          <TabsTrigger value="proteccion" className="gap-1.5">
-            <ShieldCheck className="h-4 w-4" />
-            Protección
-          </TabsTrigger>
           <TabsTrigger value="sistema" className="gap-1.5">
             <Laptop className="h-4 w-4" />
-            Sistema
+            Este equipo
           </TabsTrigger>
         </TabsList>
+
+        {/* La línea que dice para qué sirve la pestaña abierta. El nombre solo no
+            alcanzaba: "Valor y gasto" no le dice a nadie que ahí se ve cuánto
+            trabajo le ahorró Mia este mes. */}
+        <p className="mt-3 text-pretty text-body text-muted-foreground">{TAB_HINTS[tab]}</p>
 
         {/* ── Primeros pasos ────────────────────────────────────────── */}
         <TabsContent value="primeros-pasos" className="animate-fade-in">
@@ -477,13 +535,33 @@ export default function ConfigurarPage() {
 
         {/* ── Conexiones ────────────────────────────────────────────── */}
         <TabsContent value="conexiones" className="animate-fade-in">
-          <section id="conexiones" className="mt-6 scroll-mt-6">
+          {/* La galería va PRIMERO: el abogado reconoce su Outlook o su Obsidian por
+              el logo antes de leer una sola palabra, y desde ahí baja a la tarjeta
+              donde de verdad se conecta. Detrás no hay estados inventados: cada
+              tarjeta lee el endpoint que ya servía ese dato. */}
+          <section id="herramientas" className="mt-6 scroll-mt-6">
+            <SectionTitle
+              icon={Plug}
+              title="Tus herramientas"
+              hint="Mia reconoce sola lo que ya tienes en este equipo. Lo que no encuentre, te lo dice con su motivo — nunca lo da por hecho."
+            />
+            <GaleriaHerramientas />
+          </section>
+
+          <section id="conexiones" className="mt-section scroll-mt-6">
             <SectionTitle
               icon={Settings2}
-              title="Conexiones"
-              hint="Lo que Mia puede usar para ayudarte. Todo se activa solo si tú lo decides."
+              title="Configurar cada conexión"
+              hint="El detalle de cada una: activarla, cambiarla o desconectarla."
             />
             <ConexionesSection connectors={c} onChanged={loadStats} />
+          </section>
+
+          {/* Las carpetas son una FUENTE más de las que Mia lee, igual que el correo
+              o las notas: tenían pestaña propia y eso obligaba a buscarlas aparte.
+              El `id` no cambia, así que /configurar#carpetas sigue funcionando. */}
+          <section id="carpetas" className="mt-section scroll-mt-6">
+            <CarpetasSection />
           </section>
 
           {/* Los ayudantes externos son otra cosa que Mia "puede usar", así que viven
@@ -499,18 +577,27 @@ export default function ConfigurarPage() {
           </section>
         </TabsContent>
 
-        {/* ── Carpetas ──────────────────────────────────────────────── */}
-        <TabsContent value="carpetas" className="animate-fade-in">
-          <section id="carpetas" className="mt-6 scroll-mt-6">
-            <CarpetasSection />
-          </section>
-        </TabsContent>
-
-        {/* ── Automatizaciones ──────────────────────────────────────── */}
+        {/* ── Trabajo automático (automatizaciones + Banco de oro) ────
+            El Banco de oro tenía pestaña propia para no mezclarlo con el dinero;
+            ese riesgo sigue evitado — aquí no hay pesos, hay trabajo que Mia hace
+            sola y el examen con el que se comprueba que no empeora. */}
         <TabsContent value="automatizaciones" className="animate-fade-in">
           <section id="automatizaciones" className="mt-6 scroll-mt-6">
-            <SectionTitle icon={Repeat} title="Automatizaciones" />
+            <SectionTitle
+              icon={Repeat}
+              title="Automatizaciones"
+              hint="Tareas que Mia repite sola para que no tengas que acordarte de pedirlas."
+            />
             <AutomationsSection />
+          </section>
+
+          <section id="calidad" className="mt-section scroll-mt-6">
+            <SectionTitle
+              icon={Award}
+              title="Banco de oro"
+              hint="El examen con el que compruebas que Mia no empeora."
+            />
+            <BancoOroSection />
           </section>
         </TabsContent>
 
@@ -562,95 +649,52 @@ export default function ConfigurarPage() {
           </details>
         </TabsContent>
 
-        {/* ── Calidad (Banco de oro) ────────────────────────────────
-            Tab propio y no dentro de "Valor y gasto": aquello es dinero y esto es
-            un examen de no-regresión. Mezclarlos haría creer que la calidad de Mia
-            se mide en pesos. */}
-        <TabsContent value="calidad" className="animate-fade-in">
-          <section id="calidad" className="mt-6 scroll-mt-6">
-            <SectionTitle
-              icon={Award}
-              title="Banco de oro"
-              hint="El examen con el que compruebas que Mia no empeora."
-            />
-            <BancoOroSection />
-          </section>
-        </TabsContent>
-
-        <TabsContent value="proteccion" className="animate-fade-in">
-          <ProteccionDatosSection />
-        </TabsContent>
-
+        {/* ── Este equipo (apariencia + protección de datos) ──────────
+            Las dos cosas que dependen de ESTE computador y de nadie más: cómo se
+            ve Mia aquí y cómo se protege lo que aquí se guarda. Eran dos pestañas
+            y ninguna de las dos se buscaba por su nombre. */}
         <TabsContent value="sistema" className="animate-fade-in">
-          <section id="sistema" className="mt-6 scroll-mt-6 space-y-6">
+          <section id="sistema" className="mt-6 scroll-mt-6">
             <SectionTitle
               icon={Laptop}
-              title="Apariencia y Sistema"
-              hint="Personaliza cómo se ve y responde la interfaz de tu despacho."
+              title="Cómo se ve Mia"
+              hint="Elige el aspecto de la interfaz. Se aplica solo en este computador."
             />
-            
-            <div className={cn(cardVariants(), "p-6 space-y-6")}>
-              <div className="space-y-2">
-                <h3 className="font-bold text-lg">Tema de la Interfaz</h3>
-                <p className="text-sm text-muted-foreground">
-                  Elige entre el Modelo Claro (diseño neumórfico con relieve) y el Modelo Oscuro (diseño espacial profundo).
-                </p>
-              </div>
 
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 max-w-2xl">
-                <button
-                  type="button"
-                  onClick={() => handleThemeChange("light")}
-                  className={cn(
-                    "flex flex-col items-center gap-3 rounded-2xl p-6 border transition-all shadow-sm bg-card/40 hover:bg-card/75",
-                    currentTheme === "light"
-                      ? "border-primary bg-primary/5 text-primary shadow-neu-raised"
-                      : "border-border hover:border-primary/50 text-muted-foreground"
-                  )}
-                >
-                  <Sun className="h-8 w-8" />
-                  <div className="text-center">
-                    <span className="block font-semibold text-sm">Modelo Claro</span>
-                    <span className="block text-xs text-muted-foreground/80 mt-0.5">Limpio y tridimensional</span>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleThemeChange("dark")}
-                  className={cn(
-                    "flex flex-col items-center gap-3 rounded-2xl p-6 border transition-all shadow-sm bg-card/40 hover:bg-card/75",
-                    currentTheme === "dark"
-                      ? "border-primary bg-primary/5 text-primary shadow-neu-raised"
-                      : "border-border hover:border-primary/50 text-muted-foreground"
-                  )}
-                >
-                  <Moon className="h-8 w-8" />
-                  <div className="text-center">
-                    <span className="block font-semibold text-sm">Modelo Oscuro</span>
-                    <span className="block text-xs text-muted-foreground/80 mt-0.5">Espacial y de alto contraste</span>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleThemeChange("system")}
-                  className={cn(
-                    "flex flex-col items-center gap-3 rounded-2xl p-6 border transition-all shadow-sm bg-card/40 hover:bg-card/75",
-                    currentTheme === "system"
-                      ? "border-primary bg-primary/5 text-primary shadow-neu-raised"
-                      : "border-border hover:border-primary/50 text-muted-foreground"
-                  )}
-                >
-                  <Laptop className="h-8 w-8" />
-                  <div className="text-center">
-                    <span className="block font-semibold text-sm">Tema del Sistema</span>
-                    <span className="block text-xs text-muted-foreground/80 mt-0.5">Sincronizado con tu dispositivo</span>
-                  </div>
-                </button>
-              </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {TEMAS.map(({ id, icon: Icon, nombre, detalle }) => {
+                const activo = currentTheme === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    aria-pressed={activo}
+                    onClick={() => handleThemeChange(id)}
+                    className={cn(
+                      cardVariants({ variant: "raised", padding: "md" }),
+                      "flex flex-col items-center gap-3 bg-card/80 text-center backdrop-blur-md",
+                      activo ? "border-cta/30 bg-cta/5 text-primary" : "text-muted-foreground",
+                    )}
+                  >
+                    <NeuIcon icon={Icon} tone={activo ? "cta" : "muted"} />
+                    <span>
+                      <span className="block text-section text-foreground">{nombre}</span>
+                      <span className="mt-0.5 block text-meta text-muted-foreground">{detalle}</span>
+                    </span>
+                    <span className="text-meta font-medium">
+                      {activo ? "En uso" : "Usar este"}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </section>
+
+          {/* Conserva su propio `id="proteccion"`: /configurar#proteccion, que usa el
+              recordatorio del escritorio (ProtectionReminder), sigue llegando aquí. */}
+          <div className="mt-section">
+            <ProteccionDatosSection />
+          </div>
         </TabsContent>
       </Tabs>
     </PageShell>

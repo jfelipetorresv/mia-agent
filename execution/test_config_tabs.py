@@ -7,10 +7,17 @@ frontend (mismo patrón de run_frontend_checks() en execution/test_second_brain_
 porque lo que hay que garantizar es texto/estructura presente en el archivo, no
 comportamiento en runtime (eso lo cubre Playwright/QA manual).
 
+ACTUALIZADO 2026-08-19 (bloque 3 del rediseño Luxury): la página pasó de OCHO
+pestañas a CINCO. Este gate ya NO congela cuántas pestañas hay — congelaba una
+disposición concreta, que es justo lo que había que poder mejorar. Lo que sí
+congela, porque es lo que rompe a terceros, es que TODOS los anclas históricos
+(#conexiones, #carpetas, #automatizaciones, #valor, #calidad, #proteccion,
+#asistentes) sigan resolviendo a una pestaña Y a una sección con ese mismo `id`.
+
 Cubre:
   1. configurar/page.tsx importa Tabs/TabsList/TabsTrigger/TabsContent de shadcn.
-  2. Los 6 subtabs (incluida protección de datos)
-     y el mapa hash→tab con los 4 anclas históricos.
+  2. Las 5 pestañas nuevas y el mapa hash→tab con TODOS los anclas históricos,
+     cada uno con su <section id> todavía presente en la página.
   3. Sincronía con hash viva: 'hashchange' + 'replaceState'.
   4. 'La salud de Mia' se conserva; 'Primeros pasos' presente; contador en el trigger.
   5. Compatibilidad externa intacta: setup.py, dashboard/page.tsx, FuentesPanel.tsx y
@@ -54,17 +61,34 @@ def main() -> int:
         and '@/components/ui/tabs"' in configurar,
     )
 
-    # 2. Los 6 ids de tab + mapa hash→tab con los anclas históricos
+    # 2. Las 5 pestañas + el mapa hash→tab con TODOS los anclas históricos
     check(
-        "los 6 subtabs están presentes (value=)",
+        "las 5 pestañas están presentes (value=)",
         all(
             f'value="{tid}"' in configurar
-            for tid in ["primeros-pasos", "conexiones", "carpetas", "automatizaciones", "valor", "proteccion"]
+            for tid in ["primeros-pasos", "conexiones", "automatizaciones", "valor", "sistema"]
         ),
     )
     check(
-        "el mapa hash→tab conserva los anclas históricos",
-        all(h in configurar for h in ["#conexiones", "#carpetas", "#automatizaciones", "#valor", "#proteccion"]),
+        "el mapa hash→tab conserva TODOS los anclas históricos",
+        all(
+            f'"{h}"' in configurar
+            for h in ["#conexiones", "#carpetas", "#automatizaciones", "#valor",
+                      "#calidad", "#proteccion", "#asistentes"]
+        ),
+    )
+    # Un hash que resuelve a una pestaña pero no encuentra su sección deja al
+    # abogado mirando otra cosa: la sección tiene que seguir existiendo con su id.
+    proteccion_tsx = (ROOT / "frontend" / "app" / "_components" / "ProteccionDatosSection.tsx").read_text(encoding="utf-8")
+    check(
+        "cada ancla histórico tiene todavía su <section id=...>",
+        all(f'id="{sec}"' in configurar
+            for sec in ["conexiones", "carpetas", "asistentes", "automatizaciones", "calidad", "sistema"])
+        and 'id="proteccion"' in proteccion_tsx,
+    )
+    check(
+        "el deep-link a una sección sin pestaña propia hace scroll a su id",
+        "scrollToAnchor" in configurar and "anchorFromHash" in configurar,
     )
 
     # 3. Deep-link vivo (sincronía con hash, no solo al montar)
@@ -106,9 +130,17 @@ def main() -> int:
     oro = (root / "frontend" / "app" / "_components" / "BancoOroSection.tsx").read_text(encoding="utf-8")
     check("Ayudantes externos montados en Configuración",
           "AsistentesSection" in configurar and 'id="asistentes"' in configurar)
-    check("Banco de oro con tab propio + deep-link #calidad",
-          "BancoOroSection" in configurar and '"#calidad": "calidad"' in configurar
-          and 'value="calidad"' in configurar)
+    # El Banco de oro dejó de tener pestaña propia (bloque 3): vive dentro de
+    # "Trabajo automático", que es donde tiene sentido — sigue SIN mezclarse con
+    # "Valor y gasto", que era el riesgo real que este check protegía.
+    check("Banco de oro montado, con deep-link #calidad a su sección",
+          "BancoOroSection" in configurar
+          and '"#calidad": { tab: "automatizaciones", anchor: "calidad" }' in configurar
+          and 'id="calidad"' in configurar)
+    # El riesgo que este check protege: que "calidad" acabe leyéndose como dinero.
+    # Basta con que el Banco de oro no viva en el mismo TabsContent que el valor.
+    check("el Banco de oro NO quedó dentro de «Valor y gasto»",
+          configurar.index("<BancoOroSection />") < configurar.index("<ValorGastoSection"))
     # El contrato que costó encontrar: el router de settings NO lleva prefijo /api
     # (mismo bug que en su día dejó la bienvenida sin guardar el motor elegido).
     check("Ayudantes: ruta real /settings/agents (sin el prefijo /api)",
@@ -126,6 +158,28 @@ def main() -> int:
           "aviso_consentimiento" in asistentes and "bloqueado_por_politica" in asistentes)
     check("Banco de oro: muestra las notas del backend (aviso, nota_pii, nota_captura)",
           all(k in oro for k in ("aviso", "nota_pii", "nota_captura")))
+
+    # 8. BLOQUE 3 · la galería de herramientas reconocibles y su honestidad.
+    galeria = (ROOT / "frontend" / "app" / "_components" / "GaleriaHerramientas.tsx").read_text(encoding="utf-8")
+    check("la galería está montada al frente de Conexiones",
+          "GaleriaHerramientas" in configurar and 'id="herramientas"' in configurar)
+    check("la galería lee el estado REAL de los endpoints que ya existían",
+          all(ep in galeria for ep in ("/api/welcome/status", "/api/mailbox/status",
+                                       "/api/obsidian/status", "/api/notebooklm/status", "/health")))
+    check("la galería no promete un conector de Google Drive",
+          'nombre: "Google Drive"' not in galeria)
+    check("cada pestaña dice para qué sirve (TAB_HINTS)", "TAB_HINTS" in configurar)
+
+    # 9. P3 · Badge (<div>) dentro de <p> en /configurar#conexiones: HTML inválido
+    # que rompía la hidratación. No debe volver.
+    asistentes_src = (ROOT / "frontend" / "app" / "_components" / "AsistentesSection.tsx").read_text(encoding="utf-8")
+    check("Ayudantes: ningún <Badge> vive dentro de un <p>",
+          "<p className=\"flex items-center gap-2 text-sm text-muted-foreground\">" not in asistentes_src)
+
+    # 10. Protección de datos usa la primitiva Card, no clases de tarjeta cableadas.
+    check("Protección de datos usa <Card>, no 'border-border bg-card shadow-sm' a mano",
+          "<Card variant=" in proteccion_tsx
+          and "rounded-xl border border-border bg-card" not in proteccion_tsx)
 
     passed = sum(1 for _, ok in _results if ok)
     total = len(_results)
