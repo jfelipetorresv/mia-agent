@@ -75,6 +75,7 @@ from ..onboarding.ficha_loader import load_ficha_context
 from ..policy import budget as policy_budget
 from ..policy import turn_budget
 from ..jurisdiction.pack import GENERIC_CODE
+from . import barreras_harness
 from . import (context_recovery, delegate_intent, delegate_proposal, delegation,
                handoff as matter_handoff, packs as legal_packs, reasoning_filter,
                research, retrieval, stage_gate, untrusted, verification)
@@ -151,8 +152,28 @@ def _route_after_hitl(state: MatterState) -> str:
 
 
 def _commit_research_sources(md: dict, sources: list | None) -> None:
-    """Pack + packet destilado. Cero fuentes ≠ preflight verde."""
+    """Pack + packet destilado. Cero fuentes ≠ preflight verde.
+
+    §23 (harness de litigio) · VERIFICAR EL CONTENIDO, NO EL CONTINENTE. Antes de que una
+    fuente se convierta en packet —o sea, antes de que el redactor la vea— se coteja el
+    PASAJE que dice citar contra el contenido del que dice salir (similitud calibrada,
+    umbral 75 %) y se le exige identificación mínima: tipo, número/radicado y fecha. El
+    hash que ya viajaba prueba que el archivo no cambió; no prueba que diga lo que dice
+    decir, y esa es exactamente la brecha por la que 17 de 36 fuentes de un paquete real
+    pasaron con toda la cadena en verde. AVISO: el informe queda en
+    metadata["fuentes_revisadas"] y sube al abogado; las fuentes siguen entrando salvo que
+    el despacho encienda MIA_FUENTE_IDENTIFICACION_EXIGIR."""
     src_list = [s for s in (sources or []) if isinstance(s, dict)]
+    try:
+        revision = barreras_harness.revisar_fuentes(src_list)
+        if revision:
+            md["fuentes_revisadas"] = revision
+            src_list = barreras_harness.filtrar_fuentes(src_list, revision)
+        else:
+            md.pop("fuentes_revisadas", None)
+    except Exception:  # noqa: BLE001 — revisar la fuente jamás puede tumbar el turno
+        logger.warning("no se pudo revisar el contenido de las fuentes; siguen tal cual",
+                       exc_info=True)
     md["research_sources"] = src_list
     pack = legal_packs.source_pack_from_research(src_list)
     md["source_pack"] = pack.model_dump()
@@ -2006,6 +2027,16 @@ class MatterGraphBuilder:
             parts.append(selected_instruction)
             return _messages(parts, index=index_small)
 
+        # §19 · si ESTE draft corrige uno anterior (re-draft del HITL por cambio de matriz,
+        # rechazo del gate, o un borrador heredado que llegó en el estado), se deja la
+        # versión previa y su informe para que el verificador vuelva a pasar ACOTADO a los
+        # pasajes reescritos. Sin borrador previo, la clave ni se escribe.
+        borrador_previo = state.get("draft") or ""
+        if borrador_previo.strip():
+            md["texto_anterior"] = borrador_previo
+            md["informe_anterior"] = md_in.get("verification") if isinstance(
+                md_in.get("verification"), dict) else None
+
         draft, usage = await self._llm(
             _messages(user_parts), task="legal_draft", state=state, md=md, shrink=_shrink, node="draft",
             model=_persona_alias(state))
@@ -2150,6 +2181,23 @@ class MatterGraphBuilder:
         alcance = _aviso_de_alcance(state.get("metadata") or md)
         if alcance:
             report["alcance_lectura"] = alcance
+        # §21 · BARRIDO DE PATRÓN. Un defecto señalado con un ejemplo casi nunca está solo:
+        # en el harness Pipe mostró un pasaje y el barrido encontró 32. Antes de emitir, se
+        # barre el escrito COMPLETO por el patrón de cada defecto que el muro señaló y se
+        # reportan TODAS sus ocurrencias, no solo la primera. AVISO: las señala, no reescribe.
+        _barrido_por_defectos(report, annotated,
+                              (state.get("metadata") or md).get("hitl_decision"))
+        # §23 · el informe de las fuentes viaja con el del borrador: el abogado no debería
+        # tener que buscar en otra pantalla por qué una cita quedó sin respaldo cuando la
+        # causa está aguas arriba, en la fuente que se le inyectó al redactor.
+        fuentes = md.get("fuentes_revisadas")
+        if isinstance(fuentes, dict) and fuentes:
+            report["fuentes"] = fuentes
+        # §19 · CORREGIR ES REDACTAR. Si este texto es la CORRECCIÓN de uno anterior
+        # (re-draft del HITL, edición del abogado o texto heredado), la verificación se
+        # vuelve a leer ACOTADA a los pasajes que cambiaron, con doble alcance: ¿quedó bien
+        # la corrección? ¿y trajo defectos nuevos el propio arreglo?
+        _segunda_pasada_si_hubo_correccion(md, report, annotated)
         return annotated
 
     # (`_check_negative_claims` vive como función del módulo, más abajo: no necesita `self` y
@@ -2529,6 +2577,13 @@ class MatterGraphBuilder:
             # produce un informe separado y no altera el texto que se almacenará.
             final = str(decision.get("edited_text") or "")
             report_md = dict(md)
+            # §19 · CORREGIR ES REDACTAR. La edición del abogado ES una corrección: el
+            # verificador ya corría sobre el texto entero, pero nadie miraba QUÉ cambió ni
+            # si el propio arreglo trajo un defecto nuevo. Con estas dos claves el informe
+            # gana el bloque `segunda_pasada` acotado a los pasajes reescritos.
+            report_md["texto_anterior"] = draft
+            report_md["informe_anterior"] = md.get("verification") if isinstance(
+                md.get("verification"), dict) else None
             _ = await self._verify_draft(state, report_md, final)
             md["verification"] = report_md.get("verification") or {}
             # Edición humana = autorización explícita de una segunda pasada cara.
@@ -2887,6 +2942,57 @@ def build_project_graph(checkpointer: Any, *, trace_capture: Optional[TraceCaptu
     """Atajo: construye el grafo del proyecto (Bloque A) con el checkpointer dado."""
     return MatterGraphBuilder(trace_capture, agent_hub).build_project(checkpointer)
 
+
+
+def _barrido_por_defectos(report: dict, texto: str, decision: Any = None) -> None:
+    """§21 · Barre el escrito completo por el patrón de cada defecto señalado. AVISO.
+
+    Dos orígenes de «defecto señalado», y ambos entran por el mismo mecanismo genérico:
+      · el GATE — las citas que el muro dejó en un estado defectuoso (`detalle` del
+        informe). El descriptor se deriva de su referencia, por rol: una cita respaldada o
+        sellada no señala ningún patrón, y eso lo decide el `estado`, no el texto.
+      · el ABOGADO — lo que entrecomilló en su motivo de rechazo («no vuelvas a escribir
+        "salvo mejor criterio"»). Un ejemplo suyo vale por todo el documento.
+
+    Fail-soft: cualquier fallo deja el informe exactamente como estaba. Escribe in situ
+    bajo `report["barrido_patron"]` y solo cuando hay algo que decir."""
+    try:
+        defectos: list = [d for d in (report.get("detalle") or []) if isinstance(d, dict)]
+        motivo = ""
+        if isinstance(decision, dict):
+            motivo = str(decision.get("feedback") or "")
+        if motivo:
+            defectos = barreras_harness.descriptores_del_motivo(motivo) + defectos
+        barrido = barreras_harness.barrido_de_patron(texto, defectos)
+        if barrido:
+            report["barrido_patron"] = barrido
+    except Exception:  # noqa: BLE001 — barrer de más o de menos nunca tumba el turno
+        logger.warning("no se pudo barrer el escrito por patrón", exc_info=True)
+
+
+def _segunda_pasada_si_hubo_correccion(md: dict, report: dict, texto: str) -> None:
+    """§19 · Segunda vuelta del gate acotada a los pasajes reescritos. AVISO.
+
+    El disparador NO es una heurística sobre el texto: es que alguien haya dejado
+    explícitamente en la metadata el texto anterior y su informe (`texto_anterior` /
+    `informe_anterior`). Los tres sitios que corrigen lo hacen: el re-draft del HITL, la
+    edición del abogado y el borrador heredado. Las claves se CONSUMEN aquí para que la
+    comparación no se arrastre a un turno que no corrigió nada.
+
+    Fail-soft: cualquier fallo deja el informe como estaba."""
+    try:
+        anterior = md.pop("texto_anterior", None)
+        informe_anterior = md.pop("informe_anterior", None)
+        if not isinstance(anterior, str) or not anterior.strip():
+            return
+        segunda = barreras_harness.segunda_pasada(
+            anterior, informe_anterior if isinstance(informe_anterior, dict) else None,
+            texto, report)
+        if segunda:
+            report["segunda_pasada"] = segunda
+    except Exception:  # noqa: BLE001 — la segunda pasada informa, jamás bloquea
+        logger.warning("no se pudo correr la segunda pasada sobre los pasajes corregidos",
+                       exc_info=True)
 
 
 def _aviso_de_alcance(md: dict) -> Optional[dict]:

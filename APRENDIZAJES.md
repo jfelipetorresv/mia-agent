@@ -591,3 +591,66 @@ no se declara junto a su cifra o si vuelve el `?? 0` sobre las cifras del mes.
 **Aplica en:** toda cifra nueva que Mia le muestre al abogado. La regla no es de caso sino
 de inventario: la definición literal se escribe ANTES de que la cifra se pinte, y el gate
 lo comprueba. Regla operativa §18 del vault de Pipe.
+
+## Barreras portadas del harness de litigio (2026-08-19, §§19/21/23 del vault de Pipe)
+
+82. **Corregir es redactar: el texto nuevo que entra al corregir es igual de sospechoso que el
+original.** Un gate que corre una sola vez no es un gate — aplicar las correcciones de la primera
+pasada introdujo siete errores nuevos en un escrito real, y una reincidencia normativa apareció
+justo en el texto reescrito para corregir el hallazgo anterior.
+**Barrera:** `barreras_harness.segunda_pasada()` (diff por párrafo entre la versión anterior y la
+corregida + relectura del informe del verificador ACOTADA a lo que cambió, con doble alcance:
+¿quedó bien la corrección? ¿trajo defectos nuevos el propio arreglo?). Vive en
+`backend/mia/agents/barreras_harness.py`; se dispara desde `graph._verify_draft` cuando alguien dejó
+`metadata["texto_anterior"]`, y eso lo hacen los tres sitios que corrigen: el re-draft del HITL
+(`draft_node`), la edición del abogado (`finalize_node`, rama `editing`) y un borrador heredado.
+«Introducido» significa nuevo en el DOCUMENTO, no nuevo en el párrafo: una cita que ya venía
+defectuosa en otro pasaje no la introdujo la corrección.
+**Estado: AVISO** — el bloque `verification.segunda_pasada` informa; no edita ni bloquea.
+**Tests (ambos sentidos):** `execution/test_corregir_es_redactar.py` — R (la corrección arregla la
+cita señalada y mete otra sin respaldo → se reporta) y C (corrección limpia → cero defectos
+introducidos). 20/20 PASS.
+
+83. **Un defecto señalado con un ejemplo casi nunca está solo: se barre el documento entero por su
+patrón antes de emitir.** En el harness Pipe mostró un pasaje y el barrido encontró 32; en otra
+corrida, corregir hallazgo por hallazgo costó cuatro versiones completas del escrito.
+**Barrera:** `barreras_harness.barrido_de_patron()` + `descriptor_de_defecto()` /
+`descriptores_del_motivo()`. El patrón se DERIVA de lo señalado por dos vías que comparten
+mecanismo: las citas que el muro dejó en estado defectuoso, y lo que el abogado entrecomilló en su
+motivo de rechazo. Se cablea en `graph._barrido_por_defectos`, dentro de `_verify_draft`.
+El descriptor decide por ROL (`estado`: una cita respaldada o sellada no señala patrón) y coteja por
+SECUENCIA CONTIGUA DE TOKENS, nunca por subcadena — «Ley 14» no puede casar dentro de «Ley 1437»
+(lección del P0 de sellos por substring).
+**Estado: AVISO** — el bloque `verification.barrido_patron` cuenta y ejemplifica todas las
+ocurrencias («Encontré este mismo problema en N lugares más… te los dejo señalados todos»); no
+reescribe ninguna.
+**Tests (ambos sentidos):** `execution/test_barrido_de_patron.py` — R (defecto señalado una vez que
+en realidad está en cuatro lugares → los encuentra todos) y C (defecto que sí ocurre una sola vez →
+ningún barrido, cero ruido). 24/24 PASS.
+
+84. **Sellar el continente no es verificar el contenido, y la fuente entra con identificación o no
+entra.** 17 de 36 fuentes de un paquete real traían un texto que no era de la norma que decían
+citar, con toda la cadena de verificación en verde: se cotejaba el hash del archivo —que coincidía—
+y jamás el texto. Y una providencia se citó como «sentencia de 2013» porque el contrato del paquete
+no pedía radicado ni fecha: la regla se le exige a quien puede cumplirla.
+**Qué había en Mia:** `packs.source_pack_from_research` sellaba cada fuente con `chunk_hash` (el
+continente) y `verification._backing_source_tokenized` cotejaba la REFERENCIA de la cita contra las
+claves de la fuente (identidad del documento). Nadie cotejaba el PASAJE contra el contenido del que
+dice salir, y ningún campo era obligatorio salvo `referencia` y `chunk_hash`.
+**Qué se añadió:** `barreras_harness.similitud()` (por tokens y en ORDEN, umbral inicial 75 % como
+en el harness, configurable con `MIA_FUENTE_SIMILITUD_UMBRAL`), `identificacion()` (tipo ·
+número/radicado · fecha, leídos por CAMPO NOMBRADO, jamás adivinados dentro de la cadena de la
+referencia) y `revisar_fuentes()` / `filtrar_fuentes()`. Se llaman desde
+`graph._commit_research_sources`, o sea ANTES de que la fuente llegue al redactor, y el informe sube
+al abogado bajo `verification.fuentes`.
+**Estado: AVISO** — con `MIA_FUENTE_IDENTIFICACION_EXIGIR` apagado (default) la fuente entra igual y
+solo se informa con razón honesta; encendido, no entra. La palanca a muro está construida y
+apagada, a la espera de medir falsos positivos.
+**Tests (ambos sentidos):** `execution/test_contenido_no_continente.py` — R (fuente cuyo hash cuadra
+y cuyo pasaje es de otra norma → se caza y se nombra) y C (fuente bien copiada y bien identificada →
+ni un aviso). 30/30 PASS.
+
+**Aplica en:** las tres nacen como AVISO por la regla de implantación de Mia (una barrera nueva
+registra y reporta; solo sube a muro cuando demuestre no dar falsos positivos), y ninguna debilita
+un muro existente: el banco de citas quemadas y la omisión bajo jurisdicción desconocida siguen
+bloqueando exactamente igual.

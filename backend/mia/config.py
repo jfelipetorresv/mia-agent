@@ -254,6 +254,13 @@ MIA_RETRIEVAL_COVERAGE_RESERVE_FRACTION = float(
 # la misma disciplina del muro de citas aplicada a la lectura. 0.95 y no 1.0 porque llegar al
 # último fragmento por dedup o por tope por pieza no es leer de menos.
 MIA_ALCANCE_AVISO_UMBRAL = float(os.getenv("MIA_ALCANCE_AVISO_UMBRAL", "0.95"))
+# --- §23 · Verificar el contenido, no el continente (harness de litigio, 2026-08-19) ----
+# Cuánto del PASAJE que una fuente dice citar tiene que aparecer, EN ORDEN, dentro del
+# contenido del que dice salir. El hash prueba que el archivo no cambió; no prueba que diga
+# lo que dice decir. 0.75 es el umbral ya calibrado contra datos reales en el harness del
+# despacho (17 de 36 fuentes de un paquete traían texto de otra norma con toda la cadena de
+# verificación en verde). Configurable porque el corpus de cada despacho recorta distinto.
+MIA_FUENTE_SIMILITUD_UMBRAL = float(os.getenv("MIA_FUENTE_SIMILITUD_UMBRAL", "0.75"))
 # Se piden más filas de las que se van a entregar porque el dedup y el tope por documento
 # descartan algunas: sin este colchón, "leer 100" acababa entregando 70.
 MIA_RETRIEVAL_OVERFETCH = float(os.getenv("MIA_RETRIEVAL_OVERFETCH", "1.5"))
@@ -286,6 +293,14 @@ MIA_KNOWLEDGE_MAX_TOP_K = int(os.getenv("MIA_KNOWLEDGE_MAX_TOP_K", "10"))
 def _env_flag(name: str, default: str = "0") -> bool:
     """Bandera booleana de .env, tolerante con la forma en que la escriba un humano."""
     return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on", "si", "sí")
+
+
+# §23 (cont.) · Con esto en 1, una fuente sin identificación mínima (tipo · número/radicado
+# · fecha) o cuyo pasaje no coincide con su contenido NO entra al redactor. Nace APAGADO: la
+# barrera arranca como AVISO y solo sube a muro cuando demuestre no dar falsos positivos
+# (regla de implantación de Mia). Vive aquí abajo por orden de ejecución: `_env_flag` se
+# define en esta línea y no antes.
+MIA_FUENTE_IDENTIFICACION_EXIGIR = _env_flag("MIA_FUENTE_IDENTIFICACION_EXIGIR")
 
 
 # --- Lectura AGÉNTICA del expediente (opt-in · APAGADA por defecto) --------------
