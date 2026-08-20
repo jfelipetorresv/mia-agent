@@ -28,7 +28,16 @@ type MotorPolicy = {
   // Capacidades comprobables de la instalación (auditoría 2026-08-14: viajaban del
   // backend y ninguna pantalla las leía — la lista ofrecía Codex aunque no estuviera).
   capabilities?: {
-    codex?: { installed?: boolean; blocked_reason?: string };
+    // `installed` es un hecho del equipo; `enabled_here` es la decisión de política de
+    // Mia. Se separan porque decir «no está instalada» cuando sí lo está es mentirle
+    // al abogado sobre su propio computador (defecto D1, 2026-08-20).
+    codex?: {
+      installed?: boolean;
+      signed_in?: boolean;
+      enabled_here?: boolean;
+      reason_code?: string;
+      blocked_reason?: string;
+    };
   };
 };
 
@@ -481,7 +490,7 @@ export default function ConexionesSection({
           className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
         >
           {(policy?.opciones || []).map((o) => {
-            const codexBlocked = o.id === "codex" && policy?.capabilities?.codex?.installed === false;
+            const codexBlocked = o.id === "codex" && policy?.capabilities?.codex?.enabled_here === false;
             return (
               <option key={o.id} value={o.id} disabled={codexBlocked}>
                 {o.nombre}{codexBlocked ? " (no disponible en este equipo)" : ""}
@@ -489,7 +498,7 @@ export default function ConexionesSection({
             );
           })}
         </select>
-        {policy?.capabilities?.codex?.installed === false && policy?.capabilities?.codex?.blocked_reason ? (
+        {policy?.capabilities?.codex?.enabled_here === false && policy?.capabilities?.codex?.blocked_reason ? (
           <p className="mt-2 text-sm text-muted-foreground">{policy.capabilities.codex.blocked_reason}</p>
         ) : null}
         {policyMsg ? <p className="mt-2 text-sm text-muted-foreground">{policyMsg}</p> : null}

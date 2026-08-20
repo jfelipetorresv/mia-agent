@@ -173,6 +173,36 @@ def _policy_options() -> list[dict]:
     return [{"id": k, "nombre": v} for k, v in _POLICY_LABELS.items()]
 
 
+_CODEX_RAZONES = {
+    "no_instalada": "No está instalada en este equipo.",
+    "sin_sesion": "Está instalada, pero no hay una sesión de Codex iniciada en este equipo.",
+    "no_habilitada_en_este_modo": (
+        "Está instalada, pero este modo de Mia no la usa: Codex por membresía solo se "
+        "habilita en la aplicación de escritorio del titular."
+    ),
+    "disponible": "",
+}
+
+
+def _codex_capability() -> dict[str, Any]:
+    """Estado de Codex sin afirmar un hecho falso del equipo del abogado.
+
+    Instalada, con sesión y habilitada son tres cosas distintas: la política puede
+    apagarla aunque esté perfectamente instalada y autenticada. Detectar ≠ habilitar.
+    """
+    estado = codex_subscription_llm.detect_status()
+    return {
+        "installed": estado["instalada"],
+        "signed_in": estado["sesion"],
+        "enabled_here": estado["disponible"],
+        "reason_code": estado["motivo"],
+        "role": "motor jurídico local del titular, seleccionado explícitamente",
+        "marginal_cost_basis": "subscription_not_per_call",
+        "local_membership_required": True,
+        "blocked_reason": _CODEX_RAZONES.get(estado["motivo"], ""),
+    }
+
+
 def _model_capabilities() -> dict[str, Any]:
     """Capacidades comprobables de la instalación, sin prometer planes ni modelos ajenos.
 
@@ -194,15 +224,7 @@ def _model_capabilities() -> dict[str, Any]:
             "max_is_exceptional": True,
             "available_efforts": subscription_llm.supported_efforts(),
         },
-        "codex": {
-            "installed": codex_subscription_llm.is_available(),
-            "role": "motor jurídico local del titular, seleccionado explícitamente",
-            "marginal_cost_basis": "subscription_not_per_call",
-            "local_membership_required": True,
-            "blocked_reason": ("Solo funciona en la app local del titular; no se habilita "
-                               "en servidores ni instalaciones compartidas."
-                               if not codex_subscription_llm.is_available() else ""),
-        },
+        "codex": _codex_capability(),
     }
 
 
@@ -321,15 +343,19 @@ async def put_model_policy(request: Request):
             detail=("Opción no válida. Usa 'quality_adaptive', 'suscripcion', 'codex', 'nube', "
                     "'soberano' u 'openrouter'."),
         )
-    if policy == "codex" and not codex_subscription_llm.is_available():
-        raise HTTPException(
-            status_code=409,
-            # Honestidad: aquí solo se comprueba instalación local + binario presente;
-            # la sesión de Codex se valida en la primera solicitud, no ahora.
-            detail=("Codex por membresía solo está disponible en la instalación local del "
-                    "titular y con Codex instalado en este equipo. La sesión se comprueba "
-                    "en la primera solicitud."),
-        )
+    if policy == "codex":
+        capacidad = _codex_capability()
+        if not capacidad["enabled_here"]:
+            raise HTTPException(
+                status_code=409,
+                # Honestidad: el motivo es el REAL. Si Codex está instalada, el mensaje no
+                # dice que falte; dice que este modo no la habilita. La vigencia de la
+                # sesión sigue comprobándose en la primera solicitud.
+                detail=capacidad["blocked_reason"] or (
+                    "Codex por membresía solo se habilita en la aplicación de escritorio "
+                    "del titular."
+                ),
+            )
     allow_or_raw = (body or {}).get("allow_openrouter") if isinstance(body, dict) else None
     merge: dict[str, Any] = {"model_policy": policy}
     if allow_or_raw is not None:

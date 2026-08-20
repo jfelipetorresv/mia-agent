@@ -130,6 +130,61 @@ DIAGNOSTICO_DEMO = (
     "probar el requerimiento previo."
 )
 
+# ── Productos verificados de cada etapa (fact-pack / source-pack / strategy-pack) ──
+# Desde los packs fail-closed (migración 059) una etapa que no deja su producto ABORTA el
+# turno: sin FACT_PACK el borrador no se redacta y la pantalla de revisión muestra el aborto,
+# no el borrador didáctico. Los dobles de la semilla tienen que emitir los mismos bloques
+# que emitiría el modelo real; si no, la semilla ya no verifica nada (defecto D2, 2026-08-20).
+#
+# Los hechos van anclados a [doc 1] a propósito: es el único locator que existe siempre,
+# cualquiera sea el número de fragmentos que el turno recupere.
+FACT_PACK_DEMO = {
+    "hechos": [
+        {"texto": "El contrato de suministro fija en su cláusula 12 un plazo de entrega "
+                  "de treinta días.", "locator": "[doc 1]"},
+        {"texto": "La entrega se discute frente a ese plazo contractual.", "locator": "[doc 1]"},
+    ],
+    "conteo_declarado": 2,
+}
+
+# Fuente de investigación de la SEMILLA. El corpus del despacho demo está vacío (no se
+# siembra jurisprudencia), y sin una sola fuente el pack de tesis no puede cotejarse y el
+# turno aborta antes del borrador. Es material de demostración y su referencia lo dice:
+# NO respalda la cita quemada del borrador («Ley 4137 de 2011»), que debe seguir saliendo
+# marcada — que es justo lo que la semilla existe para poder mirar.
+FUENTE_DEMO = {
+    "tipo": "norma",
+    "referencia": "Norma de demostración 100 de 2020, artículo 5",
+    "titulo": "Norma de demostración sobre el plazo de entrega (material de prueba)",
+    "numero": "100 de 2020",
+    "fecha": "2020-01-01",
+    "pasaje": "El plazo de entrega pactado obliga a las partes.",
+    "content": "Artículo 5. El plazo de entrega pactado obliga a las partes y su "
+               "incumplimiento se rige por lo acordado en el contrato.",
+}
+
+STRATEGY_PACK_DEMO = {
+    "argumentos": [
+        {"id": "A1",
+         "tesis": "El plazo de entrega pactado en la cláusula 12 gobierna la mora.",
+         "fuente_refs": [FUENTE_DEMO["referencia"]],
+         "seleccionado": True,
+         "contraparte": "Sostendrá que hubo prórroga.",
+         "prueba": "[doc 1]"},
+    ],
+    "descartes": [
+        {"tesis": "Fuerza mayor",
+         "motivo": "El expediente de demostración no acredita ningún hecho externo."},
+    ],
+}
+
+
+def _fence(kind: str, payload: dict) -> str:
+    """El bloque vallado que el parser de packs espera (packs._PACK_FENCE)."""
+    return (f"==={kind}===\n"
+            + json.dumps(payload, ensure_ascii=False)
+            + "\n===END===")
+
 
 # Términos ENTERRADOS: van en el documento pero deben quedar FUERA de lo que el turno
 # recupera. Es la condición del aviso de afirmaciones negativas —una negativa escrita sobre
@@ -157,6 +212,15 @@ def _fake_call_llm(messages, *, task=None, model=None, **kw):
         content = BORRADOR_DEMO
     elif task == "legal_edit" or "Incorpora al borrador" in sysmsg:
         content = BORRADOR_DEMO + "\n(Versión con las indicaciones del abogado.)"
+    elif task == "legal_facts":
+        content = ("Hechos establecidos (material de prueba):\n"
+                   + "\n".join(f"- {h['texto']} {h['locator']}" for h in FACT_PACK_DEMO["hechos"])
+                   + "\n\n" + _fence("FACT_PACK", FACT_PACK_DEMO))
+    elif task == "legal_research":
+        content = ("Memoria de investigación de prueba: la fuente de demostración fija que "
+                   "el plazo de entrega pactado obliga a las partes.")
+    elif task == "legal_analysis":
+        content = _fence("STRATEGY_PACK", STRATEGY_PACK_DEMO) + "\n\n" + DIAGNOSTICO_DEMO
     elif "GATE DE CALIDAD DE CITAS" in sysmsg:
         # El gate LLM (F1.5) audita y responde SOLO un veredicto — nunca reescribe el
         # borrador. El doble lo aprueba para que las piezas plantadas lleguen intactas
@@ -169,9 +233,24 @@ def _fake_call_llm(messages, *, task=None, model=None, **kw):
         usage=SimpleNamespace(prompt_tokens=12, completion_tokens=20, total_tokens=32))
 
 
+async def _fake_gather_sources(tenant_id, query, *, jurisdictions=None):
+    """El corpus del despacho demo está vacío; la semilla planta UNA fuente de prueba.
+
+    Sin fuente no hay pack de investigación, y sin pack la matriz de tesis no se puede
+    cotejar: el turno aborta antes del borrador y la semilla deja de mostrar lo que
+    promete. La fuente es de demostración y no respalda la cita quemada del borrador.
+    """
+    bloque = (f"[{FUENTE_DEMO['referencia']}] {FUENTE_DEMO['titulo']}\n"
+              f"{FUENTE_DEMO['content']}")
+    return bloque, [dict(FUENTE_DEMO)], list(jurisdictions or ["generic"])
+
+
 def _instalar_dobles() -> None:
+    from mia.agents import research as agents_research
+
     embeddings.embed_texts = _fake_embed
     llm.call_llm = _fake_call_llm
+    agents_research.gather_sources = _fake_gather_sources
 
 
 # ── Documentos sintéticos ─────────────────────────────────────────────────────

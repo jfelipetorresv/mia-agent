@@ -490,8 +490,19 @@ function GuiaRegistroGoogle({
 /* ────────────────────── Estados que llegan del backend ────────────────────── */
 
 type MotorDetectado = { claude?: boolean; codex?: boolean; ollama?: boolean };
+/** Los tres hechos separados de un motor local: estar instalado, tener sesión y estar
+ *  habilitado por la política de este modo de Mia. Mezclarlos producía una frase falsa
+ *  sobre el equipo del abogado (defecto D1, 2026-08-20). */
+type MotorEstado = {
+  instalada?: boolean;
+  sesion?: boolean;
+  habilitada_por_politica?: boolean;
+  disponible?: boolean;
+  motivo?: "no_instalada" | "sin_sesion" | "no_habilitada_en_este_modo" | "disponible";
+};
 type WelcomeStatus = {
   motor_detectado?: MotorDetectado;
+  motor_estado?: { codex?: MotorEstado };
   faltan_llaves?: { busqueda?: boolean; respaldo?: boolean; openrouter?: boolean };
 };
 type Conexion = { proveedor: string; conectado: boolean; archivos?: boolean; disponible?: boolean };
@@ -546,6 +557,9 @@ export default function GaleriaHerramientas() {
   }
 
   const motor = welcome?.motor_detectado || {};
+  // Si el backend es anterior a 2026-08-20 no trae `motor_estado`: sin ese dato no se
+  // afirma nada sobre el equipo más allá de lo que `motor_detectado` ya dice.
+  const codexEstado: MotorEstado = welcome?.motor_estado?.codex || {};
   const conexion = (p: string) => (mailbox?.conexiones || []).find((c) => c.proveedor === p);
   const ms = conexion("microsoft");
   const google = conexion("google");
@@ -574,12 +588,25 @@ export default function GaleriaHerramientas() {
       nombre: "Codex",
       gana: "Delega a Codex el análisis pesado sin que salga nada del expediente.",
       logo: LogoCodex,
-      ...(motor.codex
+      ...(codexEstado.motivo === "disponible" || (motor.codex && !codexEstado.motivo)
         ? { tono: "detectada" as Tono, estado: "Detectada e iniciada", ancla: "conector-motor", accion: "Usarla" }
-        : {
-            tono: "ausente" as Tono,
-            estado: "No está instalada o no has iniciado sesión en ella",
-          }),
+        : codexEstado.motivo === "sin_sesion"
+          ? {
+              tono: "pendiente" as Tono,
+              estado: "Está instalada en este equipo, pero no has iniciado sesión en ella",
+            }
+          : codexEstado.motivo === "no_habilitada_en_este_modo"
+            ? {
+                tono: "pendiente" as Tono,
+                estado: "Está instalada, pero este modo de Mia no la usa",
+              }
+            : codexEstado.motivo === "no_instalada"
+              ? { tono: "ausente" as Tono, estado: "No está instalada en este equipo" }
+              : {
+                  // Sin `motor_estado` no hay hecho comprobado: se dice lo único cierto.
+                  tono: "ausente" as Tono,
+                  estado: "Mia no la está usando como motor en este equipo",
+                }),
     },
     {
       id: "ollama",

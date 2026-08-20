@@ -52,23 +52,74 @@ class CodexCLIUnavailable(CodexCLIError):
         super().__init__(message, status_code=404)
 
 
+# Wrappers que npm instala junto al binario real. Nunca se EJECUTAN (abrirían un
+# shell); solo sirven para localizar el ejecutable nativo que traen al lado.
+_WRAPPER_SUFFIXES = {".cmd", ".bat", ".ps1", ".js", ""}
+# El paquete de plataforma de npm: @openai/codex-<os>-<arch>/vendor/<triple>/bin/codex[.exe]
+_VENDOR_GLOBS = (
+    "node_modules/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/",
+    "node_modules/@openai/codex-*/vendor/*/bin/",
+    "../lib/node_modules/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/",
+    "../lib/node_modules/@openai/codex-*/vendor/*/bin/",
+)
+_EXE_NAMES = ("codex.exe", "codex")
+
+
+def _is_native_exe(path: Path) -> bool:
+    """Ejecutable nativo: .exe en Windows, bit de ejecución y sin extensión de script fuera."""
+    if not path.is_file():
+        return False
+    suffix = path.suffix.lower()
+    if os.name == "nt":
+        return suffix == ".exe"
+    return suffix not in _WRAPPER_SUFFIXES or (suffix == "" and os.access(path, os.X_OK))
+
+
+def _vendor_exe_near(wrapper: Path) -> Path | None:
+    """Resuelve el binario real que npm deja junto a codex/codex.cmd/codex.ps1.
+
+    npm pone en PATH un wrapper de shell; el ejecutable vive en el paquete de
+    plataforma. Se busca por patrón (sin versiones ni rutas cableadas) y se ignoran
+    los directorios de staging de npm (los que empiezan por punto).
+    """
+    base = wrapper.parent
+    for pattern in _VENDOR_GLOBS:
+        for name in _EXE_NAMES:
+            for hit in sorted(base.glob(pattern + name)):
+                if any(part.startswith(".") for part in hit.parts):
+                    continue
+                try:
+                    resolved = hit.resolve(strict=True)
+                except OSError:
+                    continue
+                if _is_native_exe(resolved):
+                    return resolved
+    return None
+
+
 def _native_candidates() -> list[Path]:
-    """Solo binarios nativos; jamás wrappers cmd/ps1/bat que abran un shell."""
-    candidates: list[Path] = []
+    """Devuelve binarios NATIVOS. Nunca se ejecuta un wrapper cmd/ps1/bat/sh."""
+    raw: list[Path] = []
     explicit = os.environ.get("MIA_CODEX_EXE", "").strip()
     if explicit:
-        candidates.append(Path(explicit))
-    found = shutil.which("codex.exe") or shutil.which("codex")
-    if found:
-        candidates.append(Path(found))
+        raw.append(Path(explicit))
+    seen_which: set[str] = set()
+    for name in ("codex.exe", "codex.cmd", "codex.ps1", "codex.bat", "codex"):
+        found = shutil.which(name)
+        if found and found.lower() not in seen_which:
+            seen_which.add(found.lower())
+            raw.append(Path(found))
     unique: list[Path] = []
-    for candidate in candidates:
+    for candidate in raw:
         try:
             resolved = candidate.resolve(strict=True)
         except OSError:
             continue
-        if resolved.is_file() and resolved.suffix.lower() == ".exe" and resolved not in unique:
-            unique.append(resolved)
+        if not resolved.is_file():
+            continue
+        exe = resolved if _is_native_exe(resolved) else _vendor_exe_near(resolved)
+        if exe is not None and exe not in unique:
+            unique.append(exe)
     return unique
 
 
@@ -77,8 +128,56 @@ def _resolve_exe() -> Path | None:
     return candidates[0] if candidates else None
 
 
+def _codex_home() -> Path:
+    raw = os.environ.get("CODEX_HOME", "").strip()
+    return Path(raw) if raw else Path.home() / ".codex"
+
+
+def _has_session() -> bool:
+    """Señal local de sesión: el archivo de credenciales que escribe `codex login`.
+
+    No prueba que el token siga vigente (eso solo lo dice el propio Codex en la
+    primera solicitud); prueba que hay una sesión iniciada en este equipo.
+    """
+    try:
+        return (_codex_home() / "auth.json").is_file()
+    except OSError:
+        return False
+
+
 def _local_membership_allowed() -> bool:
     return bool(getattr(config, "CODEX_MEMBERSHIP_LOCAL_ALLOWED", False))
+
+
+def detect_status() -> dict[str, Any]:
+    """Los tres hechos separados, sin mezclarlos en una sola frase falsa.
+
+    `instalada` es un hecho del equipo; `sesion` es un hecho de la cuenta;
+    `habilitada` es una decisión de POLÍTICA de Mia (membresía local del titular).
+    Detectar no habilita: esto solo informa.
+    """
+    exe = _resolve_exe()
+    instalada = exe is not None
+    sesion = _has_session() if instalada else False
+    permitida = _local_membership_allowed()
+    # El motivo es el PRIMER obstáculo real, en el orden en que hay que resolverlos:
+    # instalar → que este modo la habilite → iniciar sesión.
+    if not instalada:
+        motivo = "no_instalada"
+    elif not permitida:
+        motivo = "no_habilitada_en_este_modo"
+    elif not sesion:
+        motivo = "sin_sesion"
+    else:
+        motivo = "disponible"
+    return {
+        "instalada": instalada,
+        "sesion": sesion,
+        "habilitada_por_politica": permitida,
+        "disponible": bool(instalada and permitida),
+        "motivo": motivo,
+        "ruta": str(exe) if exe else "",
+    }
 
 
 def is_available() -> bool:

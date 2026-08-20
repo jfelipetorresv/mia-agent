@@ -179,11 +179,19 @@ async def welcome_status(request: Request):
         "respaldo": not env_values.get("ANTHROPIC_API_KEY", "").strip(),
         "openrouter": not env_values.get("OPENROUTER_API_KEY", "").strip(),
     }
+    # `motor_detectado` responde «¿puede Mia usar este motor ahora?» (compatibilidad).
+    # `motor_estado` responde por separado los tres hechos que antes se mezclaban en una
+    # sola frase falsa: instalada / con sesión / habilitada por la política de este modo.
+    # Detectar no habilita: la política sigue mandando en `motor_detectado`.
+    codex_estado = codex_subscription_llm.detect_status()
     motor_detectado = {
         "claude": bool(shutil.which("claude")),
-        "codex": codex_subscription_llm.is_available(),
+        "codex": codex_estado["disponible"],
         "ollama": bool(shutil.which("ollama")),
     }
+    # La ruta del binario no viaja al frontend: no aporta nada al abogado y es
+    # información del sistema de archivos del equipo.
+    motor_estado = {"codex": {k: v for k, v in codex_estado.items() if k != "ruta"}}
 
     if tenant_id:
         try:
@@ -205,6 +213,7 @@ async def welcome_status(request: Request):
         "faltan_llaves": faltan_llaves,
         "onboarding_completo": onboarding_completo,
         "motor_detectado": motor_detectado,
+        "motor_estado": motor_estado,
         "politica": politica,
     }
 

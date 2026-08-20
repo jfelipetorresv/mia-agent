@@ -89,6 +89,47 @@ def main() -> int:
             env=env_tauri, capture_output=True, text=True, timeout=60)
         check("0g · la misma marca inyectada al proceso sí la enciende (mutación)",
               probe2.returncode == 0)
+    # ── D1 · detección: npm pone en PATH wrappers (codex, codex.cmd, codex.ps1) y deja
+    # el binario nativo dentro del paquete de plataforma. Exigir un .exe en PATH declaraba
+    # «no instalada» una instalación perfectamente válida.
+    import os as _os2
+    import tempfile as _tmp2
+    with _tmp2.TemporaryDirectory() as tmp:
+        raiz = Path(tmp)
+        vendor = (raiz / "node_modules/@openai/codex/node_modules/@openai/codex-win32-x64"
+                  "/vendor/x86_64-pc-windows-msvc/bin")
+        vendor.mkdir(parents=True)
+        exe_real = vendor / ("codex.exe" if _os2.name == "nt" else "codex")
+        exe_real.write_bytes(b"MZ binario simulado")
+        if _os2.name != "nt":
+            exe_real.chmod(0o755)
+        staging = (raiz / "node_modules/@openai/.codex-STAGING/node_modules/@openai"
+                   "/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin")
+        staging.mkdir(parents=True)
+        (staging / exe_real.name).write_bytes(b"MZ staging")
+        wrapper = raiz / "codex.cmd"
+        wrapper.write_text("@ECHO OFF\r\nnode codex.js %*\r\n", encoding="utf-8")
+        old_which = codex.shutil.which
+        try:
+            codex.shutil.which = lambda name: str(wrapper) if name == "codex.cmd" else None
+            resuelto = codex._resolve_exe()
+            check("0h · el wrapper .cmd de npm resuelve al binario nativo del paquete",
+                  resuelto is not None and resuelto.name == exe_real.name
+                  and resuelto == exe_real.resolve()
+                  and not any(p.startswith(".") for p in resuelto.parts))
+            codex.shutil.which = lambda name: None
+            check("0i · sin nada en PATH la detección sigue diciendo que no hay binario",
+                  codex._resolve_exe() is None)
+            solo_wrapper = raiz / "solo"
+            solo_wrapper.mkdir()
+            huerfano = solo_wrapper / "codex.cmd"
+            huerfano.write_text("@ECHO OFF\r\n", encoding="utf-8")
+            codex.shutil.which = lambda name: str(huerfano) if name == "codex.cmd" else None
+            check("0j · un wrapper suelto sin binario nativo NO se ejecuta ni cuenta",
+                  codex._resolve_exe() is None)
+        finally:
+            codex.shutil.which = old_which
+
     captured: dict[str, object] = {}
     old_resolve, old_run = codex._resolve_exe, codex.subprocess.run
     old_local_mode = config.CODEX_MEMBERSHIP_LOCAL_ALLOWED
@@ -140,9 +181,21 @@ def main() -> int:
               and "servidor" in str(blocked).lower())
         from mia.api.routes import settings
         capability = settings._model_capabilities()["codex"]
-        check("6 · estado/UI marca Codex no disponible fuera del equipo local del titular",
-              capability["installed"] is False and capability["local_membership_required"] is True
-              and "servidores" in capability["blocked_reason"])
+        # D1 (2026-08-20): el estado no puede afirmar un hecho FALSO del equipo. Con Codex
+        # instalada y la política apagada, «instalada» sigue siendo verdad y lo que se
+        # comunica es que este modo no la usa. Detectar ≠ habilitar.
+        check("6 · Codex instalada pero apagada por política: no se dice que falte",
+              capability["installed"] is True and capability["enabled_here"] is False
+              and capability["local_membership_required"] is True
+              and capability["reason_code"] == "no_habilitada_en_este_modo"
+              and "no está instalada" not in capability["blocked_reason"].lower()
+              and "instalada" in capability["blocked_reason"].lower())
+        codex._resolve_exe = lambda: None
+        ausente = settings._model_capabilities()["codex"]
+        check("6b · Codex realmente ausente sí se reporta como no instalada",
+              ausente["installed"] is False and ausente["enabled_here"] is False
+              and ausente["reason_code"] == "no_instalada"
+              and "no está instalada" in ausente["blocked_reason"].lower())
     finally:
         codex._resolve_exe = old_resolve
         config.CODEX_MEMBERSHIP_LOCAL_ALLOWED = old_local_mode
