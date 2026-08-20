@@ -4,6 +4,8 @@ export { default as BrandMark } from "./BrandMark";
 export type { BrandMarkProps } from "./BrandMark";
 export { default as WelcomeShell } from "./WelcomeShell";
 export type { WelcomeShellProps } from "./WelcomeShell";
+export { default as ThemeChoice } from "./ThemeChoice";
+export type { ThemeChoiceProps } from "./ThemeChoice";
 export { default as WelcomeProgress, JOURNEY_STEPS } from "./WelcomeProgress";
 export type { WelcomeProgressProps } from "./WelcomeProgress";
 export { default as Celebration } from "./Celebration";

@@ -32,15 +32,19 @@ import {
   Lightbulb,
   Map,
   Minus,
+  Moon,
   PartyPopper,
   PiggyBank,
   Repeat,
   ShieldCheck,
   Settings2,
+  Sun,
+  Laptop,
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getStoredTheme, setTheme, type Theme } from "@/lib/theme";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cardVariants } from "@/components/ui/card";
 import { staggerStyle } from "@/lib/motion";
@@ -129,7 +133,8 @@ type TabId =
   | "automatizaciones"
   | "valor"
   | "calidad"
-  | "proteccion";
+  | "proteccion"
+  | "sistema";
 
 const HASH_TO_TAB: Record<string, TabId> = {
   "#primeros-pasos": "primeros-pasos",
@@ -139,6 +144,7 @@ const HASH_TO_TAB: Record<string, TabId> = {
   "#valor": "valor",
   "#calidad": "calidad",
   "#proteccion": "proteccion",
+  "#sistema": "sistema",
 };
 
 function tabFromHash(): TabId | null {
@@ -151,6 +157,18 @@ export default function ConfigurarPage() {
   const [error, setError] = useState("");
   const [abierta, setAbierta] = useState<string | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [currentTheme, setCurrentTheme] = useState<Theme>("system");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setCurrentTheme(getStoredTheme());
+    }
+  }, []);
+
+  const handleThemeChange = (t: Theme) => {
+    setTheme(t);
+    setCurrentTheme(t);
+  };
 
   // Lazy initializer: si se llega con un hash reconocido, ese tab manda desde
   // el primer render (evita el "flash" del tab por defecto). Si no hay hash,
@@ -388,6 +406,10 @@ export default function ConfigurarPage() {
             <ShieldCheck className="h-4 w-4" />
             Protección
           </TabsTrigger>
+          <TabsTrigger value="sistema" className="gap-1.5">
+            <Laptop className="h-4 w-4" />
+            Sistema
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Primeros pasos ────────────────────────────────────────── */}
@@ -557,6 +579,78 @@ export default function ConfigurarPage() {
 
         <TabsContent value="proteccion" className="animate-fade-in">
           <ProteccionDatosSection />
+        </TabsContent>
+
+        <TabsContent value="sistema" className="animate-fade-in">
+          <section id="sistema" className="mt-6 scroll-mt-6 space-y-6">
+            <SectionTitle
+              icon={Laptop}
+              title="Apariencia y Sistema"
+              hint="Personaliza cómo se ve y responde la interfaz de tu despacho."
+            />
+            
+            <div className={cn(cardVariants(), "p-6 space-y-6")}>
+              <div className="space-y-2">
+                <h3 className="font-bold text-lg">Tema de la Interfaz</h3>
+                <p className="text-sm text-muted-foreground">
+                  Elige entre el Modelo Claro (diseño neumórfico con relieve) y el Modelo Oscuro (diseño espacial profundo).
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 max-w-2xl">
+                <button
+                  type="button"
+                  onClick={() => handleThemeChange("light")}
+                  className={cn(
+                    "flex flex-col items-center gap-3 rounded-2xl p-6 border transition-all shadow-sm bg-card/40 hover:bg-card/75",
+                    currentTheme === "light"
+                      ? "border-primary bg-primary/5 text-primary shadow-neu-raised"
+                      : "border-border hover:border-primary/50 text-muted-foreground"
+                  )}
+                >
+                  <Sun className="h-8 w-8" />
+                  <div className="text-center">
+                    <span className="block font-semibold text-sm">Modelo Claro</span>
+                    <span className="block text-xs text-muted-foreground/80 mt-0.5">Limpio y tridimensional</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleThemeChange("dark")}
+                  className={cn(
+                    "flex flex-col items-center gap-3 rounded-2xl p-6 border transition-all shadow-sm bg-card/40 hover:bg-card/75",
+                    currentTheme === "dark"
+                      ? "border-primary bg-primary/5 text-primary shadow-neu-raised"
+                      : "border-border hover:border-primary/50 text-muted-foreground"
+                  )}
+                >
+                  <Moon className="h-8 w-8" />
+                  <div className="text-center">
+                    <span className="block font-semibold text-sm">Modelo Oscuro</span>
+                    <span className="block text-xs text-muted-foreground/80 mt-0.5">Espacial y de alto contraste</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleThemeChange("system")}
+                  className={cn(
+                    "flex flex-col items-center gap-3 rounded-2xl p-6 border transition-all shadow-sm bg-card/40 hover:bg-card/75",
+                    currentTheme === "system"
+                      ? "border-primary bg-primary/5 text-primary shadow-neu-raised"
+                      : "border-border hover:border-primary/50 text-muted-foreground"
+                  )}
+                >
+                  <Laptop className="h-8 w-8" />
+                  <div className="text-center">
+                    <span className="block font-semibold text-sm">Tema del Sistema</span>
+                    <span className="block text-xs text-muted-foreground/80 mt-0.5">Sincronizado con tu dispositivo</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </section>
         </TabsContent>
       </Tabs>
     </PageShell>

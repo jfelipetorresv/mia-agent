@@ -19,7 +19,15 @@ export interface CelebrationProps {
   className?: string;
 }
 
-const COLORS = ["hsl(var(--primary))", "hsl(var(--cta))", "#98e4bf", "#2EA9A9"];
+// Solo tokens: los dos hex que había aquí (#98e4bf, #2EA9A9) eran los extremos del
+// degradado verde neón anterior y sobrevivían al cambio de paleta pintando confeti
+// de un color que ya no existe en el producto.
+const COLORS = [
+  "hsl(var(--primary))",
+  "hsl(var(--cta))",
+  "hsl(var(--cta-gradient-from))",
+  "hsl(var(--accent-gold))",
+];
 
 interface Particle {
   angle: number;

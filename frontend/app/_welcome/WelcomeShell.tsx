@@ -3,6 +3,7 @@
 import * as React from "react";
 import { motion } from "framer-motion";
 import BrandMark from "./BrandMark";
+import ThemeChoice from "./ThemeChoice";
 import { useReducedMotion } from "./motion";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +18,11 @@ export interface WelcomeShellProps {
   hideBrand?: boolean;
   /** Tamaño máximo del contenido central. Default "md" (formularios). */
   width?: "sm" | "md" | "lg";
+  /**
+   * Oculta el conmutador de apariencia de la esquina. Úsalo solo cuando el paso
+   * ya ofrece la elección en grande (la bienvenida del onboarding). Default false.
+   */
+  hideThemeChoice?: boolean;
   className?: string;
 }
 
@@ -48,12 +54,16 @@ export default function WelcomeShell({
   footer,
   hideBrand = false,
   width = "md",
+  hideThemeChoice = false,
   className,
 }: WelcomeShellProps) {
   const reduce = useReducedMotion();
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground">
+    // `bg-mesh-living` (no `bg-background` a secas): es el fondo vivo del pack de
+    // diseño — mesh teal en deriva lenta + grano analógico. Aporta la profundidad
+    // que el neumorfismo necesita para leerse.
+    <div className="relative min-h-screen w-full overflow-hidden bg-mesh-living text-foreground">
       {/* Lavado radial base de marca. */}
       <div aria-hidden className="pointer-events-none absolute inset-0 bg-aurora" />
 
@@ -85,6 +95,15 @@ export default function WelcomeShell({
 
       {/* Viñeta sutil para asentar el centro y dar profundidad (por tema). */}
       <div aria-hidden className="pointer-events-none absolute inset-0 bg-vignette-welcome" />
+
+      {/* Elección de apariencia: disponible desde el primer segundo del viaje, en
+          todas las pantallas de la primera vez (alta, entrar, activar, entrevista).
+          Guarda con el mismo mecanismo del menú lateral (lib/theme). */}
+      {!hideThemeChoice && (
+        <div className="absolute right-5 top-5 z-20 sm:right-8 sm:top-8">
+          <ThemeChoice />
+        </div>
+      )}
 
       {/* Contenido. */}
       <div className={cn("relative z-10 flex min-h-screen flex-col items-center px-6 py-10 sm:py-12", className)}>

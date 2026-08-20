@@ -4,23 +4,27 @@
 
 @layer base {
   :root {
-    /* MIA · tema claro — identidad Lexia (manual 2025): gris brillante + teal + verde CTA */
-    --background: 210 25% 98%; /* Bright Grey #FAFBFC */
-    --foreground: 0 0% 2%; /* #060606 */
+    /* MIA · tema claro — MIA-Luxury-Design-Pack (neumorfismo teal, §1 de la guía
+       docs/design/MIA-Luxury-Design-Pack/HOW_TO_REPLICATE_STYLE.md). El matiz de
+       marca pasa de 180 (teal plano) a 188 (teal oxígeno) y el fondo es acero
+       suave #F4F6F9, que es lo que hace legible el relieve neumórfico: sobre
+       blanco puro las dos sombras del relieve no se ven. */
+    --background: 210 25% 97%; /* #F4F6F9 — acero suave */
+    --foreground: 220 30% 10%; /* azul oscuro de contraste */
 
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 2%;
+    --card-foreground: 220 30% 10%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 2%;
+    --popover-foreground: 220 30% 10%;
 
-    --primary: 180 100% 25%; /* teal #008080 — marca Lexia */
-    --primary-foreground: 180 25% 98%;
+    --primary: 188 100% 28%; /* teal principal de MIA */
+    --primary-foreground: 188 25% 98%;
 
-    --secondary: 180 12% 94%;
-    --secondary-foreground: 0 0% 2%;
+    --secondary: 200 20% 94%;
+    --secondary-foreground: 220 30% 10%;
 
-    --muted: 180 12% 94%;
+    --muted: 200 20% 94%;
     /* Accesibilidad, no cosmética: 45% daba 4.57:1 sobre --background, sin
        margen; con cualquier modificador de opacidad caía a ~3.6:1, por debajo
        del 4.5:1 de WCAG AA. A 40% da 5.52:1 sobre --background y 5.77:1 sobre
@@ -34,27 +38,27 @@
        justo en los textos de garantía jurídica ("Mia propone; tú decides").
        Si un texto debe verse más apagado, se usa un token más claro, nunca
        opacidad. */
-    --muted-foreground: 210 2% 40%;
+    --muted-foreground: 210 10% 38%;
 
-    --accent: 180 15% 92%; /* superficie sutil de hover */
-    --accent-foreground: 0 0% 2%;
+    --accent: 200 20% 92%; /* superficie sutil de hover */
+    --accent-foreground: 220 30% 10%;
 
-    --cta: 160 100% 42%; /* verde vibrante de marca — legible en claro */
-    --cta-foreground: 0 0% 4%;
-    /* Extremos del degradado del CTA principal. Antes eran hex crudos
-       (#98e4bf → #00f5a2) escritos dentro de .bg-gradient-cta: el único color
-       del producto fuera del sistema de tokens, y justo en el botón que más
-       importa. Estos dos valores son la conversión exacta de esos hex, así que
-       el CTA se ve idéntico a antes; ahora, además, se puede cambiar desde un
-       solo sitio. NO se redefinen en .dark: el degradado del CTA es el mismo
-       verde de marca en ambos temas, por decisión de diseño. */
-    --cta-gradient-from: 150.8 58.4% 74.5%; /* = #98E4BF */
-    --cta-gradient-to: 159.7 100% 48%; /* = #00F5A2 */
-    /* Verde oscuro SOLO para texto/bordes de CTA en tema claro. El 23% no es
-       arbitrario: la insignia no se pinta sobre blanco sino sobre bg-cta/15, que
-       aclara el fondo. Medido sobre ese fondo compuesto da 5.10:1 en reposo y
-       4.91:1 con hover:bg-cta/20 — AA (≥4.5:1) en ambos estados. */
-    --cta-strong: 160 100% 23%;
+    --cta: 188 100% 32%; /* teal vibrante de acción (pack de lujo) */
+    --cta-foreground: 0 0% 100%;
+    /* Extremos del degradado del CTA principal. Vivieron como hex crudos
+       (#98e4bf → #00f5a2, el verde neón anterior) dentro de .bg-gradient-cta:
+       el único color del producto fuera del sistema de tokens, y justo en el
+       botón que más importa. Hoy son el teal del pack, en dos peldaños del
+       mismo matiz 188 para que la píldora tenga volumen sin cambiar de color.
+       NO se redefinen en .dark: el degradado del CTA es el mismo teal de marca
+       en ambos temas, por decisión de diseño. */
+    --cta-gradient-from: 188 85% 38%;
+    --cta-gradient-to: 188 100% 26%;
+    /* Teal oscuro SOLO para texto/bordes de CTA en tema claro: la insignia no
+       se pinta sobre blanco sino sobre bg-cta/15, que aclara el fondo, así que
+       el color del botón no alcanzaría AA como texto. Sustituye al verde
+       oscuro anterior con el mismo criterio (≥4.5:1 sobre el fondo compuesto). */
+    --cta-strong: 188 100% 22%;
 
     --destructive: 4 55% 47%;
     --destructive-foreground: 0 0% 100%;
@@ -65,9 +69,14 @@
     --warning: 38 60% 45%;
     --warning-foreground: 0 0% 100%;
 
-    --border: 180 10% 89%;
-    --input: 180 10% 89%;
-    --ring: 180 100% 25%;
+    --border: 210 20% 90%;
+    --input: 210 20% 90%;
+    --ring: 188 100% 28%;
+
+    /* ÚNICO dorado del producto: el acento tipográfico de la palabra
+       "Bienvenido" en la pantalla de bienvenida (renders del pack). No se usa
+       en superficies, botones ni iconos — ahí el acento es siempre el teal. */
+    --accent-gold: 36 32% 52%;
 
     /* Radio de las SUPERFICIES (tarjetas, paneles, diálogos) = rounded-lg.
        Los otros dos peldaños (6px controles pequeños, 10px controles) están en
@@ -90,12 +99,13 @@
       0 1px 2px hsl(var(--foreground) / 0.04),
       0 14px 32px -16px hsl(var(--foreground) / 0.2),
       inset 0 1px 0 hsl(var(--primary) / 0.18);
+    /* Neumorfismo — valores exactos de la §1 de la guía del pack. */
     --neu-raised:
-      6px 6px 14px hsl(210 20% 90%),
+      6px 6px 14px hsl(210 20% 88%),
       -6px -6px 14px hsl(0 0% 100%),
-      inset 0 1px 0 hsl(var(--primary) / 0.05);
+      inset 0 1px 0 hsl(188 100% 28% / 0.03);
     --neu-sunken:
-      inset 4px 4px 8px hsl(210 20% 90%),
+      inset 4px 4px 8px hsl(210 20% 88%),
       inset -4px -4px 8px hsl(0 0% 100%);
 
     /* ESPACIADO — respiración. La app medía gap-2 ×183 contra gap-6 ×4: era
@@ -109,31 +119,37 @@
   }
 
   .dark {
-    /* MIA · tema oscuro — el look de la pantalla de arranque de escritorio: negro + teal */
-    --background: 180 8% 4%; /* #060606 con tinte teal */
-    --foreground: 180 17% 93%;
+    /* MIA · tema oscuro — MIA-Luxury-Design-Pack §1: negro espacial (#07090b) con
+       teal brillante. El verde neón #00F5A2 sale del producto: el pack tiene un
+       solo color de acento (teal 188) y el dorado queda reservado al título de
+       la bienvenida. */
+    --background: 200 15% 4%; /* #07090b */
+    --foreground: 200 15% 90%;
 
-    --card: 180 10% 8%;
-    --card-foreground: 180 17% 93%;
+    --card: 200 15% 7%;
+    --card-foreground: 200 15% 90%;
 
-    --popover: 180 10% 8%;
-    --popover-foreground: 180 17% 93%;
+    --popover: 200 15% 7%;
+    --popover-foreground: 200 15% 90%;
 
-    --primary: 180 55% 52%; /* teal aclarado, como el splash */
-    --primary-foreground: 180 30% 5%;
+    --primary: 188 75% 48%; /* teal brillante */
+    --primary-foreground: 200 30% 5%;
 
-    --secondary: 180 8% 13%;
-    --secondary-foreground: 180 17% 93%;
+    --secondary: 200 15% 13%;
+    --secondary-foreground: 200 15% 90%;
 
-    --muted: 180 8% 13%;
-    --muted-foreground: 180 10% 62%;
+    --muted: 200 15% 13%;
+    --muted-foreground: 200 12% 65%;
 
-    --accent: 180 10% 16%;
-    --accent-foreground: 180 17% 93%;
+    --accent: 200 15% 16%;
+    --accent-foreground: 200 15% 90%;
 
-    --cta: 160 100% 48%; /* #00F5A2 — brilla sobre negro */
-    --cta-foreground: 0 0% 4%;
-    --cta-strong: 160 100% 48%; /* en oscuro el neón ya tiene contraste de sobra */
+    --cta: 188 90% 50%; /* teal de acción brillante */
+    --cta-foreground: 200 30% 5%;
+    --cta-strong: 188 90% 62%; /* texto de CTA sobre bg-cta/15: aclarado para AA */
+
+    /* Dorado del título de bienvenida, aclarado para el fondo espacial. */
+    --accent-gold: 36 38% 68%;
 
     --destructive: 4 60% 56%;
     --destructive-foreground: 0 0% 100%;
@@ -144,9 +160,9 @@
     --warning: 38 70% 60%;
     --warning-foreground: 250 12% 10%;
 
-    --border: 180 10% 15%;
-    --input: 180 10% 17%;
-    --ring: 180 55% 52%;
+    --border: 200 15% 12%;
+    --input: 200 15% 16%;
+    --ring: 188 75% 48%;
 
     /* Elevación en oscuro: la sombra se tinta al color de FONDO (negro con
        tinte teal), no a negro puro. Sobre una superficie oscura una sombra
@@ -155,13 +171,14 @@
       0 1px 2px hsl(var(--background) / 0.5),
       0 18px 38px -16px hsl(var(--background) / 0.72),
       inset 0 1px 0 hsl(0 0% 100% / 0.05);
+    /* Neumorfismo oscuro — valores exactos de la §1 de la guía del pack. */
     --neu-raised:
       8px 8px 20px hsl(0 0% 0% / 0.6),
-      -8px -8px 20px hsl(180 10% 12% / 0.35),
-      inset 0 1px 1px hsl(180 55% 52% / 0.15);
+      -8px -8px 20px hsl(200 15% 10% / 0.35),
+      inset 0 1px 1px hsl(188 75% 48% / 0.15);
     --neu-sunken:
       inset 6px 6px 12px hsl(0 0% 0% / 0.7),
-      inset -6px -6px 12px hsl(180 10% 12% / 0.2);
+      inset -6px -6px 12px hsl(200 15% 10% / 0.2);
   }
 }
 
@@ -410,38 +427,55 @@
     box-shadow: var(--neu-sunken);
   }
   
+  /* Fondo vivo — §3 de la guía del pack: mesh de tres focos radiales (teal de
+     marca + lavado de acero) más una capa de grano analógico. Los tres focos
+     son los de la guía; el `background-size` + `mesh-shift` son propios del
+     producto y se conservan: la deriva lenta es lo que lo hace "vivo".
+     El grano va en ::after (no ::before, como en la guía) porque varias
+     pantallas ya apilan contenido sobre este fondo y ::before quedaría por
+     debajo del color de fondo en algunas de ellas; el efecto es el mismo. */
   .bg-mesh-living {
     background-color: hsl(var(--background));
-    background-image: 
-      radial-gradient(at 0% 0%, hsl(var(--primary) / 0.04) 0px, transparent 55%),
-      radial-gradient(at 50% 0%, hsl(var(--cta) / 0.02) 0px, transparent 50%),
-      radial-gradient(at 100% 0%, hsl(var(--primary) / 0.04) 0px, transparent 55%);
+    background-image:
+      radial-gradient(at 0% 0%, hsla(188, 100%, 30%, 0.08) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsla(210, 40%, 80%, 0.12) 0px, transparent 50%),
+      radial-gradient(at 50% 100%, hsla(188, 70%, 40%, 0.06) 0px, transparent 50%);
     background-size: 200% 200%;
     animation: mesh-shift 25s ease-in-out infinite;
     position: relative;
   }
-  
+
   .dark .bg-mesh-living {
     background-color: hsl(var(--background));
-    background-image: 
-      radial-gradient(at 0% 0%, hsl(var(--primary) / 0.12) 0px, transparent 60%),
-      radial-gradient(at 50% 0%, hsl(var(--cta) / 0.07) 0px, transparent 50%),
-      radial-gradient(at 100% 0%, hsl(var(--primary) / 0.1) 0px, transparent 60%);
+    background-image:
+      /* Más tenues que en claro a propósito: el fondo del render oscuro es negro
+         espacial, y sobre 4% de luminosidad los mismos porcentajes del tema claro
+         se leen como un lavado verdoso en toda la pantalla. */
+      radial-gradient(at 0% 0%, hsla(188, 75%, 48%, 0.07) 0px, transparent 55%),
+      radial-gradient(at 100% 0%, hsla(200, 30%, 40%, 0.06) 0px, transparent 55%),
+      radial-gradient(at 50% 100%, hsla(188, 90%, 50%, 0.04) 0px, transparent 50%);
   }
-  
+
   .bg-mesh-living::after {
     content: "";
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    opacity: 0.03;
+    opacity: 0.035; /* 3.5% en claro (guía §3) */
     pointer-events: none;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
   }
-  
+
   .dark .bg-mesh-living::after {
     opacity: 0.045;
+  }
+
+  /* Acento dorado del título de bienvenida — el ÚNICO dorado del producto.
+     Vive aquí (y no como hex repetido en la pantalla) para que exista un solo
+     sitio donde cambiarlo. */
+  .text-accent-gold {
+    color: hsl(var(--accent-gold));
   }
 
   /* Cifras alineadas en columna (importes, plazos, contadores, tablas): sin

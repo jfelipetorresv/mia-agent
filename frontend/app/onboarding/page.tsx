@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Search, SlidersHorizontal, Sparkles, UserRound } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import {
   StaggerItem,
   MiaLine,
   Celebration,
+  ThemeChoice,
 } from "@/app/_welcome";
 
 type Question = {
@@ -473,13 +474,51 @@ export default function OnboardingPage() {
   // ── Bienvenida: qué es esto, cuánto tarda y qué gana el abogado. Una sola vez. ──
   if (!welcomed) {
     return (
-      <WelcomeShell progress={<WelcomeProgress current={2} />}>
+      <WelcomeShell progress={<WelcomeProgress current={2} />} width="lg" hideThemeChoice>
         <StepTransition stepKey="intro" direction={1}>
-          <Stagger className="space-y-6 text-center">
+          <Stagger className="space-y-8 text-center">
+            <StaggerItem className="space-y-2">
+              {/* Titular de portada del pack de diseño: "Bienvenido" en el único
+                  dorado del producto (--accent-gold, clase text-accent-gold) y el
+                  resto en el color de texto. Un solo h1 por pantalla. */}
+              <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">
+                <span className="text-accent-gold">Bienvenido</span>{" "}
+                <span className="text-foreground">a Mia.</span>
+              </h1>
+              <p className="text-xl text-muted-foreground sm:text-2xl">Tu asistente jurídica</p>
+            </StaggerItem>
+
+            {/* Los tres pasos del viaje, tal como los anuncia el render: iconos
+                esculpidos en bajo relieve sobre el fondo vivo. */}
+            <StaggerItem>
+              <div className="flex flex-wrap items-start justify-center gap-x-10 gap-y-6">
+                {[
+                  { icon: UserRound, title: "Regístrate", hint: "Crea tu cuenta" },
+                  { icon: SlidersHorizontal, title: "Personaliza", hint: "Fija tus preferencias" },
+                  { icon: Search, title: "Explora", hint: "Empieza a consultar" },
+                ].map((paso) => {
+                  const Icon = paso.icon;
+                  return (
+                    <div key={paso.title} className="flex items-center gap-3 text-left">
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-card/70 shadow-neu-sunken">
+                        <Icon className="h-5 w-5 text-primary" />
+                      </span>
+                      <span className="flex flex-col">
+                        <span className="text-sm font-semibold uppercase tracking-wider text-foreground">
+                          {paso.title}
+                        </span>
+                        <span className="text-xs text-muted-foreground">{paso.hint}</span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </StaggerItem>
+
             <StaggerItem>
               <MiaLine
                 text="Hola, soy Mia. Voy a ser tu asistente."
-                className="text-center text-2xl font-semibold tracking-tight sm:text-3xl"
+                className="text-center text-xl font-semibold tracking-tight sm:text-2xl"
               />
             </StaggerItem>
             <StaggerItem>
@@ -493,6 +532,14 @@ export default function OnboardingPage() {
               <p className="text-sm text-muted-foreground/80">
                 Toma unos 3 minutos y podrás cambiar todo cuando quieras.
               </p>
+            </StaggerItem>
+            <StaggerItem className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Apariencia del despacho
+              </p>
+              {/* Misma persistencia que el menú lateral (lib/theme): esta pantalla
+                  ya no guarda el tema por su cuenta. */}
+              <ThemeChoice variant="cards" />
             </StaggerItem>
             <StaggerItem>
               {draft ? (
@@ -511,7 +558,7 @@ export default function OnboardingPage() {
                       setIdx(porId >= 0 ? porId : Math.max(0, Math.min(total - 1, draft.idx)));
                       setWelcomed(true);
                     }}
-                    className="gap-2"
+                    className="gap-2 rounded-full px-8"
                   >
                     <Sparkles className="h-4 w-4" />
                     Continuar donde ibas
@@ -519,6 +566,7 @@ export default function OnboardingPage() {
                   <Button
                     size="lg"
                     variant="ghost"
+                    className="rounded-full px-8"
                     onClick={() => {
                       setAnswers({});
                       setDirection(1);
@@ -531,9 +579,17 @@ export default function OnboardingPage() {
                   </Button>
                 </div>
               ) : (
-                <Button variant="cta" size="lg" onClick={() => setWelcomed(true)} className="gap-2">
+                // Píldora teal con física de botón: `variant="cta"` ya trae
+                // shadow-neu-raised y active:shadow-neu-sunken; aquí solo se le da
+                // la forma y el aire del render.
+                <Button
+                  variant="cta"
+                  size="lg"
+                  onClick={() => setWelcomed(true)}
+                  className="gap-2 rounded-full px-10 tracking-wide"
+                >
                   <Sparkles className="h-4 w-4" />
-                  Empecemos
+                  Empezar ahora
                 </Button>
               )}
             </StaggerItem>

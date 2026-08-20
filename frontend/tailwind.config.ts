@@ -36,9 +36,9 @@ const config: Config = {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
         },
-        // CTA de marca: VERDE vibrante (--cta = 160 100% 42% en claro, 48% en
-        // oscuro), NO terracota. El comentario anterior contradecía el valor real
-        // y describía un color que nunca existió en el producto.
+        // CTA de marca: TEAL vibrante del MIA-Luxury-Design-Pack (--cta =
+        // 188 100% 32% en claro, 188 90% 50% en oscuro). Sustituye al verde neón
+        // #00F5A2 anterior: el pack tiene un solo acento cromático.
         // Usar con moderación: es el único llamado a la acción destacado.
         cta: {
           DEFAULT: "hsl(var(--cta))",
