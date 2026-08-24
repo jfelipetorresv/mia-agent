@@ -886,10 +886,16 @@ def call_llm(
             if escalation == QUALITY_ESCALATION_EXCEPTIONAL:
                 retry_kwargs["quality_escalation"] = escalation
             max_retries = 0 if _eval_provider_override.get() else MAX_RETRIES
+            # 063 (harness 2026-08-24): reloj POR LLAMADA. Hasta ahora el único reloj era
+            # md["latency_ms"] del turno completo; este mide cuánto tardó ESTE proveedor en
+            # ESTA llamada y viaja a turn_usage, donde el nodo (ContextVar) ya la atribuye
+            # a su etapa del grafo.
+            _t0 = time.perf_counter()
             resp = _call_with_retries(
                 client, {**base_kwargs, "messages": alias_messages, "model": alias},
                 max_retries, task=task, alias=alias, next_alias=next_alias, **retry_kwargs,
             )
+            _elapsed_ms = (time.perf_counter() - _t0) * 1000.0
             # Metadatos de decisión para la telemetría. No alteran la respuesta pública
             # OpenAI-compatible; sí impiden que el panel confunda un alias de ruta con el
             # modelo/esfuerzo que realmente se le pidió al CLI.
@@ -900,6 +906,7 @@ def call_llm(
                 effort=(getattr(resp, "mia_effort", None)
                         or (_cli_effort(alias, task, escalation) if alias.startswith("cli-") else None)),
                 quality_escalation=escalation,
+                latency_ms=_elapsed_ms,
             )   # CP-V1: tokens reales → turn_usage
             return resp
         except (policy_budget.BudgetExceeded, policy_budget.BudgetControlUnavailable):
@@ -932,7 +939,8 @@ def call_llm(
 
 def _record_usage(alias: str, task: str | None, resp: Any, *,
                   effective_model: str | None = None, effort: str | None = None,
-                  quality_escalation: str | None = None) -> None:
+                  quality_escalation: str | None = None,
+                  latency_ms: float | None = None) -> None:
     """CP-V1 (Ola 4): registra el uso real de la llamada (tokens→costo) en el buffer
     de metrics/usage. Cubre las 3 políticas: la API/OpenRouter traen `resp.usage`
     OpenAI-compatible y el CLI de la suscripción también lo construye
@@ -944,18 +952,27 @@ def _record_usage(alias: str, task: str | None, resp: Any, *,
         # finish_reason distingue una respuesta completa ('stop') de una truncada por tope
         # ('length') o de tool_calls; defensivo porque el CLI de suscripción puede no traerlo.
         stop_reason = None
+        # 063 (harness 2026-08-24): cuántas llamadas a herramientas pidió la RESPUESTA.
+        # Este es el único cuello de botella por el que pasan TODAS las rondas de la
+        # lectura agéntica (agents/retrieval) y del turno MCP (mcp/turn): contarlas aquí
+        # las cuenta a todas sin tocar sus bucles. 0 = respuesta sin herramientas.
+        tool_calls = 0
         try:
             choices = getattr(resp, "choices", None) or []
             if choices:
                 stop_reason = getattr(choices[0], "finish_reason", None)
+                message = getattr(choices[0], "message", None)
+                tool_calls = len(getattr(message, "tool_calls", None) or [])
         except Exception:  # noqa: BLE001 — nunca romper por leer un campo opcional
             stop_reason = None
+            tool_calls = 0
         usage_metrics.record(
             alias, task, getattr(resp, "usage", None), stop_reason=stop_reason,
             effective_model=effective_model or getattr(resp, "mia_model_hint", None)
             or getattr(resp, "model", alias),
             effort=effort or getattr(resp, "mia_effort", None),
             quality_escalation=quality_escalation,
+            latency_ms=latency_ms, tool_calls=tool_calls,
         )
     except Exception:  # noqa: BLE001 — una métrica nunca tumba una respuesta buena
         logger.exception("no se pudo registrar el uso (alias=%s task=%s)", alias, task)

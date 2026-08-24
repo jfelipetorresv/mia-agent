@@ -1,11 +1,13 @@
 {
-  "version": 1,
+  "version": 2,
   "producto": "mia",
-  "nota": "Catálogo barrera ↔ productor ↔ invocador. Una invariante DURA sin invocador de producción hace fallar el gate execution/test_catalogo_barreras.py. Adaptado de la idea de catalogo-barreras de Lexia; no copia el CLI jurídico.",
+  "nota": "Catálogo barrera ↔ productor ↔ invocador ↔ modo. Una invariante DURA sin invocador de producción hace fallar el gate execution/test_catalogo_barreras.py. `modo` declara la dureza de conducta: 'muro' = bloquea (retira texto, rechaza aprobación o impide el final); 'aviso' = registra y reporta pero NO puede frenar el trabajo del abogado. Regla de implantación (decisión de Pipe 2026-07-27): toda barrera nueva nace como AVISO y solo sube a muro cuando demuestre no dar falsos positivos. El gate execution/test_modo_barreras.py coteja cada `modo` declarado contra la conducta real del código: un muro que no bloquea o un aviso que puede bloquear lo ponen en rojo. Adaptado de la idea de catalogo-barreras de Lexia; no copia el CLI jurídico.",
   "invariantes": [
     {
       "id": "gate-lanzador-health",
       "dureza": "dura",
+      "modo": "muro",
+      "modo_motivo": "Sin /health→200 no hay API: el producto entero queda bloqueado por construcción (fail-closed de arranque).",
       "productor": "backend/mia/api/run.py::main",
       "invocador": "python -m mia.api.run",
       "verificacion": "GET /health → 200",
@@ -14,6 +16,8 @@
     {
       "id": "verification-unavailable-no-final",
       "dureza": "dura",
+      "modo": "muro",
+      "modo_motivo": "verification_passes es fail-closed: sin informe, con marcadas/anotadas/omitidas/quemadas o sin veredicto positivo del gate LLM, no se habilita documento final (legal_ledger.py).",
       "productor": "backend/mia/memory/legal_ledger.py::verification_passes",
       "invocador": "backend/mia/agents/graph.py::finalize_node",
       "simbolos": ["mia.memory.legal_ledger:verification_passes", "mia.agents.graph:MatterGraphBuilder.finalize_node"]
@@ -21,6 +25,8 @@
     {
       "id": "hitl-hash-recibo",
       "dureza": "dura",
+      "modo": "muro",
+      "modo_motivo": "Una aprobación con huella ausente o vieja se convierte en rechazo (hitl_checkpoint_node): el clic solo vale sobre el texto exacto que se mostró.",
       "productor": "backend/mia/memory/legal_ledger.py::content_hash",
       "invocador": "backend/mia/api/routes/hitl.py::_require_current_draft_hash",
       "simbolos": ["mia.memory.legal_ledger:content_hash", "mia.api.routes.hitl:_require_current_draft_hash"]
@@ -28,6 +34,8 @@
     {
       "id": "draft-fail-closed-packs",
       "dureza": "dura",
+      "modo": "muro",
+      "modo_motivo": "require_upstream_for_draft levanta StageIncomplete si facts/research/analysis no cerraron con pack verificado: draft_node aborta.",
       "productor": "backend/mia/agents/stage_gate.py::require_upstream_for_draft",
       "invocador": "backend/mia/agents/graph.py::draft_node",
       "simbolos": ["mia.agents.stage_gate:require_upstream_for_draft", "mia.agents.graph:MatterGraphBuilder.draft_node"]
@@ -35,6 +43,8 @@
     {
       "id": "suggestions-cron",
       "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "Corre en el scheduler, fuera de la ruta del turno: un fallo del cron jamás frena un turno ni una aprobación.",
       "productor": "backend/mia/cron/suggestions.py::generate_suggestions",
       "invocador": "backend/mia/cron/scheduler.py::build_scheduler",
       "simbolos": ["mia.cron.suggestions:generate_suggestions", "mia.cron.scheduler:build_scheduler"]
@@ -42,6 +52,8 @@
     {
       "id": "telegram-lifespan",
       "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "Opt-in y fail-soft: sin token devuelve 'skipped' sin lanzar; configurado a medias avisa y no arranca. Nunca tumba el API.",
       "productor": "backend/mia/channels/telegram_bridge.py::start_bridge_if_configured",
       "invocador": "backend/mia/api/main.py::lifespan",
       "simbolos": ["mia.channels.telegram_bridge:start_bridge_if_configured", "mia.api.main:lifespan"]
@@ -49,6 +61,8 @@
     {
       "id": "export-events-reader",
       "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "Lectura pura del ledger para la pantalla: no decide, no rechaza, no bloquea.",
       "productor": "backend/mia/memory/legal_ledger.py::list_exports",
       "invocador": "backend/mia/api/routes/ux.py::list_matter_exports",
       "simbolos": ["mia.memory.legal_ledger:list_exports", "mia.api.routes.ux:list_matter_exports"]
@@ -56,9 +70,74 @@
     {
       "id": "turn-budget-second-pass",
       "dureza": "dura",
+      "modo": "muro",
+      "modo_motivo": "authorize_expensive es fail-closed: la segunda pasada cara sin autorización explícita levanta TurnBudgetExceeded.",
       "productor": "backend/mia/policy/turn_budget.py::authorize_expensive",
       "invocador": "backend/mia/agents/graph.py::verificador_citas_node",
       "simbolos": ["mia.policy.turn_budget:authorize_expensive", "mia.agents.graph:MatterGraphBuilder.verificador_citas_node"]
+    },
+    {
+      "id": "citas-quemadas",
+      "dureza": "dura",
+      "modo": "muro",
+      "modo_motivo": "Decisión de Pipe #46.2: una cita que el despacho demostró falsa se RETIRA del texto emitido (BURNED_MARK). No admite falso positivo: la cita está en la lista que el propio abogado construyó, o no está.",
+      "productor": "backend/mia/agents/verification.py::annotate_draft (burned=)",
+      "invocador": "backend/mia/agents/graph.py::_verify_draft",
+      "simbolos": ["mia.agents.verification:annotate_draft", "mia.agents.graph:MatterGraphBuilder._verify_draft"]
+    },
+    {
+      "id": "afirmaciones-negativas",
+      "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "Decisión #46.1: la afirmación negativa se confronta contra el documento COMPLETO y el resultado viaja como clave del informe (afirmaciones_negativas). Nunca edita el borrador ni bloquea el turno.",
+      "productor": "backend/mia/agents/verification.py::scan_negative_claims",
+      "invocador": "backend/mia/agents/graph.py::_check_negative_claims",
+      "simbolos": ["mia.agents.verification:scan_negative_claims", "mia.agents.graph:_check_negative_claims"]
+    },
+    {
+      "id": "contaminacion-expediente",
+      "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "Decisión #46.4: nombrar partes de OTRO asunto del despacho puede ser legítimo — se reporta (clave contaminacion_expediente), jamás se bloquea.",
+      "productor": "backend/mia/agents/graph.py::_check_foreign_parties",
+      "invocador": "backend/mia/agents/graph.py::_verify_draft",
+      "simbolos": ["mia.agents.graph:_check_foreign_parties", "mia.agents.graph:MatterGraphBuilder._verify_draft"]
+    },
+    {
+      "id": "fuente-identificacion",
+      "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "§23: nace APAGADA (MIA_FUENTE_IDENTIFICACION_EXIGIR=0 por defecto). En aviso informa qué fuentes quedarían fuera; solo con la bandera encendida por el despacho filtra de verdad. Si el default cambia a exigir, este modo debe subir a muro en el mismo commit.",
+      "productor": "backend/mia/agents/barreras_harness.py::revisar_fuentes",
+      "invocador": "backend/mia/agents/graph.py (fuentes_revisadas en el informe)",
+      "simbolos": ["mia.agents.barreras_harness:revisar_fuentes", "mia.config:MIA_FUENTE_IDENTIFICACION_EXIGIR"]
+    },
+    {
+      "id": "raices-datos",
+      "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "Barrera NUEVA (2026-08-24, portada del harness check-raices-datos.py): toda ruta de datos CONFIGURADA debe existir y no estar vacía. Nace como aviso: vive en execution/, fuera de la ruta del turno — no puede frenar al abogado. Una ruta opcional NO configurada es informativa, no fallo.",
+      "productor": "execution/test_raices_datos.py::auditar",
+      "invocador": "execution/test_raices_datos.py (pasada de gates)",
+      "simbolos": ["mia.config:MIA_HOME"]
+    },
+    {
+      "id": "medicion-por-nodo",
+      "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "Barrera NUEVA (2026-08-24): denuncia la AUSENCIA de medición — un turno que corrió nodos debe dejar ≥1 fila por nodo en turn_usage con node no nulo (si set_node se rompe en un refactor, el desglose queda NULL y todo sigue verde). Vive en execution/, fuera de la ruta del turno.",
+      "productor": "backend/mia/metrics/usage.py::set_node",
+      "invocador": "execution/test_medicion_por_nodo.py (pasada de gates)",
+      "simbolos": ["mia.metrics.usage:set_node", "mia.eval.harness:usage_by_node"]
+    },
+    {
+      "id": "disposicion-hallazgos",
+      "dureza": "dura",
+      "modo": "aviso",
+      "modo_motivo": "Barrera NUEVA (2026-08-24, portada del harness check-disposicion-hallazgos.py): al aprobar, el recibo del ledger registra qué hallazgos del informe de verificación quedaron SIN disposición (corregido+evidencia o descartado+quién). NUNCA bloquea el botón de aprobar ni añade fricción a la pantalla.",
+      "productor": "backend/mia/memory/hallazgos.py::pendientes_de_disposicion",
+      "invocador": "backend/mia/agents/graph.py::hitl_checkpoint_node",
+      "simbolos": ["mia.memory.hallazgos:pendientes_de_disposicion", "mia.agents.graph:MatterGraphBuilder.hitl_checkpoint_node"]
     }
   ]
 }

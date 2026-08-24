@@ -688,13 +688,18 @@ async def usage_by_node(tenant_id: str) -> list[dict]:
         rows = await (await conn.execute(
             "SELECT coalesce(node, '(sin nodo)') AS node, task, model, count(*) AS llamadas, "
             "sum(prompt_tokens) AS prompt_tokens, sum(completion_tokens) AS completion_tokens, "
-            "sum(total_tokens) AS total_tokens "
+            "sum(total_tokens) AS total_tokens, "
+            # 063 (harness 2026-08-24): reloj y tool-calls por nodo. coalesce por las
+            # filas anteriores a la columna (NULL): no rompen el agregado.
+            "sum(coalesce(latency_ms, 0)) AS latency_ms, "
+            "sum(coalesce(tool_calls, 0)) AS tool_calls "
             "FROM turn_usage GROUP BY 1, 2, 3 ORDER BY sum(total_tokens) DESC"
         )).fetchall()
     return [
         {"node": r[0], "task": r[1], "model": r[2], "llamadas": int(r[3]),
          "prompt_tokens": int(r[4] or 0), "completion_tokens": int(r[5] or 0),
-         "total_tokens": int(r[6] or 0)}
+         "total_tokens": int(r[6] or 0),
+         "latency_ms": round(float(r[7] or 0.0), 3), "tool_calls": int(r[8] or 0)}
         for r in rows
     ]
 

@@ -200,7 +200,8 @@ def _cache_tokens(usage: Any) -> tuple[int, int]:
 
 def record(alias: str, task: str | None, usage: Any,
            *, stop_reason: str | None = None, effective_model: str | None = None,
-           effort: str | None = None, quality_escalation: str | None = None) -> None:
+           effort: str | None = None, quality_escalation: str | None = None,
+           latency_ms: float | None = None, tool_calls: int | None = None) -> None:
     """Bufferiza el uso de UNA llamada al LLM. Sin scope o sin usage → no-op."""
     try:
         scope = _scope.get()
@@ -242,6 +243,10 @@ def record(alias: str, task: str | None, usage: Any,
             "stop_reason": (str(stop_reason)[:32] if stop_reason else None),
             # F0.1: atribución por nodo del grafo (None = llamada fuera del grafo).
             "node": ((_node.get() or "")[:64] or None),
+            # 063 (harness 2026-08-24): reloj por LLAMADA y tool-calls pedidos por la
+            # respuesta. None = quien registró no midió (compatibilidad hacia atrás).
+            "latency_ms": (round(float(latency_ms), 3) if latency_ms is not None else None),
+            "tool_calls": (int(tool_calls) if tool_calls is not None else None),
             "cost_status": cost_status_for(str(alias)),
         }
         with _lock:
@@ -272,12 +277,12 @@ _INSERT_SQL = (
     "INSERT INTO turn_usage (tenant_id, matter_id, task, model, effective_model, effort, "
     "quality_escalation, prompt_tokens, "
     "completion_tokens, total_tokens, cost_usd, source, cache_read_tokens, "
-    "cache_creation_tokens, stop_reason, node, cost_status) VALUES "
+    "cache_creation_tokens, stop_reason, node, latency_ms, tool_calls, cost_status) VALUES "
     "(%(tenant_id)s::uuid, %(matter_id)s::uuid, %(task)s, %(model)s, %(effective_model)s, "
     "%(effort)s, %(quality_escalation)s, %(prompt_tokens)s, "
     "%(completion_tokens)s, %(total_tokens)s, %(cost_usd)s, %(source)s, "
     "%(cache_read_tokens)s, %(cache_creation_tokens)s, %(stop_reason)s, %(node)s, "
-    "%(cost_status)s)"
+    "%(latency_ms)s, %(tool_calls)s, %(cost_status)s)"
 )
 
 

@@ -64,6 +64,7 @@ from ..gateway.agent_hub import CONNECTORS, AgentHub
 from ..db import pool as db_pool
 from ..memory import burned_citations
 from ..memory import citation_seals
+from ..memory import hallazgos
 from ..memory import legal_ledger
 from ..memory.playbook_manager import Playbook, PlaybookManager
 from ..memory.tokens import estimate_tokens
@@ -1250,6 +1251,12 @@ class MatterGraphBuilder:
         atribuya la llamada a su etapa del grafo. El ContextVar viaja al thread de
         asyncio.to_thread (copia de contexto), igual que el scope del middleware."""
         node_token = usage_metrics.set_node(node)
+        # 063 (harness 2026-08-24): reloj y conteo POR NODO en la MISMA mecánica que ya
+        # fija el nodo (este try/finally). Se acumula en md["node_metrics"] para que el
+        # turno lleve consigo qué nodos corrieron y cuánto tardaron — es además la verdad
+        # contra la que el gate de medición coteja las filas de turn_usage (si set_node
+        # se rompe en un refactor, el desglose queda NULL y este espejo lo delata).
+        _node_t0 = time.perf_counter()
         try:
             resp = await asyncio.to_thread(llm.call_llm, messages, task=task, model=model)
         except Exception as exc:  # noqa: BLE001 — solo rescatamos CONTEXT_TOO_LONG; el resto re-lanza
@@ -1287,6 +1294,18 @@ class MatterGraphBuilder:
             resp = await asyncio.to_thread(llm.call_llm, reduced, task=task, model=model)
         finally:
             usage_metrics.reset_node(node_token)
+            # Métrica por nodo: jamás rompe el turno (mismo criterio que metrics.usage).
+            try:
+                if md is not None and node:
+                    nm = md.setdefault("node_metrics", {})
+                    e = nm.setdefault(node, {"llamadas": 0, "latency_ms": 0.0})
+                    e["llamadas"] = int(e.get("llamadas") or 0) + 1
+                    e["latency_ms"] = round(
+                        float(e.get("latency_ms") or 0.0)
+                        + (time.perf_counter() - _node_t0) * 1000.0, 3)
+            except Exception:  # noqa: BLE001 — una métrica jamás rompe un turno
+                logger.debug("node_metrics: no se pudo acumular (node=%s)", node,
+                             exc_info=True)
         content = resp.choices[0].message.content or ""
         # Filtro del "razonamiento en voz alta" (agents/reasoning_filter): los modelos de
         # razonamiento LOCALES (Ollama / mia-local) anteponen su cadena de pensamiento en
@@ -2595,6 +2614,17 @@ class MatterGraphBuilder:
                             "rejected_by_gate": "legal_ledger"}
         md["draft_hash"] = draft_hash
         md["hitl_decision"] = decision
+        # DISPOSICIÓN DE HALLAZGOS (portado del harness check-disposicion-hallazgos.py ·
+        # 2026-08-24 · AVISO ESTRICTO): en el harness un gate dejó una nota, nadie la cerró
+        # y el escrito se radicó así. Aquí, al aprobar (o aprobar editando), se calcula qué
+        # hallazgos del informe de verificación quedaron SIN disposición («corregido» +
+        # evidencia o «descartado» + quién) y la lista viaja al recibo del ledger en
+        # finalize_node. NUNCA bloquea el botón de aprobar ni cambia `dec`: la aprobación
+        # del abogado es válida — lo que no puede ser es SIN CONSTANCIA de qué quedó abierto.
+        # Fail-soft total: pendientes_de_disposicion jamás lanza.
+        if dec in ("approved", "editing"):
+            md["hallazgos_sin_disposicion"] = hallazgos.pendientes_de_disposicion(
+                md.get("verification"), (decision or {}).get("disposiciones"))
         if dec == "comments":
             # El re-draft por comentarios es una pasada cara autorizada por el abogado:
             # la pidió él, punto por punto. Se guarda lo ANCLADO (no lo que llegó crudo)
@@ -2734,11 +2764,22 @@ class MatterGraphBuilder:
                     source_hashes=citation_seals.active_source_hashes(
                         md.get("research_sources") or [], state.get("documents") or []),
                 )
+                # DISPOSICIÓN DE HALLAZGOS (AVISO · 2026-08-24): el recibo de la aprobación
+                # humana deja constancia de qué hallazgos del informe quedaron sin disponer.
+                # En una edición el informe se recalculó sobre el texto final, así que la
+                # lista se recalcula aquí sobre ESE informe (el que acompaña al final).
+                # Solo registra: no cambia `passed` ni el flujo — es la versión aviso del
+                # check-disposicion-hallazgos.py del harness.
+                sin_disposicion = hallazgos.pendientes_de_disposicion(
+                    md.get("verification"), decision.get("disposiciones"))
+                md["hallazgos_sin_disposicion"] = sin_disposicion
                 await legal_ledger.record_gate(
                     state["tenant_id"], state["matter_id"], final_hash,
                     gate="human_approval", passed=decision.get("attested") is True,
                     evidence={"decision": status, "reviewed_draft_hash": md.get("draft_hash") or "",
-                              "attested": decision.get("attested") is True},
+                              "attested": decision.get("attested") is True,
+                              "hallazgos_sin_disposicion": sin_disposicion[:50],
+                              "hallazgos_sin_disposicion_total": len(sin_disposicion)},
                     run_id=str(md.get("ledger_run_id") or trace_id), trace_id=trace_id,
                     checker_version="human-attestation-v1",
                     jurisdictions=list(state.get("jurisdictions") or []),
