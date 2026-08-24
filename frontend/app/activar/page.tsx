@@ -1,14 +1,26 @@
 "use client";
 
-// Activar MIA — paso 2 del viaje de bienvenida (F3).
-// El abogado confirma el motor de Mia y pega la clave mínima de búsqueda, con
-// validación en vivo. Todo en lenguaje llano (§G): NUNCA se muestra "API key",
-// "Voyage", "Anthropic", "token", "endpoint", "modelo" ni "LLM".
+// Activar MIA — paso 2 del viaje de bienvenida (F3), rediseñado en el bloque D4
+// («un solo motor, claves entendibles», bitácora UX 2026-08-19, puntos 2-4):
+//
+//   · UN paso de motor: Mia detecta qué hay instalado en el equipo (Claude Code /
+//     Codex / Ollama), PRESELECCIONA el detectado y el abogado confirma o cambia.
+//     OpenRouter dejó de ser una tarjeta hermana: es un respaldo con sección propia.
+//   · UNA pantalla de claves: solo las que aplican al motor elegido, cada una con
+//     el enunciado de qué habilita y qué pasa si se omite. Lo imprescindible se
+//     dice como requisito, no como consejo.
+//   · OpenRouter explicado de verdad: qué es, que solo entra cuando el motor
+//     principal falla, que el gasto lo paga el abogado y que implica enviar el
+//     trabajo a un servicio externo. `allow_openrouter` solo viaja cuando el
+//     abogado marca el consentimiento de forma expresa — nunca como efecto
+//     colateral de pegar una clave.
+//
+// Todo en lenguaje llano (§G): NUNCA se muestra "API key", "Voyage", "Anthropic",
+// "token", "endpoint", "modelo" ni "LLM". OpenRouter sí se nombra: es la cuenta
+// que el abogado mismo crea y carga.
 //
 // Consumo de infraestructura visual: WelcomeShell + WelcomeProgress (current=1),
-// StepTransition entre sub-pasos, Stagger/WelcomeField y MiaLine para la voz de
-// Mia. El motion "grande" lo dan esos wrappers; los micro-remates (✓ que aparece)
-// usan clases de tailwindcss-animate — no se importa framer-motion directo.
+// StepTransition entre sub-pasos, Stagger/WelcomeField, MiaLine y NotaMia.
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
@@ -19,6 +31,7 @@ import {
   Cloud,
   Cpu,
   Loader2,
+  ShieldAlert,
   Sparkles,
   Wallet,
   X,
@@ -34,6 +47,7 @@ import {
   MiaLine,
   JOURNEY_STEPS,
 } from "@/app/_welcome";
+import { NotaMia } from "@/app/_components/NotaMia";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { shellInvoke } from "@/lib/shell";
 import { Button } from "@/components/ui/button";
@@ -43,12 +57,24 @@ import { cn } from "@/lib/utils";
 // ── Contratos backend (welcome) ────────────────────────────────────────────
 type Politica = "quality_adaptive" | "suscripcion" | "codex" | "nube" | "soberano" | "openrouter";
 
+// Los tres hechos separados que sirve el backend para Codex (commit d0aa95b):
+// instalada (hecho del equipo) · sesion (hecho de la cuenta) · habilitada por la
+// política de este modo (decisión de Mia). Nunca se mezclan en una sola frase.
+interface CodexEstado {
+  instalada: boolean;
+  sesion: boolean;
+  habilitada_por_politica: boolean;
+  disponible: boolean;
+  motivo: string;
+}
+
 interface WelcomeStatus {
   instalado: boolean;
   hay_usuario: boolean;
   faltan_llaves: { busqueda: boolean; respaldo: boolean; openrouter: boolean };
   onboarding_completo: boolean;
   motor_detectado: { claude: boolean; codex: boolean; ollama: boolean };
+  motor_estado?: { codex?: CodexEstado };
   politica: Politica;
 }
 
@@ -74,9 +100,46 @@ const GENERIC_TEST_UNAVAILABLE = "No pude comprobar la clave en este momento. Pu
 
 // Extrae el mensaje en llano del backend (§G): solo se muestra un ApiError con
 // `detail` redactado para el abogado; nunca un error de red en crudo.
-function plainMessage(err: unknown, fallback: string): string {
+function plainMessage(err: unknown, porDefecto: string): string {
   const msg = err instanceof ApiError && !err.message.startsWith("Error ") ? err.message : "";
-  return msg || fallback;
+  return msg || porDefecto;
+}
+
+// ── Preselección del motor (D4): lo detectado manda ─────────────────────────
+// Regla: si la política ya guardada corresponde a un motor presente en el equipo
+// (o no depende del equipo, como "nube"), se respeta; si no, se preselecciona el
+// motor DETECTADO en orden de preferencia (Claude Code → Codex → Ollama → nube).
+// Detectar no habilita (el backend lo repite): esto solo evita que el abogado
+// tenga que adivinar lo que Mia ya sabe.
+function preseleccionMotor(s: WelcomeStatus): Politica {
+  const d = s.motor_detectado;
+  const p = s.politica ?? "quality_adaptive";
+  if ((p === "quality_adaptive" || p === "suscripcion") && d.claude) return p;
+  if (p === "codex" && d.codex) return p;
+  if (p === "soberano" && d.ollama) return p;
+  if (p === "nube" || p === "openrouter") return p;
+  if (d.claude) return "quality_adaptive";
+  if (d.codex) return "codex";
+  if (d.ollama) return "soberano";
+  return "nube";
+}
+
+// Etiqueta honesta de Codex a partir de los tres hechos separados. Regla dura:
+// jamás decir "no está instalada" cuando sí lo está — el primer obstáculo real
+// es el que se nombra (instalar → habilitar → iniciar sesión).
+function etiquetaCodex(s: WelcomeStatus): string | undefined {
+  const e = s.motor_estado?.codex;
+  if (!e) {
+    return s.motor_detectado.codex ? "Ya detecté Codex en este equipo." : undefined;
+  }
+  if (!e.instalada) return undefined;
+  if (!e.habilitada_por_politica) {
+    return "Codex está instalado en este equipo, pero esta instalación no lo habilita.";
+  }
+  if (!e.sesion) {
+    return "Ya detecté Codex en este equipo. Su sesión no está iniciada; te lo indico al primer uso.";
+  }
+  return "Ya detecté Codex en este equipo, con la sesión iniciada.";
 }
 
 // ── Hook: validación en vivo de una clave (con debounce y guardia de carrera) ─
@@ -299,7 +362,7 @@ function EngineCard({
             )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-          {detected && (
+          {detected && detectedLabel && (
             <p className="mt-1.5 inline-flex items-center gap-1 text-xs text-primary">
               <Check className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
               {detectedLabel}
@@ -331,7 +394,8 @@ export default function ActivarPage() {
   const [phase, setPhase] = React.useState<Phase>("cargando");
   const [status, setStatus] = React.useState<WelcomeStatus | null>(null);
 
-  // Sub-paso interno: 0 = motor, 1 = clave de búsqueda, 2 = clave de respaldo.
+  // Sub-paso interno: 0 = motor · 1 = claves del motor elegido · 2 = respaldo
+  // OpenRouter (solo cuando aplica).
   const [subStep, setSubStep] = React.useState(0);
   const [direction, setDirection] = React.useState(1);
 
@@ -340,11 +404,16 @@ export default function ActivarPage() {
   const respaldo = useKeyValidation("respaldo");
   const openrouter = useKeyValidation("openrouter");
 
+  // Consentimiento EXPRESO del respaldo OpenRouter (opt-in de confidencialidad):
+  // sin esta casilla marcada, la clave no se guarda y `allow_openrouter` no viaja.
+  const [orConsent, setOrConsent] = React.useState(false);
+
   const [saving, setSaving] = React.useState(false);
   const [saveError, setSaveError] = React.useState("");
   const [result, setResult] = React.useState<{ mensaje: string; aviso: string | null } | null>(null);
 
-  // Al montar: consulta el estado y decide si auto-omitir (modo dev / nada que falta).
+  // Al montar: consulta el estado, PRESELECCIONA el motor detectado (D4) y decide
+  // si auto-omitir (modo dev / nada que falta).
   React.useEffect(() => {
     let cancel = false;
     (async () => {
@@ -365,7 +434,7 @@ export default function ActivarPage() {
           return;
         }
         setStatus(s);
-        setPolitica(s.politica ?? "quality_adaptive");
+        setPolitica(preseleccionMotor(s));
         setPhase("activar");
       } catch {
         if (cancel) return;
@@ -387,21 +456,36 @@ export default function ActivarPage() {
     setSubStep((s) => s - 1);
   }
 
+  // Encuadres derivados del motor elegido.
+  // · "nube": la clave de respaldo ES el motor (obligatoria).
+  // · "openrouter" (solo instalaciones que ya venían con esa elección): su clave
+  //   es el motor (obligatoria) y no hay sección de respaldo aparte.
+  // · "soberano": nada sale del equipo — no se ofrece ningún respaldo externo.
+  const respaldoEsMotor = politica === "nube";
+  const openrouterEsMotor = politica === "openrouter";
+  // El respaldo con la cuenta de OpenRouter solo aplica cuando hay un motor
+  // principal distinto y el abogado no eligió máxima privacidad.
+  const openrouterRespaldoAplica = !openrouterEsMotor && politica !== "soberano";
+  // La clave de respaldo del motor (plan B) solo aplica con motores por suscripción
+  // o membresía; en "nube" ese mismo campo es el motor, y en "soberano" no existe.
+  const respaldoAplica = politica !== "openrouter" && politica !== "soberano";
+  // ¿La pantalla de claves es la terminal (no hay sección de respaldo después)?
+  const clavesEsTerminal = !openrouterRespaldoAplica;
+
   // Guarda lo que haya (política + claves validadas) y termina el paso.
-  // `includeRespaldo=false` / `includeOpenrouter=false` cuando el abogado pulsa
-  // "Omitir" — así no se envía esa clave aunque haya alcanzado a validarla antes.
-  async function finish(opts: { includeRespaldo?: boolean; includeOpenrouter?: boolean } = {}) {
-    const { includeRespaldo = true, includeOpenrouter = true } = opts;
+  async function finish() {
     if (!status) return;
     setSaving(true);
     setSaveError("");
     try {
-      // Si el abogado conectó una clave de OpenRouter válida y NO la eligió como
-      // motor principal, la está conectando como respaldo/"más uso": ese es el
-      // opt-in de confidencialidad para enrutar el overflow a un tercero (regla 2).
-      // Con "openrouter" como motor no hace falta (ya funciona sin el flag), pero
-      // mandarlo true es inocuo — se decide igual para no bifurcar la lógica.
-      const conectoOpenrouter = includeOpenrouter && openrouter.state === "ok" && openrouter.value.trim().length > 0;
+      // Opt-in de confidencialidad (regla 2, bloque D4): `allow_openrouter` SOLO
+      // viaja cuando el abogado marcó el consentimiento expreso del respaldo Y su
+      // clave quedó validada. Cuando OpenRouter es el propio motor elegido, la
+      // elección ya es expresa y el flag es inocuo (funciona sin él); se manda
+      // para no bifurcar la lógica del backend.
+      const openrouterAutorizado = openrouterEsMotor || (openrouterRespaldoAplica && orConsent);
+      const conectoOpenrouter =
+        openrouterAutorizado && openrouter.state === "ok" && openrouter.value.trim().length > 0;
 
       // Fija la política si el abogado la cambió, o si hace falta mandar el opt-in
       // de OpenRouter (el PUT es el único lugar que persiste ambas cosas juntas).
@@ -423,13 +507,13 @@ export default function ActivarPage() {
         }
       }
 
-      // Solo se envían claves que quedaron validadas (✓). Las omitidas no se tocan.
+      // Solo se envían claves que quedaron validadas (✓) y que aplican al motor
+      // elegido. La clave de OpenRouter exige además el consentimiento expreso.
       const payload: { busqueda?: string; respaldo?: string; openrouter?: string } = {};
       if (busqueda.state === "ok" && busqueda.value.trim()) payload.busqueda = busqueda.value.trim();
-      if (includeRespaldo && respaldo.state === "ok" && respaldo.value.trim())
+      if ((respaldoAplica || respaldoEsMotor) && respaldo.state === "ok" && respaldo.value.trim())
         payload.respaldo = respaldo.value.trim();
-      if (includeOpenrouter && openrouter.state === "ok" && openrouter.value.trim())
-        payload.openrouter = openrouter.value.trim();
+      if (conectoOpenrouter) payload.openrouter = openrouter.value.trim();
 
       if (payload.busqueda || payload.respaldo || payload.openrouter) {
         const res = await apiSend<KeysResult>("POST", "/api/welcome/keys", payload);
@@ -544,24 +628,32 @@ export default function ActivarPage() {
 
   if (!status) return null; // salvaguarda de tipos
 
-  // Encuadre de la clave de respaldo (Anthropic) según el motor elegido: en "nube" ES el
-  // motor (obligatoria); en el resto es un plan B opcional.
-  const respaldoEsMotor = politica === "nube";
-  // La clave de OpenRouter es el MOTOR cuando el abogado eligió "Tu cuenta de OpenRouter"
-  // (obligatoria); en "nube"/"suscripción" aparece como respaldo/"más uso" (opcional). En
-  // "soberano" no se ofrece (nada sale del equipo).
-  const openrouterEsMotor = politica === "openrouter";
-  // El paso de OpenRouter existe salvo en "soberano"; el paso de respaldo (Anthropic)
-  // existe salvo cuando OpenRouter ya es el motor. El ÚLTIMO paso presente es el que
-  // guarda y termina; el paso de respaldo solo es terminal en "soberano".
-  const respaldoIsLast = politica === "soberano";
+  const algoDetectado =
+    status.motor_detectado.claude || status.motor_detectado.codex || status.motor_detectado.ollama;
 
-  // ── Sub-pasos del asistente de activación ────────────────────────────────
+  // ── Sub-paso 0 · UN solo motor principal ──────────────────────────────────
+  // Las tarjetas son los MOTORES de verdad. La cuenta de OpenRouter no compite
+  // aquí: es un respaldo y tiene su sección propia. La única excepción es una
+  // instalación que YA venía con esa elección guardada — quitarle la tarjeta le
+  // cambiaría el motor en silencio, así que en ese caso sí se muestra.
+  const engineOrder: Politica[] = [
+    "quality_adaptive",
+    "suscripcion",
+    "codex",
+    "nube",
+    ...(status.politica === "openrouter" ? (["openrouter"] as Politica[]) : []),
+    "soberano",
+  ];
+
   const stepMotor = (
     <Stagger className="flex flex-col gap-6">
       <StaggerItem>
         <MiaLine
-          text="Para ayudarte necesito un motor que me haga razonar. Elige de dónde saco esa capacidad."
+          text={
+            algoDetectado
+              ? "Revisé este equipo y dejé seleccionado el motor que ya tienes instalado. Confírmalo o elige otro: trabajo con uno solo como principal."
+              : "Elige el motor con el que voy a razonar. Trabajo con uno solo como principal."
+          }
           className="text-xl leading-snug sm:text-2xl"
         />
       </StaggerItem>
@@ -569,12 +661,12 @@ export default function ActivarPage() {
       <WelcomeField>
         <div
           role="radiogroup"
-          aria-label="Motor de Mia"
+          aria-label="Motor principal de Mia"
           className="flex flex-col gap-3"
           onKeyDown={(e) => {
             // El orden DEBE coincidir con el orden visual de las tarjetas (abajo):
             // las flechas mueven el foco por índice de DOM.
-            const order: Politica[] = ["quality_adaptive", "suscripcion", "codex", "nube", "openrouter", "soberano"];
+            const order = engineOrder;
             const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
             const backward = e.key === "ArrowUp" || e.key === "ArrowLeft";
             if (!forward && !backward) return;
@@ -619,29 +711,27 @@ export default function ActivarPage() {
             icon={Sparkles}
             title="Codex en este equipo"
             description="Usa tu membresía de Codex como motor jurídico principal en este computador. No funciona en servidores ni cambia a Claude, nube ni otro motor sin que tú cambies esta selección."
-            detected={status.motor_detectado.codex}
-            detectedLabel="Detecté Codex local; la primera solicitud comprobará tu sesión y fallará claro si no está iniciada."
+            detected={Boolean(status.motor_estado?.codex?.instalada ?? status.motor_detectado.codex)}
+            detectedLabel={etiquetaCodex(status)}
             selected={politica === "codex"}
             onSelect={() => setPolitica("codex")}
           />
           <EngineCard
             icon={Cloud}
             title="En la nube"
-            description={
-              status.motor_detectado.claude
-                ? "Me conecto a un motor en internet. Necesitarás una clave de respaldo del motor."
-                : "Me conecto a un motor en internet para razonar. Necesitarás una clave de respaldo del motor."
-            }
+            description="Me conecto a un motor en internet para razonar. Requiere la clave del motor; te la pido en el paso siguiente."
             selected={politica === "nube"}
             onSelect={() => setPolitica("nube")}
           />
-          <EngineCard
-            icon={Wallet}
-            title="Tu cuenta de OpenRouter"
-            description="Tú conectas tu cuenta y la cargas de crédito; pagas tu propio uso. Ideal si no usas la suscripción del equipo."
-            selected={politica === "openrouter"}
-            onSelect={() => setPolitica("openrouter")}
-          />
+          {status.politica === "openrouter" && (
+            <EngineCard
+              icon={Wallet}
+              title="Tu cuenta de OpenRouter"
+              description="Esta instalación ya venía con tu cuenta de OpenRouter como motor. Tú la cargas de crédito y pagas tu propio uso; tu trabajo sale hacia ese servicio externo."
+              selected={politica === "openrouter"}
+              onSelect={() => setPolitica("openrouter")}
+            />
+          )}
           <EngineCard
             icon={Cpu}
             title="Todo en tu equipo"
@@ -662,7 +752,26 @@ export default function ActivarPage() {
     </Stagger>
   );
 
-  const stepBusqueda = (
+  // ── Sub-paso 1 · UNA sola pantalla de claves (solo las que aplican) ───────
+  // Reglas de copy (memoria del dueño): registro profesional, indicativo, y lo
+  // imprescindible se enuncia como requisito, no como consejo.
+  const puedeContinuarClaves =
+    // La clave del motor (cuando el motor la exige) es obligatoria.
+    (!respaldoEsMotor || respaldo.state === "ok") &&
+    (!openrouterEsMotor || openrouter.state === "ok") &&
+    // La de búsqueda es requisito para continuar por el camino principal.
+    busqueda.state === "ok" &&
+    // El plan B opcional, si se escribió, tiene que estar validado.
+    (!respaldoAplica || respaldoEsMotor || !respaldo.value.trim() || respaldo.state === "ok");
+
+  // Camino secundario: seguir sin activar la búsqueda. Exige igual la clave del
+  // motor cuando el motor la requiere — sin motor, Mia no razona.
+  const puedeOmitirBusqueda =
+    (!respaldoEsMotor || respaldo.state === "ok") &&
+    (!openrouterEsMotor || openrouter.state === "ok") &&
+    (!respaldoAplica || respaldoEsMotor || !respaldo.value.trim() || respaldo.state === "ok");
+
+  const stepClaves = (
     <Stagger className="flex flex-col gap-6">
       <StaggerItem>
         <button
@@ -677,12 +786,17 @@ export default function ActivarPage() {
 
       <StaggerItem>
         <MiaLine
-          text="Ahora, pega tu clave de búsqueda en tus documentos."
+          text="Estas son las claves que aplican al motor que elegiste. Te digo qué activa cada una."
           className="text-xl leading-snug sm:text-2xl"
         />
       </StaggerItem>
 
-      <WelcomeField hint="Con esta clave puedo leer y encontrar lo que necesito dentro de tus documentos. Es la que hace que la búsqueda funcione.">
+      {/* 1 · Clave de búsqueda: REQUISITO de la búsqueda documental, siempre aplica. */}
+      <WelcomeField
+        label="Búsqueda en tus documentos"
+        htmlFor="clave-busqueda"
+        hint="Esta clave es un requisito para la búsqueda: sin ella no leo ni encuentro nada dentro de tus documentos. Con ella, la búsqueda queda activa de inmediato."
+      >
         <KeyField
           id="clave-busqueda"
           label="Clave de búsqueda en tus documentos"
@@ -695,73 +809,77 @@ export default function ActivarPage() {
         />
       </WelcomeField>
 
-      <WelcomeField>
-        <div className="flex flex-col gap-2">
-          <Button
-            variant="cta"
-            size="lg"
-            className="w-full"
-            disabled={busqueda.state !== "ok"}
-            onClick={goNext}
-          >
-            Continuar
-          </Button>
-          <Button variant="ghost" size="lg" className="w-full" onClick={goNext}>
-            Lo haré después
-          </Button>
-        </div>
-      </WelcomeField>
-    </Stagger>
-  );
-
-  const stepRespaldo = (
-    <Stagger className="flex flex-col gap-6">
-      <StaggerItem>
-        <button
-          type="button"
-          onClick={goBack}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+      {/* 2 · Clave del motor, SOLO cuando el motor elegido la exige. */}
+      {respaldoEsMotor && (
+        <WelcomeField
+          label="Motor en la nube"
+          htmlFor="clave-respaldo"
+          hint="Elegiste razonar en la nube: esta clave ES tu motor. Sin ella no puedo razonar, así que la necesito para continuar."
         >
-          <ArrowLeft className="h-4 w-4" aria-hidden />
-          Volver
-        </button>
-      </StaggerItem>
+          <KeyField
+            id="clave-respaldo"
+            label="Clave del motor en la nube"
+            value={respaldo.value}
+            onChange={respaldo.setValue}
+            state={respaldo.state}
+            motivo={respaldo.motivo}
+            onRecheck={respaldo.recheck}
+            placeholder="Pega aquí la clave del motor"
+          />
+        </WelcomeField>
+      )}
 
-      <StaggerItem>
-        <MiaLine
-          text={
-            respaldoEsMotor
-              ? "Por último, pega la clave de respaldo del motor."
-              : "¿Quieres añadir una clave de respaldo del motor? Es opcional."
-          }
-          className="text-xl leading-snug sm:text-2xl"
-        />
-      </StaggerItem>
+      {openrouterEsMotor && (
+        <WelcomeField
+          label="Tu cuenta de OpenRouter"
+          htmlFor="clave-openrouter-motor"
+          hint="Elegiste tu cuenta de OpenRouter como motor: esta clave es la que me deja razonar. Tú la creas, la cargas de crédito y pagas tu propio uso."
+        >
+          <KeyField
+            id="clave-openrouter-motor"
+            label="Clave de tu cuenta de OpenRouter"
+            value={openrouter.value}
+            onChange={openrouter.setValue}
+            state={openrouter.state}
+            motivo={openrouter.motivo}
+            onRecheck={openrouter.recheck}
+            placeholder="Pega aquí la clave de tu cuenta de OpenRouter"
+          />
+          <div className="mt-3 flex flex-col gap-1.5 text-xs text-muted-foreground">
+            <a
+              href="https://openrouter.ai/keys"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex w-fit items-center gap-1 text-primary underline-offset-4 transition-colors hover:underline"
+            >
+              Crea tu clave en openrouter.ai/keys
+            </a>
+            <span>Ponle un tope de gasto en OpenRouter para no llevarte sorpresas.</span>
+          </div>
+        </WelcomeField>
+      )}
 
-      <WelcomeField
-        hint={
-          respaldoEsMotor
-            ? "Es la clave que me da la capacidad de razonar en la nube, así que la necesito para poder ayudarte."
-            : "Es un plan B por si tu suscripción no está disponible. No la necesitas para empezar; puedes añadirla ahora o más adelante."
-        }
-      >
-        <KeyField
-          id="clave-respaldo"
-          label="Clave de respaldo del motor"
-          value={respaldo.value}
-          onChange={respaldo.setValue}
-          state={respaldo.state}
-          motivo={respaldo.motivo}
-          onRecheck={respaldo.recheck}
-          placeholder={
-            respaldoEsMotor
-              ? "Pega aquí la clave del motor"
-              : "Pega aquí tu clave de respaldo (opcional)"
-          }
-        />
-      </WelcomeField>
+      {/* 3 · Plan B del motor: solo con motores por suscripción o membresía. */}
+      {respaldoAplica && !respaldoEsMotor && (
+        <WelcomeField
+          label="Respaldo del motor (opcional)"
+          htmlFor="clave-respaldo"
+          hint="Cuando tu motor principal no está disponible, uso esta clave para seguir trabajando. Sin ella, si el motor principal falla me detengo y te aviso. Puedes agregarla ahora o más adelante."
+        >
+          <KeyField
+            id="clave-respaldo"
+            label="Clave de respaldo del motor"
+            value={respaldo.value}
+            onChange={respaldo.setValue}
+            state={respaldo.state}
+            motivo={respaldo.motivo}
+            onRecheck={respaldo.recheck}
+            placeholder="Pega aquí tu clave de respaldo (opcional)"
+          />
+        </WelcomeField>
+      )}
 
-      {saveError && (
+      {saveError && clavesEsTerminal && (
         <StaggerItem>
           <p
             className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
@@ -778,42 +896,32 @@ export default function ActivarPage() {
             variant="cta"
             size="lg"
             className="w-full"
-            // En "nube" la clave de respaldo ES el motor primario: obligatoria — el
-            // botón exige clave válida. En suscripción/soberano es de verdad opcional:
-            // basta que, si escribió algo, esté validado. Cuando este paso NO es el
-            // último (suscripción/nube tienen después el paso de OpenRouter), el botón
-            // avanza; solo en "soberano" (paso terminal) guarda y termina.
-            disabled={
-              (respaldoIsLast && saving) ||
-              (respaldoEsMotor
-                ? respaldo.state !== "ok"
-                : respaldo.value.trim().length > 0 && respaldo.state !== "ok")
-            }
-            onClick={respaldoIsLast ? () => finish({ includeRespaldo: true }) : goNext}
+            disabled={saving || !puedeContinuarClaves}
+            onClick={clavesEsTerminal ? () => finish() : goNext}
           >
-            {respaldoIsLast && saving ? (
+            {clavesEsTerminal && saving ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                 Guardando…
               </>
-            ) : respaldoIsLast ? (
+            ) : clavesEsTerminal ? (
               "Terminar y continuar"
             ) : (
               "Continuar"
             )}
           </Button>
-          {/* Salto solo cuando el respaldo es REALMENTE opcional. En "nube" no se ofrece:
-              sin esa clave Mia no tiene motor para razonar. Terminal (soberano) omite y
-              termina; intermedio (suscripción) simplemente avanza al paso de OpenRouter. */}
-          {!respaldoEsMotor && (
+          {/* Camino secundario, con la consecuencia dicha de frente: sin la clave de
+              búsqueda, la búsqueda queda desactivada. Solo aparece mientras esa clave
+              no está validada, y nunca salta la clave del MOTOR (sin motor no hay Mia). */}
+          {busqueda.state !== "ok" && (
             <Button
               variant="ghost"
               size="lg"
               className="w-full"
-              disabled={saving}
-              onClick={respaldoIsLast ? () => finish({ includeRespaldo: false }) : goNext}
+              disabled={saving || !puedeOmitirBusqueda}
+              onClick={clavesEsTerminal ? () => finish() : goNext}
             >
-              {respaldoIsLast ? "Omitir por ahora" : "Lo haré después"}
+              Seguir sin activar la búsqueda por ahora
             </Button>
           )}
         </div>
@@ -821,7 +929,8 @@ export default function ActivarPage() {
     </Stagger>
   );
 
-  const stepOpenrouter = (
+  // ── Sub-paso 2 · Respaldo con tu cuenta de OpenRouter (consentimiento) ────
+  const stepOpenrouterRespaldo = (
     <Stagger className="flex flex-col gap-6">
       <StaggerItem>
         <button
@@ -836,48 +945,76 @@ export default function ActivarPage() {
 
       <StaggerItem>
         <MiaLine
-          text={
-            openrouterEsMotor
-              ? "Para razonar con tu cuenta de OpenRouter necesito tu clave. Tú la creas y la cargas de crédito."
-              : "¿Quieres más uso? Conecta tu cuenta de OpenRouter como respaldo."
-          }
+          text="Un respaldo adicional, aparte de tu motor: tu cuenta de OpenRouter. Es opcional y decides tú."
           className="text-xl leading-snug sm:text-2xl"
         />
       </StaggerItem>
 
-      <WelcomeField
-        hint={
-          openrouterEsMotor
-            ? "Con esta clave uso tu cuenta de OpenRouter para razonar. Tú pagas tu propio uso."
-            : "Cuando tu motor principal no esté disponible, sigo trabajando con tu cuenta de OpenRouter. Es opcional; puedes añadirla ahora o más adelante."
-        }
-      >
-        <KeyField
-          id="clave-openrouter"
-          label="Clave de tu cuenta de OpenRouter"
-          value={openrouter.value}
-          onChange={openrouter.setValue}
-          state={openrouter.state}
-          motivo={openrouter.motivo}
-          onRecheck={openrouter.recheck}
-          placeholder={
-            openrouterEsMotor
-              ? "Pega aquí la clave de tu cuenta de OpenRouter"
-              : "Pega aquí tu clave de OpenRouter (opcional)"
-          }
-        />
-        <div className="mt-3 flex flex-col gap-1.5 text-xs text-muted-foreground">
-          <a
-            href="https://openrouter.ai/keys"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex w-fit items-center gap-1 text-primary underline-offset-4 transition-colors hover:underline"
-          >
-            Crea tu clave en openrouter.ai/keys
-          </a>
-          <span>Ponle un tope de gasto en OpenRouter para no llevarte sorpresas.</span>
-        </div>
+      <StaggerItem>
+        <NotaMia
+          id="activar-openrouter-respaldo"
+          icon={ShieldAlert}
+          titulo="Qué es OpenRouter y qué implica activarlo"
+          cerrable={false}
+        >
+          OpenRouter es un servicio externo que da acceso a motores de razonamiento por
+          internet. Solo entra a trabajar cuando tu motor principal falla. El gasto corre
+          por tu cuenta: tú la creas, la cargas de crédito y le pones un tope. Al usarlo,
+          la información de tu trabajo sale de este equipo hacia ese servicio externo.
+        </NotaMia>
+      </StaggerItem>
+
+      {/* Consentimiento EXPRESO: la casilla es la puerta. Sin marcarla no aparece el
+          campo de la clave, no se guarda nada y el permiso no se activa. */}
+      <WelcomeField>
+        <label
+          htmlFor="consentimiento-openrouter"
+          className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card/60 p-4 transition-colors hover:border-primary/60"
+        >
+          <input
+            id="consentimiento-openrouter"
+            type="checkbox"
+            checked={orConsent}
+            onChange={(e) => setOrConsent(e.target.checked)}
+            className="mt-1 h-4 w-4 shrink-0 accent-primary"
+          />
+          <span className="text-sm text-foreground">
+            Autorizo que, cuando mi motor principal falle, Mia continúe el trabajo con mi
+            cuenta de OpenRouter. Entiendo que eso envía la información de mi trabajo a un
+            servicio externo y que ese uso lo pago yo.
+          </span>
+        </label>
       </WelcomeField>
+
+      {orConsent && (
+        <WelcomeField
+          label="Clave de tu cuenta de OpenRouter"
+          htmlFor="clave-openrouter"
+          hint="Con esta clave activo el respaldo que acabas de autorizar. La clave queda guardada en este equipo."
+        >
+          <KeyField
+            id="clave-openrouter"
+            label="Clave de tu cuenta de OpenRouter"
+            value={openrouter.value}
+            onChange={openrouter.setValue}
+            state={openrouter.state}
+            motivo={openrouter.motivo}
+            onRecheck={openrouter.recheck}
+            placeholder="Pega aquí la clave de tu cuenta de OpenRouter"
+          />
+          <div className="mt-3 flex flex-col gap-1.5 text-xs text-muted-foreground">
+            <a
+              href="https://openrouter.ai/keys"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex w-fit items-center gap-1 text-primary underline-offset-4 transition-colors hover:underline"
+            >
+              Crea tu clave en openrouter.ai/keys
+            </a>
+            <span>Ponle un tope de gasto en OpenRouter para no llevarte sorpresas.</span>
+          </div>
+        </WelcomeField>
+      )}
 
       {saveError && (
         <StaggerItem>
@@ -896,54 +1033,37 @@ export default function ActivarPage() {
             variant="cta"
             size="lg"
             className="w-full"
-            // Motor principal (openrouter): clave OBLIGATORIA. Respaldo/"más uso"
-            // (suscripción/nube): opcional — basta que, si escribió algo, esté validado.
-            disabled={
-              saving ||
-              (openrouterEsMotor
-                ? openrouter.state !== "ok"
-                : openrouter.value.trim().length > 0 && openrouter.state !== "ok")
-            }
-            onClick={() => finish({ includeOpenrouter: true })}
+            // Con consentimiento marcado, la clave escrita tiene que quedar validada;
+            // sin consentimiento, este botón termina sin activar nada de OpenRouter.
+            disabled={saving || (orConsent && openrouter.value.trim().length > 0 && openrouter.state !== "ok")}
+            onClick={() => finish()}
           >
             {saving ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                 Guardando…
               </>
+            ) : orConsent ? (
+              "Activar el respaldo y terminar"
             ) : (
-              "Terminar y continuar"
+              "Terminar sin este respaldo"
             )}
           </Button>
-          {/* "Omitir" solo cuando OpenRouter es opcional (respaldo). Como motor principal
-              no se ofrece: sin esa clave Mia no tiene con qué razonar. */}
-          {!openrouterEsMotor && (
-            <Button
-              variant="ghost"
-              size="lg"
-              className="w-full"
-              disabled={saving}
-              onClick={() => finish({ includeOpenrouter: false })}
-            >
-              Omitir por ahora
-            </Button>
-          )}
         </div>
       </WelcomeField>
     </Stagger>
   );
 
-  // Pasos dinámicos según el motor elegido: motor y búsqueda siempre; el respaldo
-  // (Anthropic) salvo cuando OpenRouter YA es el motor; el paso de OpenRouter salvo en
-  // "soberano" (nada sale del equipo). El último presente guarda y termina.
-  const steps = [stepMotor, stepBusqueda];
-  if (politica !== "openrouter") steps.push(stepRespaldo);
-  if (politica !== "soberano") steps.push(stepOpenrouter);
+  // Pasos dinámicos según el motor elegido: motor y claves siempre; la sección de
+  // respaldo con OpenRouter solo cuando hay un motor principal distinto y el
+  // abogado no eligió máxima privacidad ("soberano": nada sale del equipo).
+  const steps = [stepMotor, stepClaves];
+  if (openrouterRespaldoAplica) steps.push(stepOpenrouterRespaldo);
 
   return (
     <WelcomeShell progress={<WelcomeProgress steps={JOURNEY_STEPS} current={1} />}>
       <StepTransition stepKey={subStep} direction={direction}>
-        {steps[subStep]}
+        {steps[Math.min(subStep, steps.length - 1)]}
       </StepTransition>
     </WelcomeShell>
   );
