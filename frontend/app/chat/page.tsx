@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Scale,
@@ -13,10 +13,13 @@ import {
   MessagesSquare,
   Wand2,
   UserRound,
+  SlidersHorizontal,
+  Pin,
 } from "lucide-react";
 import { apiGet, streamPost, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import MiaMarkdown from "@/components/MiaMarkdown";
+import { AtajosPanel } from "./_components/AtajosPanel";
 import { cn } from "@/lib/utils";
 
 type Conversation = { id: string; title: string; updated_at: string };
@@ -24,7 +27,16 @@ type Role = "user" | "assistant";
 type Message = { role: Role; content: string };
 // Atajo de la firma u organización: un clic PRE-LLENA el cuadro de mensaje
 // con `texto` — el abogado revisa y decide si lo envía (consent-first, nunca se auto-envía).
-type Atajo = { kind: "guia" | "agente"; id: string; label: string; texto: string };
+// `clave` identifica el atajo para la pantalla donde el abogado los gobierna ("guia:<id>",
+// "agente:<id>", "propio:<id>"); `fijado` es lo que él marcó para tenerlo siempre a mano.
+type Atajo = {
+  kind: "guia" | "agente" | "propio";
+  id: string;
+  clave: string;
+  label: string;
+  texto: string;
+  fijado?: boolean;
+};
 
 // Ejemplos que ENSEÑAN qué puede hacer Mia (empty state). Cada uno toca una
 // capacidad real: sus asuntos, un recordatorio, la configuración y lo que Mia ya
@@ -58,6 +70,7 @@ export default function ChatPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [atajos, setAtajos] = useState<Atajo[]>([]);
+  const [panelAtajos, setPanelAtajos] = useState(false);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -76,16 +89,22 @@ export default function ChatPage() {
     }
   }
 
-  useEffect(() => {
-    loadConversations();
+  // Los atajos se recargan también tras cada cambio en la pantalla de atajos, para que el
+  // abogado vea el efecto de fijar, ocultar o renombrar sin recargar la página.
+  const cargarAtajos = useCallback(() => {
     apiGet<{ atajos: Atajo[] }>("/api/atajos")
       .then((res) => setAtajos(res.atajos || []))
       .catch(() => setAtajos([]));
+  }, []);
+
+  useEffect(() => {
+    loadConversations();
+    cargarAtajos();
     return () => {
       abortRef.current?.abort();
       if (typerRef.current) clearInterval(typerRef.current);
     };
-  }, []);
+  }, [cargarAtajos]);
 
   // Consent-first: PRE-LLENA el cuadro de mensaje con el texto del atajo. El abogado lo
   // revisa y edita antes de enviar — nunca se auto-envía.
@@ -308,28 +327,40 @@ export default function ChatPage() {
                   </button>
                 ))}
               </div>
-              {atajos.length > 0 ? (
-                <div
-                  className="mt-8 flex w-full max-w-lg animate-slide-up flex-wrap justify-center gap-2"
-                  style={{ animationDelay: "420ms", animationFillMode: "backwards" }}
+              {/* Atajos: los propongo yo y el abogado manda sobre ellos. El acceso para
+                  gobernarlos vive AQUÍ, junto a los propios atajos, porque es aquí donde se
+                  le ocurre que uno sobra o que falta otro; mandarlo a otra pantalla a
+                  buscarlo es la forma más segura de que no lo haga nunca. */}
+              <div
+                className="mt-8 flex w-full max-w-lg animate-slide-up flex-wrap items-center justify-center gap-2"
+                style={{ animationDelay: "420ms", animationFillMode: "backwards" }}
+              >
+                {atajos.map((a) => (
+                  <button
+                    key={a.clave || `${a.kind}-${a.id}`}
+                    onClick={() => aplicarAtajo(a.texto)}
+                    title="Se agrega a tu cuadro de mensaje para que lo revises antes de enviar"
+                    className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3.5 py-1.5 text-xs font-medium text-card-foreground shadow-sm backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+                  >
+                    {a.fijado ? (
+                      <Pin className="h-3.5 w-3.5 text-primary" />
+                    ) : a.kind === "agente" ? (
+                      <UserRound className="h-3.5 w-3.5 text-primary" />
+                    ) : (
+                      <Wand2 className="h-3.5 w-3.5 text-primary" />
+                    )}
+                    {a.label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setPanelAtajos(true)}
+                  title="Fija los que quieras tener siempre, aparta los que te estorben o escribe uno tuyo"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border bg-transparent px-3.5 py-1.5 text-xs font-medium text-muted-foreground transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:text-foreground"
                 >
-                  {atajos.map((a) => (
-                    <button
-                      key={`${a.kind}-${a.id}`}
-                      onClick={() => aplicarAtajo(a.texto)}
-                      title="Se agrega a tu cuadro de mensaje para que lo revises antes de enviar"
-                      className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3.5 py-1.5 text-xs font-medium text-card-foreground shadow-sm backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
-                    >
-                      {a.kind === "agente" ? (
-                        <UserRound className="h-3.5 w-3.5 text-primary" />
-                      ) : (
-                        <Wand2 className="h-3.5 w-3.5 text-primary" />
-                      )}
-                      {a.label}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  {atajos.length > 0 ? "Ajustar mis atajos" : "Crear un atajo"}
+                </button>
+              </div>
             </div>
           ) : (
             <div className="mx-auto w-full max-w-2xl px-4 py-6">
@@ -438,6 +469,12 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      <AtajosPanel
+        open={panelAtajos}
+        onOpenChange={setPanelAtajos}
+        onCambio={cargarAtajos}
+      />
     </div>
   );
 }
