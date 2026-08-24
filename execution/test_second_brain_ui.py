@@ -100,7 +100,10 @@ def run_frontend_checks() -> None:
     memoria = (ROOT / "frontend" / "app" / "memoria" / "page.tsx").read_text(encoding="utf-8")
     dashboard = (ROOT / "frontend" / "app" / "dashboard" / "page.tsx").read_text(encoding="utf-8")
     onboarding = (ROOT / "frontend" / "app" / "onboarding" / "page.tsx").read_text(encoding="utf-8")
-    asunto = (ROOT / "frontend" / "app" / "asuntos" / "[id]" / "page.tsx").read_text(encoding="utf-8")
+    # D3 (2026-08-24): asuntos y proyectos se fusionaron en «Casos»; la vieja
+    # asuntos/[id]/page.tsx es ahora un stub de redirección sin lógica. La pantalla
+    # canónica del caso con borrador vive en casos/[id]/CasoConBorrador.tsx.
+    asunto = (ROOT / "frontend" / "app" / "casos" / "[id]" / "CasoConBorrador.tsx").read_text(encoding="utf-8")
     # Reestructuración 2026-07-09 (feedback de Pipe: el Panel tenía demasiada
     # información que en realidad es configuración): Conexiones (Obsidian, Pinecone,
     # Motor de IA) y "La salud de Mia" se mudaron del Panel a Configuración —
@@ -111,8 +114,14 @@ def run_frontend_checks() -> None:
     ).read_text(encoding="utf-8")
     # Pase wow 2026-07-08: el tab de la wiki se llama "Criterios aprendidos" (§G, sin jerga).
     check("frontend: tab Wiki del despacho", "Criterios aprendidos" in memoria)
-    check("frontend: sugerir corrección", "Sugerir corrección" in memoria)
-    check("frontend: reporte semanal destacado", "Resumen semanal" in memoria)
+    # Regla sellada de Pipe (2026-07-29): los gates de copy verifican el CONCEPTO, nunca la
+    # redacción literal. El bloque 4 del rediseño Luxury (b9f1f23, aprobado) renombró
+    # «Sugerir corrección» → «Corrígeme» y el gate quedó rojo sin defecto real (visto 2026-08-24).
+    # Anclas conceptuales: el control de corrección existe y envía (id + handler), y el reporte
+    # semanal se consume del endpoint real.
+    check("frontend: sugerir corrección (control + envío)",
+          "wiki-correction" in memoria and "sendCorrection" in memoria)
+    check("frontend: reporte semanal consumido", "/api/dreams/report" in memoria)
     # Pase wow 2026-07-08: "Conectores" → "Conexiones" y "Salud del second brain" →
     # "La salud de Mia" (lenguaje llano §G); Obsidian y Pinecone siguen presentes.
     check("frontend: sección Conectores", "Conexiones" in conexiones_src and "Obsidian" in conexiones_src and "Pinecone" in conexiones_src)
@@ -131,14 +140,16 @@ def run_frontend_checks() -> None:
     # B4: "Guías y documentos" + "Lo que Mia sabe hacer" se fusionaron en un solo
     # subtab ("Guías y habilidades", sentence case como el resto de tabs de esta
     # página: "Mi despacho", "Criterios aprendidos") que muestra la métrica GEPA.
-    check("frontend CP7: tab Guías y habilidades consume /api/skills/ranked",
-          "Guías y habilidades" in memoria and "/api/skills/ranked" in memoria)
+    # Mismas anclas conceptuales (regla del 2026-07-29): endpoint consumido + handler, no el
+    # rótulo del tab, que el rediseño Luxury renombra con aprobación de Pipe.
+    check("frontend CP7: el conocimiento consume /api/skills/ranked",
+          "/api/skills/ranked" in memoria)
     check("frontend CP7: botón Importar guías → /api/playbooks/import (multipart)",
           "Importar guías" in memoria and "/api/playbooks/import" in memoria)
     check("frontend CP7: la sugerencia muestra el procedimiento que se modificaría (target)",
-          "Procedimiento que se modificaría" in memoria and "p.target" in memoria)
+          "p.target" in memoria)
     check("frontend CP7: propuestas del Curator con Aprobar/Rechazar",
-          "/api/curator/proposals" in memoria and "Orden del conocimiento" in memoria)
+          "/api/curator/proposals" in memoria and "curatorAct" in memoria)
     check("frontend CP7: recordatorios en el panel (listar + cancelar, CP-B3)",
           "/api/assistant/reminders" in dashboard and "Recordatorios" in dashboard)
     check("frontend CP7 (Riesgo #27): triad_mode FUERA del onboarding (sin toggle ni "

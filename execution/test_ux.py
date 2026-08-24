@@ -36,6 +36,7 @@ except Exception:
 import init_profiles                                 # noqa: E402  (migración 007)
 from mia import config, embeddings                   # noqa: E402
 from mia.agent import llm                             # noqa: E402
+from mia.agents import research as agents_research   # noqa: E402
 from mia.agents.state import thread_id_for           # noqa: E402
 
 _results: list[tuple[str, bool]] = []
@@ -51,10 +52,60 @@ def _fake_embed(texts):
     return [[0.1] + [0.0] * (config.EMBED_DIM - 1) for _ in texts]
 
 
+# Packs fail-closed (migración 059): cada etapa cierra con su producto o draft_node
+# ABORTA y approve devuelve 409. Los dobles emiten el MISMO contrato que el modelo real
+# — patrón canónico de test_e2e.py / seed_despacho_demo.py. Este doble llevaba el
+# contrato viejo (regla 78: deriva de mocks) y approve fallaba desde la 059 sin que el
+# rojo tuviera causa escrita (visto 2026-08-24).
+_FACT_PACK_UX = {
+    "hechos": [
+        {"texto": "La demanda invoca el estatuto de contratación como fundamento.",
+         "locator": "[doc 1]"},
+    ],
+    "conteo_declarado": 1,
+}
+
+_FUENTE_UX = {
+    "tipo": "norma",
+    "referencia": "Norma de prueba UX 200 de 2021, artículo 3",
+    "titulo": "Norma de prueba UX sobre caducidad (material de prueba)",
+    "numero": "200 de 2021",
+    "fecha": "2021-01-01",
+    "pasaje": "La caducidad de la acción se rige por el término legal.",
+    "content": "Artículo 3. La caducidad de la acción se rige por el término legal "
+               "aplicable al medio de control ejercido.",
+}
+
+_STRATEGY_PACK_UX = {
+    "argumentos": [
+        {"id": "A1",
+         "tesis": "La acción está caducada según el término legal aplicable.",
+         "fuente_refs": [_FUENTE_UX["referencia"]],
+         "seleccionado": True,
+         "contraparte": "Sostendrá la interrupción del término.",
+         "prueba": "[doc 1]"},
+    ],
+    "descartes": [],
+}
+
+
+def _pack_fence(kind: str, payload: dict) -> str:
+    import json as _json
+    return f"==={kind}===\n" + _json.dumps(payload, ensure_ascii=False) + "\n===END==="
+
+
 def _fake_call_llm(messages, *, task=None, model=None, **kw):
     sysmsg = messages[0]["content"] if messages and isinstance(messages[0], dict) else ""
     if task == "legal_verification":
         content = "APTO"
+    elif task == "legal_facts":
+        content = ("Hechos establecidos (prueba UX):\n"
+                   + "\n".join(f"- {h['texto']} {h['locator']}"
+                               for h in _FACT_PACK_UX["hechos"])
+                   + "\n\n" + _pack_fence("FACT_PACK", _FACT_PACK_UX))
+    elif task == "legal_analysis":
+        content = (_pack_fence("STRATEGY_PACK", _STRATEGY_PACK_UX)
+                   + "\n\nDIAGNÓSTICO: el eje es la caducidad de la acción.")
     elif "Redacta el borrador" in sysmsg:
         content = "BORRADOR: contestación de la demanda. [VERIFICAR fecha del hecho]"
     elif "Incorpora al borrador" in sysmsg:
@@ -66,8 +117,17 @@ def _fake_call_llm(messages, *, task=None, model=None, **kw):
         usage=SimpleNamespace(prompt_tokens=12, completion_tokens=20, total_tokens=32))
 
 
+async def _fake_gather_sources(tenant_id, query, *, jurisdictions=None):
+    """El corpus del tenant UX está vacío; sin UNA fuente, research no deja pack y el
+    turno aborta antes del borrador (mismo doble que test_e2e.py)."""
+    bloque = (f"[{_FUENTE_UX['referencia']}] {_FUENTE_UX['titulo']}\n"
+              f"{_FUENTE_UX['content']}")
+    return bloque, [dict(_FUENTE_UX)], list(jurisdictions or ["generic"])
+
+
 embeddings.embed_texts = _fake_embed
 llm.call_llm = _fake_call_llm
+agents_research.gather_sources = _fake_gather_sources
 
 PG = dict(host=os.getenv("PG_HOST", "127.0.0.1"), port=os.getenv("PG_PORT", "5432"),
           dbname=os.getenv("PG_DB", "mia"), user="postgres", password=os.getenv("PG_PASSWORD", ""))

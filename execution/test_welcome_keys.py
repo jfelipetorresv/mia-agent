@@ -232,9 +232,14 @@ def run_checks(client, fake: FakeLLM, tenants: list[str]) -> None:
 
     r_auth = client.get("/api/welcome/status", headers=auth_a)
     body_auth = r_auth.json()
+    # Concepto, no literal: un despacho recién registrado recibe la política POR DEFECTO del
+    # backend, sea cual sea. El literal "suscripcion" quedó desactualizado cuando Pipe fijó
+    # quality_adaptive como default (2026-08-14, docstring de llm._default_policy) y este
+    # check llevaba rojo desde entonces sin defecto real (visto 2026-08-24).
+    from mia.agent import llm as _llm_mod
     check("s6 · con Bearer válido → 200 y datos reales del tenant nuevo",
           r_auth.status_code == 200 and body_auth["onboarding_completo"] is False
-          and body_auth["politica"] == "suscripcion")
+          and body_auth["politica"] == _llm_mod._default_policy())
     # Camino REAL (sin monkeypatch): tras registrar, la función SECURITY DEFINER
     # `mia_any_tenant_exists` ve el despacho pese al RLS FORCE de `tenants`.
     check("s6b · hay_usuario REAL = true tras registrar (SECURITY DEFINER supera RLS)",
