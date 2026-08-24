@@ -141,7 +141,7 @@ async def _stream_turn_events(
 # turno al guardián de citas. Por eso su frase anuncia el paso que ARRANCA (mismo
 # patrón que el flujo de asunto, donde 'draft' anuncia la verificación).
 _PROJECT_NODE_PROGRESS = {
-    "intake": "Mia está revisando las fuentes del proyecto…",
+    "intake": "Mia está revisando las fuentes del caso…",
     "work": "Mia está verificando las normas y la jurisprudencia que citó…",
 }
 
@@ -412,7 +412,7 @@ async def stream_matter(
             # NO se cablea una llamada al LLM dentro del generador SSE sin una fuente real de
             # la conversación (sería inventar el mecanismo — regla dura: cero cron/heurística).
 
-    saludo = ("Mia está revisando las fuentes del proyecto…" if kind == "proyecto"
+    saludo = ("Mia está revisando las fuentes del caso…" if kind == "proyecto"
               else "Mia está revisando el expediente…")
     return EventSourceResponse(
         turno_sse(saludo, eventos_del_grafo, tenant_id, matter_id),

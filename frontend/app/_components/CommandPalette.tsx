@@ -58,9 +58,9 @@ export default function CommandPalette() {
           })}
         </CommandGroup>
         <CommandGroup heading="Acciones">
-          <CommandItem value="Nuevo asunto" onSelect={() => run(() => router.push("/?nuevo=1"))}>
+          <CommandItem value="Nuevo caso" onSelect={() => run(() => router.push("/casos?nuevo=1"))}>
             <Plus className="h-4 w-4" />
-            <span>Nuevo asunto</span>
+            <span>Nuevo caso</span>
             <CommandShortcut>N</CommandShortcut>
           </CommandItem>
         </CommandGroup>

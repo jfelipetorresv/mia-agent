@@ -58,7 +58,7 @@ async def _respond(request: Request, matter_id: str, *, aprobar: bool,
     tenant_id = getattr(request.state, "tenant_id", None)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Sin contexto de tenant")
-    require_uuid(matter_id, "asunto")
+    require_uuid(matter_id, "caso")
     await assert_owns_matter(tenant_id, matter_id)  # tenant cruzado -> 401
 
     # El grafo con el que se reanuda tiene que ser EL MISMO con el que se pausó.
@@ -136,7 +136,7 @@ async def listar_memoria(matter_id: str, request: Request):
     tenant_id = getattr(request.state, "tenant_id", None)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Sin contexto de tenant")
-    require_uuid(matter_id, "asunto")
+    require_uuid(matter_id, "caso")
     await assert_owns_matter(tenant_id, matter_id)
     keys = await hub_memory.list_for_matter(tenant_id, matter_id)
     return {"ayudantes": [
@@ -155,7 +155,7 @@ async def revocar_memoria(matter_id: str, slug: str, request: Request):
     tenant_id = getattr(request.state, "tenant_id", None)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="Sin contexto de tenant")
-    require_uuid(matter_id, "asunto")
+    require_uuid(matter_id, "caso")
     await assert_owns_matter(tenant_id, matter_id)
     key = agent_hub.slug_to_key(slug)
     if key is None:

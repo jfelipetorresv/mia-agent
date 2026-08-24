@@ -538,7 +538,7 @@ def aviso_cambio_de_motor(cambios: list[dict] | None) -> dict | None:
         "sugerencia": (
             "Esto es exactamente lo que evita un plan Max: los expedientes grandes caben "
             "completos en lo que ya pagas, sin cargos aparte y sin que yo tenga que quedarme a "
-            "medias. Si trabajas asuntos de este tamaño, te lo recomiendo de una."
+            "medias. Si trabajas casos de este tamaño, te lo recomiendo de una."
         ),
     }
 

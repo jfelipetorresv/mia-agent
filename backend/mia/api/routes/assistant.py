@@ -54,8 +54,8 @@ _LEGAL_OBJECT = re.compile(
     re.IGNORECASE,
 )
 _MATTER_REDIRECT_MESSAGE = (
-    "Para trabajar jurídicamente con precisión necesito hacerlo dentro de un Asunto, "
-    "con su jurisdicción, expediente y verificaciones. Elige un asunto o crea uno nuevo."
+    "Para trabajar jurídicamente con precisión necesito hacerlo dentro de un caso, "
+    "con su jurisdicción, expediente y verificaciones. Elige un caso o crea uno nuevo."
 )
 
 

@@ -277,7 +277,7 @@ export default function MissionBoard({ matterId, compact = false }: { matterId: 
 
       {missions.length === 0 && !creating ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
-          Aún no hay misiones para este asunto. Crea una para desglosar el trabajo en hitos.
+          Aún no hay misiones para este caso. Crea una para desglosar el trabajo en hitos.
         </p>
       ) : null}
 

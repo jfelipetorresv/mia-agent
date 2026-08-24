@@ -150,7 +150,7 @@ STEP_GUIDES: dict[str, dict] = {
     },
     "voz": {
         "que_es": (
-            "Un botón de micrófono junto al chat de tus asuntos: dictas con tu "
+            "Un botón de micrófono junto al chat de tus casos: dictas con tu "
             "voz y Mia escribe el texto por ti."),
         "para_que": (
             "Dictar es más rápido que teclear, y tu voz NUNCA sale del servidor "
@@ -159,7 +159,7 @@ STEP_GUIDES: dict[str, dict] = {
         "como": [
             "Abre Configuración con «Ir al paso» y ubica la tarjeta «Dictado por voz», en la sección «Conexiones».",
             "Pulsa «Instalar dictado por voz» y confirma: la descarga (~700 MB) tarda unos minutos y puedes seguir el avance ahí mismo.",
-            "Cuando termine, verás el botón de micrófono junto al campo de texto de tus asuntos.",
+            "Cuando termine, verás el botón de micrófono junto al campo de texto de tus casos.",
             "Toca el micrófono, dicta, y vuelve a tocarlo para que Mia escriba lo que dijiste.",
         ],
     },
@@ -167,10 +167,11 @@ STEP_GUIDES: dict[str, dict] = {
 
 # CP-C4b · Qué hace cada sección de Mia — el mapa de la casa, en lenguaje llano.
 MIA_SECTIONS: list[dict] = [
-    {"titulo": "Asuntos",
+    {"titulo": "Casos",
      "que_es": "La pantalla principal: un espacio de trabajo por cada caso.",
-     "para_que": ("Aquí subes el expediente, le preguntas a Mia y recibes el "
-                  "diagnóstico y el borrador para tu aprobación.")},
+     "para_que": ("Aquí subes el expediente, conectas carpetas y le preguntas a Mia. "
+                  "En cada caso eliges si te entrega un borrador para aprobar o te "
+                  "responde directo.")},
     {"titulo": "Revisión de borradores",
      "que_es": "Donde apruebas, corriges o rechazas lo que Mia redacta.",
      "para_que": ("Nada sale del despacho sin tu visto bueno: revisas el borrador "

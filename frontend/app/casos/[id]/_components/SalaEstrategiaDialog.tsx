@@ -122,7 +122,7 @@ export default function SalaEstrategiaDialog({ open, onOpenChange, matterId, has
             {!hasDocuments ? (
               <p role="alert" className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-sm text-warning">
                 Sube documentos del expediente para convocar la sala de estrategia: el panel
-                debate sobre las pruebas reales del asunto.
+                debate sobre las pruebas reales del caso.
               </p>
             ) : null}
             <div>

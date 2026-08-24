@@ -251,7 +251,7 @@ async def get_matter(matter_id: str, request: Request):
             "SELECT id, title, description, status, created_at, kind, jurisdictions FROM matters "
             "WHERE id = %s::uuid", (matter_id,))).fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="Asunto no encontrado")
+        raise HTTPException(status_code=404, detail="Caso no encontrado")
     # `jurisdictions` es lo GUARDADO ([] = hereda de la firma); `jurisdictions_effective`
     # es lo que el grafo usa de verdad este turno (resolver con precedencia asunto→firma).
     # Sin el efectivo, la UI pintaba "General" para [] cuando el backend usaba las de la firma.
@@ -274,6 +274,71 @@ async def put_matter_jurisdictions(matter_id: str, request: Request,
             (Json(jurisdictions), matter_id),
         )
     return {"jurisdictions": jurisdictions}
+
+
+# ── Modo de trabajo del caso (D3 · fusión Asuntos+Proyectos → "Casos") ────────
+# El abogado ve UN solo concepto («caso») con un control explícito de comportamiento:
+# 'asunto'  = Mia entrega un borrador que el abogado aprueba antes de que salga.
+# 'proyecto' = Mia responde directo en la conversación, sin parada de aprobación.
+# Los valores internos NO se renombran ('asunto'/'proyecto' viven en el CHECK de la
+# migración 028 y en todos los call-sites); el cambio de vocabulario es de la capa
+# visible. DECISIÓN (2026-08-23): no hay migración 061 — renombrar los literales del
+# CHECK no aporta nada al abogado (nunca los ve) y tocaría datos y contratos estables.
+class MatterModeBody(BaseModel):
+    kind: str
+
+
+@router.put("/matters/{matter_id}/modo")
+async def put_matter_mode(matter_id: str, request: Request, body: MatterModeBody):
+    """Cambia cómo trabaja Mia en un caso ya creado.
+
+    Solo se permite cuando el caso no tiene trabajo a medio decidir: un borrador
+    esperando revisión (o una propuesta de ayudante sin responder) se resolvería con
+    un grafo distinto al que lo pausó, así que el cambio se bloquea con un 409 cuyo
+    `detail` va en llano — es lo que el abogado lee en pantalla."""
+    tid = _tenant(request)
+    await assert_owns_matter(tid, matter_id)
+    if body.kind not in _MATTER_KINDS:
+        raise HTTPException(status_code=422, detail="Ese modo de trabajo no existe.")
+    async with pool.tenant_connection(tid) as conn:
+        row = await (await conn.execute(
+            "SELECT kind, pending_review, title FROM matters WHERE id = %s::uuid",
+            (matter_id,))).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Ese caso no existe.")
+    current, pending, title = (row[0] or "asunto"), bool(row[1]), row[2]
+    if current == body.kind:
+        return {"kind": current, "changed": False}
+    if pending:
+        raise HTTPException(status_code=409, detail=(
+            "Este caso tiene un borrador esperando tu revisión. Apruébalo o recházalo "
+            "antes de cambiar cómo trabaja Mia aquí."))
+    # El borrador pendiente se detecta arriba con pending_review; queda la OTRA pausa
+    # posible del turno (una propuesta de ayudante sin responder) y cualquier pausa que
+    # pending_review no cubra. Se mira el checkpoint real con el grafo del modo ACTUAL:
+    # la pausa debe resolverse con el mismo grafo que la abrió (contrato de matter_kind).
+    from ...agents.graph import build_project_graph
+    graph_builder = build_project_graph if current == "proyecto" else build_matter_graph
+    cfg = {"configurable": {"thread_id": thread_id_for(tid, matter_id)}}
+    async with open_checkpointer() as cp:
+        st = await graph_builder(cp).aget_state(cfg)
+    if st and st.next:
+        raise HTTPException(status_code=409, detail=(
+            "Mia tiene trabajo esperando tu decisión en este caso (un borrador o una "
+            "propuesta de ayudante). Resuélvelo antes de cambiar cómo trabaja aquí."))
+    async with pool.tenant_connection(tid) as conn:
+        await conn.execute(
+            "UPDATE matters SET kind=%s WHERE id=%s::uuid", (body.kind, matter_id))
+    # Al pasar a modo con borrador, el caso gana su expediente en disco (mismo andamiaje
+    # accesorio del alta: jamás tumba el cambio de modo).
+    if body.kind == "asunto":
+        try:
+            await run_in_threadpool(scaffold_matter_workspace, tid, matter_id, titulo=title)
+        except Exception:
+            logger.exception(
+                "no se pudo andamiar el expediente al cambiar de modo (tenant=%s matter=%s)",
+                tid, matter_id)
+    return {"kind": body.kind, "changed": True}
 
 
 # ── Pantalla 2 · documentos ──────────────────────────────────────────────────
@@ -364,7 +429,7 @@ async def create_output(matter_id: str, request: Request, response: Response, bo
     await assert_owns_matter(tid, matter_id)
     if await _matter_kind(tid, matter_id) != "proyecto":
         raise HTTPException(status_code=422,
-                            detail="Los archivos guardados solo existen dentro de un proyecto.")
+                            detail="Los archivos guardados solo existen en un caso de respuesta directa.")
     # Dedupe por huella del CONTENIDO (igual criterio que upload_document con el archivo):
     # guardar dos veces lo mismo no lo duplica ni lo vuelve a embeber.
     sha256 = hashlib.sha256(body.content.encode("utf-8")).hexdigest()
@@ -375,7 +440,7 @@ async def create_output(matter_id: str, request: Request, response: Response, bo
     if dup:
         response.status_code = 200
         return {"status": "duplicado", "id": str(dup[0]), "title": dup[1],
-                "message": "Ese archivo ya estaba guardado en el proyecto — no lo dupliqué."}
+                "message": "Ese archivo ya estaba guardado en este caso — no lo dupliqué."}
     chunks = chunk_text(body.content)
     try:
         vectors = await asyncio.to_thread(embeddings.embed_texts, chunks) if chunks else []
@@ -385,7 +450,7 @@ async def create_output(matter_id: str, request: Request, response: Response, bo
         logger.exception("no se pudo guardar el archivo del proyecto (tenant=%s matter=%s)",
                          tid, matter_id)
         raise HTTPException(status_code=502, detail=(
-            "No pude guardar este archivo en el proyecto — inténtalo de nuevo en un momento."))
+            "No pude guardar este archivo en el caso — inténtalo de nuevo en un momento."))
     async with pool.tenant_connection(tid) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, origin, body) "
@@ -405,7 +470,7 @@ async def list_outputs(matter_id: str, request: Request):
     await assert_owns_matter(tid, matter_id)
     if await _matter_kind(tid, matter_id) != "proyecto":
         raise HTTPException(status_code=422,
-                            detail="Los archivos guardados solo existen dentro de un proyecto.")
+                            detail="Los archivos guardados solo existen en un caso de respuesta directa.")
     async with pool.tenant_connection(tid) as conn:
         rows = await (await conn.execute(
             "SELECT id, filename, created_at FROM documents "
@@ -421,7 +486,7 @@ async def download_output_docx(matter_id: str, doc_id: str, request: Request):
     await assert_owns_matter(tid, matter_id)
     if await _matter_kind(tid, matter_id) != "proyecto":
         raise HTTPException(status_code=422,
-                            detail="Los archivos guardados solo existen dentro de un proyecto.")
+                            detail="Los archivos guardados solo existen en un caso de respuesta directa.")
     if not _is_uuid(doc_id):
         raise HTTPException(status_code=404, detail="Ese archivo no existe.")
     async with pool.tenant_connection(tid) as conn:
@@ -576,7 +641,7 @@ async def download_draft_docx(matter_id: str, request: Request):
     values = (state.values or {}) if state else {}
     draft = values.get("draft")
     if not draft:
-        raise HTTPException(status_code=404, detail="El asunto aún no tiene un borrador.")
+        raise HTTPException(status_code=404, detail="Este caso aún no tiene un borrador.")
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
             "SELECT title FROM matters WHERE id = %s::uuid", (matter_id,))).fetchone()
@@ -1225,7 +1290,7 @@ def _section_to_playbook(title: str, body_lines: list[str]) -> Playbook:
         applies_when = first.split(":", 1)[1].strip()[:200]
         content = rest.strip()
     else:
-        applies_when = f"asuntos relacionados con: {title}"
+        applies_when = f"casos relacionados con: {title}"
         content = body
     summary = (content.splitlines() or [title])[0].strip()[:200] or title
     return Playbook(id="", title=title, summary=summary,
@@ -1937,7 +2002,9 @@ async def dashboard_stats(request: Request):
     async with pool.tenant_connection(tid) as conn:
         async def scalar(sql):
             return (await (await conn.execute(sql)).fetchone())[0]
-        matters_active = await scalar("SELECT count(*) FROM matters WHERE kind='asunto' AND status='active'")
+        # D3 · «Casos»: el Panel dice «casos activos» — cuenta los dos modos de trabajo
+        # (antes solo kind='asunto', que dejaba invisibles los de respuesta directa).
+        matters_active = await scalar("SELECT count(*) FROM matters WHERE status='active'")
         documents_indexed = await scalar("SELECT count(*) FROM documents")
         playbooks_active = await scalar("SELECT count(*) FROM playbooks WHERE status='active'")
         playbooks_archived = await scalar("SELECT count(*) FROM playbooks WHERE status='archived'")
@@ -2119,7 +2186,7 @@ async def _assert_warroom_matter(tid: str, matter_id: str) -> None:
     """La Sala de estrategia solo existe en un ASUNTO (no en un proyecto)."""
     if await _matter_kind(tid, matter_id) != "asunto":
         raise HTTPException(status_code=422,
-                            detail="La sala de estrategia solo existe dentro de un asunto.")
+                            detail="La sala de estrategia solo existe en un caso con revisión de borrador.")
 
 
 async def _warroom_state(tenant_id: str, matter_id: str, question: str) -> tuple[dict, MatterGraphBuilder]:
@@ -2204,7 +2271,7 @@ async def warroom_start(matter_id: str, request: Request, body: WarroomStartBody
     if existing and not body.autorizar_pasada_cara:
         raise HTTPException(
             status_code=409,
-            detail="Esta sala de estrategia ya corrió en este asunto. Confirma que "
+            detail="Esta sala de estrategia ya corrió en este caso. Confirma que "
                    "quieres una segunda pasada cara para continuar.")
     if len(body.panel) < _WARROOM_MIN_PANEL:
         raise HTTPException(status_code=422,
@@ -2243,7 +2310,7 @@ async def warroom_stream(matter_id: str, request: Request,
     if existing and not autorizar:
         raise HTTPException(
             status_code=409,
-            detail="Esta sala de estrategia ya corrió en este asunto. Confirma que "
+            detail="Esta sala de estrategia ya corrió en este caso. Confirma que "
                    "quieres una segunda pasada cara para continuar.")
 
     # CP-E1: tope de gasto del despacho ANTES de abrir el SSE (el turno es GET → el bloqueo

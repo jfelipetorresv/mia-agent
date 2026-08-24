@@ -257,11 +257,11 @@ async def _expand_expediente(
         if not ref.target:
             # @expediente suelto → el asunto en curso (solo en un turno de asunto).
             if not matter_id:
-                return ("@expediente: dime cuál — escribe @expediente:\"nombre del asunto\".",
+                return ("@expediente: dime cuál — escribe @expediente:\"nombre del caso\".",
                         None, False)
             resolved_id, title = matter_id, await _matter_title(conn, matter_id)
             if title is None:
-                return ("@expediente: no encontré el asunto en curso.", None, False)
+                return ("@expediente: no encontré el caso en curso.", None, False)
         else:
             matches = await _resolve_matter(conn, ref.target)
             if not matches:

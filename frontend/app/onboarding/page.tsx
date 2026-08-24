@@ -434,8 +434,8 @@ export default function OnboardingPage() {
               </p>
             </StaggerItem>
             <StaggerItem className="flex flex-wrap justify-center gap-3">
-              <Button variant="ghost" onClick={() => router.push("/")}>
-                Ir a mis asuntos
+              <Button variant="ghost" onClick={() => router.push("/casos")}>
+                Ir a mis casos
               </Button>
               <Button
                 variant="cta"
@@ -869,7 +869,7 @@ function QuestionInput({
               placeholder="Escribe y presiona Enter"
             />
           </Field>
-          <Field label="En qué asuntos">
+          <Field label="En qué tipo de casos">
             <TagInput
               value={asList(value)}
               onChange={onChange}

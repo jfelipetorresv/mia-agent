@@ -91,7 +91,7 @@ export default function DiarioDialog({ open, onOpenChange, matterId }: Props) {
             Arrancar el día
           </DialogTitle>
           <DialogDescription>
-            Lo que Mia dejó apuntado en este asunto. Lo que necesita tu decisión va arriba.
+            Lo que Mia dejó apuntado en este caso. Lo que necesita tu decisión va arriba.
           </DialogDescription>
         </DialogHeader>
 

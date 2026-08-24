@@ -1,6 +1,5 @@
 import {
   MessagesSquare,
-  LayoutGrid,
   FolderKanban,
   BookOpen,
   Gauge,
@@ -24,14 +23,20 @@ export type NavItem = {
  * fuente única, mover el elemento aquí reordena el Sidebar y el buscador de
  * un golpe. El aterrizaje después de entrar se decide en `login/page.tsx`.
  *
- * Lo que NO se toca todavía: la ruta raíz `/` sigue siendo Asuntos. Cambiarla
- * obliga a revisar los nueve archivos que enlazan a `/` y es un cambio aparte.
+ * D3 · «Casos»: Asuntos y Proyectos eran la MISMA tabla con dos pestañas; ahora
+ * son un solo ítem. La raíz `/`, `/asuntos/...` y `/proyectos/...` redirigen a
+ * `/casos` (alias de compatibilidad) — por eso el match cubre las cuatro formas.
  */
 export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Panel", icon: Gauge, match: (p) => p.startsWith("/dashboard") },
   { href: "/chat", label: "Conversar", icon: MessagesSquare, match: (p) => p.startsWith("/chat") },
-  { href: "/", label: "Asuntos", icon: LayoutGrid, match: (p) => p === "/" || p.startsWith("/asuntos") },
-  { href: "/proyectos", label: "Proyectos", icon: FolderKanban, match: (p) => p.startsWith("/proyectos") },
+  {
+    href: "/casos",
+    label: "Casos",
+    icon: FolderKanban,
+    match: (p) =>
+      p === "/" || p.startsWith("/casos") || p.startsWith("/asuntos") || p.startsWith("/proyectos"),
+  },
   { href: "/memoria", label: "Conocimiento", icon: BookOpen, match: (p) => p.startsWith("/memoria") },
   { href: "/personas", label: "Agentes jurídicos", icon: Users, match: (p) => p.startsWith("/personas") },
   { href: "/configurar", label: "Configuración", icon: Settings2, match: (p) => p.startsWith("/configurar") },

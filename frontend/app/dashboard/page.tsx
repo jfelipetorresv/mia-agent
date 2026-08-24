@@ -166,7 +166,7 @@ function gridFor(count: number): string {
 
 /** El rótulo del tipo de fila, en el idioma del oficio (nunca el `kind` crudo). */
 function tipoDe(m: Matter): string {
-  return m.kind === "proyecto" ? "Proyecto" : "Asunto";
+  return m.kind === "proyecto" ? "Respuesta directa" : "Con revisión de borrador";
 }
 
 /**
@@ -196,13 +196,14 @@ function money(n: number): number {
  * mismo criterio conservador del servidor cuando no reconoce un `kind`.
  */
 function rutaDe(m: Matter): string {
-  return m.kind === "proyecto" ? `/proyectos/${m.id}` : `/asuntos/${m.id}`;
+  // D3 · «Casos»: la ficha es única; el despachador de /casos/[id] decide el espacio.
+  return `/casos/${m.id}`;
 }
 
 /** El borrador se revisa DENTRO del asunto; un proyecto no tiene esa pantalla,
  *  así que se abre el proyecto en vez de mandar al abogado a una ruta ajena. */
 function rutaRevisar(m: Matter): string {
-  return m.kind === "proyecto" ? `/proyectos/${m.id}` : `/asuntos/${m.id}/revisar`;
+  return m.kind === "proyecto" ? `/casos/${m.id}` : `/casos/${m.id}/revisar`;
 }
 
 /**
@@ -411,8 +412,8 @@ export default function DashboardPage() {
   // Subtítulo del encabezado, armado solo con lo que de verdad llegó.
   const subActivos =
     activos === null
-      ? "No pude consultar cuántos asuntos tienes abiertos"
-      : `${activos} ${activos === 1 ? "asunto activo" : "asuntos activos"}`;
+      ? "No pude consultar cuántos casos tienes abiertos"
+      : `${activos} ${activos === 1 ? "caso activo" : "casos activos"}`;
   const subDecisiones =
     decisiones === null
       ? "no pude ver qué espera tu decisión"
@@ -423,11 +424,6 @@ export default function DashboardPage() {
         : decisionesParcial
           ? "no pude ver todo lo pendiente"
           : "nada espera tu decisión";
-
-  // Los borradores esperando pueden ser de un proyecto: el botón de salida y el
-  // rótulo tienen que llevar al sitio correcto, no siempre a Asuntos.
-  const pendientesSoloProyectos =
-    pendingMatters.length > 0 && pendingMatters.every((m) => m.kind === "proyecto");
 
   // Puesta a punto: solo lo que falta. Los pasos que el abogado OMITIÓ no se
   // insisten, y la sección entera desaparece cuando Mia ya está lista.
@@ -627,13 +623,13 @@ export default function DashboardPage() {
                 <PanelCard
                   icon={Folder}
                   title="Tu trabajo abierto"
-                  hint="Tus asuntos y proyectos. Abre cualquiera para ver su expediente."
+                  hint="Tus casos. Abre cualquiera para ver su expediente."
                   tone="primary"
                   className="animate-slide-up"
                   actions={
                     allMatters.length > 0 ? (
                       <Button asChild size="sm" variant="ghost" className="gap-1.5">
-                        <Link href="/">
+                        <Link href="/casos">
                           Ver todos
                           <ArrowRight className="h-3.5 w-3.5" />
                         </Link>
@@ -643,18 +639,18 @@ export default function DashboardPage() {
                 >
                   {!mattersOk ? (
                     <p className="text-pretty text-body text-muted-foreground">
-                      No pude consultar tus asuntos y proyectos ahora mismo. Vuelve a abrir el Panel
+                      No pude consultar tus casos ahora mismo. Vuelve a abrir el Panel
                       en un momento.
                     </p>
                   ) : allMatters.length === 0 ? (
                     <EmptyHint icon={Folder}>
-                      Todavía no tienes asuntos ni proyectos abiertos. Crea el primero y Mia empieza
+                      Todavía no tienes casos abiertos. Crea el primero y Mia empieza
                       a leer su expediente.{" "}
                       <Link
-                        href="/"
+                        href="/casos?nuevo=1"
                         className="font-medium text-primary underline underline-offset-2"
                       >
-                        Crear mi primer asunto
+                        Crear mi primer caso
                       </Link>
                     </EmptyHint>
                   ) : (
@@ -696,17 +692,10 @@ export default function DashboardPage() {
                           Se muestran {mattersVisibles.length} de {allMatters.length}. Los ves todos
                           en{" "}
                           <Link
-                            href="/"
+                            href="/casos"
                             className="font-medium text-primary underline underline-offset-2"
                           >
-                            Asuntos
-                          </Link>{" "}
-                          y{" "}
-                          <Link
-                            href="/proyectos"
-                            className="font-medium text-primary underline underline-offset-2"
-                          >
-                            Proyectos
+                            Casos
                           </Link>
                           .
                         </p>
@@ -905,8 +894,8 @@ export default function DashboardPage() {
 
                   {pendingMatters.length > 0 ? (
                     <Button asChild variant="cta" size="sm" className="mt-4 gap-1.5">
-                      <Link href={pendientesSoloProyectos ? "/proyectos" : "/"}>
-                        {pendientesSoloProyectos ? "Ver proyectos" : "Ver asuntos"}
+                      <Link href="/casos">
+                        Ver casos
                         <ArrowRight className="h-3.5 w-3.5" />
                       </Link>
                     </Button>
@@ -1044,7 +1033,7 @@ export default function DashboardPage() {
                         condición y la cifra salen de la MISMA lista recortada. */}
                     {dailyRecorte > 0 ? (
                       <p className="mt-3 text-pretty text-body text-muted-foreground">
-                        Tienes {dailyTotal} asuntos y proyectos abiertos: aquí se miran los{" "}
+                        Tienes {dailyTotal} casos abiertos: aquí se miran los{" "}
                         {dailyRevisados} más recientes y quedan {dailyRecorte} sin mirar.
                       </p>
                     ) : null}

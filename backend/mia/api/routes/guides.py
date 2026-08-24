@@ -121,7 +121,7 @@ async def guides_interview(request: Request, body: InterviewRequest):
             pool=pool,
         )
     except MatterNotFoundError:
-        raise HTTPException(status_code=404, detail="Ese asunto no existe.")
+        raise HTTPException(status_code=404, detail="Ese caso no existe.")
 
     # Bloque C: al cerrar una entrevista de agente, sugerimos guías del despacho que encajan.
     if body.kind == "agente" and isinstance(result, dict) and result.get("done"):

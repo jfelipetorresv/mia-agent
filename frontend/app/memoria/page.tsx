@@ -123,7 +123,7 @@ export default function MemoriaPage() {
         <TabsContent value="wiki" className="animate-fade-in">
           <div className="mt-6 space-y-6">
             <NotaMia id="conocimiento-criterios" icon={BookOpen} titulo="Así voy aprendiendo cómo piensas">
-              Cada vez que trabajamos un asunto anoto el criterio que aplicaste sobre ese tema. Abre
+              Cada vez que trabajamos un caso anoto el criterio que aplicaste sobre ese tema. Abre
               cualquiera para ver cómo lo entiendo hoy y corrígeme cuando no refleje al despacho.
             </NotaMia>
             <Wiki />
@@ -203,13 +203,13 @@ function Wiki() {
         <NeuIcon icon={BookOpen} tone="primary" className="mx-auto mb-4" />
         <h2 className="text-title">Todavía no hay criterios del despacho</h2>
         <p className="mx-auto mt-2 max-w-md text-pretty text-body text-muted-foreground">
-          Los criterios nacen del trabajo: en cuanto analicen un asunto juntos, Mia anota aquí cómo
-          abordas ese tema y qué posición defiende tu despacho. Empieza abriendo un asunto.
+          Los criterios nacen del trabajo: en cuanto analicen un caso juntos, Mia anota aquí cómo
+          abordas ese tema y qué posición defiende tu despacho. Empieza abriendo un caso.
         </p>
         <Button asChild className="mt-6 gap-2">
-          <Link href="/">
+          <Link href="/casos">
             <FolderOpen className="h-4 w-4" />
-            Ir a mis asuntos
+            Ir a mis casos
           </Link>
         </Button>
       </Card>
@@ -243,7 +243,7 @@ function Wiki() {
                       tema se trata. Dos líneas completas y luego sí se recorta. */}
                   <div className="text-pretty text-section line-clamp-2">{c.name}</div>
                   <div className="mt-0.5 text-body text-muted-foreground">
-                    {c.case_count} {c.case_count === 1 ? "asunto trabajado" : "asuntos trabajados"} ·{" "}
+                    {c.case_count} {c.case_count === 1 ? "caso trabajado" : "casos trabajados"} ·{" "}
                     {c.last_updated || "sin fecha"}
                   </div>
                 </div>
@@ -272,7 +272,7 @@ function Wiki() {
           <DialogHeader>
             <DialogTitle>{selected?.name}</DialogTitle>
             <DialogDescription>
-              Así entiende Mia este tema hoy, con lo que ha visto en tus asuntos. Si algo no
+              Así entiende Mia este tema hoy, con lo que ha visto en tus casos. Si algo no
               representa al despacho, escríbeselo abajo y lo ajusta.
             </DialogDescription>
           </DialogHeader>
@@ -327,7 +327,7 @@ const ORIGIN_LABEL: Record<string, string> = {
   manual: "Escrita a mano",
   importada: "Importada",
   entrevista: "Creada con Mia",
-  asunto: "Nacida de un asunto",
+  asunto: "Nacida de un caso",
   aprendida: "Aprendida por Mia",
 };
 
@@ -422,7 +422,7 @@ function Saber() {
     await apiSend("POST", "/api/playbooks", {
       title: form.title.trim(),
       summary: form.summary.trim() || form.title.trim(),
-      applies_when: form.applies_when.trim() || "Depende del contexto del asunto.",
+      applies_when: form.applies_when.trim() || "Depende del contexto del caso.",
       content: form.content.trim(),
       origin: "manual",
     });
@@ -701,7 +701,7 @@ function Saber() {
                       className="mt-2"
                       label="La aprobaste el % de las veces"
                       fraccion={skill.activations > 0 ? skill.approval_rate : null}
-                      sinMedir="Mia todavía no ha usado esta guía en ningún asunto"
+                      sinMedir="Mia todavía no ha usado esta guía en ningún caso"
                       sufijo={` · Mia la usó ${skill.activations} ${skill.activations === 1 ? "vez" : "veces"}`}
                     />
                   ) : null}
@@ -1055,7 +1055,7 @@ function Sugerencias() {
           <p className="text-section">Mia revisa su propio trabajo</p>
           <p className="mt-0.5 text-pretty text-body text-muted-foreground">
             {reviewMsg ||
-              "Cada día repasa los asuntos recientes y anota qué puede hacer mejor. Pídele que lo haga ahora si acabas de cerrar algo importante."}
+              "Cada día repasa los casos recientes y anota qué puede hacer mejor. Pídele que lo haga ahora si acabas de cerrar algo importante."}
           </p>
         </div>
       </div>

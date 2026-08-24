@@ -115,7 +115,8 @@ export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const kindWord = kind === "proyecto" ? "este proyecto" : "este asunto";
+  // D3 · «Casos»: el abogado ve un solo concepto, sin importar el modo de trabajo.
+  const kindWord = "este caso";
 
   function stopPolling() {
     if (pollRef.current) {

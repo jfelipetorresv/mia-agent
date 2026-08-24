@@ -408,7 +408,7 @@ export default function ConexionesSection({
         active={Boolean(speech?.listo)}
         subtitle={
           speech?.listo
-            ? "Instalado · dicta con el micrófono desde el chat de tus asuntos"
+            ? "Instalado · dicta con el micrófono desde el chat de tus casos"
             : speech?.estado === "descargando"
               ? "Instalando…"
               : "Inactivo"
@@ -529,7 +529,7 @@ export default function ConexionesSection({
           >
             <p className="mb-3 text-sm text-muted-foreground">
               Deja que Mia consulte lo que tú cargaste en tu propio NotebookLM mientras
-              investiga un asunto.
+              investiga un caso.
             </p>
             <div
               role="note"

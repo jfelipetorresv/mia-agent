@@ -214,16 +214,19 @@ def _gate_enganche_frontend() -> None:
     check("el componente no inventa su propio texto para el abogado",
           "crédito" not in texto_comp.lower() or "aviso.message" in texto_comp)
 
-    for pantalla in ("asuntos/[id]/page.tsx", "proyectos/[id]/page.tsx"):
+    # D3 · «Casos»: las pantallas canónicas viven en /casos (las rutas viejas
+    # /asuntos y /proyectos son stubs de redirección sin lógica de turno). El gate
+    # sigue a las pantallas reales — inspeccionar un stub daría verde/rojo vacío.
+    for pantalla in ("casos/[id]/CasoConBorrador.tsx", "casos/[id]/CasoDirecto.tsx"):
         src = (fe / pantalla).read_text(encoding="utf-8")
         check(f"{pantalla} atiende el evento", '"aviso_de_costo"' in src)
         check(f"{pantalla} lo pinta", "<AvisoDeCosto" in src)
 
-    revisar = (fe / "asuntos" / "[id]" / "revisar" / "page.tsx").read_text(encoding="utf-8")
-    check("la revisión del borrador no pierde el aviso al volver al asunto",
+    revisar = (fe / "casos" / "[id]" / "revisar" / "page.tsx").read_text(encoding="utf-8")
+    check("la revisión del borrador no pierde el aviso al volver al caso",
           '"aviso_de_costo"' in revisar and "depositarAvisoDeCosto" in revisar)
-    asunto = (fe / "asuntos" / "[id]" / "page.tsx").read_text(encoding="utf-8")
-    check("y el asunto lo recoge al volver", "recogerAvisoDeCosto" in asunto)
+    caso = (fe / "casos" / "[id]" / "CasoConBorrador.tsx").read_text(encoding="utf-8")
+    check("y el caso lo recoge al volver", "recogerAvisoDeCosto" in caso)
 
 
 def main() -> int:  # noqa: C901

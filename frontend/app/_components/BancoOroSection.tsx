@@ -434,7 +434,7 @@ export default function BancoOroSection() {
       setMsg({
         tono: "ok",
         texto: r.permitido
-          ? "Autorización concedida. Ya puedes guardar un asunto como caso del examen."
+          ? "Autorización concedida. Ya puedes guardar un caso resuelto como caso del examen."
           : "Autorización retirada. Los casos que ya guardaste siguen ahí: son anónimos.",
       });
     } catch (err) {
@@ -453,7 +453,7 @@ export default function BancoOroSection() {
       setAsuntos(ms ?? []);
     } catch (err) {
       setAsuntos([]);
-      setMsg({ tono: "mal", texto: plainMessage(err, "No se pudieron cargar tus asuntos.") });
+      setMsg({ tono: "mal", texto: plainMessage(err, "No se pudieron cargar tus casos.") });
     }
   }
 
@@ -472,7 +472,7 @@ export default function BancoOroSection() {
     } catch (err) {
       setMsg({
         tono: "mal",
-        texto: plainMessage(err, "No se pudo guardar este asunto como caso del examen."),
+        texto: plainMessage(err, "No se pudo guardar este caso como caso del examen."),
       });
     } finally {
       setBusy(null);
@@ -733,7 +733,7 @@ export default function BancoOroSection() {
         {/* Documentos */}
         <div className="space-y-3">
           <div>
-            <h4 className="text-sm font-semibold tracking-tight">Los documentos del asunto</h4>
+            <h4 className="text-sm font-semibold tracking-tight">Los documentos del caso</h4>
             <p className="mt-0.5 text-sm text-muted-foreground">
               El texto de los documentos, ya sin los datos del cliente.
             </p>
@@ -976,7 +976,7 @@ export default function BancoOroSection() {
           aquí queda solo la explicación, que sí es propia de esta pantalla. */}
       <div>
         <p className="text-sm text-muted-foreground">
-          Es el examen de tu despacho. Guarda aquí asuntos que ya resolviste y aprobaste: Mia les
+          Es el examen de tu despacho. Guarda aquí casos que ya resolviste y aprobaste: Mia les
           quita los datos del cliente y los conserva como prueba para comprobar, con el tiempo, que
           no empeora. Estos casos <span className="font-medium text-foreground">no</span> alimentan
           sus respuestas: solo la califican.
@@ -988,7 +988,7 @@ export default function BancoOroSection() {
       {/* Consentimiento — manda sobre todo lo demás. Apagado de fábrica. */}
       <ConnectorCard
         icon={ShieldCheck}
-        title="Autorización para usar asuntos reales"
+        title="Autorización para usar casos reales"
         subtitle={permitido ? "Concedida" : "No concedida"}
         active={Boolean(permitido)}
         actions={
@@ -1003,7 +1003,7 @@ export default function BancoOroSection() {
         }
       >
         <p className="text-sm text-muted-foreground">
-          Para armar un caso del examen, Mia tiene que leer un asunto real: el expediente, tu consulta
+          Para armar un caso del examen, Mia tiene que leer un caso real: el expediente, tu consulta
           y el borrador que aprobaste. Lo que queda guardado va{" "}
           <span className="font-medium text-foreground">sin los datos del cliente</span> y lo revisas
           tú antes de que cuente, pero la captura sí toca material real. Por eso te lo preguntamos
@@ -1011,7 +1011,7 @@ export default function BancoOroSection() {
         </p>
         {permitido ? (
           <p className="mt-2 text-sm text-muted-foreground">
-            Puedes retirar la autorización cuando quieras: Mia dejará de capturar asuntos nuevos. Los
+            Puedes retirar la autorización cuando quieras: Mia dejará de capturar casos nuevos. Los
             casos que ya guardaste no se borran, porque ya son anónimos; para sacar uno concreto,
             bórralo desde la lista.
           </p>
@@ -1021,9 +1021,9 @@ export default function BancoOroSection() {
       {/* Captura */}
       {permitido ? (
         <div className="rounded-xl border border-border bg-card p-4">
-          <h4 className="text-sm font-semibold tracking-tight">Guardar un asunto como caso</h4>
+          <h4 className="text-sm font-semibold tracking-tight">Guardar un caso resuelto como caso del examen</h4>
           <p className="mt-1 text-sm text-muted-foreground">
-            Solo sirven los asuntos que ya resolviste y en los que aprobaste un borrador: el examen
+            Solo sirven los casos que ya resolviste y en los que aprobaste un borrador: el examen
             necesita saber cuál era la buena respuesta. Elige uno e inténtalo; si no sirve, te decimos
             por qué.
           </p>
@@ -1031,13 +1031,13 @@ export default function BancoOroSection() {
             <div className="mt-3 space-y-3 animate-fade-in">
               <div>
                 <Label htmlFor="oro-asunto" className="mb-1.5 block text-sm">
-                  ¿Qué asunto quieres guardar?
+                  ¿Qué caso quieres guardar?
                 </Label>
                 {asuntos === null ? (
                   <Skeleton className="h-10 w-full max-w-md rounded-md" />
                 ) : asuntos.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    Todavía no tienes asuntos. Resuelve uno y aprueba su borrador para poder guardarlo.
+                    Todavía no tienes casos. Resuelve uno y aprueba su borrador para poder guardarlo.
                   </p>
                 ) : (
                   <select
@@ -1046,7 +1046,7 @@ export default function BancoOroSection() {
                     onChange={(e) => setAsuntoElegido(e.target.value)}
                     className="h-10 w-full max-w-md rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <option value="">Elige un asunto…</option>
+                    <option value="">Elige un caso…</option>
                     {asuntos.map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.name}
@@ -1075,7 +1075,7 @@ export default function BancoOroSection() {
           ) : (
             <Button size="sm" onClick={abrirCaptura} className="mt-3">
               <Plus className="h-4 w-4" />
-              Guardar un asunto
+              Guardar un caso
             </Button>
           )}
         </div>
@@ -1089,8 +1089,8 @@ export default function BancoOroSection() {
         {casos.length === 0 ? (
           <EmptyHint icon={ShieldCheck}>
             Todavía no hay casos en el examen. {permitido
-              ? "Guarda un asunto que ya resolviste para empezar."
-              : "Autoriza arriba el uso de asuntos reales para poder guardar el primero."}
+              ? "Guarda un caso que ya resolviste para empezar."
+              : "Autoriza arriba el uso de casos reales para poder guardar el primero."}
           </EmptyHint>
         ) : (
           <ul className="space-y-2">
