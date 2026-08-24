@@ -9,6 +9,65 @@
 
 ---
 
+# CIERRE — 2026-08-24 · sesión 61 · D3/D4/D7 + deuda vieja en cero + segunda tanda del harness · EMPEZAR AQUÍ
+
+## TL;DR
+
+Ocho commits pusheados (`4718432`…`ac447cc`). Los bloques D3 (Casos), D4 (motor único) y D7
+(atajos editables) de la bitácora UX quedaron implementados y verificados; la deuda vieja quedó
+en cero salvo lo declarado abajo; y entró la segunda tanda de mecanismos del harness de litigio,
+todos como AVISO. `verify.ps1 -Mode quick` VERDE: 29 suites, ~35 s. Los gates se corren con
+`.venv\Scripts\python.exe` (el Python del sistema no tiene psycopg y da rojos falsos).
+
+## Lo hecho
+
+- **D3 `4718432`**: asuntos+proyectos → un solo concepto «Casos» (misma tabla `matters`; la
+  diferencia real es el modo borrador/directo, ahora un control dentro del caso con
+  `PUT /api/matters/{id}/modo` y 409 honesto). URLs viejas redirigen. Sin migración (decisión
+  documentada en `ux.py`). Vocabulario visible «asunto»→«caso» en toda la capa visible.
+- **D4 `b13336f`**: pantalla de activación con preselección real del motor detectado, una sola
+  pantalla de claves con requisitos como requisitos, y OpenRouter fuera del grupo de motores con
+  consentimiento expreso (sin casilla no viaja `allow_openrouter`). **Copy pendiente de aprobación
+  de Pipe.**
+- **D7 `2010a8a`**: atajos del chat editables — migración `062_shortcut_prefs` (RLS patrón 047),
+  CRUD `/api/atajos`, panel «Tus atajos». Lo fijado nunca se descarta; el desborde se dice con el
+  número exacto. Falta reordenar arrastrando (columna `position` en 0).
+- **Deuda `6355d66` + `8374572` + `c8fca73`**: gate real del lanzador (`test_api_launcher`, probado
+  por mutación), `setup_db_steps.py` (PS 5.1), `RuntimeHealthBanner` por el puente `mia-shell` sin
+  debilitar seguridad, `test_e2e` 59/59 de raíz (mocks con contrato viejo de packs 059), tres gates
+  rojos viejos con causa raíz (aprendizajes 86-87), y las consolas negras (aprendizaje 85 — regla
+  sellada de Pipe: ningún gate abre ventanas).
+- **Harness tanda 2 `ac447cc`** (auditoría previa: el harness NO tiene cifra medida de mejora, solo
+  diagnóstico): modo `aviso|muro` declarado en `config/catalogo-barreras.json` (15 invariantes) y
+  cotejado contra conducta en ambos sentidos (`test_modo_barreras`, probado por mutación); raíces
+  de datos (`test_raices_datos` — ya cazó 6 carpetas rotas en la DB, residuo de seeds); denuncia de
+  ausencia de medición (`test_medicion_por_nodo`, auto-mutación integrada); latencia+`tool_calls`
+  por nodo (migración `063`, `usage_by_node()` ampliado); disposición de hallazgos en el recibo
+  `human_approval` del ledger (`memory/hallazgos.py`), sin fricción de UI. NO portados con razón:
+  herencia de cotejo (Mia capada a 1 pasada/turno), techos por rol (solo aplicaría al Agent Hub),
+  paralelismo (grafo lineal).
+
+## Decisiones de Pipe PENDIENTES
+
+1. Barra lateral en tema claro: ¿clara (recomendada) u oscura como hoy? (mockups mostrados en chat
+   + `..\Decisiones-de-diseno-2026-08-23.html`).
+2. Ayudantes del Agent Hub: ¿añadir la marca en letra pequeña («Funciona con Claude Code»)?
+   OJO: hoy YA están sin marca por regla §G — la B es una excepción parcial a su propia regla.
+3. Aprobar el copy de D4 (motor / claves / consentimiento OpenRouter).
+
+## Deuda declarada (con causa)
+
+- Capa 3 del puente `mia-shell` (botones en la app empaquetada): exige re-ensamblar el instalador
+  con checkout limpio.
+- `test_eval_harness.py`: 2 rojos preexistentes (demostrado idéntico en HEAD).
+- 6 carpetas rotas en la DB local (residuo de seeds/tests): reportadas por `test_raices_datos` en
+  cada corrida, no borradas.
+- Bloque informativo de disposición de hallazgos en la pantalla de revisión: el dato ya viaja en
+  `metadata`, falta pintarlo.
+- Verificación visual en navegador de D4 y D7: no corrida (D3 sí se verificó en vivo).
+
+---
+
 # CIERRE — 2026-08-19 · sesión 46 · F4 CERRADA (instalador existe) + 23 observaciones de UX de Pipe · EMPEZAR AQUÍ
 
 ## TL;DR

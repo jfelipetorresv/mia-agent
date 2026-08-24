@@ -654,3 +654,33 @@ ni un aviso). 30/30 PASS.
 registra y reporta; solo sube a muro cuando demuestre no dar falsos positivos), y ninguna debilita
 un muro existente: el banco de citas quemadas y la omisión bajo jurisdicción desconocida siguen
 bloqueando exactamente igual.
+
+## Sesión 2026-08-24 (D3/D4/D7 + deuda + segunda tanda del harness)
+
+85. **`$IsWindows` no existe en Windows PowerShell 5.1 — y las suites le sacaban consolas negras
+al abogado.** `verify.ps1` ocultaba la ventana de cada suite con `if ($IsWindows)`, variable que
+solo existe en PowerShell Core: en la 5.1 de la máquina de Pipe evaluaba a `$null` y cada corrida
+de gates abría 25+ ventanas visibles encima de su trabajo. Se detecta Windows con
+`$env:OS -eq 'Windows_NT'`. **Regla sellada por Pipe (2026-08-24): ningún gate ni script del repo
+abre ventanas de consola visibles.** Todo `subprocess.Popen` de gate lleva
+`creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)` (el getattr lo hace inocuo en otros
+SO). Commit `c8fca73`.
+
+86. **Un script de init que re-aplica una migración vieja deshace las posteriores sin fallar…
+hasta que los datos lo delatan.** `init_dreams.py` re-aplicaba la `010` (DROP + ADD del CHECK de
+`feedback_proposals`), pisando el vocabulario ACUMULADO de la `058`; cualquier fila legítima
+`soul_rule`/`harvest_lessons` reventaba tres gates con `CheckViolation`, y durante semanas se
+diagnosticó como «fila corrupta en la DB local». La fila era legítima; el script era el defecto.
+Regla: un helper de init apunta SIEMPRE a la definición vigente de lo que asegura, nunca a una
+migración intermedia. De paso quedó a la vista que la `049` había perdido `soul_rule` de la lista
+(la `058` lo repuso): al reemplazar un CHECK completo, la lista nueva se construye desde la
+VIGENTE, no desde la original. Commit `8374572`.
+
+87. **Tres gates llevaban rojo sin causa escrita, y ninguno era el defecto que su rótulo sugería.**
+`test_second_brain_ui` (6 checks clavados al copy literal que el rediseño aprobado renombró con
+las funciones intactas — regla del 2026-07-29: los gates verifican el concepto, no la redacción),
+`test_welcome_keys` s6 (esperaba la política default vieja; ahora coteja contra
+`llm._default_policy()`, sea cual sea) y `test_ux` (deriva de mocks, regla 78: el doble no emitía
+packs de la 059 y approve devolvía 409). Moraleja operativa: un rojo que se «declara preexistente»
+sin causa raíz escrita es deuda que se re-diagnostica mal en cada sesión siguiente; o se arregla o
+se deja la causa exacta (archivo:línea) por escrito. Commit `8374572`.
