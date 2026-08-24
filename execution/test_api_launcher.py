@@ -106,6 +106,9 @@ def run() -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
+        # Sin ventana de consola: en Windows este gate le sacaba una terminal negra al
+        # abogado en pleno trabajo (orden de Pipe 2026-08-24). En otros SO el flag es 0.
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     check("el subproceso del lanzador se creó", proc.poll() is None)
 

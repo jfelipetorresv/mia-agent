@@ -313,7 +313,9 @@ def _ephemeral_stack(tmp: Path, router_settings: dict, tag: str):
             [str(litellm_exe), "--config", str(cfg_path), "--host", "127.0.0.1",
              "--port", str(proxy_port)],
             cwd=str(tmp), env=_scrubbed_env(),
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            # Sin ventana de consola en Windows (orden de Pipe 2026-08-24); 0 en otros SO.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if not _wait_ready(proxy_port, proc):
             print(f"    [{tag}] el proxy efímero NO arrancó a tiempo (puerto {proxy_port})")
             yield None, upstream

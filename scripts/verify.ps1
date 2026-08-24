@@ -104,7 +104,10 @@ foreach ($test in $tests) {
             RedirectStandardError = $stderr
             PassThru = $true
         }
-        if ($IsWindows) {
+        # $IsWindows NO existe en Windows PowerShell 5.1 (solo en PowerShell Core): aquí
+        # evaluaba a $null y cada suite abría una consola negra visible sobre el escritorio
+        # del abogado (reportado por Pipe 2026-08-24). Se detecta Windows por $env:OS.
+        if ($env:OS -eq 'Windows_NT' -or $IsWindows) {
             $startArgs['WindowStyle'] = 'Hidden'
         }
         $proc = Start-Process @startArgs
