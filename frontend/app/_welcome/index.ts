@@ -14,6 +14,8 @@ export { default as WelcomeField } from "./WelcomeField";
 export type { WelcomeFieldProps } from "./WelcomeField";
 export { default as MiaLine } from "./MiaLine";
 export type { MiaLineProps } from "./MiaLine";
+export { default as WelcomeHero } from "./WelcomeHero";
+export type { WelcomeHeroProps } from "./WelcomeHero";
 export { StepTransition, Stagger, StaggerItem } from "./MotionField";
 export type { StepTransitionProps, StaggerProps } from "./MotionField";
 export {

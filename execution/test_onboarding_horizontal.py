@@ -43,7 +43,13 @@ def main() -> int:
     # un país fuera de la lista y esta pantalla no, el abogado lo pierde al editar.
     despacho = (ROOT / "frontend" / "app" / "_components" / "MiDespachoSection.tsx").read_text(encoding="utf-8")
     sidebar = (ROOT / "frontend" / "app" / "_components" / "Sidebar.tsx").read_text(encoding="utf-8")
-    workspace = (ROOT / "frontend" / "app" / "asuntos" / "[id]" / "page.tsx").read_text(encoding="utf-8")
+    # D3 (2026-08, «un solo concepto Casos»): la conversación vive en /casos/[id]
+    # (CasoConBorrador + CasoDirecto); /asuntos/[id] quedó como alias de redirección
+    # sin UI. El gate lee las superficies REALES del chat, no el alias.
+    workspace = (
+        (ROOT / "frontend" / "app" / "casos" / "[id]" / "CasoConBorrador.tsx").read_text(encoding="utf-8")
+        + (ROOT / "frontend" / "app" / "casos" / "[id]" / "CasoDirecto.tsx").read_text(encoding="utf-8")
+    )
     globals_css = (ROOT / "frontend" / "app" / "globals.css").read_text(encoding="utf-8")
 
     # Nota (consolidación 2026-07-09, decisión de Pipe): el paso de jurisdicción SÍ
@@ -66,7 +72,10 @@ def main() -> int:
     check("pregunta ÚNICA de país, en orden alfabético y sin ningún país destacado",
           "COUNTRY_OPTIONS" in onboarding_surface and '"p5"' not in onboarding
           and len(paises) >= 20 and paises == sorted(paises)
-          and onboarding.count("¿Con las reglas jurídicas de qué país trabaja tu despacho?") == 1)
+          # Regla de copy de Pipe: los gates verifican el CONCEPTO, nunca la redacción
+          # literal. El sujeto de la pregunta cambió de "tu despacho" a "tu firma u
+          # organización" (criterio de lenguaje 2026-08); se ancla el arranque estable.
+          and onboarding.count("¿Con las reglas jurídicas de qué país trabaja tu") == 1)
     check("la selección de país auto-llena jurisdiction.base (nombres) además de jurisdictions (códigos)",
           'soulResponses["jurisdiction.base"]' in onboarding and "COUNTRY_NAME_BY_CODE" in onboarding)
 

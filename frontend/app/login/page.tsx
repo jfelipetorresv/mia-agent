@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { apiSend, plainMessage, setToken } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { apiGet, apiSend, plainMessage, setToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   WelcomeShell,
+  WelcomeHero,
   StepTransition,
   Stagger,
   WelcomeField,
@@ -16,12 +17,43 @@ import {
 
 type AuthResponse = { token: string; tenant_id: string };
 
+// La portada se muestra una sola vez por sesión de navegación: si el abogado la
+// omite (o vuelve a /login desde el registro), no se le vuelve a interponer.
+const HERO_VISTO_KEY = "mia-portada-vista";
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Portada cinematográfica de bienvenida (pack de diseño, encargo de Pipe
+  // 2026-08-24): la primera pantalla del abogado recién instalado es el hero,
+  // no el formulario de entrada. "Primera vez" = este equipo aún no tiene
+  // ningún despacho creado (`hay_usuario` de /api/welcome/status, endpoint
+  // público). Si el estado no se puede consultar o ya hay usuario, se muestra
+  // el formulario de siempre: la portada jamás bloquea la entrada.
+  const [hero, setHero] = useState<"comprobando" | "mostrar" | "no">(() => {
+    if (typeof window !== "undefined" && sessionStorage.getItem(HERO_VISTO_KEY)) return "no";
+    return "comprobando";
+  });
+
+  useEffect(() => {
+    if (hero !== "comprobando") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const st = await apiGet<{ hay_usuario: boolean }>("/api/welcome/status");
+        if (!cancelled) setHero(st.hay_usuario ? "no" : "mostrar");
+      } catch {
+        if (!cancelled) setHero("no");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hero]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,6 +81,37 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Mientras se decide si toca la portada, el lienzo vivo sin contenido: es un
+  // instante y evita el destello formulario→portada.
+  if (hero === "comprobando") {
+    return <WelcomeShell width="sm">{null}</WelcomeShell>;
+  }
+
+  // Primera vez en este equipo: la portada del pack como primera pantalla.
+  // «Empezar ahora» avanza al paso real siguiente (crear el despacho);
+  // «Omitir» salta solo la presentación y deja el formulario de entrada,
+  // que es donde el flujo aterrizaba hasta hoy (el registro no se puentea).
+  if (hero === "mostrar") {
+    return (
+      // hideBrand: el render canónico no lleva el wordmark arriba — la marca ya
+      // vive en el anillo del cristal («MIA — Legal intelligence»).
+      <WelcomeShell width="lg" hideBrand>
+        <StepTransition stepKey="portada" direction={1}>
+          <WelcomeHero
+            onStart={() => {
+              sessionStorage.setItem(HERO_VISTO_KEY, "1");
+              router.push("/register");
+            }}
+            onSkip={() => {
+              sessionStorage.setItem(HERO_VISTO_KEY, "1");
+              setHero("no");
+            }}
+          />
+        </StepTransition>
+      </WelcomeShell>
+    );
   }
 
   return (
