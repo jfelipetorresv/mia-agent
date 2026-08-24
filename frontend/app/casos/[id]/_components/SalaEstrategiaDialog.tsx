@@ -130,7 +130,7 @@ export default function SalaEstrategiaDialog({ open, onOpenChange, matterId, has
                 Panel propuesto
               </p>
               {panel.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+                <p className="rounded-lg border border-dashed border-border bg-card/40 px-3 py-4 text-center text-xs text-muted-foreground shadow-neu-raised">
                   Sin counsel en el panel — suma al menos {MIN_PANEL} para empezar.
                 </p>
               ) : (
@@ -138,7 +138,7 @@ export default function SalaEstrategiaDialog({ open, onOpenChange, matterId, has
                   {panel.map((p, idx) => (
                     <li
                       key={`${p.persona_id ?? "sintetico"}-${p.stance}-${idx}`}
-                      className="flex items-start justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2.5 text-sm"
+                      className="flex items-start justify-between gap-2 rounded-lg border border-border/10 bg-card px-3 py-2.5 text-sm shadow-neu-raised"
                     >
                       <div className="min-w-0">
                         <div className="font-medium">{p.name}</div>
@@ -169,7 +169,7 @@ export default function SalaEstrategiaDialog({ open, onOpenChange, matterId, has
                   {disponibles.map((a) => (
                     <li
                       key={a.persona_id}
-                      className="flex items-start justify-between gap-2 rounded-lg border border-border px-3 py-2.5 text-sm"
+                      className="flex items-start justify-between gap-2 rounded-lg border border-border/10 bg-card px-3 py-2.5 text-sm shadow-neu-raised"
                     >
                       <div className="min-w-0">
                         <div className="font-medium">{a.name}</div>

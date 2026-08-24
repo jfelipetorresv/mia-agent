@@ -83,7 +83,7 @@ export default function CierreDialog({ open, onOpenChange, busy, result }: Props
                   {result!.durables.map((d, i) => (
                     <li
                       key={i}
-                      className="rounded-xl border border-border bg-card px-3 py-2 text-sm leading-relaxed text-card-foreground shadow-sm"
+                      className="rounded-lg border border-border/10 bg-card px-3 py-2 text-sm leading-relaxed text-card-foreground shadow-neu-raised"
                     >
                       {d}
                     </li>
@@ -101,7 +101,7 @@ export default function CierreDialog({ open, onOpenChange, busy, result }: Props
                   {result!.pendientes.map((p, i) => (
                     <li
                       key={i}
-                      className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-sm leading-relaxed text-card-foreground shadow-sm"
+                      className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm leading-relaxed text-card-foreground shadow-neu-raised"
                     >
                       {p}
                     </li>

@@ -101,7 +101,7 @@ export default function DiarioDialog({ open, onOpenChange, matterId }: Props) {
             Preparando tu resumen…
           </div>
         ) : error ? (
-          <div className="flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning">
+          <div className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-warning">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <p>{error}</p>
           </div>
@@ -149,8 +149,8 @@ function DailyRow({ item, highlight = false }: { item: DailyItem; highlight?: bo
   return (
     <div
       className={cn(
-        "rounded-xl border px-3 py-2.5 shadow-sm",
-        highlight ? "border-primary/30 bg-primary/5" : "border-border bg-card",
+        "rounded-lg border px-3 py-2.5 shadow-neu-raised",
+        highlight ? "border-primary/30 bg-primary/5" : "border-border/10 bg-card",
       )}
     >
       <div className="flex items-start gap-2">

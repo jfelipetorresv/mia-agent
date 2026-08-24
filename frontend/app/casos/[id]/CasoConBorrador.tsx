@@ -45,6 +45,7 @@ import CierreDialog, { type CierreResult } from "./_components/CierreDialog";
 import DocumentosPorConfirmarDialog from "./_components/DocumentosPorConfirmarDialog";
 import type { DebateTurn, Panelist, WarRoomResult } from "./_components/warroom-types";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import MiaMarkdown from "@/components/MiaMarkdown";
 import {
   Dialog,
@@ -788,7 +789,7 @@ function WorkspacePageContent({
                             : "Error"}
                     </span>
                   </div>
-                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
+                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted shadow-neu-sunken">
                     <div
                       className={cn(
                         "h-full rounded-full transition-all duration-300",
@@ -807,8 +808,8 @@ function WorkspacePageContent({
 
       {/* Consulta: espacio único de conversación (el plan vive en el aside derecho) */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex-1 space-y-5 overflow-auto px-6 py-6">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card/80 px-4 py-3 shadow-sm">
+        <div className="flex-1 space-y-block overflow-auto px-6 py-6">
+          <Card className="flex flex-wrap items-center justify-between gap-3 bg-card/80 px-4 py-3 backdrop-blur-sm">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Globe2 className="h-4 w-4 shrink-0 text-primary" />
               <span className="text-xs font-medium text-muted-foreground">Contexto jurídico</span>
@@ -823,7 +824,7 @@ function WorkspacePageContent({
                 <summary className="cursor-pointer list-none rounded-lg px-2 py-1 text-xs font-medium text-primary hover:bg-primary/5">
                   Cambiar
                 </summary>
-                <div className="absolute right-0 z-20 mt-2 min-w-56 space-y-2 rounded-xl border border-border bg-card p-3 shadow-lg">
+                <div className="absolute right-0 z-20 mt-2 min-w-56 space-y-2 rounded-lg border border-border/10 bg-card p-3 shadow-neu-raised">
                   <p className="text-xs text-muted-foreground">
                     Mia concentrará la investigación y las verificaciones en lo que marques.
                   </p>
@@ -843,12 +844,12 @@ function WorkspacePageContent({
               </details>
             ) : null}
             {jurisdictionError ? <p role="alert" className="w-full text-xs text-warning">{jurisdictionError}</p> : null}
-          </div>
+          </Card>
           {notice ? (
-            <div
+            <Card
               role={notice.type === "warning" ? "alert" : "status"}
               className={cn(
-                "flex items-start gap-3 rounded-xl border px-5 py-4 animate-slide-up",
+                "flex items-start gap-3 px-5 py-4 animate-slide-up",
                 notice.type === "warning"
                   ? "border-warning/30 bg-warning/5 text-warning"
                   : "border-success/30 bg-success/10 text-success",
@@ -867,11 +868,11 @@ function WorkspacePageContent({
               >
                 <X className="h-4 w-4" />
               </button>
-            </div>
+            </Card>
           ) : null}
           {messages.length === 0 ? (
             <div className="mt-20 text-center animate-slide-up">
-              <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-muted/50 text-primary shadow-neu-sunken">
                 <Sparkles className="h-5 w-5" />
               </div>
               <p className="text-sm text-muted-foreground">
@@ -888,7 +889,7 @@ function WorkspacePageContent({
                     {streaming && i === lastIdx && !m.text ? (
                       <span className="absolute inset-0 rounded-full bg-primary/40 blur-md animate-pulse-soft" aria-hidden />
                     ) : null}
-                    <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-sm">
+                    <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-neu-raised">
                       <Scale className="h-4 w-4" />
                     </div>
                   </div>
@@ -896,7 +897,7 @@ function WorkspacePageContent({
                 <div
                   className={
                     m.role === "user"
-                      ? "max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
+                      ? "max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-neu-raised"
                       : "max-w-[75%] pt-1 font-serif text-[15px] leading-relaxed text-foreground"
                   }
                 >
@@ -1004,7 +1005,7 @@ function WorkspacePageContent({
               ) : null}
             </div>
           </div>
-          <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-2 shadow-lg shadow-primary/5 transition-shadow focus-within:border-primary/40 focus-within:shadow-primary/10">
+          <div className="flex items-end gap-2 rounded-lg border border-border/20 bg-secondary/30 p-2 shadow-neu-sunken transition-colors focus-within:border-primary/40">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -1038,7 +1039,7 @@ function WorkspacePageContent({
       </div>
 
       {/* Diagnóstico + Plan de trabajo */}
-      <aside className="hidden w-[300px] shrink-0 flex-col gap-5 overflow-y-auto border-l border-border bg-card/40 px-5 py-6 xl:flex">
+      <aside className="hidden w-[300px] shrink-0 flex-col gap-block overflow-y-auto border-l border-border bg-card/40 px-5 py-6 xl:flex">
         <div>
           <h3 className="mb-3 text-sm font-semibold">Diagnóstico</h3>
           {diagnosis ? (
@@ -1050,9 +1051,9 @@ function WorkspacePageContent({
                   <SummaryRow label="Riesgo y recomendación" text={summary.riesgo} />
                 </div>
               ) : null}
-              <div className="whitespace-pre-wrap rounded-xl border border-border bg-card px-3 py-3 font-serif text-sm leading-relaxed text-card-foreground shadow-sm">
+              <Card className="whitespace-pre-wrap px-3 py-3 font-serif text-sm leading-relaxed">
                 {diagnosis}
-              </div>
+              </Card>
               {verification && verification.citas > 0 ? (
                 <div className="mt-5">
                   <h3 className="mb-3 text-sm font-semibold">Citas del borrador</h3>
@@ -1073,7 +1074,7 @@ function WorkspacePageContent({
         <details
           open={planOpen}
           onToggle={(e) => setPlanOpen((e.target as HTMLDetailsElement).open)}
-          className="group shrink-0 rounded-xl border border-border bg-card shadow-sm"
+          className="group shrink-0 rounded-lg border border-border/10 bg-card shadow-neu-raised"
         >
           <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
             <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
@@ -1145,7 +1146,7 @@ function WorkspacePageContent({
                 "Esto es una propuesta para que la revises, no algo que Mia ya hizo. Solo saldrá el texto de abajo."}
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm whitespace-pre-wrap">
+          <div className="rounded-lg border border-border/20 bg-muted/40 px-3 py-2 text-sm whitespace-pre-wrap shadow-neu-sunken">
             {delegation?.texto || "(Sin texto propuesto)"}
           </div>
           <label className="flex items-start gap-2 text-sm text-muted-foreground">
@@ -1184,10 +1185,10 @@ type DiagnosisSummary = { problema?: string; normas?: string; riesgo?: string };
 function SummaryRow({ label, text }: { label: string; text?: string }) {
   if (!text) return null;
   return (
-    <div className="rounded-xl border border-border bg-card px-3 py-2 shadow-sm">
+    <Card className="px-3 py-2">
       <div className="text-xs font-semibold uppercase tracking-wide text-primary/80">{label}</div>
       <div className="mt-0.5 text-sm text-card-foreground">{text}</div>
-    </div>
+    </Card>
   );
 }
 

@@ -337,16 +337,18 @@ function EngineCard({
       // tabulación; entre tarjetas se navega con flechas (manejadas por el grupo).
       tabIndex={selected ? 0 : -1}
       className={cn(
-        "group relative w-full rounded-xl border bg-card/60 p-4 text-left transition-all duration-300",
-        "hover:border-primary/60 hover:bg-card",
-        selected ? "glow-teal border-primary bg-primary/10" : "border-border",
+        "group relative w-full rounded-lg border p-4 text-left transition-all duration-300",
+        "hover:border-primary/60",
+        selected
+          ? "border-primary/50 bg-primary/10 shadow-neu-sunken"
+          : "border-border/10 bg-card shadow-neu-raised hover:-translate-y-0.5",
       )}
     >
       <div className="flex items-start gap-3">
         <span
           className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-colors",
-            selected ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground",
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors",
+            selected ? "bg-primary text-primary-foreground" : "bg-secondary text-primary shadow-neu-sunken",
           )}
         >
           <Icon className="h-5 w-5" aria-hidden />
@@ -609,7 +611,7 @@ export default function ActivarPage() {
             <StaggerItem>
               <div
                 role="status"
-                className="flex max-w-md items-start gap-3 rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-left"
+                className="flex max-w-md items-start gap-3 rounded-lg border border-primary/40 bg-primary/10 px-4 py-3 text-left shadow-neu-raised"
               >
                 <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
                 <p className="text-sm font-medium text-foreground">{result.aviso}</p>
@@ -969,7 +971,7 @@ export default function ActivarPage() {
       <WelcomeField>
         <label
           htmlFor="consentimiento-openrouter"
-          className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card/60 p-4 transition-colors hover:border-primary/60"
+          className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/10 bg-card p-4 shadow-neu-raised transition-colors hover:border-primary/60"
         >
           <input
             id="consentimiento-openrouter"

@@ -174,7 +174,7 @@ export default function SalaEstrategiaResult({
         <details
           open={debateOpen}
           onToggle={(e) => setDebateOpen((e.target as HTMLDetailsElement).open)}
-          className="group mt-3 rounded-xl border border-border bg-card shadow-sm"
+          className="group mt-3 rounded-lg border border-border/10 bg-card shadow-neu-raised"
         >
           <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
             <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />

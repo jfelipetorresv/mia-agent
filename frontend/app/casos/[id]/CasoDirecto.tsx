@@ -32,6 +32,7 @@ import AvisoDeCosto, { type AvisoDeCostoData } from "../../_components/AvisoDeCo
 import CitationReview, { type CitaDetalle, type Verification } from "../../_components/CitationReview";
 import { SectionTitle } from "../../_components/SectionTitle";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import MiaMarkdown from "@/components/MiaMarkdown";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -394,7 +395,7 @@ export default function CasoDirecto({
           <div className="flex-1 space-y-5 overflow-auto px-6 py-6">
             {messages.length === 0 ? (
               <div className="mt-16 text-center animate-slide-up">
-                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-muted/50 text-primary shadow-neu-sunken">
                   <Sparkles className="h-5 w-5" />
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -415,7 +416,7 @@ export default function CasoDirecto({
                         {streaming && i === lastIdx && !m.text ? (
                           <span className="absolute inset-0 rounded-full bg-primary/40 blur-md animate-pulse-soft" aria-hidden />
                         ) : null}
-                        <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-sm">
+                        <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/75 text-primary-foreground shadow-neu-raised">
                           <Sparkles className="h-4 w-4" />
                         </div>
                       </div>
@@ -423,7 +424,7 @@ export default function CasoDirecto({
                     <div
                       className={
                         m.role === "user"
-                          ? "max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
+                          ? "max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-neu-raised"
                           : "max-w-[75%] pt-1 font-serif text-[15px] leading-relaxed text-foreground"
                       }
                     >
@@ -453,7 +454,7 @@ export default function CasoDirecto({
           <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
             <AvisoDeCosto aviso={avisoCosto} onDismiss={() => setAvisoCosto(null)} />
             <div className="mb-2 flex min-h-5 items-center text-sm text-muted-foreground">{status}</div>
-            <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-2 shadow-lg shadow-primary/5 transition-shadow focus-within:border-primary/40 focus-within:shadow-primary/10">
+            <div className="flex items-end gap-2 rounded-lg border border-border/20 bg-secondary/30 p-2 shadow-neu-sunken transition-colors focus-within:border-primary/40">
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -502,13 +503,16 @@ export default function CasoDirecto({
           {outputsLoading ? (
             <div className="px-1 py-3 text-xs text-muted-foreground">Cargando…</div>
           ) : outputs.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+            <Card variant="dashed" className="px-3 py-6 text-center text-xs text-muted-foreground">
               Cuando le pidas a Mia algo que valga la pena guardar, aparecerá aquí.
-            </div>
+            </Card>
           ) : (
             <ul className="space-y-2">
               {outputs.map((o) => (
-                <li key={o.id} className="rounded-lg border border-border bg-card px-3 py-2.5 text-xs">
+                <li
+                  key={o.id}
+                  className="rounded-lg border border-border/10 bg-card px-3 py-2.5 text-xs shadow-neu-raised"
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 font-medium text-foreground">
@@ -581,7 +585,7 @@ export default function CasoDirecto({
                 "Esto es una propuesta para que la revises, no algo que Mia ya hizo. Solo saldrá el texto de abajo."}
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm whitespace-pre-wrap">
+          <div className="rounded-lg border border-border/20 bg-muted/40 px-3 py-2 text-sm whitespace-pre-wrap shadow-neu-sunken">
             {delegation?.texto || "(Sin texto propuesto)"}
           </div>
           <label className="flex items-start gap-2 text-sm text-muted-foreground">
@@ -679,10 +683,10 @@ function RevisionCitas({ informe }: { informe: InformeCitas }) {
   );
 
   return (
-    <div
+    <Card
       className={cn(
-        "ml-11 max-w-[75%] rounded-lg border px-3 py-2.5",
-        alerta ? "border-warning/30 bg-warning/5" : "border-border bg-card/60",
+        "ml-11 max-w-[75%] px-3 py-2.5",
+        alerta ? "border-warning/30 bg-warning/5" : "bg-card/60",
       )}
     >
       {expandible ? (
@@ -720,7 +724,7 @@ function RevisionCitas({ informe }: { informe: InformeCitas }) {
           <CitationReview verification={informe} />
         </div>
       ) : null}
-    </div>
+    </Card>
   );
 }
 

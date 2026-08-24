@@ -319,7 +319,7 @@ export default function ChatPage() {
                   <button
                     key={ex.text}
                     onClick={() => send(ex.text)}
-                    className="group animate-slide-up rounded-xl border border-border bg-card/80 px-4 py-3.5 text-left text-sm text-card-foreground shadow-sm backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+                    className="group animate-slide-up rounded-lg border border-border/10 bg-card/80 px-4 py-3.5 text-left text-sm text-card-foreground shadow-neu-raised backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-[var(--neu-raised),_0_12px_24px_-8px_hsl(var(--primary)/0.12)]"
                     style={{ animationDelay: `${180 + i * 70}ms`, animationFillMode: "backwards" }}
                   >
                     <ex.icon className="mb-2 h-4 w-4 text-primary transition-transform duration-200 group-hover:scale-110" />
@@ -340,7 +340,7 @@ export default function ChatPage() {
                     key={a.clave || `${a.kind}-${a.id}`}
                     onClick={() => aplicarAtajo(a.texto)}
                     title="Se agrega a tu cuadro de mensaje para que lo revises antes de enviar"
-                    className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3.5 py-1.5 text-xs font-medium text-card-foreground shadow-sm backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md"
+                    className="group inline-flex items-center gap-1.5 rounded-full border border-border/10 bg-card/80 px-3.5 py-1.5 text-xs font-medium text-card-foreground shadow-neu-raised backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40"
                   >
                     {a.fijado ? (
                       <Pin className="h-3.5 w-3.5 text-primary" />
@@ -388,7 +388,7 @@ export default function ChatPage() {
                   <div
                     className={
                       m.role === "user"
-                        ? "max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm"
+                        ? "max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-neu-raised"
                         : "max-w-[80%] pt-1 font-serif text-[15px] leading-relaxed text-foreground"
                     }
                   >
@@ -435,7 +435,7 @@ export default function ChatPage() {
                 {status}
               </p>
             ) : null}
-            <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-2 shadow-lg shadow-primary/5 transition-shadow focus-within:border-primary/40 focus-within:shadow-primary/10">
+            <div className="flex items-end gap-2 rounded-lg border border-border/20 bg-secondary/30 p-2 shadow-neu-sunken transition-colors focus-within:border-primary/40">
               <textarea
                 ref={inputRef}
                 value={input}

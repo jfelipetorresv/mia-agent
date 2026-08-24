@@ -22,6 +22,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, ClipboardCheck, Loader2, Pencil } from "lucide-react";
 import { apiGet, apiSend, plainMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -222,7 +223,7 @@ export default function DocumentosPorConfirmarDialog({ open, onOpenChange, matte
             {docs.map((doc) => {
               const origen = doc.origin ? ORIGEN_LABEL[doc.origin] || "" : "";
               return (
-                <div key={doc.id} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                <Card key={doc.id} className="px-4 py-3">
                   <div className="mb-2">
                     <div className="truncate text-sm font-semibold text-card-foreground">{doc.nombre}</div>
                     {origen ? <div className="mt-0.5 text-xs text-muted-foreground">{origen}</div> : null}
@@ -249,7 +250,7 @@ export default function DocumentosPorConfirmarDialog({ open, onOpenChange, matte
                       return (
                         <div
                           key={p.campo}
-                          className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5"
+                          className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5 shadow-neu-sunken"
                         >
                           <div className="text-xs font-semibold uppercase tracking-wide text-primary/80">
                             {campoLabel(p.campo)}
@@ -340,7 +341,7 @@ export default function DocumentosPorConfirmarDialog({ open, onOpenChange, matte
                       );
                     })}
                   </div>
-                </div>
+                </Card>
               );
             })}
           </div>
