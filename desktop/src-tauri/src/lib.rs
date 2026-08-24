@@ -248,6 +248,12 @@ struct Shared {
     frontend_origin: Mutex<Option<String>>,
     /// Serializa un reinicio de litellm en curso (evita dos reinicios a la vez).
     restarting: AtomicBool,
+    /// Último aviso `runtime-*` del supervisor, con nº de secuencia. La pantalla de
+    /// MIA es un ORIGEN REMOTO sin IPC (hardening), así que los eventos
+    /// `mia://progress` nunca le llegan: `RuntimeHealthBanner` lo lee por POLLING
+    /// vía el puente `mia-shell` (`/runtime/health`). La secuencia permite al
+    /// frontend distinguir un aviso nuevo de uno ya pintado.
+    runtime_notice: Mutex<Option<(u64, Progress)>>,
 }
 
 const SUPERVISOR_INTERVAL: Duration = Duration::from_secs(5);
@@ -392,13 +398,22 @@ fn port_open(port: u16) -> bool {
 }
 
 fn emit(app: &AppHandle, stage: &str, text: &str) {
-    let _ = app.emit(
-        "mia://progress",
-        Progress {
-            stage: stage.to_string(),
-            text: text.to_string(),
-        },
-    );
+    let progress = Progress {
+        stage: stage.to_string(),
+        text: text.to_string(),
+    };
+    // Los avisos del supervisor (`runtime-*`) se RETIENEN además de emitirse: la
+    // ventana principal (origen remoto, sin IPC) no puede escuchar el evento y los
+    // lee por el puente `mia-shell` (`/runtime/health`). Solo esa familia se retiene:
+    // el resto del progreso pertenece a la pantalla de arranque, que sí recibe IPC.
+    if stage.starts_with("runtime-") {
+        if let Some(shared) = app.try_state::<Shared>() {
+            let mut guard = shared.runtime_notice.lock().unwrap();
+            let seq = guard.as_ref().map(|(s, _)| *s).unwrap_or(0) + 1;
+            *guard = Some((seq, progress.clone()));
+        }
+    }
+    let _ = app.emit("mia://progress", progress);
 }
 
 /// Archivo para redirigir stdout/stderr de un proceso hijo (para diagnóstico).
@@ -2109,6 +2124,23 @@ async fn handle_shell_request(
         "/restart-litellm" => restart_litellm(app.clone())
             .await
             .map(serde_json::Value::String),
+        // Solo lectura: el último aviso `runtime-*` del supervisor (o null). Es la vía
+        // por la que RuntimeHealthBanner ve la salud del runtime — la ventana es un
+        // origen remoto sin IPC y los eventos mia://progress no le llegan. Mismas
+        // defensas que el resto del puente: Origin exacto, solo POST, ruta cerrada.
+        "/runtime/health" => {
+            let stored = {
+                let shared = app.state::<Shared>();
+                let guard = shared.runtime_notice.lock().unwrap();
+                guard.clone()
+            };
+            Ok(match stored {
+                Some((seq, p)) => serde_json::json!({
+                    "seq": seq, "stage": p.stage, "text": p.text
+                }),
+                None => serde_json::Value::Null,
+            })
+        }
         _ => Err("Operación desconocida.".into()),
     };
 
@@ -2169,6 +2201,7 @@ pub fn run() {
                 maintenance_running: AtomicBool::new(false),
                 frontend_origin: Mutex::new(None),
                 restarting: AtomicBool::new(false),
+                runtime_notice: Mutex::new(None),
             });
 
             let handle = app.handle().clone();

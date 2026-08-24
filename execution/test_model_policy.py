@@ -513,15 +513,25 @@ def run() -> None:
     from mia.agent import codex_subscription_llm
     saved_available = subscription_llm.is_available
     saved_codex_available = codex_subscription_llm.is_available
+    saved_codex_detect = codex_subscription_llm.detect_status
     saved_list_available = settings._hub.list_available
     try:
         subscription_llm.is_available = lambda: False
         codex_subscription_llm.is_available = lambda: False
+        # D1 (d0aa95b): _codex_capability dejó de mirar is_available() y pasó a
+        # detect_status() (tres hechos: instalada / sesión / habilitada). El doble
+        # sigue el contrato NUEVO — con el viejo, este check dependía de si la
+        # máquina del que corre el gate tiene Codex instalado (regla 78).
+        codex_subscription_llm.detect_status = lambda: {
+            "instalada": False, "sesion": False, "habilitada_por_politica": False,
+            "disponible": False, "motivo": "no_instalada", "ruta": "",
+        }
         settings._hub.list_available = lambda: {"codex": {"installed": False}}
         capabilities = settings._model_capabilities()
         check("10a · capabilities expone Claude y Codex ausentes sin prometer disponibilidad",
               capabilities["claude_code"]["installed"] is False
               and capabilities["codex"]["installed"] is False
+              and capabilities["codex"]["enabled_here"] is False
               and capabilities["claude_code"]["max_is_exceptional"] is True)
         check("10b · efforts usa la interfaz pública, incluida la capacidad Max excepcional",
               tuple(capabilities["claude_code"]["available_efforts"])
@@ -540,8 +550,10 @@ def run() -> None:
         # Ajustes deshabilita Codex cuando no está instalado y muestra blocked_reason.
         conexiones = (ROOT / "frontend" / "app" / "_components" /
                       "ConexionesSection.tsx").read_text(encoding="utf-8")
+        # D1 (d0aa95b): la UI gatea por `enabled_here` (detectar ≠ habilitar), ya no
+        # por `installed`. El gate verifica el concepto con la expresión vigente.
         check("10c-bis · Ajustes lee capabilities: Codex no disponible se deshabilita con razón",
-              "capabilities?.codex?.installed === false" in conexiones
+              "capabilities?.codex?.enabled_here === false" in conexiones
               and "blocked_reason" in conexiones)
         check("10c · UI expone Codex como motor explícito y no promete cambio silencioso",
               "Codex en este equipo" in activation
@@ -550,6 +562,7 @@ def run() -> None:
     finally:
         subscription_llm.is_available = saved_available
         codex_subscription_llm.is_available = saved_codex_available
+        codex_subscription_llm.detect_status = saved_codex_detect
         settings._hub.list_available = saved_list_available
 
 

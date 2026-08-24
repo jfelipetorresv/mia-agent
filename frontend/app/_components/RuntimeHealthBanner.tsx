@@ -2,45 +2,72 @@
 
 import { AlertTriangle, CheckCircle2, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { shellInvoke } from "@/lib/shell";
 
 type RuntimeNotice = { stage: string; text: string };
-type Unlisten = () => void;
-type TauriEvent = {
-  listen?: (
-    event: string,
-    handler: (event: { payload?: RuntimeNotice }) => void,
-  ) => Promise<Unlisten>;
-};
+type RuntimeHealth = { seq: number; stage: string; text: string } | null;
 
-/** Estado del supervisor local. En navegador normal no aparece. */
+// Mismo ritmo que el supervisor de la cáscara (SUPERVISOR_INTERVAL = 5s).
+const POLL_MS = 5_000;
+
+/** Estado del supervisor local. En navegador normal no aparece.
+ *
+ * Historia: este banner escuchaba `window.__TAURI__.event.listen("mia://progress")`,
+ * pero la ventana de MIA navega a http://localhost:3100 — para Tauri v2 un ORIGEN
+ * REMOTO que por el hardening deliberado (sin capability `remote`, sin
+ * `dangerousRemoteUrlIpcAccess`) no recibe IPC: `window.__TAURI__` nunca existe ahí
+ * y el banner llevaba muerto desde siempre (HANDOFF 2026-08-19). Ahora LEE el último
+ * aviso `runtime-*` por el puente `mia-shell` (POST /runtime/health, misma allowlist
+ * de Origin y rutas cerradas que Protección) con polling. En un navegador normal el
+ * primer fetch falla (el protocolo no existe) y el polling se apaga solo. */
 export default function RuntimeHealthBanner() {
   const [notice, setNotice] = useState<RuntimeNotice | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const tauri = (
-      window as unknown as { __TAURI__?: { event?: TauriEvent } }
-    ).__TAURI__;
-    if (!tauri?.event?.listen) return;
-
-    let unlisten: Unlisten | undefined;
     let cancelled = false;
-    tauri.event.listen("mia://progress", (event) => {
-      const next = event.payload;
-      if (!next?.stage.startsWith("runtime-")) return;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    // 0 = todavía sin línea base. El primer poll fija la línea base: un
+    // `runtime-ok` viejo no se pinta (ruido), pero un error pendiente SÍ — antes
+    // el listener se perdía todo lo emitido antes de montar la página.
+    let lastSeq = 0;
+    let baselined = false;
+
+    const show = (next: RuntimeNotice) => {
       if (timer.current) clearTimeout(timer.current);
       setNotice(next);
       if (next.stage === "runtime-ok") {
         timer.current = setTimeout(() => setNotice(null), 8_000);
       }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    }).catch(() => undefined);
+    };
 
+    const tick = async () => {
+      let health: RuntimeHealth;
+      try {
+        health = await shellInvoke<RuntimeHealth>("runtime/health");
+      } catch {
+        // Navegador (dev) o cáscara ausente: no hay supervisor que vigilar.
+        if (interval) clearInterval(interval);
+        return;
+      }
+      if (cancelled || !health) return;
+      if (!baselined) {
+        baselined = true;
+        lastSeq = health.seq;
+        // Un problema aún vigente se muestra desde el primer render.
+        if (health.stage !== "runtime-ok") show(health);
+        return;
+      }
+      if (health.seq === lastSeq) return;
+      lastSeq = health.seq;
+      show(health);
+    };
+
+    tick();
+    interval = setInterval(tick, POLL_MS);
     return () => {
       cancelled = true;
-      unlisten?.();
+      if (interval) clearInterval(interval);
       if (timer.current) clearTimeout(timer.current);
     };
   }, []);

@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import json
 import logging
 import os
 import shutil
@@ -121,10 +122,62 @@ def _resp(content: str):
         usage=SimpleNamespace(prompt_tokens=15, completion_tokens=25, total_tokens=40))
 
 
+# Packs fail-closed (migración 059, sesión 2026-08-18): cada etapa debe cerrar con su
+# producto verificado o draft_node ABORTA (stage_failed) y approve devuelve 409 («la
+# revisión independiente todavía no permite emitir»). Los dobles emiten los mismos
+# bloques que el modelo real — el MISMO contrato que seed_despacho_demo.py (defecto D2)
+# y la misma clase de deriva de mocks de la regla 78 de APRENDIZAJES.md.
+_FACT_PACK_E2E = {
+    "hechos": [
+        {"texto": "La demanda invoca el estatuto de contratación como fundamento.",
+         "locator": "[doc 1]"},
+    ],
+    "conteo_declarado": 1,
+}
+
+# Fuente de investigación del doble (gather_sources): el corpus del tenant de prueba
+# está vacío y sin UNA fuente el pack de tesis no coteja y el turno aborta.
+_FUENTE_E2E = {
+    "tipo": "norma",
+    "referencia": "Norma de prueba E2E 200 de 2021, artículo 3",
+    "titulo": "Norma de prueba E2E sobre caducidad (material de prueba)",
+    "numero": "200 de 2021",
+    "fecha": "2021-01-01",
+    "pasaje": "La caducidad de la acción se rige por el término legal.",
+    "content": "Artículo 3. La caducidad de la acción se rige por el término legal "
+               "aplicable al medio de control ejercido.",
+}
+
+_STRATEGY_PACK_E2E = {
+    "argumentos": [
+        {"id": "A1",
+         "tesis": "La acción está caducada según el término legal aplicable.",
+         "fuente_refs": [_FUENTE_E2E["referencia"]],
+         "seleccionado": True,
+         "contraparte": "Sostendrá la interrupción del término.",
+         "prueba": "[doc 1]"},
+    ],
+    "descartes": [],
+}
+
+
+def _pack_fence(kind: str, payload: dict) -> str:
+    import json as _json
+    return f"==={kind}===\n" + _json.dumps(payload, ensure_ascii=False) + "\n===END==="
+
+
 def _fake_call_llm(messages, *, task=None, model=None, **kw):
     if task == "soul":
         return _resp(_SOUL_FIXTURE)
     sysmsg = messages[0]["content"] if messages and isinstance(messages[0], dict) else ""
+    if task == "legal_facts":
+        return _resp("Hechos establecidos (prueba E2E):\n"
+                     + "\n".join(f"- {h['texto']} {h['locator']}"
+                                 for h in _FACT_PACK_E2E["hechos"])
+                     + "\n\n" + _pack_fence("FACT_PACK", _FACT_PACK_E2E))
+    if task == "legal_analysis":
+        return _resp(_pack_fence("STRATEGY_PACK", _STRATEGY_PACK_E2E)
+                     + "\n\nDIAGNÓSTICO: el eje del asunto es la caducidad de la acción.")
     if "Redacta el borrador" in sysmsg:
         return _resp("BORRADOR: contestación de la demanda. [VERIFICAR fecha del hecho]")
     if "Incorpora al borrador" in sysmsg:
@@ -140,8 +193,21 @@ def _fake_embed(texts):
     return [[0.1] + [0.0] * (config.EMBED_DIM - 1) for _ in texts]
 
 
+async def _fake_gather_sources(tenant_id, query, *, jurisdictions=None):
+    """El corpus del tenant E2E está vacío; el doble planta UNA fuente verificable
+    (mismo contrato que seed_despacho_demo.py): sin ella research no deja pack y el
+    turno aborta antes del borrador."""
+    bloque = (f"[{_FUENTE_E2E['referencia']}] {_FUENTE_E2E['titulo']}\n"
+              f"{_FUENTE_E2E['content']}")
+    return bloque, [dict(_FUENTE_E2E)], list(jurisdictions or ["generic"])
+
+
 embeddings.embed_texts = _fake_embed
 llm.call_llm = _fake_call_llm
+
+from mia.agents import research as agents_research  # noqa: E402
+
+agents_research.gather_sources = _fake_gather_sources
 
 PG = dict(host=os.getenv("PG_HOST", "127.0.0.1"), port=os.getenv("PG_PORT", "5432"),
           dbname=os.getenv("PG_DB", "mia"), user="postgres", password=os.getenv("PG_PASSWORD", ""))
@@ -379,7 +445,16 @@ def run_e2e(client, auth, tid) -> list[str]:
             json={"draft_hash": draft_payload.get("draft_hash"), "attested": True},
         ) as s:
             ok_appr = s.status_code == 200
-            _ = "".join(s.iter_text())
+            appr_body = "".join(s.iter_text())
+        if not ok_appr:
+            # Diagnóstico: sin el cuerpo, un 409 de huella y un 409 del gate de
+            # verificación son indistinguibles y cada fallo cuesta una investigación.
+            print(f"     approve -> {s.status_code}: {appr_body[:300]}")
+            _rep = draft_payload.get("verification")
+            if isinstance(_rep, dict):
+                _rep = {k: v for k, v in _rep.items() if k != "oraciones"}
+            print(f"     verification del borrador: {json.dumps(_rep, ensure_ascii=False, default=str)[:1200]}")
+            print(f"     stage_failed: {json.dumps(draft_payload.get('stage_failed'), ensure_ascii=False, default=str)[:600]}")
         check("POST draft/approve -> 200", ok_appr)
     else:
         check("borrador 404: el mock no dejó borrador (aceptable)", True)

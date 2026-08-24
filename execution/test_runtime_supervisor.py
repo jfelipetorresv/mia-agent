@@ -20,8 +20,15 @@ assert "El reinicio manual pudo completarse" in rust
 assert "if closing(&shared)" in rust
 assert 'emit(&app, "runtime-error"' in rust
 assert "<RuntimeHealthBanner />" in layout
-assert 'listen("mia://progress"' in banner
-assert 'startsWith("runtime-")' in banner
+# 2026-08-23: el banner dejó de escuchar IPC (`__TAURI__.event.listen`) — la ventana
+# de MIA es un ORIGEN REMOTO sin IPC por el hardening, así que ese camino estaba
+# muerto desde siempre (HANDOFF 2026-08-19). Ahora la cáscara RETIENE el último aviso
+# `runtime-*` y el banner lo lee por el puente `mia-shell` (POST /runtime/health).
+assert 'shellInvoke<RuntimeHealth>("runtime/health")' in banner
+assert '"runtime-ok"' in banner
+assert 'stage.starts_with("runtime-")' in rust     # la retención en emit()
+assert '"/runtime/health"' in rust                  # la ruta del puente
+assert "runtime_notice" in rust
 
 print("PASS: supervisor arranca después de Mia y solo repara hijos propios")
 print("PASS: crash-loop acotado, cierre coordinado y aviso visible")

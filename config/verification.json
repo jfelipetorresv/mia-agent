@@ -4,6 +4,7 @@
   "quick": [
     "execution/check_env_pins.py",
     "execution/test_gates_no_ciegos.py",
+    "execution/test_api_launcher.py",
     "execution/test_migration_contracts.py",
     "execution/test_model_policy.py",
     "execution/test_llm_fallback.py",
