@@ -18,6 +18,10 @@ import { ConnectorCard, EmptyHint } from "@/app/_components/PanelUI";
 type Agente = {
   id: string;
   nombre: string;
+  // Marca comercial del programa (excepción §G, decisión de Pipe 2026-08-24): se
+  // muestra en letra pequeña bajo el nombre por función, para que el abogado sepa
+  // qué instalar. El nombre principal sigue siendo funcional y en español.
+  marca?: string;
   instalado: boolean;
   habilitado: boolean;
   listo?: boolean;
@@ -42,6 +46,20 @@ const AGENT_ICONS: Record<string, ComponentType<{ className?: string }>> = {
 
 function agentIcon(id: string): ComponentType<{ className?: string }> {
   return AGENT_ICONS[id] || Bot;
+}
+
+// Línea de marca en letra pequeña (excepción §G, decisión de Pipe 2026-08-24). Le dice
+// al abogado con qué programa funciona el ayudante y, si falta, que hay que instalarlo.
+// La razón honesta de «no listo» sigue diciendo lo suyo aparte.
+function lineaMarca(agente: Agente): string {
+  if (!agente.marca) return "";
+  if (!agente.instalado) {
+    return `Funciona con ${agente.marca}: hay que instalarlo para activar este ayudante.`;
+  }
+  if (agente.listo) {
+    return `Funciona con ${agente.marca}, ya instalado en tu equipo.`;
+  }
+  return `Funciona con ${agente.marca}.`;
 }
 
 function estadoTexto(agente: Agente): string {
@@ -180,6 +198,9 @@ export default function AsistentesSection() {
                   </Button>
                 }
               >
+                {lineaMarca(agente) ? (
+                  <p className="text-xs text-muted-foreground">{lineaMarca(agente)}</p>
+                ) : null}
                 {/* P3 · `Badge` es un <div>: dentro de un <p> el navegador CIERRA el
                     párrafo antes de él, así que el HTML del servidor y el del cliente
                     dejaban de coincidir (aviso de hidratación en /configurar#conexiones)

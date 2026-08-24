@@ -19,9 +19,11 @@
 //     su estado sale del MISMO campo `conexiones[].archivos` de /api/mailbox/status.
 //     Mientras la instalación no tenga registrada la aplicación de Google, la tarjeta
 //     lo dice con esas palabras en vez de ofrecer un botón que acabaría en error.
-//   · Los "ayudantes externos" (Agent Hub) no llevan logo de marca: el backend los
-//     nombra de forma neutra a propósito (agent_hub.py::CONNECTORS) y esta pantalla
-//     no le pone una marca encima a un nombre que el backend decidió ocultar.
+//   · Los "ayudantes externos" (Agent Hub) conservan su nombre funcional en español
+//     (agent_hub.py::CONNECTORS) y esta pantalla no los pinta. Desde la decisión de
+//     Pipe 2026-08-24 la marca comercial SÍ puede mostrarse en letra pequeña bajo el
+//     nombre por función (campo `marca` de /settings/agents) — así se hace en
+//     AsistentesSection.tsx —, pero el nombre principal sigue sin marca.
 //
 // Fuentes de verdad, todas ya existentes:
 //   motores            → GET /api/welcome/status  (motor_detectado, faltan_llaves)

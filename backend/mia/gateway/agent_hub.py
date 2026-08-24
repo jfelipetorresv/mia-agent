@@ -19,8 +19,12 @@ confidencialidad (política ≠ 'soberano' + opt-in del despacho) vive en `gatew
 y quien decide CUÁNDO es `agents/delegate_intent.py` + `agents/graph.py::_maybe_delegate`.
 Nadie debe llamar a `invoke_result` sin haber pasado por `hub_gate.delegation_allowed`.
 
-§G: el abogado nunca ve marcas ("Hermes", "Claude Code"); ve un `display_name` en
-español. El `slug` (id público neutro) es lo que viaja en las URLs de settings.
+§G: el abogado ve un `display_name` funcional en español; el `slug` (id público
+neutro) es lo que viaja en las URLs de settings. Excepción (decisión de Pipe
+2026-08-24): los ayudantes del Agent Hub muestran su marca comercial (`marca`) en
+letra pequeña bajo el nombre por función, para que el abogado sepa qué instalar
+cuando la tarjeta dice «no instalado». El nombre principal sigue siendo funcional
+y en español; ni `display_name` ni `slug` llevan la marca.
 
 Los flags de invocación se confirman contra ``--help`` del binario SI está en PATH.
 Si el binario no está, o el help no muestra el flag que usamos, el conector queda
@@ -58,6 +62,8 @@ class Connector:
     env_override: str                         # var de entorno con ruta explícita
     build_args: Callable[[str], list[str]]    # (prompt) -> args DESPUÉS del binario
     stdin_prompt: bool = False                # el prompt viaja por STDIN, nunca por argv
+    marca: str = ""                           # marca comercial, en letra pequeña bajo el
+                                              # nombre funcional (excepción §G, Pipe 2026-08-24)
 
 
 def _prompt_flag(flag: str) -> Callable[[str], list[str]]:
@@ -76,9 +82,10 @@ _HELP_NEEDLES: dict[str, tuple[str, ...]] = {
 
 CONNECTORS: dict[str, Connector] = {
     "hermes": Connector("hermes", "investigacion", "Asistente de investigación jurídica",
-                        ("hermes",), "MIA_HERMES_BIN", _prompt_flag("-p")),
+                        ("hermes",), "MIA_HERMES_BIN", _prompt_flag("-p"), marca="Hermes"),
     "claude_code": Connector("claude_code", "documentos", "Editor de documentos",
-                             ("claude", "claude-code"), "MIA_CLAUDE_BIN", _prompt_flag("-p")),
+                             ("claude", "claude-code"), "MIA_CLAUDE_BIN", _prompt_flag("-p"),
+                             marca="Claude Code"),
     # Codex con el MISMO aislamiento del proveedor productivo (codex_subscription_llm):
     # prompt por stdin (nunca argv), efímero, sin config/reglas del usuario, sandbox de
     # solo lectura y herramientas/red apagadas. Sin esto, el texto delegado (derivado del
@@ -100,11 +107,13 @@ CONNECTORS: dict[str, Connector] = {
                            "-c", 'approval_policy="never"',
                            "-c", "check_for_update_on_startup=false",
                            "-",
-                       ], stdin_prompt=True),
+                       ], stdin_prompt=True, marca="Codex"),
     "antigravity": Connector("antigravity", "escritorio", "Asistente de escritorio",
-                             ("antigravity",), "MIA_ANTIGRAVITY_BIN", _prompt_flag("-p")),
+                             ("antigravity",), "MIA_ANTIGRAVITY_BIN", _prompt_flag("-p"),
+                             marca="Antigravity"),
     "openclaw": Connector("openclaw", "navegacion", "Asistente de navegación web",
-                          ("openclaw",), "MIA_OPENCLAW_BIN", _prompt_flag("-p")),
+                          ("openclaw",), "MIA_OPENCLAW_BIN", _prompt_flag("-p"),
+                          marca="OpenClaw"),
 }
 
 @dataclass(frozen=True)
@@ -269,6 +278,9 @@ class AgentHub:
                 "key": key,
                 "slug": c.slug,
                 "display_name": c.display_name,
+                # Excepción §G (Pipe 2026-08-24): la marca viaja en campo propio, en
+                # letra pequeña en la UI; el display_name sigue limpio.
+                "marca": c.marca,
                 "installed": binary is not None,
                 "binary": binary,
                 "invocation_ready": ready,

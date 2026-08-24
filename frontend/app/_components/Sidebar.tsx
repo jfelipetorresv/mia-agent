@@ -66,10 +66,10 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Desktop — la barra lateral es SIEMPRE oscura (identidad de marca), sin
-          importar el tema claro/oscuro del resto de la app: se fuerza el scope
-          "dark" para que todos los tokens (fondo, bordes, texto) resuelvan fijos. */}
-      <aside className="dark hidden w-64 shrink-0 flex-col border-r border-border/10 bg-background/90 backdrop-blur-md md:flex">
+      {/* Desktop — la barra sigue el tema elegido por el abogado (decisión de Pipe
+          2026-08-24; anula la anterior de identidad de marca "siempre oscura"):
+          los tokens (fondo, bordes, texto) resuelven según el tema activo. */}
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-border/10 bg-background/90 backdrop-blur-md md:flex">
         <div className="px-5 py-5">
           <BrandMark size="sm" href="/" />
         </div>
@@ -97,8 +97,9 @@ export default function Sidebar() {
         </div>
       </aside>
 
-      {/* Mobile top bar — misma identidad oscura fija que el sidebar de escritorio. */}
-      <header className="dark sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background px-4 py-3 md:hidden">
+      {/* Mobile top bar — sigue el tema elegido, igual que el sidebar de escritorio
+          (decisión de Pipe 2026-08-24). */}
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background px-4 py-3 md:hidden">
         <BrandMark size="sm" href="/" />
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" onClick={openCommandPalette} aria-label="Buscar">
@@ -110,7 +111,7 @@ export default function Sidebar() {
                 <Menu className="h-4 w-4" />
               </Button>
             </DialogTrigger>
-            <DialogContent className="dark left-0 top-0 h-full max-w-[17rem] translate-x-0 translate-y-0 rounded-none border-r bg-background duration-200 data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left sm:rounded-none">
+            <DialogContent className="left-0 top-0 h-full max-w-[17rem] translate-x-0 translate-y-0 rounded-none border-r bg-background duration-200 data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left sm:rounded-none">
               <DialogTitle className="sr-only">Menú de navegación</DialogTitle>
               <div className="flex h-full flex-col">
                 <div className="pb-4">

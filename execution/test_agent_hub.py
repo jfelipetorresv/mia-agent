@@ -121,6 +121,13 @@ def test_detection_and_invoke():
         check("list_available no filtra binario a marca en display",
               all("hermes" not in v["display_name"].lower() and "claude" not in v["display_name"].lower()
                   for v in avail.values()))
+        # Excepción §G (decisión de Pipe 2026-08-24): la marca comercial viaja en campo
+        # PROPIO (`marca`, para la letra pequeña de la UI); el display_name sigue limpio.
+        check("excepción §G: cada conector trae `marca` no vacía en campo propio",
+              all(isinstance(v.get("marca"), str) and v["marca"] for v in avail.values()))
+        check("excepción §G: la marca esperada está (hermes→Hermes, claude_code→Claude Code)",
+              avail["hermes"]["marca"] == "Hermes"
+              and avail["claude_code"]["marca"] == "Claude Code")
     finally:
         ah.shutil.which = orig_which
 
@@ -281,10 +288,13 @@ def api_checks(a):
         agentes = r.json().get("agentes", [])
         out["count"] = len(agentes)
         out["shape_ok"] = all(
-            {"id", "nombre", "instalado", "habilitado", "listo", "razon"} <= set(x)
+            {"id", "nombre", "marca", "instalado", "habilitado", "listo", "razon"} <= set(x)
             for x in agentes)
         brands = ("hermes", "claude", "codex", "antigravity", "openclaw")
+        # `nombre` e `id` siguen SIN marca; la marca comercial viaja aparte en `marca`
+        # (excepción §G, decisión de Pipe 2026-08-24) y debe venir no vacía.
         out["no_brand"] = all(not any(brnd in (x["nombre"] + x["id"]).lower() for brnd in brands) for x in agentes)
+        out["marca_presente"] = all(isinstance(x.get("marca"), str) and x["marca"] for x in agentes)
         # enable: si el CLI no está listo → 409; si --help lo confirmó → 200
         before = {x["id"]: x for x in agentes}
         inv = before["investigacion"]
@@ -344,9 +354,11 @@ def main() -> int:
 
     # PASO 3 · endpoints de settings
     check("GET /settings/agents responde 200", api["list_status"] == 200)
-    check("lista los 5 conectores con forma {id,nombre,instalado,habilitado,listo,razon}",
+    check("lista los 5 conectores con forma {id,nombre,marca,instalado,habilitado,listo,razon}",
           api["count"] == 5 and api["shape_ok"])
     check("nombres/ids SIN marca de CLI (§G)", api["no_brand"])
+    check("excepción §G (Pipe 2026-08-24): `marca` presente y no vacía en cada ayudante",
+          api["marca_presente"])
     check("POST enable respeta listo (409 si el CLI no está confirmado)",
           api.get("enable_ok") is True)
     check("POST disable deshabilita → habilitado False", api["disable_status"] == 200 and api["disabled_false"])

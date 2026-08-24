@@ -47,13 +47,14 @@ todos como AVISO. `verify.ps1 -Mode quick` VERDE: 29 suites, ~35 s. Los gates se
   herencia de cotejo (Mia capada a 1 pasada/turno), techos por rol (solo aplicaría al Agent Hub),
   paralelismo (grafo lineal).
 
-## Decisiones de Pipe PENDIENTES
+## Decisiones de Pipe — TOMADAS el 2026-08-24 (mismo día, en chat)
 
-1. Barra lateral en tema claro: ¿clara (recomendada) u oscura como hoy? (mockups mostrados en chat
-   + `..\Decisiones-de-diseno-2026-08-23.html`).
-2. Ayudantes del Agent Hub: ¿añadir la marca en letra pequeña («Funciona con Claude Code»)?
-   OJO: hoy YA están sin marca por regla §G — la B es una excepción parcial a su propia regla.
-3. Aprobar el copy de D4 (motor / claves / consentimiento OpenRouter).
+1. Barra lateral: CLARA en tema claro — anula la decisión previa «siempre oscura por identidad
+   de marca». Implementada en el commit de barra+marca de esta misma sesión.
+2. Ayudantes del Agent Hub: CON la marca en letra pequeña bajo el nombre funcional («Funciona
+   con Claude Code…») — excepción parcial sellada a §G, documentada donde vive la regla.
+3. Copy de D4 (motor / claves / consentimiento OpenRouter): APROBADO por Pipe tal como está
+   en `b13336f`.
 
 ## Deuda declarada (con causa)
 

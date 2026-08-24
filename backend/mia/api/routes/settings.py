@@ -49,7 +49,8 @@ def _tenant(request: Request) -> str:
 
 @router.get("/settings/agents")
 async def list_agents(request: Request):
-    """Lista los conectores con su estado para el tenant. Solo español, sin marcas.
+    """Lista los conectores con su estado para el tenant. Nombre funcional en español;
+    la marca comercial va aparte en `marca` (excepción §G, decisión de Pipe 2026-08-24).
 
     `bloqueado_por_politica` refleja el candado de `gateway/hub_gate.py`: con 'soberano'
     NO se delega aunque el ayudante esté habilitado (el toggle no es una excepción a la
@@ -66,6 +67,10 @@ async def list_agents(request: Request):
         {
             "id": info["slug"],                 # id público neutro (sin marca)
             "nombre": info["display_name"],     # español (§G)
+            # Excepción §G (decisión de Pipe 2026-08-24): la marca comercial viaja en
+            # campo propio para que la UI la muestre en letra pequeña bajo el nombre
+            # funcional — así el abogado sabe qué instalar. `nombre` sigue sin marca.
+            "marca": info.get("marca") or "",
             "instalado": info["installed"],
             "listo": bool(info.get("invocation_ready")),
             "razon": info.get("razon") or "",
