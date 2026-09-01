@@ -46,6 +46,41 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+/**
+ * EL PIE DE LA BARRA · lo que es de la cuenta, no de la navegación.
+ *
+ * Pipe, bitácora 2026-08-19 (punto 15b): «Apariencia y Cerrar sesión perdidos
+ * abajo». Eran dos botones fantasma idénticos pegados al final de la lista de
+ * secciones, sin nada que dijera que pertenecen a otra categoría: se leían como
+ * dos entradas más del menú, y las dos últimas, que es donde menos se mira.
+ *
+ * Lo que cambia es la JERARQUÍA, no las funciones: un rótulo que los agrupa y
+ * los separa de la navegación, y el cierre de sesión en color de advertencia —
+ * es la única acción del menú que te saca de donde estás, y debe verse distinta
+ * de cambiar el tema. Ambos siguen siendo los mismos dos controles de siempre.
+ */
+function PieDeCuenta({ onLogout, className }: { onLogout: () => void; className?: string }) {
+  return (
+    <div className={cn("border-t border-border p-3", className)}>
+      <p className="px-3 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+        Tu cuenta
+      </p>
+      <div className="flex flex-col gap-1">
+        <ThemeToggle />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start gap-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          onClick={onLogout}
+        >
+          <LogOut className="h-4 w-4" />
+          <span>Cerrar sesión</span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function Sidebar() {
   const path = usePathname() || "/";
   const router = useRouter();
@@ -88,13 +123,7 @@ export default function Sidebar() {
         <div className="mt-4 flex-1 overflow-y-auto px-3">
           <NavLinks />
         </div>
-        <div className="flex flex-col gap-1 border-t border-border p-3">
-          <ThemeToggle />
-          <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground" onClick={logout}>
-            <LogOut className="h-4 w-4" />
-            <span>Cerrar sesión</span>
-          </Button>
-        </div>
+        <PieDeCuenta onLogout={logout} />
       </aside>
 
       {/* Mobile top bar — sigue el tema elegido, igual que el sidebar de escritorio
@@ -120,13 +149,7 @@ export default function Sidebar() {
                 <div className="flex-1 overflow-y-auto">
                   <NavLinks onNavigate={() => setMobileOpen(false)} />
                 </div>
-                <div className="flex flex-col gap-1 border-t border-border pt-3">
-                  <ThemeToggle />
-                  <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground" onClick={logout}>
-                    <LogOut className="h-4 w-4" />
-                    <span>Cerrar sesión</span>
-                  </Button>
-                </div>
+                <PieDeCuenta onLogout={logout} className="pt-3" />
               </div>
             </DialogContent>
           </Dialog>

@@ -5,6 +5,7 @@ import {
   Gauge,
   Users,
   Settings2,
+  LifeBuoy,
   type LucideIcon,
 } from "lucide-react";
 
@@ -40,4 +41,9 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/memoria", label: "Conocimiento", icon: BookOpen, match: (p) => p.startsWith("/memoria") },
   { href: "/personas", label: "Agentes jurídicos", icon: Users, match: (p) => p.startsWith("/personas") },
   { href: "/configurar", label: "Configuración", icon: Settings2, match: (p) => p.startsWith("/configurar") },
+  // Punto 15 de la bitácora 2026-08-19: el manual deja de ser un acordeón plegado dentro de
+  // Configuración y pasa a ser su propia pantalla. Entra aquí, y no solo en el pie de la
+  // barra, porque esta lista es también la fuente del buscador (Ctrl+K): quien no sabe dónde
+  // mirar suele escribir «ayuda» antes que abrir un menú.
+  { href: "/ayuda", label: "Cómo funciona Mia", icon: LifeBuoy, match: (p) => p.startsWith("/ayuda") },
 ];

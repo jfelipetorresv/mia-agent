@@ -60,6 +60,19 @@ from .. import config
 
 logger = logging.getLogger("mia.onboarding.soul")
 
+# RECORTE 2026-08-25 (bitácora de feedback UX 2026-08-19, decisiones de Pipe):
+#   · p2 «¿en qué ciudad y país trabajas?» SALE del cuestionario. La ciudad no cambia un
+#     borrador (punto 8) y el país ya lo declara el selector múltiple de jurisdicciones, que
+#     es el que además enruta los paquetes jurídicos (punto 9/10 · D10). Preguntarlo dos
+#     veces era pedirle al abogado que confirmara algo que ya había dicho.
+#   · p22 «¿cuándo das un escrito por terminado?» SALE (punto 12). Mismo criterio con el que
+#     salieron p3, p4, p18 y p19: el estándar de cierre se aprende del trabajo aprobado, no
+#     de una frase escrita antes de que exista un solo documento.
+#   · El registro profesional deja de pedirse aquí y vive en Configuración → perfil del
+#     despacho (punto 6 · D9): es un dato de la firma, no criterio de redacción.
+# `identity.location` y `terminado` pasan a LEGACY_RENDERED_FIELDS: un despacho que los
+# respondió antes NO pierde nada — se siguen guardando y se siguen imprimiendo en su SOUL.
+#
 # ── Las preguntas del onboarding (bloques del Doc 4, menos P8/P9/P12/P13 que el
 #    agente aprende del uso, y menos P15/P16 de estrategia — decisión de Pipe 2026-07-06;
 #    menos P10/P11/P14/P17 — decisión de Pipe 2026-07-09: la voz de redacción se aprende
@@ -73,10 +86,6 @@ QUESTIONS: list[dict] = [
     {"id": "p1", "block": "identity", "field": "identity.name",
      "question": "¿Cómo se llama tu despacho y cómo firmas tú?",
      "example": "Va impreso en cada escrito que redacte para ti."},
-    {"id": "p2", "block": "identity", "field": "identity.location",
-     "question": "¿En qué ciudad y país trabajas?",
-     # El ejemplo enseña el FORMATO, no una plaza: MIA no es de ningún país.
-     "example": "Ciudad, País"},
     # Bloque 2 — Jurisdicción y práctica.
     # NOTA (consolidación 2026-07-09, decisión de Pipe): la pregunta descriptiva de país
     # (antes p5, field jurisdiction.base) ya NO se hace — el frontend tiene UN solo
@@ -99,9 +108,6 @@ QUESTIONS: list[dict] = [
     {"id": "p21", "block": "criterio", "field": "nunca",
      "question": "¿Qué no debo hacer nunca?",
      "example": "Una prohibición tuya me dice más que un párrafo sobre tu estilo."},
-    {"id": "p22", "block": "criterio", "field": "terminado",
-     "question": "¿Cuándo das un escrito por terminado?",
-     "example": "Es mi única forma de saber cuándo entregarte algo en vez de adivinar."},
 ]
 
 # Orden canónico de los bloques (para el progreso del frontend).
@@ -117,9 +123,9 @@ BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "criterio")
 # Los que alimenta el cuestionario de hoy (+ `aprendido`, que no pregunta nadie: lo
 # escribe Mia desde el trabajo real vía `update_soul`).
 CURRENT_FIELDS: frozenset[str] = frozenset({
-    "identity.name", "identity.location",
+    "identity.name",
     "jurisdiction.base", "jurisdiction.practice_areas", "jurisdiction.client_type",
-    "autonomia.reviso_siempre", "autonomia.decide_solo", "nunca", "terminado",
+    "autonomia.reviso_siempre", "autonomia.decide_solo", "nunca",
     "aprendido",
 })
 
@@ -130,6 +136,10 @@ LEGACY_RENDERED_FIELDS: frozenset[str] = frozenset({
     "identity.voice", "identity.channels",
     "legal_voice.structure", "legal_voice.banned_words",
     "hard_nos", "rhythm", "memory.tools_that_survived", "triad_mode",
+    # Salieron del cuestionario el 2026-08-25 (recorte de arriba) y se siguen imprimiendo:
+    # el perfil de un despacho que ya los contestó no puede empobrecerse por un recorte
+    # posterior, y «Revisar mi perfil» tiene que poder volver a guardarlos sin un 422.
+    "identity.location", "terminado",
 })
 
 # Campos del cuestionario ORIGINAL de 19 preguntas (anterior a los recortes del

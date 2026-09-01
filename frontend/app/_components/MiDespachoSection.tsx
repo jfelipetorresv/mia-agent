@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card } from "@/components/ui/card";
 import { CountrySelector, COUNTRY_NAME_BY_CODE } from "./CountrySelector";
 import { TOOL_OPTIONS } from "./toolOptions";
 
@@ -209,7 +210,7 @@ export default function MiDespachoSection() {
       {/* La línea que explicaba de dónde salen estos datos ("es lo mismo que
           respondiste al conocer a Mia") vive ahora en la nota de Mia que abre la
           pestaña — bloque 4 del rediseño. Tenerla dos veces era ruido. */}
-      <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+      <Card padding="md" className="space-y-4">
         <h3 className="text-sm font-semibold">Identidad</h3>
         <TextField label="Nombre de la firma u organización" value={firm.firm} onChange={(v) => setFirm({ ...firm, firm: v })} />
         <TextField
@@ -221,9 +222,9 @@ export default function MiDespachoSection() {
           <TextField label="País" value={location.country} onChange={(v) => setLocation({ ...location, country: v })} />
           <TextField label="Ciudad" value={location.city} onChange={(v) => setLocation({ ...location, city: v })} />
         </div>
-      </section>
+      </Card>
 
-      <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+      <Card padding="md" className="space-y-4">
         <h3 className="text-sm font-semibold">Jurisdicción y práctica</h3>
         <p className="text-xs text-muted-foreground">
           Esto le dice a Mia qué normas y jurisprudencia usar. Puedes elegir más de un país.
@@ -236,9 +237,9 @@ export default function MiDespachoSection() {
         />
         <ChipsField label="Áreas de práctica" value={practiceAreas} onChange={setPracticeAreas} />
         <ChipsField label="Tipo de cliente" value={clientType} onChange={setClientType} />
-      </section>
+      </Card>
 
-      <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+      <Card padding="md" className="space-y-4">
         <h3 className="text-sm font-semibold">Cómo quieres que trabaje</h3>
         <p className="text-xs text-muted-foreground">
           Es lo que más cambia mi forma de trabajar. Cámbialo cuando cambie tu criterio.
@@ -255,18 +256,27 @@ export default function MiDespachoSection() {
             rows={3}
           />
         </div>
-      </section>
+      </Card>
 
-      <section className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-sm">
+      <Card padding="md" className="space-y-4">
         <h3 className="text-sm font-semibold">Datos profesionales</h3>
-        <TextField label="Tarjeta profesional" value={tpNumber} onChange={setTpNumber} />
+        <TextField
+          label="Tu número de registro profesional"
+          value={tpNumber}
+          onChange={setTpNumber}
+        />
+        <p className="text-xs text-muted-foreground/80">
+          El número con el que ejerces —tarjeta profesional, colegiatura o el que use tu
+          ordenamiento—. Lo escribo en los documentos que lo llevan. Antes te lo pedía al
+          conocerte; es un dato de tu firma, y su sitio es este.
+        </p>
         <ChipsField label="Fuentes preferidas" value={preferredSources} onChange={setPreferredSources} />
-      </section>
+      </Card>
 
-      <section className="space-y-3 rounded-xl border border-border bg-card p-5 shadow-sm">
+      <Card padding="md" className="space-y-3">
         <h3 className="text-sm font-semibold">Herramientas</h3>
         <ToolsChecklist value={tools} onChange={setTools} />
-      </section>
+      </Card>
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
         <Button onClick={save} disabled={saving}>
@@ -282,7 +292,7 @@ export default function MiDespachoSection() {
       {saveError ? <p className="text-sm text-destructive">{saveError}</p> : null}
       {warning ? <p className="text-sm text-warning">{warning}</p> : null}
       {summary ? (
-        <details className="rounded-xl border border-border bg-card/60">
+        <details className="rounded-lg border border-border/10 bg-card/60 shadow-neu-raised">
           <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
             Así entendí a tu firma u organización
           </summary>

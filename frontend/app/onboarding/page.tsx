@@ -44,6 +44,8 @@ type Status = {
   last_updated: string | null;
   responses?: Record<string, AnswerValue>;
   draft?: { responses: Record<string, AnswerValue>; idx: number; qid?: string | null } | null;
+  /** Nombre de la firma tal como se dio al crear la cuenta. No se vuelve a preguntar. */
+  firm_name?: string;
 };
 
 // Claves reservadas dentro de `responses` para la selección de jurisdicción (paso local,
@@ -94,12 +96,17 @@ const HIDDEN_QUESTION_IDS = new Set(["p19"]);
 // "Opcional — puedes saltarla": quien contestaba solo lo obligatorio obtenía un perfil de
 // seis líneas que el sistema daba por bueno. Ese era el defecto de producto. Ahora el
 // cuestionario es más corto y cada pregunta se ganó su sitio, así que ninguna se salta.
-const REQUIRED_IDS = new Set(["p1", "p2", JURISDICTION_QUESTION_ID, "p6", "p20", "p21", "p22"]);
+// p2 (ciudad y país) y p22 (cuándo doy un escrito por terminado) salieron del
+// cuestionario el 2026-08-25 — decisiones de Pipe, puntos 8 y 12 de la bitácora. El país lo
+// declara el paso de jurisdicción, que además es el que enruta los paquetes jurídicos.
+const REQUIRED_IDS = new Set(["p1", JURISDICTION_QUESTION_ID, "p6", "p20", "p21"]);
 
 // Tipos de input por pregunta (onboarding horizontal: sin conocimiento jurídico hardcodeado
 // fuera de la lista de países del paso de jurisdicción, que es deliberada). Son el
 // FALLBACK tolerante: las preguntas con pantalla propia se resuelven antes, en el switch.
-const TEXT_IDS = new Set(["p22"]);
+// Ninguna pregunta viva usa hoy el input de texto largo; la constante se conserva
+// porque es el fallback tolerante para cualquier pregunta que el backend añada.
+const TEXT_IDS = new Set<string>([]);
 const TAG_IDS = new Set(["p6", "p20", "p21"]);
 
 // Segundo campo de los pasos que fusionan dos datos en una sola pantalla (rediseño
@@ -129,11 +136,22 @@ const SUGGESTIONS: Record<string, string[]> = {
     "Escritos al cliente",
     "Correos que salen del despacho",
   ],
+  // D6 · borrador de líneas rojas del oficio, para que el abogado edite en vez de escribir
+  // desde cero. Agnósticas de jurisdicción y de rama: ninguna nombra un país, un tribunal
+  // ni una norma. Son chips, no una lista cerrada: quita, cambia y agrega lo que quiera.
   p21: [
     "Citar sin verificar la fuente",
     "Afirmar hechos que no estén en el expediente",
     "Enviar algo al cliente sin que yo lo lea",
     "Prometer un resultado",
+    "Revelar información de un cliente a quien no le corresponde",
+    "Usar material de un caso en otro distinto",
+    "Trabajar un asunto con conflicto de interés sin avisarme",
+    "Dejar pasar un plazo sin advertírmelo",
+    "Opinar sobre una materia que no es de mi práctica",
+    "Firmar o presentar algo sin que yo lo apruebe",
+    "Cambiar cifras, fechas o nombres del expediente",
+    "Guardar información del despacho fuera de donde yo te diga",
   ],
 };
 const DECIDE_SUGGESTIONS = [
@@ -224,9 +242,9 @@ export default function OnboardingPage() {
         ]);
         let list = qs.filter((q) => !HIDDEN_QUESTION_IDS.has(q.id));
 
-        // Paso local de jurisdicción: la ÚNICA pregunta de país (consolidación 2026-07-09).
-        // La lista de países es fija (COUNTRY_OPTIONS); el paso SIEMPRE se inserta después
-        // de p2.
+        // Paso local de jurisdicción: la ÚNICA pregunta de país. Se ancla al ÚLTIMO paso
+        // del bloque de identidad, no a p2 — p2 salió del cuestionario el 2026-08-25 y
+        // anclarse a una pregunta que ya no existe mandaba este paso al final de todo.
         const jurisdictionStep: Question = {
           id: JURISDICTION_QUESTION_ID,
           block: "jurisdiction",
@@ -234,8 +252,8 @@ export default function OnboardingPage() {
           question: "¿Con las reglas jurídicas de qué país trabaja tu firma u organización?",
           example: "",
         };
-        const p2Index = list.findIndex((q) => q.id === "p2");
-        const insertAt = p2Index >= 0 ? p2Index + 1 : list.length;
+        let insertAt = list.findIndex((q) => q.block !== "identity");
+        if (insertAt < 0) insertAt = list.length;
         list = [...list.slice(0, insertAt), jurisdictionStep, ...list.slice(insertAt)];
 
         setQuestions(list);
@@ -245,6 +263,15 @@ export default function OnboardingPage() {
         } else {
           setStarted(true);
           if (st.draft) setDraft(st.draft);
+          // La firma se precarga desde la cuenta y NO se vuelve a preguntar (punto 5). Solo
+          // se siembra si el paso viene vacío: un borrador a medias manda sobre esto.
+          if (st.firm_name) {
+            setAnswers((prev) => {
+              const actual = asNamePair(prev["identity.name"]);
+              if (actual.firm) return prev;
+              return { ...prev, "identity.name": { ...actual, firm: st.firm_name as string } };
+            });
+          }
         }
       } catch {
         setError("No se pudo cargar la entrevista. Revisa que el servidor esté encendido.");
@@ -379,11 +406,11 @@ export default function OnboardingPage() {
               </p>
             </div>
 
-            <div className="rounded-2xl border border-border bg-card/80 p-6 shadow-sm backdrop-blur-sm md:p-8">
+            <div className="rounded-lg border border-border/10 border-border/10 bg-card/80 p-6 shadow-neu-raised backdrop-blur-sm md:p-8">
               <SummaryMarkdown markdown={completion.summary} />
             </div>
 
-            <details className="rounded-xl border border-border bg-card/50">
+            <details className="rounded-lg border border-border/10 bg-card/50 shadow-neu-raised">
               <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
                 Ver el perfil completo que guardé
               </summary>
@@ -789,10 +816,15 @@ function QuestionInput({
     // garantía de que ningún despacho del mundo se queda fuera (regla dura: Mia no es de
     // ningún país). Las dos vías valen igual para poder continuar.
     case JURISDICTION_QUESTION_ID:
+      // UN SOLO control (puntos 9 y 10 · D10). Antes había dos preguntas: las casillas y,
+      // debajo, «¿trabajas con las reglas de otro país?» — que sonaba a una segunda
+      // decisión cuando era la misma. El campo libre se queda (sin él, un despacho fuera de
+      // la lista no puede terminar el alta: regla dura, Mia no es de ningún país), pero
+      // como parte del mismo paso y dicho como lo que es: la forma de añadir el que falte.
       return (
-        <div className="space-y-5">
+        <div className="space-y-4">
           <CountrySelector value={asList(value)} onChange={onChange} />
-          <Field label="¿Trabajas con las reglas de otro país? Escríbelo aquí">
+          <Field label="¿Falta el tuyo? Escríbelo y lo agrego">
             <TagInput
               value={asList(secondValue)}
               onChange={onChangeSecond ?? (() => {})}
@@ -802,55 +834,41 @@ function QuestionInput({
             />
           </Field>
           <p className="text-xs text-muted-foreground/80">
-            Si tu país no está en la lista, escríbelo y seguimos. Trabajaré contigo igual,
-            apoyándome en las normas y documentos que tú me des.
+            Trabajo contigo en cualquier ordenamiento, esté o no en la lista, apoyándome en
+            las normas y los documentos que tú me des.
           </p>
         </div>
       );
-    // P1 — dos campos: firma u organización + abogado.
+    // P1 — SOLO el nombre del abogado. La firma ya se dio al crear la cuenta y se
+    // precarga (punto 5 de la bitácora: preguntarlo otra vez era pedirle al abogado que
+    // confirmara algo que ya había escrito). Se muestra para que la vea, y si está mal la
+    // corrige aquí mismo — precargar no es cerrar la puerta.
+    //
+    // El número de registro profesional YA NO se pide aquí (punto 6 · D9): es un dato de la
+    // firma, no criterio de redacción, y vive en Configuración → perfil del despacho.
     case "p1": {
       const n = asNamePair(value);
       return (
         <div className="space-y-3">
-          <Field label="Nombre de la firma u organización">
-            <Input
-              value={n.firm}
-              onChange={(e) => onChange({ ...n, firm: e.target.value })}
-              placeholder="Ej: Fajardo & Asociados"
-              autoFocus
-            />
-          </Field>
           <Field label="Tu nombre (abogado principal)">
             <Input
               value={n.lawyer}
               onChange={(e) => onChange({ ...n, lawyer: e.target.value })}
-              placeholder="Ej: Nombre Apellido · número de registro profesional 000.000"
-            />
-          </Field>
-        </div>
-      );
-    }
-
-    // P2 — dos campos: país + ciudad.
-    case "p2": {
-      const l = asLocationPair(value);
-      return (
-        <div className="space-y-3">
-          <Field label="País">
-            <Input
-              value={l.country}
-              onChange={(e) => onChange({ ...l, country: e.target.value })}
-              placeholder="Ej: tu país"
+              placeholder="Ej: Nombre Apellido"
               autoFocus
             />
           </Field>
-          <Field label="Ciudad">
+          <Field label="Tu firma u organización">
             <Input
-              value={l.city}
-              onChange={(e) => onChange({ ...l, city: e.target.value })}
-              placeholder="Ej: tu ciudad"
+              value={n.firm}
+              onChange={(e) => onChange({ ...n, firm: e.target.value })}
+              placeholder="Ej: Fajardo & Asociados"
             />
           </Field>
+          <p className="text-xs text-muted-foreground/80">
+            El nombre de la firma es el que escribiste al crear tu espacio. Cámbialo aquí si
+            quiero escribirlo de otra manera en tus escritos.
+          </p>
         </div>
       );
     }

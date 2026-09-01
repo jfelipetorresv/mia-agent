@@ -502,31 +502,23 @@ export default function ConfigurarPage() {
           )}
           {pasosList}
 
-          {s.secciones && s.secciones.length ? (
-            <section className="mt-section">
-              <SectionTitle
-                icon={Map}
-                title="¿Qué hace cada sección de Mia?"
-                hint="El mapa de la casa: para qué sirve cada pantalla que ves en el menú."
-              />
-              <ul className="space-y-2">
-                {s.secciones.map((sec) => (
-                  <li key={sec.titulo}>
-                    <details className={cn(cardVariants(), "group transition-colors hover:border-primary/25")}>
-                      <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 text-section [&::-webkit-details-marker]:hidden">
-                        {sec.titulo}
-                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-                      </summary>
-                      <div className="space-y-1.5 border-t border-border px-4 py-3 text-body text-muted-foreground">
-                        <p>{sec.que_es}</p>
-                        <p>{sec.para_que}</p>
-                      </div>
-                    </details>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
+          {/* El mapa de la casa dejó de vivir aquí, plegado (punto 15 de la bitácora
+              2026-08-19): ahora es «Cómo funciona Mia», su propia pantalla, con el
+              cuándo y el cómo de cada sección. Aquí queda la puerta, no una copia:
+              dos textos del mismo tema en dos sitios se separan a la primera edición. */}
+          <section className="mt-section">
+            <SectionTitle
+              icon={Map}
+              title="¿Qué hace cada sección de Mia?"
+              hint="El mapa de la casa: para qué sirve cada pantalla, cuándo te sirve y cómo se usa."
+            />
+            <Button asChild variant="outline" className="gap-1.5">
+              <Link href="/ayuda">
+                Abrir el manual
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </section>
 
           <p className="mt-section text-body text-muted-foreground">
             Cada paso te lleva a la pantalla donde se hace. Cuando actives Telegram,

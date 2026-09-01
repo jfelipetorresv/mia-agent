@@ -1992,7 +1992,19 @@ async def onboarding_status(request: Request):
     except Exception:
         logger.exception("no se pudo leer el borrador de onboarding (tenant=%s)", tid)
         draft = None
-    return {**soul_status(tid), "responses": load_responses(tid), "draft": draft}
+    # `firm_name` viaja para que el paso de identidad NO vuelva a preguntar el nombre de la
+    # firma: ya se dio al crear la cuenta (punto 5 de la bitácora 2026-08-19). Fail-open: si
+    # no se puede leer, el paso deja el campo vacío y el abogado lo escribe, como antes.
+    firma = ""
+    try:
+        async with pool.tenant_connection(tid) as conn:
+            row = await (await conn.execute(
+                "SELECT name FROM tenants WHERE id = %s::uuid", (tid,))).fetchone()
+        firma = (row[0] or "") if row else ""
+    except Exception:
+        logger.exception("no se pudo leer el nombre de la firma (tenant=%s)", tid)
+    return {**soul_status(tid), "responses": load_responses(tid), "draft": draft,
+            "firm_name": firma}
 
 
 # ── Pantalla 5 · dashboard ───────────────────────────────────────────────────

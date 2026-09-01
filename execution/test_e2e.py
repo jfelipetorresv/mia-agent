@@ -319,26 +319,32 @@ def run_e2e(client, auth, tid) -> list[str]:
     print("\n-- Paso 1 · Onboarding (SOUL.md) --")
     r = client.get("/api/onboarding/questions", headers=auth)
     qs = r.json() if r.status_code == 200 else []
-    # Contrato 2026-07-20 (rediseño "más rico, no más largo"): 6 preguntas de backend —
-    # el frontend añade encima su paso local de jurisdicción (7 pasos para el abogado).
-    # Removidas del cuestionario (el endpoint NO debe reintroducirlas): P5 (país — lo
-    # pregunta el selector único del frontend), P8/P9/P12/P13 (se aprenden del uso),
-    # P15/P16 (estrategia), P10/P11/P14/P17 (voz/límites/ritmo), y ahora P3 (estilo en
-    # adjetivos), P4 (canales), P7 (fusionada en P6), P18 (herramientas) y P19 (modo
-    # profundo, no implementado).
-    removed_ids = {"p3", "p4", "p5", "p7", "p8", "p9", "p10", "p11", "p12", "p13",
-                   "p14", "p15", "p16", "p17", "p18", "p19"}
+    # Contrato 2026-09-01 (bitácora de feedback UX, decisiones de Pipe): 4 preguntas de
+    # backend — el frontend añade encima su paso local de jurisdicción (5 pasos para el
+    # abogado). Al recorte anterior se suman P2 (ciudad y país: la ciudad no cambia un
+    # borrador y el país lo declara el selector — puntos 8, 9 y 10) y P22 (cuándo se da un
+    # escrito por terminado: se aprende del trabajo aprobado — punto 12).
+    #
+    # El check se ancla a que las removidas NO VUELVAN y a que las vigentes SIGAN, no a un
+    # número: clavarlo a la cifra obliga a tocar el gate en cada decisión de producto, y ese
+    # es el camino por el que un gate se «actualiza» sin que nadie mire lo que protege.
+    removed_ids = {"p2", "p3", "p4", "p5", "p7", "p8", "p9", "p10", "p11", "p12", "p13",
+                   "p14", "p15", "p16", "p17", "p18", "p19", "p22"}
     qids = {q.get("id") for q in qs}
-    check("GET /api/onboarding/questions -> 6 preguntas (sin las removidas: P3/P4/P5/P7-P19)",
-          r.status_code == 200 and len(qs) == 6 and not (qids & removed_ids))
+    check("GET /api/onboarding/questions no reintroduce ninguna pregunta retirada",
+          r.status_code == 200 and bool(qs) and not (qids & removed_ids))
     check("cada pregunta trae id/block/field/question/example",
           bool(qs) and all({"id", "block", "field", "question", "example"} <= set(q) for q in qs))
     check("las preguntas cubren los bloques vigentes (identity/jurisdiction/criterio)",
           {q["block"] for q in qs} == {"identity", "jurisdiction", "criterio"})
-    # Las 3 preguntas que hacen COMPUTABLE el criterio: sin ellas el perfil vuelve a ser
-    # una tarjeta de presentación (datos censales y cero juicio).
-    check("la entrevista pregunta autonomía, líneas rojas y estándar de cierre",
-          {q["field"] for q in qs} >= {"autonomia.reviso_siempre", "nunca", "terminado"})
+    # Las preguntas que hacen COMPUTABLE el criterio: sin ellas el perfil vuelve a ser una
+    # tarjeta de presentación (datos censales y cero juicio). El estándar de cierre
+    # (`terminado`) salió del cuestionario el 2026-09-01 —se aprende del trabajo aprobado—
+    # pero la línea de autonomía y las líneas rojas siguen siendo el corazón del perfil.
+    check("la entrevista sigue preguntando la línea de autonomía y las líneas rojas",
+          {q["field"] for q in qs} >= {"autonomia.reviso_siempre", "nunca"})
+    check("y sigue preguntando quién es el despacho y a quién defiende",
+          {q["field"] for q in qs} >= {"identity.name", "jurisdiction.practice_areas"})
 
     # ── El guardián conectado (arreglo 2026-07-20) ───────────────────────────
     # Antes: mandar llaves por ID de pregunta devolvía 200 OK con un SOUL de dos líneas.

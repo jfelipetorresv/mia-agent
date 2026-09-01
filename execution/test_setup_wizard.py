@@ -233,11 +233,22 @@ def run_checks(client, fake_llm: FakeCompletions, det: Detectors, tenants: list[
     texto_secciones = " ".join(f"{x['titulo']} {x['que_es']} {x['para_que']}" for x in secciones)
     check("g5 · §G: las guías y el mapa de secciones tampoco traen jerga técnica",
           not _FORBIDDEN_RE.search(texto_guias + " " + texto_secciones))
-    check("g6 · el mapa de secciones de Mia explica las pantallas (Asuntos, Conocimiento, Panel…)",
+    # g6 se anclaba al rótulo literal «Asuntos», que D3 renombró a «Casos» con la función
+    # intacta: llevaba en rojo desde entonces sin causa escrita. Re-anclado al CONCEPTO
+    # (regla sellada 2026-07-29: los gates de copy verifican el concepto, nunca la
+    # redacción) — que el mapa cubra la pantalla de trabajo y la de memoria del despacho,
+    # se llamen como se llamen, y que cada entrada diga cuándo sirve y cómo se usa, que es
+    # lo que lo convierte en un manual y no en una lista de nombres.
+    titulos = " ".join(x.get("titulo", "") for x in secciones).lower()
+    check("g6 · el mapa de secciones cubre la pantalla de trabajo y la de conocimiento",
           len(secciones) >= 5
           and all(x.get("que_es") and x.get("para_que") for x in secciones)
-          and any("Asuntos" in x["titulo"] for x in secciones)
-          and any("Conocimiento" in x["titulo"] for x in secciones))
+          and ("casos" in titulos or "asuntos" in titulos)
+          and "conocimiento" in titulos)
+    check("g6b · y es un MANUAL: cada sección dice cuándo sirve y cómo se usa",
+          all(x.get("cuando") and x.get("como") for x in secciones))
+    check("g6c · cada sección lleva a dónde ir (no obliga a buscarla en el menú)",
+          all(str(x.get("ruta", "")).startswith("/") for x in secciones))
 
     # ── (s) detección simulada: cada componente cambia su paso ──
     det.which["claude"] = "C:\\bin\\claude.exe"

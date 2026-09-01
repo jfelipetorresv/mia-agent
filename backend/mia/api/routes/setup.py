@@ -166,37 +166,84 @@ STEP_GUIDES: dict[str, dict] = {
 }
 
 # CP-C4b · Qué hace cada sección de Mia — el mapa de la casa, en lenguaje llano.
+# EL MANUAL DE MIA (punto 15 de la bitácora 2026-08-19). Era un acordeón plegado dentro de
+# Configuración → «Primeros pasos», con tres frases por sección; el abogado que abre Mia por
+# primera vez no encuentra ahí un manual y no sabía para qué servía cada pantalla. Ahora esta
+# lista alimenta una pantalla propia (`/ayuda`), y por eso cada sección trae además:
+#   · `ruta`      — a dónde lleva el botón, para no obligar a buscarla en el menú;
+#   · `como`      — los pasos concretos, en el orden en que se hacen;
+#   · `cuando`    — en qué momento del trabajo real sirve, que es lo que faltaba.
+# Sin jerga (regla del proyecto): no aparece «HITL», «tenant» ni el nombre de un endpoint.
 MIA_SECTIONS: list[dict] = [
+    {"titulo": "Panel",
+     "ruta": "/dashboard",
+     "que_es": ("Lo accionable del día: sugerencias y borradores esperando tu decisión, "
+                "recordatorios, recomendaciones de Mia y un resumen del mes."),
+     "para_que": "Es lo primero que ves al entrar: qué necesita tu atención hoy.",
+     "cuando": "Al empezar el día, y cada vez que quieras saber qué quedó pendiente.",
+     "como": ["Mira «Para tu decisión»: ahí está lo que espera tu visto bueno.",
+              "Abre cada tarjeta y decide; nada avanza mientras no decidas tú.",
+              "Revisa los recordatorios y el gasto del mes antes de cerrar."]},
     {"titulo": "Casos",
+     "ruta": "/casos",
      "que_es": "La pantalla principal: un espacio de trabajo por cada caso.",
      "para_que": ("Aquí subes el expediente, conectas carpetas y le preguntas a Mia. "
                   "En cada caso eliges si te entrega un borrador para aprobar o te "
-                  "responde directo.")},
+                  "responde directo."),
+     "cuando": "Siempre que trabajes un asunto concreto con su expediente.",
+     "como": ["Crea el caso y ponle el nombre con el que tú lo llamas.",
+              "Sube el expediente, o conecta la carpeta donde ya vive.",
+              "Elige cómo quieres trabajarlo: borrador para aprobar, o respuesta directa.",
+              "Pregúntale en tus palabras; Mia lee el expediente antes de responder."]},
     {"titulo": "Revisión de borradores",
+     "ruta": "/casos",
      "que_es": "Donde apruebas, corriges o rechazas lo que Mia redacta.",
      "para_que": ("Nada sale del despacho sin tu visto bueno: revisas el borrador "
-                  "y las citas que Mia marcó para verificar antes de aprobarlo.")},
+                  "y las citas que Mia marcó para verificar antes de aprobarlo."),
+     "cuando": "Cada vez que Mia termina un borrador en un caso con aprobación.",
+     "como": ["Lee el borrador y el diagnóstico que lo acompaña.",
+              "Revisa las citas: Mia te dice cuáles respaldó y cuáles debes verificar tú.",
+              "Mira los puntos que la revisión dejó abiertos antes de decidir.",
+              "Aprueba, pide cambios con tus comentarios, o recházalo con el motivo."]},
     {"titulo": "Conocimiento",
+     "ruta": "/memoria",
      "que_es": ("La memoria del despacho: tu perfil, tus guías de trabajo y lo "
                 "que Mia va aprendiendo."),
      "para_que": ("Aquí importas guías, apruebas las sugerencias de mejora de Mia "
-                  "y ves qué tan bien le va con cada procedimiento.")},
-    {"titulo": "Panel",
-     "que_es": ("Lo accionable del día: sugerencias y borradores esperando tu "
-                "decisión, recordatorios, recomendaciones de Mia y un resumen "
-                "del mes."),
-     "para_que": "Es lo primero que ves al entrar: qué necesita tu atención hoy."},
+                  "y ves qué tan bien le va con cada procedimiento."),
+     "cuando": "Cuando quieras enseñarle tu forma de trabajar, o revisar qué aprendió.",
+     "como": ["Revisa tu perfil: es lo que Mia da por sabido de tu despacho.",
+              "Importa o escribe una guía para un tipo de escrito que hagas seguido.",
+              "Aprueba o descarta lo que Mia propone aprender; no aprende nada sola."]},
+    {"titulo": "Agentes jurídicos",
+     "ruta": "/personas",
+     "que_es": "Ayudantes con un encargo propio, que tú defines y puedes llamar por su nombre.",
+     "para_que": ("Cada uno tiene su especialidad y su forma de trabajar, para no repetirle "
+                  "las mismas instrucciones a Mia en cada turno."),
+     "cuando": "Cuando repites un tipo de encargo y quieres que salga siempre igual.",
+     "como": ["Crea el ayudante y dile qué hace y cómo quieres que trabaje.",
+              "Marca las capacidades que necesita para su tarea.",
+              "Llámalo por su nombre desde cualquier conversación."]},
     {"titulo": "Configuración",
-     "que_es": ("Este recorrido, y también el hogar de conexiones (Obsidian, "
-                "correo, motor de IA), carpetas, automatizaciones y el cálculo "
-                "de valor y gasto."),
+     "ruta": "/configurar",
+     "que_es": ("El hogar de conexiones (Obsidian, correo, motor de IA), carpetas, "
+                "automatizaciones, protección de datos y el cálculo de valor y gasto."),
      "para_que": ("Detecta qué está listo y qué falta, te explica cada pieza y te "
                   "lleva al lugar exacto donde se hace. Todo es opcional y "
-                  "retomable.")},
+                  "retomable."),
+     "cuando": "Al empezar, y cada vez que quieras conectar algo nuevo.",
+     "como": ["Mira el recorrido de primeros pasos: te dice qué falta y por qué importa.",
+              "Conecta lo que uses: tus carpetas, tu correo, tu bóveda de notas.",
+              "Revisa protección de datos y el tope de gasto antes de trabajar en serio."]},
     {"titulo": "Mia en tu celular (Telegram)",
+     "ruta": "/configurar#conexiones",
      "que_es": "Ayuda en lenguaje normal desde el celular, una vez lo actives.",
      "para_que": ("Ejemplos: «recuérdame radicar mañana a las 9» o «¿cómo va mi "
-                  "configuración?» — Mia responde por Telegram.")},
+                  "configuración?» — Mia responde por Telegram."),
+     "cuando": "Cuando estés fuera de la oficina y necesites consultarle algo.",
+     "como": ["Crea tu bot privado con la guía paso a paso de Configuración.",
+              "Pega el código que te da Telegram y listo.",
+              "Escríbele como a cualquier contacto: te responde y te recuerda."]},
 ]
 
 # Caché de detecciones que tocan disco/subprocesos (revisor CP-C4, M2/M3):
@@ -261,6 +308,19 @@ async def _count_playbooks(tenant_id: str) -> int:
             "SELECT count(*) FROM playbooks WHERE status = 'active'"
         )).fetchone()
     return int(row[0]) if row else 0
+
+
+@router.get("/manual")
+async def setup_manual(request: Request):
+    """El manual de Mia: qué es cada sección, cuándo sirve y cómo se usa.
+
+    Sale del mismo `MIA_SECTIONS` que ya viajaba dentro de `/setup/status`: una sola fuente,
+    para que la pantalla de ayuda y el recorrido de configuración nunca digan cosas
+    distintas de la misma pantalla. Es contenido fijo — no consulta nada del despacho — pero
+    va tras la sesión como el resto del API.
+    """
+    _tenant(request)
+    return {"secciones": MIA_SECTIONS}
 
 
 @router.get("/status")
