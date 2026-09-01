@@ -187,7 +187,7 @@ export default function ComentariosBorrador({
       ) : null}
 
       <aside aria-label="Tus comentarios sobre el borrador" className="space-y-3">
-        <div className="rounded-lg border border-border bg-card/60 px-4 py-3">
+        <div className="rounded-lg border border-border/10 bg-card shadow-neu-raised/60 px-4 py-3">
           <p className="text-section">Tus comentarios</p>
           <p className="mt-1 text-meta text-muted-foreground">
             Marca un pasaje del borrador y pulsa «Comentar». Mia corrige solo esos puntos y
@@ -209,7 +209,7 @@ export default function ComentariosBorrador({
           <div
             key={c.id}
             className={cn(
-              "rounded-lg border bg-card/60 px-4 py-3 transition-colors",
+              "rounded-lg shadow-neu-raised border border-border/10 bg-card/60 px-4 py-3 transition-colors",
               activo === c.id ? "border-primary/50" : "border-border",
             )}
           >
@@ -278,7 +278,7 @@ export function ResolucionDeComentarios({ informe }: { informe: InformeComentari
   return (
     <section
       aria-label="Cómo quedaron tus comentarios"
-      className="rounded-lg border border-border bg-card/60 px-4 py-3"
+      className="rounded-lg border border-border/10 bg-card shadow-neu-raised/60 px-4 py-3"
     >
       <p className="text-section">Cómo quedaron tus comentarios</p>
       {informe.resumen ? (

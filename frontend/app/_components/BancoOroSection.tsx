@@ -313,7 +313,7 @@ function CampoTexto({
   const [editando, setEditando] = useState(false);
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
+    <div className="rounded-lg border border-border/10 bg-card shadow-neu-raised p-4">
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h4 className="text-sm font-semibold tracking-tight">{titulo}</h4>
@@ -635,7 +635,7 @@ export default function BancoOroSection() {
         {avisoMsg}
 
         {/* Lo identificable pendiente. Dos clases, distinguidas a la vista y por escrito. */}
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className="rounded-lg border border-border/10 bg-card shadow-neu-raised p-4">
           <h4 className="text-sm font-semibold tracking-tight">Lo que quedó sin ocultar</h4>
           <p className="mt-1 text-sm text-muted-foreground">{caso.nota_pii}</p>
 
@@ -696,7 +696,7 @@ export default function BancoOroSection() {
         </div>
 
         {/* Nombre del caso */}
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className="rounded-lg border border-border/10 bg-card shadow-neu-raised p-4">
           <Label htmlFor="oro-titulo" className="mb-1.5 block text-sm font-semibold">
             Nombre del caso
           </Label>
@@ -742,7 +742,7 @@ export default function BancoOroSection() {
             <EmptyHint icon={FileText}>Este caso no guardó texto de documentos.</EmptyHint>
           ) : (
             documentos.map((d, di) => (
-              <div key={di} className="rounded-xl border border-border bg-card p-4">
+              <div key={di} className="rounded-lg border border-border/10 bg-card shadow-neu-raised p-4">
                 <div className="mb-2 flex items-center gap-2">
                   <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="truncate text-sm font-medium">{d.filename || "Documento sin nombre"}</span>
@@ -752,7 +752,7 @@ export default function BancoOroSection() {
                 </div>
                 <div className="space-y-3">
                   {d.chunks.map((c, ci) => (
-                    <div key={ci} className="rounded-lg border border-border/60 bg-background/40 p-3">
+                    <div key={ci} className="rounded-lg shadow-neu-raised border border-border/10 border-border/60 bg-background/40 p-3">
                       {editable ? (
                         <Textarea
                           aria-label={`Texto ${ci + 1} de ${d.filename || "documento"}`}
@@ -786,7 +786,7 @@ export default function BancoOroSection() {
         </div>
 
         {/* Lo que se le va a exigir a Mia */}
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className="rounded-lg border border-border/10 bg-card shadow-neu-raised p-4">
           <h4 className="text-sm font-semibold tracking-tight">Qué se le va a exigir a Mia</h4>
           <p className="mt-1 text-sm text-muted-foreground">
             Esto es el examen: cada vez que se corra, se comprobará que la respuesta de Mia traiga
@@ -819,7 +819,7 @@ export default function BancoOroSection() {
                 se guarda en ningún sitio, así que no hay de dónde proponerlas. No es un error, y no
                 se inventan: se le pide al abogado que las escriba, explicándole para qué sirven. */}
             {conclusiones.length === 0 ? (
-              <div className="mb-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-3 py-2.5">
+              <div className="mb-2 rounded-lg shadow-neu-raised border border-border/10 border-dashed border-primary/40 bg-primary/5 px-3 py-2.5">
                 <p className="text-sm text-foreground">
                   <span className="font-medium">Esto lo tienes que escribir tú.</span> Mia puede
                   proponerte las citas porque están en el borrador, pero no puede adivinar a qué
@@ -849,7 +849,7 @@ export default function BancoOroSection() {
         </div>
 
         {/* Confirmar / borrar */}
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className="rounded-lg border border-border/10 bg-card shadow-neu-raised p-4">
           {editable ? (
             <>
               <h4 className="text-sm font-semibold tracking-tight">Confirmar el caso</h4>
@@ -1020,7 +1020,7 @@ export default function BancoOroSection() {
 
       {/* Captura */}
       {permitido ? (
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className="rounded-lg border border-border/10 bg-card shadow-neu-raised p-4">
           <h4 className="text-sm font-semibold tracking-tight">Guardar un caso resuelto como caso del examen</h4>
           <p className="mt-1 text-sm text-muted-foreground">
             Solo sirven los casos que ya resolviste y en los que aprobaste un borrador: el examen
@@ -1099,7 +1099,7 @@ export default function BancoOroSection() {
               return (
                 <li
                   key={c.gold_case_id}
-                  className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm transition-colors hover:border-primary/25"
+                  className="rounded-lg border border-border/10 bg-card shadow-neu-raised px-4 py-3 transition-colors hover:border-primary/25"
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">

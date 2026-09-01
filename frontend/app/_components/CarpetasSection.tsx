@@ -104,7 +104,7 @@ export default function CarpetasSection() {
                 <h3 className="mb-2 text-sm font-medium text-muted-foreground">Detectadas en este equipo</h3>
                 <ul className="space-y-2">
                   {folders.detected.map((d) => (
-                    <li key={d.path} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                    <li key={d.path} className="flex items-center justify-between gap-3 rounded-lg border border-border/10 bg-card shadow-neu-raised px-4 py-3">
                       <div className="min-w-0">
                         <div className="text-sm font-medium">{d.label}</div>
                         <div className="truncate text-sm text-muted-foreground" title={d.path}>{d.path}</div>
@@ -129,7 +129,7 @@ export default function CarpetasSection() {
               ) : (
                 <ul className="space-y-2">
                   {folders.sources.filter((f) => f.enabled).map((f) => (
-                    <li key={f.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+                    <li key={f.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/10 bg-card shadow-neu-raised px-4 py-3">
                       <div className="min-w-0">
                         <div className="text-sm font-medium">{f.label}</div>
                         <div className="truncate text-sm text-muted-foreground" title={f.path}>{f.path}</div>
@@ -148,12 +148,12 @@ export default function CarpetasSection() {
                 e.preventDefault();
                 if (folderPath.trim()) addFolder(folderPath.trim(), folderLabel.trim() || undefined);
               }}
-              className="rounded-xl border border-dashed border-border bg-card/50 p-4"
+              className="rounded-lg border border-dashed border-border bg-card/40 backdrop-blur-md shadow-neu-raised p-4"
             >
               <h3 className="mb-3 text-sm font-medium text-muted-foreground">Registrar otra carpeta</h3>
               <div className="space-y-3">
                 {folderPath ? (
-                  <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-border/10 bg-card shadow-neu-raised px-3 py-2">
                     <span className="truncate text-sm" title={folderPath}>{folderPath}</span>
                     <Button type="button" size="sm" variant="ghost" onClick={() => setPickerOpen(true)} className="shrink-0">
                       Cambiar

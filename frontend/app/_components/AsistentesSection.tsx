@@ -158,7 +158,7 @@ export default function AsistentesSection() {
       </div>
 
       {aviso ? (
-        <p className="rounded-md border border-dashed border-border bg-card/50 px-3 py-2 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-dashed border-border bg-card/40 backdrop-blur-md shadow-neu-raised px-3 py-2 text-sm text-muted-foreground">
           {aviso}
         </p>
       ) : null}

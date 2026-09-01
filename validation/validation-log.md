@@ -142,3 +142,43 @@ Screenshots and validation events are logged here.
   p50 con n=1.
 - **Nota de evidencia**: capturas en `validation/screenshots/corrida-5/` (fuera de git);
   `tiempos.json` es el registro citable.
+
+## [2026-09-01] Verificación visual — pendientes de la sesión 62
+
+Recorrido con Chromium headless (la extensión del navegador no está conectada en esta
+máquina; se usó el respaldo documentado del procedimiento). Despacho sembrado con
+`seed_despacho_demo.py`. **Calibración del arnés antes de medir**: se comprueba que el token
+quedó en `localStorage` y que la app no manda a `/login`; sin eso, ninguna fila vale.
+
+Dos defectos fueron DEL ARNÉS, no del producto, y se corrigieron antes de dar veredicto:
+un `addInitScript` que tocaba `document.documentElement` antes de que existiera (inyectaba
+un `TypeError` en cada página, que se habría reportado como fallo de la app), y navegar por
+`127.0.0.1:3100` en vez de `localhost:3100`, que dejaba la sesión sin resolver y toda
+pantalla en el spinner de carga.
+
+| Ruta | Tema | Marcador esperado | Errores propios | Peticiones fallidas |
+|---|---|---|---|---|
+| /ayuda | claro y oscuro | «Cómo funciona Mia» | 0 (solo ruido de HMR del servidor de desarrollo) | 0 |
+| /personas | claro y oscuro | «Qué puede hacer» | 0 | 0 |
+| /chat (panel de atajos) | claro y oscuro | panel abierto | 0 | 0 |
+| /memoria | claro y oscuro | — | 0 | 0 |
+| /configurar | claro y oscuro | «Abrir el manual» | 0 | 0 |
+| /dashboard | claro y oscuro | — | 0 | 0 |
+
+**Reordenar atajos, probado en vivo (no solo dibujado):**
+
+- orden inicial: Cronología · Litigante · Revisor de citas · Tributarista
+- tras arrastrar el primero sobre el tercero: Litigante · Revisor · Cronología · Tributarista
+- tras recargar la página: idéntico → **el orden se guarda**, no es solo estado de pantalla
+- con la flecha de subir: Revisor · Litigante · Cronología · Tributarista → **la vía de
+  teclado hace exactamente lo mismo que el arrastre**
+
+**Lo que se miró, además de «¿carga?»:** el control de capacidades de un agente NO promete lo
+que la máquina no tiene — en este equipo «Buscar normas y jurisprudencia en vivo» aparece con
+su razón concreta («no está instalado en este equipo») en vez de ofrecerse en silencio.
+
+Capturas: `validation/screenshots/01..14_2026-09-01_*.png` (no se versionan, ver .gitignore;
+se regeneran con el recorrido en dos minutos).
+
+**Lo que esto NO acredita:** que las pantallas se vean como los renders del pack. El cotejo
+contra `docs/design/MIA-Luxury-Design-Pack/` sigue siendo trabajo de mirar, y de Pipe.

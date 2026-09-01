@@ -237,7 +237,7 @@ export default function MissionBoard({ matterId, compact = false }: { matterId: 
       ) : null}
 
       {creating ? (
-        <div className="mb-4 rounded-xl border border-border bg-muted p-4">
+        <div className="mb-4 rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted p-4">
           <h3 className="mb-3 font-medium">Nueva misión</h3>
           <div className="space-y-3">
             <Field label="Título" value={createForm.title} onChange={(v) => setCreateForm({ ...createForm, title: v })} />
@@ -413,7 +413,7 @@ function MissionDetail({
           type="button"
           onClick={() => onDecompose(false)}
           disabled={busy}
-          className="rounded-lg border border-border px-3 py-1 text-xs font-medium transition hover:bg-muted active:scale-[0.98] disabled:opacity-50"
+          className="rounded-lg shadow-neu-raised border border-border/10 border-border/10 px-3 py-1 text-xs font-medium transition hover:bg-muted active:scale-[0.98] disabled:opacity-50"
         >
           Proponer más hitos
         </button>
@@ -421,7 +421,7 @@ function MissionDetail({
           type="button"
           onClick={() => onDecompose(true)}
           disabled={busy}
-          className="rounded-lg border border-border px-3 py-1 text-xs font-medium transition hover:bg-muted active:scale-[0.98] disabled:opacity-50"
+          className="rounded-lg shadow-neu-raised border border-border/10 border-border/10 px-3 py-1 text-xs font-medium transition hover:bg-muted active:scale-[0.98] disabled:opacity-50"
         >
           Rehacer propuesta
         </button>

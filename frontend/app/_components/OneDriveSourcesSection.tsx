@@ -170,7 +170,7 @@ export default function OneDriveSourcesSection({
       ) : null}
 
       {sources.length === 0 ? (
-        <div className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-4">
+        <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-card/40 backdrop-blur-md shadow-neu-raised px-4 py-4">
           <Cloud className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
           <p className="text-sm text-muted-foreground">Aún no has agregado ninguna carpeta de {servicio}.</p>
         </div>
@@ -179,7 +179,7 @@ export default function OneDriveSourcesSection({
           {sources.map((s) => (
             <li
               key={s.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/10 bg-card shadow-neu-raised px-4 py-3"
             >
               <div className="min-w-0">
                 <div className="text-sm font-medium">{s.label}</div>

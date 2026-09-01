@@ -1234,7 +1234,7 @@ function Sugerencias() {
                     const v = c.conflict?.[side];
                     if (!v) return null;
                     return (
-                      <div key={side} className="flex flex-col rounded-lg border border-border bg-muted/30 p-3">
+                      <div key={side} className="flex flex-col rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/30 p-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="truncate text-section">{v.title}</span>
                           <Badge variant="secondary">{originLabel(v.procedencia)}</Badge>

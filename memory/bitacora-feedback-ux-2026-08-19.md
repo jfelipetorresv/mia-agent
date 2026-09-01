@@ -126,3 +126,44 @@ sin haber verificado esa lectura contra `CLAUDE.md` §I (que decía explícitame
 estado real renderizado** (capturas de la app corriendo), no una descripción textual de un
 `.md`. Una captura habría hecho evidente en 5 segundos que el problema era el negro
 forzado, no la paleta. Cuando la decisión es visual, el insumo tiene que ser visual.
+
+---
+
+## 5 · Cierre del bloque — 2026-09-01 (sesión 62)
+
+**Los 23 puntos están cerrados.** Este archivo deja de ser una lista de trabajo pendiente y
+pasa a ser el registro de por qué cada pantalla es como es. Lo que sigue abierto se declara
+al final, con su causa.
+
+| # | Cerrado en | Cómo |
+|---|---|---|
+| 1 | s46 (`10d447e`) | la bienvenida sigue el tema elegido |
+| 2, 3, 4 | s61 (`b13336f`, D4) | un motor preseleccionado, una sola pantalla de claves, OpenRouter con consentimiento expreso |
+| 5 | s62 | la firma se precarga del registro; el paso de identidad ya no la vuelve a preguntar |
+| 6 | s62 (D9) | el registro profesional vive en Configuración → perfil del despacho, con rótulo que sirve en cualquier ordenamiento |
+| 7, 8 | s62 | la pregunta de ciudad y país salió entera: el país lo declara el selector, y la ciudad no cambia un borrador |
+| 9, 10 | s62 (D10) | un solo control de jurisdicción; el campo libre dejó de ser una segunda pregunta y es la forma de añadir el que falte |
+| 11 | s62 (D6) | doce líneas rojas del oficio como borrador editable, agnósticas de jurisdicción |
+| 12 | s62 | «¿cuándo das un escrito por terminado?» salió del cuestionario |
+| 13 | s46 | investigado; se usó el patrón, no el repo |
+| 14, 14b | s46 (`0a0f020`) + s61 | puente `mia-shell`; el banner migrado. **s62** añade `test_puente_shell.py`: ninguna pantalla puede volver a invocar una ruta que la cáscara no sirve |
+| 15 | s62 | «Cómo funciona Mia» es pantalla propia (`/ayuda`), con cuándo sirve y cómo se usa cada sección, y su botón para ir |
+| 15b | s62 | el pie de la barra agrupa lo de la cuenta bajo su rótulo; cerrar sesión se distingue de cambiar el tema |
+| 16 | s60 | el Panel es rejilla, no lista vertical; «Para tu decisión» ocupa el sitio de honor |
+| 17 | s62 | Configuración y sus secciones usan la primitiva del sistema; 31 superficies migradas al neumorfismo |
+| 18 | s61 (D7) + s62 | fijar, ocultar, renombrar, escribir propios — y **reordenar arrastrando**, con flechas para quien no usa ratón |
+| 19, 20 | s61 (`4718432`, D3) | un solo concepto: «Casos» |
+| 21 | s60 | Conocimiento con nota de Mia por pestaña y vocabulario del sistema |
+| 22 | s62 | el paraguas se cerró con una BARRERA, no con un pase: `test_sistema_de_diseno.py` caza tarjetas a mano y colores anclados a un tema |
+| 23 | s62 (D8) | el agente declara qué puede hacer: leer escaneados, buscar en vivo, redactar largo. Lo marcado viaja al prompt de su turno; lo que la instalación no tiene se dice con su razón |
+
+### Lo que sigue abierto, con su causa
+
+- **Prueba en frío del instalador (D5, capa 3).** El puente quedó verificado por contrato
+  (`test_puente_shell.py`, 7/7) y el instalador reensamblado, pero que los botones de
+  Protección funcionen en la app instalada solo lo acredita instalarla en una máquina
+  limpia. Es de Pipe.
+- **Cotejo visual contra los renders del pack.** Las capturas en claro y oscuro están
+  tomadas y registradas en `validation/validation-log.md`; decir que se ven como el pack
+  exige comparar contra `docs/design/MIA-Luxury-Design-Pack/`, y eso es mirar, no medir.
+- **Las imágenes de Antigravity** que menciona §0 siguen sin llegar al repo.

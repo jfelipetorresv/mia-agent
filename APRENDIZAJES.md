@@ -684,3 +684,145 @@ las funciones intactas — regla del 2026-07-29: los gates verifican el concepto
 packs de la 059 y approve devolvía 409). Moraleja operativa: un rojo que se «declara preexistente»
 sin causa raíz escrita es deuda que se re-diagnostica mal en cada sesión siguiente; o se arregla o
 se deja la causa exacta (archivo:línea) por escrito. Commit `8374572`.
+
+## Sesión 2026-09-01 (los 23 puntos de UX cerrados + la deuda declarada de la 61)
+
+88. **Un rojo «preexistente» sin causa raíz escrita se re-diagnostica mal en cada sesión, y
+esta vez el rótulo mentía dos veces.** Los dos checks rojos de `test_eval_harness.py` decían
+«la cita sin respaldo del fake fue OMITIDA del borrador», y el defecto no tenía nada que ver
+con la omisión: el doble de modelo no emitía `FACT_PACK` ni `STRATEGY_PACK` ni fuente, así que
+la etapa de hechos moría con `PackError`, el turno entregaba su mensaje de abstención en vez
+de un borrador, y no había ninguna cita que omitir. Es la deriva de mocks del aprendizaje 78,
+por tercera vez, en la suite que precisamente mide si Mia afirma sin respaldo.
+**Lo que lo destapó fue instrumentar y LEER el crudo**, no releer el código: volcar
+`res["verification"]` mostró un borrador de 186 caracteres que empezaba «No pude seguir con el
+escrito». El panel del propio banco lo reportaba como `reached_draft: true` y
+`citas_en_regla_ratio: 1.0` — un turno abortado contado como turno limpio (regla 18: el panel
+no es la evidencia).
+**Arreglo:** el doble emite el contrato canónico de la 059, el mismo de `test_e2e.py` y
+`test_ux.py`. 69/69 PASS.
+**Regla:** cuando un check falle, comprobar primero que el ARTEFACTO que examina existe. Un
+gate sobre un producto que nunca se generó no mide lo que dice medir, y su mensaje de fallo
+apunta al sitio equivocado.
+
+89. **El defecto del aprendizaje 86 estaba vivo en otro helper, y el barrido de la familia se
+hizo por nombre de archivo en vez de por propiedad.** `init_soul_versions.py` re-aplicaba la
+migración 040, que reemplaza el CHECK de `feedback_proposals` con la lista de tipos vigente en
+su momento — sin `harvest_lessons`, que llegó con la 049. Con una fila legítima de ese tipo en
+la base, el helper reventaba con `CheckViolation` y se llevaba por delante `test_soul_guard`.
+Idéntico al 86, distinto archivo, cinco días después.
+**Por qué sobrevivió:** el 86 se arregló donde apareció. Nadie preguntó *qué otros helpers
+tienen esta misma propiedad*, que es lo que pide la regla 14 (barrer la familia entera).
+**Diferencia con el 86:** allí bastó apuntar el helper a la migración vigente; aquí no, porque
+la 040 hace DOS cosas —crea `soul_versions` y toca el vocabulario— y la primera sigue siendo
+necesaria. Las migraciones son inmutables, así que el recorte vive en QUIEN LA RE-APLICA:
+`_040_sin_vocabulario_superado()` corta por el marcador documentado y falla RUIDOSAMENTE si el
+marcador desaparece. Un recorte que degrada en silencio a «aplicar el archivo entero» es la
+regresión que este código evita.
+**BARRERA:** `test_migration_contracts.py` gana un check que caza cualquier helper de `init_*`
+que re-aplique una migración que retroceda un vocabulario enumerado. El criterio MIDE en vez
+de suponer: culpable solo si la migración reemplaza el CHECK incondicionalmente (DROP+ADD, sin
+guarda `IF NOT EXISTS`) Y su lista es subconjunto estricto de la vigente Y el helper no aplica
+después la dueña. La primera versión del criterio —«no es la última dueña»— daba tres falsos
+positivos, uno de ellos sobre un helper que ya lo hacía bien.
+**Tests (ambos sentidos):** mutación reintroduciendo el defecto → rojo con el culpable
+nombrado; restaurado → 7/7.
+
+90. **Una lección sellada por Pipe que se ejecuta a mano vuelve una cuarta vez: el cotejo de
+diseño tenía que ser un gate.** La corrección del 2026-08-24 («toda pantalla nace con el
+rediseño») venía con su método —«el orquestador coteja con grep antes de commitear»— y eso es
+un HÁBITO, no una barrera: depende de que alguien se acuerde. El inventario de esta sesión
+encontró 31 superficies dibujadas a mano repartidas por Configuración, el banco de oro, las
+automatizaciones y el panel de fuentes, más un teal `rgba(0,128,128,…)` cableado en una sombra
+que quedaba anclado al tema claro.
+**BARRERA:** `execution/test_sistema_de_diseno.py` (en el tramo rápido). Caza (a) la
+combinación «radio + borde + fondo de tarjeta» escrita a pelo sin el neumorfismo del sistema,
+(b) cualquier color literal en una pantalla, y (c) que la primitiva `<Card>` siga componiendo
+`shadow-neu-raised` — sin esa tercera, quitarle la sombra a la primitiva dejaría todo el
+producto sin rediseño y las otras dos comprobaciones seguirían en verde.
+**Las excepciones se declararon midiendo, no a ojo:** los logos de terceros llevan SUS colores
+de marca (se reconocen por el atributo de dibujo del SVG, no por el nombre del archivo), y las
+sombras arbitrarias pasan solo si sus colores son grises puros — un color con matiz dentro de
+una sombra sí queda anclado a un tema.
+**Tests (ambos sentidos):** mutación con los DOS defectos reales que ya ocurrieron (una
+tarjeta a mano y un color de marca cableado) → ambos cazados; restaurado → 5/5.
+**Lo que el gate NO dice, y está escrito en su propia salida:** que la pantalla se VEA bien.
+Eso sigue siendo mirar, y sigue siendo de Pipe (regla 21).
+
+91. **El arnés de verificación visual inyectó el error que iba a reportar como defecto del
+producto.** Dos fallos del instrumento, ninguno del código: (a) un `addInitScript` que tocaba
+`document.documentElement` corría ANTES de que el documento existiera y sembraba un
+`TypeError: Cannot read properties of null` en las doce páginas del recorrido; (b) navegar por
+`127.0.0.1:3100` en vez de `localhost:3100` dejaba la sesión sin resolver y TODA pantalla
+capturada era el spinner de carga — con los marcadores de contenido fallando en las doce
+filas, que leído deprisa parece «el producto está roto».
+**Lo que evitó el diagnóstico equivocado fue la calibración:** el arnés comprueba primero que
+el token quedó puesto y que la app no manda a `/login`, y si eso falla dice «ARNÉS ROTO», no
+«pantalla rota». Aun así, la segunda causa se coló porque la calibración pasaba y el síntoma
+aparecía después.
+**Regla operativa:** ante doce filas idénticas en rojo, sospechar del instrumento antes que
+del producto. Un defecto real rara vez es perfectamente uniforme.
+**Y el extractor también miente:** la primera lectura del orden de los atajos devolvió cuatro
+cadenas vacías porque partía el `innerText` de la fila por saltos de línea. Un veredicto
+«NO REORDENA» sobre cuatro vacíos no es un veredicto: es un instrumento sin calibrar.
+
+92. **Un control nuevo que no llega al prompt es una etiqueta, no un control.** Las capacidades
+del agente (D8) podían haberse implementado guardando tres booleanos y pintándolos: el abogado
+marcaría «leer escaneados», nadie lo aplicaría, y no habría forma de notarlo. Por eso la
+capacidad entra en `render_persona_voice` y el gate lo prueba en los dos sentidos (sin
+capacidades la voz no las menciona; con una, la enuncia), con mutación que confirma el rojo.
+**El segundo criterio: conceder no es poder.** El catálogo distingue lo que el abogado marca
+de lo que la instalación puede cumplir, y mide lo segundo (lectura óptica del equipo,
+ayudantes confirmados del hub) en vez de afirmarlo. Una capacidad no disponible se puede
+conceder igual y la pantalla dice qué falta, con su razón concreta — nunca se esconde la
+casilla ni se ofrece en silencio algo que este equipo no hace.
+**Y una capacidad concedida NO relaja la verificación:** hay un check explícito de que el
+guardrail de citas sigue en la voz cuando las tres están activas.
+
+93. **La revisión adversarial encontró siete defectos que los gates propios daban por buenos,
+y dos de ellos estaban EN los gates nuevos.** El más caro conceptualmente: el control de
+capacidades resolvió la honestidad en la PANTALLA (que avisa cuando el equipo no tiene la
+capacidad) y la dejó abierta en el PROMPT, que es donde importa — el abogado marcaba «leer
+escaneados» en una instalación sin lectura óptica y el turno le afirmaba al modelo «puedes
+leer imágenes del expediente». En un producto cuyo absoluto es cero afirmaciones sin respaldo,
+darle al modelo una capacidad falsa es la premisa que produce el invento con aire de hecho
+leído. **Arreglo:** la voz solo enuncia lo que `capability_available()` confirma, y lo
+concedido-pero-ausente se le dice al modelo como lo que es, con el encargo de decirlo en vez
+de suponer. Pantalla y prompt miden ahora con la MISMA función: si midieran por separado
+podrían contradecirse sobre el mismo equipo.
+**El segundo: el comando que retira carpetas rotas borraba carpetas VIVAS.** Su criterio
+trataba como rota una carpeta vacía —el caso nuevo registrado antes de subir el expediente— y
+una ruta de red inalcanzable, que `exists()` reporta idéntica a una borrada sin lanzar nada:
+el abogado abre el portátil fuera de la oficina y el registro del expediente del servidor
+desaparece. Agravante: el gate **codificaba el falso positivo como conducta correcta**, así
+que corregir el criterio exigía corregir también el gate. Ahora solo borra lo que no existe
+estando su sitio accesible, lo inalcanzable se nombra sin tocarlo, y el listado dice de qué
+despacho es cada carpeta (operaba sobre todos sin decir de quién).
+**Y dos gates nuevos no podían ponerse rojos ante lo que vigilaban:**
+   - El check de vocabularios exoneraba al helper si el NOMBRE del archivo vigente aparecía
+     en cualquier parte de su código: una constante sin usar bastaba. Vigilaba una cadena de
+     texto, no una conducta — y era justo el gate escrito para que el aprendizaje 86 no
+     volviera una tercera vez. Ahora EJECUTA el helper contra la base y lee el CHECK que
+     deja. De paso apareció un segundo defecto del mismo tipo: sin la base, el check decía
+     «no evaluado» y aprobaba. **Un gate que aprueba porque no pudo medir es peor que no
+     tenerlo**; ahora reprueba diciendo que no pudo medir.
+   - El gate de diseño reconocía UNA forma de escribir una tarjeta a mano (`border-border` +
+     `bg-card`): una escrita con `rounded-2xl border-white/10 bg-white/5` pasaba entera. Y su
+     exención para logos de terceros saltaba la LÍNEA completa, así que un color cableado que
+     compartiera renglón con un `fill=` pasaba. Corregido a tres señales independientes y a
+     despojar el fragmento en vez de la línea; el criterio amplio destapó 18 superficies más.
+     Al ampliarlo hubo que acotarlo: un campo de entrada lleva radio, borde y fondo por
+     naturaleza y NO es una tarjeta — sin esa exclusión el gate producía treinta falsos
+     positivos, que es la forma más segura de que nadie lo lea.
+**Los tres menores, todos reales:** `PUT /atajos/orden` creaba una fila por cada
+identificador recibido sin comprobar que la guía existiera (tabla sin clave foránea ni tope:
+amplificación de escritura desde un endpoint del producto); una clave mal formada reventaba en
+la base y salía como 502 «intenta de nuevo», invitando a repetir algo que nunca funcionaría; y
+`capabilities: None` BORRABA mientras `playbook_ids: None` conservaba — dos campos del mismo
+cuerpo con semánticas opuestas, sin defecto activo hoy y con un borrado silencioso esperando
+al primer guardado parcial.
+**La lección de método:** el revisor no encontró nada leyendo. Encontró ejecutando —200 UUID
+inventados contra el endpoint, tres aplicaciones seguidas de la migración, nueve mutaciones
+sobre el árbol de trabajo— y **tres de esas nueve mutaciones NO pusieron rojo el gate que
+debían**. Ese número es el hallazgo: la prueba de mutación de quien escribe el gate tiende a
+mutar lo que el gate mira. La de un tercero muta lo que el gate debería mirar.

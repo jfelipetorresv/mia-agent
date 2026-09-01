@@ -267,7 +267,7 @@ export default function MailboxSection() {
       ) : null}
 
       {pendientesDeHabilitar.length > 0 ? (
-        <div className="rounded-xl border border-border bg-muted/40 px-4 py-3">
+        <div className="rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/40 px-4 py-3">
           <p className="text-sm text-muted-foreground">
             La conexión con {pendientesDeHabilitar.map((c) => c.proveedor_nombre).join(" y ")} aún
             no está habilitada en este equipo. Es un paso único del administrador — pídele que
@@ -277,7 +277,7 @@ export default function MailboxSection() {
       ) : null}
 
       {conectadas.length > 0 ? (
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className="rounded-lg border border-border/10 bg-card shadow-neu-raised p-4">
           <label className="flex cursor-pointer items-start gap-2 text-sm">
             <input
               type="checkbox"

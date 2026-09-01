@@ -208,7 +208,7 @@ function CasosPageContent() {
       ) : casos.length === 0 ? (
         <div className="animate-slide-up rounded-2xl bg-card/60 backdrop-blur-md px-6 py-16 text-center shadow-neu-raised border border-border/20">
           <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-transparent text-primary animate-float" style={{ transformStyle: "preserve-3d" }}>
-            <svg viewBox="0 0 200 200" className="h-24 w-24 drop-shadow-[0_8px_16px_rgba(0,128,128,0.15)]">
+            <svg viewBox="0 0 200 200" className="h-24 w-24 drop-shadow-[0_8px_16px_hsl(var(--primary)/0.15)]">
               <defs>
                 <linearGradient id="geomGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0.8" />

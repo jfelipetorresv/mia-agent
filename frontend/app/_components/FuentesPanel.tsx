@@ -8,7 +8,10 @@
 // en llano (estado, documentos, última revisión) para que este panel no tenga
 // que traducir nada técnico (§G).
 //
-// Reusable: recibe `kind` ("asunto" | "proyecto") para hablar en el idioma
+// D3 · el panel dejó de distinguir asunto de proyecto: ambos son «este caso», y por eso
+// `kindWord` es una constante. `kind` se conserva en las props porque las pantallas que lo
+// pasan siguen sabiendo de qué tipo es su caso, pero aquí ya no cambia ni una palabra.
+// Reusable: recibía `kind` ("asunto" | "proyecto") para hablar en el idioma
 // correcto de la pantalla que lo monta, sin cambiar de contrato ni de lógica.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -93,7 +96,7 @@ function algunaEnLectura(list: Fuente[]): boolean {
   return list.some((f) => /leyendo/i.test(f.estado));
 }
 
-export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
+export default function FuentesPanel({ matterId, onChanged }: Props) {
   const [sources, setSources] = useState<Fuente[] | null>(null);
   const [loadError, setLoadError] = useState<{ text: string; showConnect?: boolean } | null>(null);
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string; showConnect?: boolean } | null>(
@@ -317,7 +320,7 @@ export default function FuentesPanel({ matterId, kind, onChanged }: Props) {
             const msg = msgs[key];
             const isBusy = Boolean(busy[key]);
             return (
-              <li key={key} className="rounded-lg border border-border bg-card px-3 py-2.5 text-xs">
+              <li key={key} className="rounded-lg border border-border/10 bg-card shadow-neu-raised px-3 py-2.5 text-xs">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 font-medium text-foreground">

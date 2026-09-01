@@ -241,7 +241,7 @@ function ArgumentMatrix({
   return (
     <section
       aria-label="Matriz de argumentos"
-      className="mb-block rounded-lg border border-border bg-card/60 px-5 py-4"
+      className="mb-block rounded-lg border border-border/10 bg-card shadow-neu-raised/60 px-5 py-4"
     >
       <p className="text-section">Argumentos de este escrito</p>
       <p className="mt-1 text-meta text-muted-foreground">

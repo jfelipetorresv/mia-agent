@@ -362,7 +362,7 @@ function BotonCopiar({ valor }: { valor: string }) {
           () => setCopiado(false)
         );
       }}
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-meta font-medium text-foreground transition-colors hover:bg-accent"
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg shadow-neu-raised border border-border/10 border-border/10 px-2 py-1 text-meta font-medium text-foreground transition-colors hover:bg-accent"
     >
       {copiado ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
       {copiado ? "Copiada" : "Copiar"}
@@ -452,7 +452,7 @@ function GuiaRegistroGoogle({
               En <b>URIs de redireccionamiento autorizados</b> pega esta dirección exacta de
               esta instalación. Un carácter de diferencia hace que Google rechace la conexión:
             </p>
-            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/40 px-3 py-2">
               <code className="min-w-0 flex-1 break-all text-meta text-foreground">
                 {uriRetorno}
               </code>
@@ -466,7 +466,7 @@ function GuiaRegistroGoogle({
               archivo <code className="rounded bg-muted/60 px-1 py-0.5 text-meta">.env</code> de
               Mia, en estas dos líneas:
             </p>
-            <pre className="overflow-x-auto rounded-lg border border-border bg-muted/40 px-3 py-2 text-meta text-foreground">
+            <pre className="overflow-x-auto rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/40 px-3 py-2 text-meta text-foreground">
               GOOGLE_OAUTH_CLIENT_ID=…{"\n"}GOOGLE_OAUTH_CLIENT_SECRET=…
             </pre>
             <p>Guarda el archivo y reinicia Mia: las claves se leen al arrancar.</p>
@@ -480,7 +480,7 @@ function GuiaRegistroGoogle({
           </Paso>
         </ol>
 
-        <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-pretty text-meta text-muted-foreground">
+        <p className="rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/40 px-3 py-2 text-pretty text-meta text-muted-foreground">
           Gmail y Google Calendar usan esta misma aplicación de Google: con este registro
           quedan habilitados los tres, sin repetir el trámite.
         </p>

@@ -106,7 +106,7 @@ export default function ValorGastoSection({
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <div className="animate-slide-up rounded-xl border border-border bg-card p-6 shadow-sm">
+      <div className="animate-slide-up rounded-lg border border-border/10 bg-card shadow-neu-raised p-6">
         <div className="mb-1 flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <TrendingUp className="h-4 w-4 text-success" />
           Valor entregado este mes
@@ -171,7 +171,7 @@ export default function ValorGastoSection({
         </div>
       </div>
 
-      <div className="animate-slide-up rounded-xl border border-border bg-card p-6 shadow-sm" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
+      <div className="animate-slide-up rounded-lg border border-border/10 bg-card shadow-neu-raised p-6" style={{ animationDelay: "60ms", animationFillMode: "backwards" }}>
         <div className="mb-1 flex items-center gap-2 text-sm font-medium text-muted-foreground">
           <PiggyBank className="h-4 w-4 text-cta" />
           Tope de gasto de IA este mes

@@ -192,7 +192,7 @@ export default function AutomationsSection() {
       <div>
         <h3 className="mb-2 text-sm font-semibold">Sugerencias de Mia</h3>
         {sugerencias.length === 0 ? (
-          <div className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-4">
+          <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-card/40 backdrop-blur-md shadow-neu-raised px-4 py-4">
             <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
             <p className="text-sm text-muted-foreground">
               No hay sugerencias pendientes. A medida que uses a Mia, ella te propondrá avisos útiles aquí.
@@ -201,7 +201,7 @@ export default function AutomationsSection() {
         ) : (
           <ul className="space-y-3">
             {sugerencias.map((s) => (
-              <li key={s.id} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+              <li key={s.id} className="rounded-lg border border-border/10 bg-card shadow-neu-raised px-4 py-3">
                 <div className="font-medium">{s.nombre}</div>
                 <p className="mt-1 text-sm text-muted-foreground">{s.rationale}</p>
                 {Object.keys(s.params || {}).length ? (
@@ -231,7 +231,7 @@ export default function AutomationsSection() {
       <div>
         <h3 className="mb-2 text-sm font-semibold">Automatizaciones activas</h3>
         {automatizaciones.length === 0 ? (
-          <div className="flex items-start gap-3 rounded-xl border border-dashed border-border bg-card/50 px-4 py-4">
+          <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-card/40 backdrop-blur-md shadow-neu-raised px-4 py-4">
             <Repeat className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
             <p className="text-sm text-muted-foreground">
               Aún no tienes automatizaciones activas. Crea una abajo o acepta una sugerencia de Mia.
@@ -240,7 +240,7 @@ export default function AutomationsSection() {
         ) : (
           <ul className="space-y-2">
             {automatizaciones.map((a) => (
-              <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+              <li key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/10 bg-card shadow-neu-raised px-4 py-3">
                 <div className="min-w-0">
                   <div className="text-sm font-medium">
                     {/* Nunca `a.kind` a secas: si la plantilla ya no está en el
@@ -275,7 +275,7 @@ export default function AutomationsSection() {
           {plantillas.map((p) => {
             const open = expandedKey === p.key;
             return (
-              <li key={p.key} className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm transition-colors hover:border-primary/25">
+              <li key={p.key} className="rounded-lg border border-border/10 bg-card shadow-neu-raised px-4 py-3 transition-colors hover:border-primary/25">
                 <button
                   type="button"
                   aria-expanded={open}
