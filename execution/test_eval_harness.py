@@ -22,6 +22,7 @@ Salida: exit 0 = PASS · exit 1 = FAIL.
     .venv\\Scripts\\python.exe execution\\test_eval_harness.py
 """
 from __future__ import annotations
+import json
 import asyncio
 import os
 import sys
@@ -49,6 +50,7 @@ from mia.agent.prompt_builder import (                    # noqa: E402
     DIAGNOSIS_CLOSING_FOOTER,
     DIAGNOSIS_CLOSING_HEADER,
 )
+from mia.agents import research as agents_research      # noqa: E402
 from mia.agents.state import thread_id_for                # noqa: E402
 from mia.db import pool                                   # noqa: E402
 from mia.eval import compare_reports, score_turn          # noqa: E402
@@ -80,6 +82,61 @@ _CLOSING = (f"{DIAGNOSIS_CLOSING_HEADER}\nProblema jurídico: la caducidad de la
             f"Riesgo y recomendación: proponer la excepción.\n{DIAGNOSIS_CLOSING_FOOTER}")
 
 
+# Packs fail-closed (migración 059): cada etapa cierra con su producto o `draft_node`
+# ABORTA y el turno entrega la abstención en vez del borrador. Este doble llevaba el
+# contrato ANTERIOR a la 059 (no emitía FACT_PACK/STRATEGY_PACK ni fuente), así que la
+# etapa de hechos moría y los dos checks de omisión no tenían cita que omitir: el rojo
+# se venía «declarando preexistente» sin causa escrita (aprendizaje 87 · regla 78 de
+# deriva de mocks). Contrato canónico, el mismo de test_e2e.py / test_ux.py.
+_FACT_PACK_EVAL = {
+    "hechos": [
+        {"texto": "El daño se consolidó el 3 de marzo de 2019 y la demanda se presentó "
+                  "el 10 de septiembre de 2021.",
+         "locator": "[doc 1]"},
+    ],
+    "conteo_declarado": 1,
+}
+
+# La fuente lleva tipo · número · fecha en CAMPOS NOMBRADOS y un `pasaje` contenido en
+# `content`: sin eso, las barreras de identificación y similitud del harness (aprendizaje
+# 84) la reportarían como no identificada aunque el turno siguiera.
+_FUENTE_EVAL = {
+    "tipo": "norma",
+    "referencia": "Norma de prueba EVAL 300 de 2020, artículo 5",
+    "titulo": "Norma de prueba EVAL sobre caducidad (material de prueba)",
+    "numero": "300 de 2020",
+    "fecha": "2020-01-01",
+    "pasaje": "La caducidad de la acción se cuenta desde la consolidación del daño.",
+    "content": "Artículo 5. La caducidad de la acción se cuenta desde la consolidación "
+               "del daño alegado por quien demanda.",
+}
+
+_STRATEGY_PACK_EVAL = {
+    "argumentos": [
+        {"id": "A1",
+         "tesis": "La acción está caducada: entre el daño y la demanda corrieron más de "
+                  "dos años.",
+         "fuente_refs": [_FUENTE_EVAL["referencia"]],
+         "seleccionado": True,
+         "contraparte": "Sostendrá que el término se interrumpió.",
+         "prueba": "[doc 1]"},
+    ],
+    "descartes": [],
+}
+
+
+def _pack_fence(kind: str, payload: dict) -> str:
+    return f"==={kind}===\n" + json.dumps(payload, ensure_ascii=False) + "\n===END==="
+
+
+async def _fake_gather_sources(tenant_id, query, *, jurisdictions=None):
+    """El corpus del tenant del banco está vacío; sin UNA fuente, research no deja pack y
+    el turno aborta antes de redactar (mismo doble que test_e2e.py)."""
+    bloque = (f"[{_FUENTE_EVAL['referencia']}] {_FUENTE_EVAL['titulo']}\n"
+              f"{_FUENTE_EVAL['content']}")
+    return bloque, [dict(_FUENTE_EVAL)], list(jurisdictions or ["generic"])
+
+
 # ── mocks (sin red) — el grafo real con LLM/embeddings stubbeados ─────────────
 def _fake_embed(texts):
     return [[0.0] * config.EMBED_DIM for _ in texts]
@@ -87,7 +144,15 @@ def _fake_embed(texts):
 
 def _fake_call_llm(messages, *, task=None, model=None, **kw):
     sysmsg = messages[0]["content"] if messages and isinstance(messages[0], dict) else ""
-    if "BORRADOR" in sysmsg or "Redacta el borrador" in sysmsg:
+    if task == "legal_facts":
+        content = ("Hechos establecidos (prueba del banco):\n"
+                   + "\n".join(f"- {h['texto']} {h['locator']}"
+                                    for h in _FACT_PACK_EVAL["hechos"])
+                   + "\n\n" + _pack_fence("FACT_PACK", _FACT_PACK_EVAL))
+    elif task == "legal_analysis":
+        content = (_pack_fence("STRATEGY_PACK", _STRATEGY_PACK_EVAL)
+                   + "\n\nDIAGNÓSTICO: el eje es la caducidad.\n\n" + _CLOSING)
+    elif "BORRADOR" in sysmsg or "Redacta el borrador" in sysmsg:
         # Borrador con una cita SIN marca → el verificador la anota (sin_respaldo=1), y bajo
         # jurisdicción desconocida la OMITE. F2 · informe por oración: se añade además una
         # afirmación asertiva SIN cita (> piso de longitud, termina en '.') para ejercitar el
@@ -630,6 +695,7 @@ async def db_checks() -> None:
 def main() -> int:
     embeddings.embed_texts = _fake_embed
     llm.call_llm = _fake_call_llm
+    agents_research.gather_sources = _fake_gather_sources
 
     offline_checks()
     frente_e_offline_checks()

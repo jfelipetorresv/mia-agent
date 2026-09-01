@@ -25,6 +25,13 @@ sys.path.insert(0, str(ROOT / "backend"))
 MIG = ROOT / "backend" / "mia" / "db" / "migrations"
 MANIFEST = ROOT / "config" / "migration_shas.json"
 
+from dotenv import load_dotenv  # noqa: E402
+
+# Sin esto, la comprobación de conducta buscaba la base en el puerto por defecto
+# (5432), no la encontraba, y devolvía «no evaluado» — que antes pasaba como
+# verde. Un gate que aprueba porque no pudo medir es peor que no tenerlo.
+load_dotenv(ROOT / ".env")
+
 from mia.setup.db_bootstrap import migration_sha256  # noqa: E402
 
 
@@ -48,6 +55,45 @@ def values(path: Path, constraint: str) -> set[str]:
     if not match:
         raise AssertionError(f"{path.name}: no se encontró {constraint}")
     return set(re.findall(r"'([^']+)'", match.group(1)))
+
+
+def _vocabulario_tras_ejecutar(helper: str, constraint: str) -> set | None:
+    """Ejecuta el helper de init y devuelve los valores del CHECK que quedan en la base.
+
+    None si no hay base con la que medir (el gate lo dice en vez de aprobar en silencio).
+    Se ejecuta en un proceso aparte, con el mismo intérprete y el mismo PYTHONPATH que usa
+    la suite, para que el efecto medido sea exactamente el que tendría en una máquina real.
+    """
+    import os
+    import subprocess
+    try:
+        import psycopg
+    except Exception:  # noqa: BLE001
+        return None
+    kw = dict(host=os.getenv("PG_HOST", "127.0.0.1"), port=os.getenv("PG_PORT", "5432"),
+              dbname=os.getenv("PG_DB", "mia"), user="postgres",
+              password=os.getenv("PG_PASSWORD", ""))
+    try:
+        with psycopg.connect(connect_timeout=5, **kw):
+            pass
+    except Exception:  # noqa: BLE001
+        return None
+
+    entorno = dict(os.environ, PYTHONPATH=str(ROOT / "backend"), PYTHONUTF8="1")
+    res = subprocess.run([sys.executable, str(ROOT / "execution" / helper)],
+                         cwd=str(ROOT), capture_output=True, text=True, env=entorno,
+                         timeout=180)
+    if res.returncode != 0:
+        # Que el helper REVIENTE es precisamente el síntoma del defecto (CheckViolation
+        # sobre una fila legítima): se cuenta como vocabulario vacío, o sea culpable.
+        return set()
+    with psycopg.connect(autocommit=True, **kw) as c:
+        fila = c.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = %s",
+            (constraint,)).fetchone()
+    if not fila:
+        return set()
+    return set(re.findall(r"'([^']+)'::", fila[0])) or set(re.findall(r"'([^']+)'", fila[0]))
 
 
 def main() -> int:
@@ -82,6 +128,65 @@ def main() -> int:
             "wiki_approved_artifact", "learn_approved_artifact",
             "skill_improvement", "harvest_lessons")),
     ))
+
+    # 1-bis · NINGÚN helper de init retrocede un vocabulario acumulado.
+    # Dos veces en dos sesiones el mismo defecto: `init_dreams.py` re-aplicaba la 010 y
+    # `init_soul_versions.py` la 040, y ambas reemplazan el CHECK de `feedback_proposals`
+    # con la lista de tipos de SU momento. El síntoma es un CheckViolation que parece «fila
+    # corrupta en la base» y en realidad es el helper.
+    #
+    # SE MIDE LA CONDUCTA, NO EL TEXTO. La primera versión de este check exoneraba al helper
+    # si el nombre de la migración vigente aparecía en su código: una constante sin usar, o
+    # un comentario, bastaban para absolverlo — o sea, vigilaba una cadena de texto, no un
+    # comportamiento. Ahora se EJECUTA el helper contra la base y se lee el CHECK que deja.
+    # Un gate escrito para que un defecto no vuelva una tercera vez no puede depender de que
+    # alguien conserve un literal.
+    sospechosos: list[tuple[str, str, str, set]] = []   # (helper, sql, constraint, vigente)
+    for constraint in ("feedback_proposals_proposal_type_check", "ck_documents_origin"):
+        duena = last_owner(constraint)
+        vigente = values(duena, constraint)
+        for sql in sorted(MIG.glob("*.sql")):
+            if sql.name == duena.name:
+                continue
+            texto = sql.read_text(encoding="utf-8")
+            if not re.search(rf"ADD CONSTRAINT\s+{re.escape(constraint)}\b", texto,
+                             flags=re.IGNORECASE):
+                continue
+            # Protegida por una guarda `IF NOT EXISTS`: no reemplaza nada (caso de la 025).
+            if not re.search(rf"DROP CONSTRAINT IF EXISTS\s+{re.escape(constraint)}", texto,
+                             flags=re.IGNORECASE):
+                continue
+            # Con el vocabulario COMPLETO: aplicarla no retrocede (caso de la 028).
+            if not (values(sql, constraint) < vigente):
+                continue
+            for helper in sorted((ROOT / "execution").glob("init_*.py")):
+                if sql.name in helper.read_text(encoding="utf-8"):
+                    sospechosos.append((helper.name, sql.name, constraint, vigente))
+
+    culpables: list[str] = []
+    no_evaluados: list[str] = []
+    for helper, sql_name, constraint, vigente in sospechosos:
+        veredicto = _vocabulario_tras_ejecutar(helper, constraint)
+        if veredicto is None:
+            no_evaluados.append(f"{helper} (sin base)")
+            continue
+        faltan = vigente - veredicto
+        if faltan:
+            culpables.append(
+                f"{helper} re-aplica {sql_name} y deja {constraint} SIN {sorted(faltan)}")
+    # NO EVALUADO NO ES APROBADO. Si hay helpers sospechosos y la base no está disponible
+    # para ejecutarlos, este check REPRUEBA diciendo por qué: aprobar sin haber medido es la
+    # forma más silenciosa de que el defecto vuelva por tercera vez.
+    if culpables:
+        detalle = "CULPABLES: " + "; ".join(culpables)
+    elif no_evaluados:
+        detalle = ("NO SE PUDO MEDIR (hace falta la base para ejecutarlos): "
+                   + ", ".join(no_evaluados))
+    else:
+        detalle = f"{len(sospechosos)} helper(s) sospechoso(s) EJECUTADO(s) y verificado(s)"
+    checks.append((
+        "ningún helper de init retrocede un vocabulario acumulado · " + detalle,
+        not culpables and not no_evaluados))
 
     # 2 · inmutabilidad contra el manifiesto sellado
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))

@@ -22,6 +22,8 @@
     "execution/test_catalogo_barreras.py",
     "execution/test_modo_barreras.py",
     "execution/test_raices_datos.py",
+    "execution/test_purgar_carpetas_rotas.py",
+    "execution/test_sistema_de_diseno.py",
     "execution/test_medicion_por_nodo.py",
     "execution/test_disposicion_hallazgos.py",
     "execution/test_packs_preflight.py",
@@ -30,7 +32,9 @@
     "execution/test_telegram_lifespan.py",
     "execution/test_handoff.py",
     "execution/test_mcp.py",
-    "execution/test_agent_hub.py"
+    "execution/test_agent_hub.py",
+    "execution/test_persona_capacidades.py",
+    "execution/test_puente_shell.py"
   ],
   "full_glob": "execution/test_*.py",
   "full_requires_database": true,
