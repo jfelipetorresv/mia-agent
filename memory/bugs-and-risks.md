@@ -1806,3 +1806,32 @@ corrió (DB dev apagada, puerto 55432) — correr con la DB encendida; patrón i
   alias `cli-*` lo marca agotado por el resto del turno (por alias: `cli-claude-haiku` no se
   condena por `cli-claude`); muere con el turno y cada salto queda contado en el aviso de costo.
   Gate: test_cambio_de_motor_aviso §3-bis. El fondo (#82/#83, expedientes que no caben) sigue igual.
+
+## Cierres y notas de la sesión 62 (2026-09-01)
+
+- **#86 · CERRADO.** `test_hitl_flow` da **21/21** contra la DB portable. El check que fallaba
+  —«los nodos corren en orden hasta draft»— no estaba desactualizado frente al grafo, como se
+  supuso en la sesión 56: el turno **abortaba antes de llegar al borrador** porque el doble de
+  modelo no emitía los productos de etapa que exige la migración 059, así que la secuencia de
+  nodos que el check espera nunca llegaba a ocurrir. Es la misma causa raíz de los dos rojos de
+  `test_eval_harness` (aprendizaje 88) y del rojo de `test_ux` que cerró la sesión 61: **una
+  sola deriva de mocks se manifestó en tres suites distintas con tres rótulos que no se
+  parecían entre sí**. Al alinear los dobles al contrato canónico, los tres se pusieron verdes.
+  Moraleja operativa: tres rojos «preexistentes» sin causa raíz escrita pueden ser un solo
+  defecto; diagnosticarlos por su rótulo los mantiene separados para siempre.
+- **#88 · NUEVO, mitigado y declarado · el comando que retira carpetas registradas borraba
+  carpetas VIVAS.** Encontrado por revisión adversarial, no por sus gates: su criterio trataba
+  como rota una carpeta vacía —el caso nuevo registrado antes de subir el expediente— y una
+  ruta de red inalcanzable, que `exists()` reporta idéntica a una borrada sin lanzar nada. El
+  escenario real: el abogado abre el portátil fuera de la oficina y el registro del expediente
+  del servidor desaparece, sin quedar ni el apunte de a dónde apuntaba. **Corregido**: solo
+  borra lo que no existe estando su sitio accesible; lo inalcanzable se nombra sin tocarlo. El
+  riesgo residual es que un recurso de red que SÍ desapareció para siempre nunca se retire
+  solo — se prefiere a la inversa, y queda a la vista en cada listado.
+- **#89 · NUEVO, cerrado en la misma sesión · se le afirmaba al modelo una capacidad que el
+  equipo no tenía.** Al conceder «leer escaneados» a un agente en una instalación sin lectura
+  óptica, la pantalla avisaba pero el prompt del turno le decía al modelo que podía. En un
+  producto cuyo absoluto es cero afirmaciones sin respaldo, es la premisa falsa que produce el
+  invento con aire de hecho leído. Corregido: pantalla y prompt miden la disponibilidad con la
+  misma función, fail-closed, y lo concedido-pero-ausente se le dice al modelo como tal.
+  Gate `test_persona_capacidades` §2-bis.
