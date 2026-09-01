@@ -153,10 +153,21 @@ def test_task_models() -> None:
     # main prefiere claude-sonnet (cae a mia-local en call_llm).
     check("main -> claude-sonnet en el mapa (1er eslabón de la cadena H.5)",
           ac.TASK_MODELS["main"] == "claude-sonnet")
-    # Ningún alias inexistente: solo claude-haiku, claude-sonnet o MIA_MODEL.
-    valid = {"claude-haiku", "claude-sonnet", config.MIA_MODEL}
-    check("todos los alias de TASK_MODELS existen (haiku/sonnet/MIA_MODEL)",
-          all(v in valid for v in ac.TASK_MODELS.values()))
+    # Ningún alias INEXISTENTE. La lista se saca de las cadenas de política del gateway, que
+    # son la fuente de verdad de qué alias existen; estaba cableada a
+    # {claude-haiku, claude-sonnet, MIA_MODEL} y envejeció: `mia-local` es un alias legítimo
+    # —el extremo local de las tres políticas— y `MIA_MODEL` vale `claude-sonnet` por
+    # defecto, así que el check llevaba en rojo señalando como inexistente el alias más usado
+    # del mapa. Un gate clavado a una lista escrita a mano acaba denunciando el código
+    # correcto; anclado a la fuente, denuncia lo que de verdad no existe.
+    valid = {alias
+             for cadenas in llm._POLICY_CHAINS.values()
+             for cadena in cadenas.values()
+             for alias in cadena}
+    valid |= {"claude-haiku", "claude-sonnet", config.MIA_MODEL}
+    fuera = {v for v in ac.TASK_MODELS.values()} - valid
+    check(f"todos los alias de TASK_MODELS existen en las cadenas del gateway (fuera: {sorted(fuera)})",
+          not fuera)
 
 
 # --- 2 · compression bloqueado a haiku, incl. atravesando AuxiliaryClient -------
