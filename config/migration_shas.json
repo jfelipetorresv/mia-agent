@@ -58,5 +58,6 @@
   "059_packs_handoff_cost_status.sql": "18019ca3c194a950531a199c6a1e5f296669373ad53bd591c0cc00570c8724d2",
   "060_google_drive_sources.sql": "b404896eae31464dc24013bc8d59535536d374058643bc51cf54ae0494b5e979",
   "062_shortcut_prefs.sql": "79c2fc8f8e8dfb6e2979f606b2e63d2334187b6b41589e995f4b5ce3c31b5fa6",
-  "063_turn_usage_latency.sql": "d578195fb81004d21e34dc32b28e607a248e6bf5ca45102123fede4a107b6f69"
+  "063_turn_usage_latency.sql": "d578195fb81004d21e34dc32b28e607a248e6bf5ca45102123fede4a107b6f69",
+  "064_persona_capabilities.sql": "5248d9b6aae12201118ab582a065cd5a68067bc3bfc164cc24a1643de87f9631"
 }

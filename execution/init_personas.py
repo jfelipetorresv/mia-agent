@@ -17,6 +17,11 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 MIGRATION = ROOT / "backend" / "mia" / "db" / "migrations" / "023_personas.sql"
+# D8 · las capacidades del agente llegaron con la 064. Va DESPUÉS de la 023 y es aditiva
+# (ADD COLUMN IF NOT EXISTS), así que aplicarla aquí no retrocede nada: sin ella, el CRUD
+# de agentes revienta con «column capabilities does not exist» en una base de dev vieja.
+MIGRATION_CAPACIDADES = (
+    ROOT / "backend" / "mia" / "db" / "migrations" / "064_persona_capabilities.sql")
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -38,11 +43,12 @@ def apply() -> None:
         raise RuntimeError("falta PG_PASSWORD en .env (superusuario para la migración)")
     with psycopg.connect(autocommit=True, **_kw("postgres", SUPER_PW)) as c:
         c.execute(MIGRATION.read_text(encoding="utf-8"))
+        c.execute(MIGRATION_CAPACIDADES.read_text(encoding="utf-8"))
 
 
 def main() -> None:
     apply()
-    print("[OK] 023_personas.sql aplicado (rol postgres)")
+    print("[OK] 023_personas.sql + 064_persona_capabilities.sql aplicados (rol postgres)")
     with psycopg.connect(autocommit=True, **_kw("postgres", SUPER_PW)) as c:
         exists = c.execute(
             "SELECT count(*) FROM information_schema.tables WHERE table_name=%s",

@@ -33,6 +33,16 @@ type Persona = {
   description: string;
   enabled: boolean;
   playbook_ids: string[];
+  capabilities: string[];
+};
+
+/** Una capacidad ofrecible, con lo que ESTA instalación puede cumplir de verdad. */
+type Capacidad = {
+  clave: string;
+  titulo: string;
+  descripcion: string;
+  disponible: boolean;
+  razon: string;
 };
 
 type PersonaForm = {
@@ -46,6 +56,7 @@ type PersonaForm = {
   description: string;
   enabled: boolean;
   playbook_ids: string[];
+  capabilities: string[];
 };
 
 const EMPTY_FORM: PersonaForm = {
@@ -58,6 +69,7 @@ const EMPTY_FORM: PersonaForm = {
   summon_phrases: [],
   description: "",
   enabled: true,
+  capabilities: [],
   playbook_ids: [],
 };
 
@@ -72,6 +84,7 @@ function apiMessage(err: unknown, fallback: string): string {
 export default function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [guides, setGuides] = useState<Guide[]>([]);
+  const [capacidades, setCapacidades] = useState<Capacidad[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadErr, setLoadErr] = useState("");
   const [editing, setEditing] = useState<Persona | null>(null);
@@ -107,9 +120,21 @@ export default function PersonasPage() {
     }
   }
 
+  async function loadCapacidades() {
+    try {
+      const res = await apiGet<{ capacidades: Capacidad[] }>("/api/personas/capacidades");
+      setCapacidades(res.capacidades || []);
+    } catch {
+      // Sin catálogo no se ofrece el control: es preferible no mostrarlo a mostrarlo sin
+      // poder decir cuáles funcionan de verdad en este equipo.
+      setCapacidades([]);
+    }
+  }
+
   useEffect(() => {
     load();
     loadGuides();
+    loadCapacidades();
   }, []);
 
   function openCreate() {
@@ -134,6 +159,7 @@ export default function PersonasPage() {
       description: p.description || "",
       enabled: p.enabled,
       playbook_ids: [...(p.playbook_ids || [])],
+      capabilities: [...(p.capabilities || [])],
     });
     setFormMsg("");
     setMiaNotice("");
@@ -163,6 +189,7 @@ export default function PersonasPage() {
       description: asStr(draft.description),
       enabled: true,
       playbook_ids: linked,
+      capabilities: [],
     });
     setFormMsg("");
     setMiaNotice(
@@ -197,6 +224,7 @@ export default function PersonasPage() {
         description: form.description.trim(),
         enabled: form.enabled,
         playbook_ids: form.playbook_ids,
+        capabilities: form.capabilities,
       };
       if (creating) {
         await apiSend("POST", "/api/personas", body);
@@ -277,6 +305,7 @@ export default function PersonasPage() {
           busy={busy}
           msg={formMsg}
           guides={guides}
+          capacidades={capacidades}
           notice={miaNotice}
         />
       ) : null}
@@ -371,6 +400,72 @@ export default function PersonasPage() {
   );
 }
 
+/**
+ * QUÉ PUEDE HACER ESTE AGENTE (D8 · punto 23 de la bitácora 2026-08-19).
+ *
+ * El formulario dejaba decir el nombre, el encargo, el tono y las frases con las que se
+ * le llama, todo texto libre. No había forma de decir qué PUEDE hacer, así que el abogado
+ * escribía «que lea los escaneados» dentro del encargo, donde no activa nada: una
+ * instrucción en prosa no enciende una capacidad. Lo que se marca aquí viaja al prompt de
+ * cada turno del agente (`render_persona_voice`), que es lo que convierte la casilla en
+ * un control de verdad y no en una etiqueta.
+ *
+ * LO QUE ESTA PANTALLA NO HACE ES PROMETER. Marcar una capacidad es una decisión del
+ * abogado; que la instalación pueda cumplirla es otra cosa distinta, y se dice por
+ * separado con su razón concreta —la misma razón honesta del catálogo de ayudantes— en
+ * vez de esconder la casilla o dejarla marcada sin efecto. Una capacidad no disponible se
+ * puede conceder igual: queda concedida para cuando el componente esté, y mientras tanto
+ * la pantalla dice exactamente qué falta.
+ */
+function CapacidadesField({
+  capacidades,
+  selected,
+  onChange,
+}: {
+  capacidades: Capacidad[];
+  selected: string[];
+  onChange: (v: string[]) => void;
+}) {
+  if (capacidades.length === 0) return null;
+
+  function alternar(clave: string) {
+    onChange(
+      selected.includes(clave) ? selected.filter((c) => c !== clave) : [...selected, clave]
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <Label>Qué puede hacer</Label>
+      <p className="text-meta text-muted-foreground">
+        Además de su encargo. Lo que marques aquí se lo digo en cada turno suyo.
+      </p>
+      <div className="space-y-2">
+        {capacidades.map((c) => (
+          <label
+            key={c.clave}
+            className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/10 bg-card shadow-neu-raised px-3 py-2.5"
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+              checked={selected.includes(c.clave)}
+              onChange={() => alternar(c.clave)}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-body font-medium">{c.titulo}</span>
+              <span className="block text-meta text-muted-foreground">{c.descripcion}</span>
+              {!c.disponible ? (
+                <span className="mt-1 block text-meta text-warning">{c.razon}</span>
+              ) : null}
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PersonaFormPanel({
   title,
   form,
@@ -380,6 +475,7 @@ function PersonaFormPanel({
   busy,
   msg,
   guides,
+  capacidades,
   notice,
 }: {
   title: string;
@@ -390,6 +486,7 @@ function PersonaFormPanel({
   busy: boolean;
   msg: string;
   guides: Guide[];
+  capacidades: Capacidad[];
   notice: string;
 }) {
   return (
@@ -439,6 +536,11 @@ function PersonaFormPanel({
           </select>
           <p className="text-meta text-muted-foreground">{motorLabel(form.model_tier)}</p>
         </div>
+        <CapacidadesField
+          capacidades={capacidades}
+          selected={form.capabilities}
+          onChange={(c) => setForm({ ...form, capabilities: c })}
+        />
         <GuidesLinkField
           guides={guides}
           selected={form.playbook_ids}

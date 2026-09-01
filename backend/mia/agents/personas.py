@@ -58,6 +58,69 @@ MODEL_TIERS = (MODEL_TIER_STANDARD, MODEL_TIER_LOCAL)
 # de la cadena — que por contrato de _POLICY_CHAINS es el fallback local/más conservador.
 LOCAL_ALIAS = "mia-local"
 
+# ── CAPACIDADES (D8 · punto 23 de la bitácora 2026-08-19) ───────────────────
+# Qué PUEDE hacer un agente, más allá de su encargo en prosa. Antes todo se metía en el
+# texto libre del encargo, donde no activa nada: escribir «lee los escaneados» no hacía
+# que los leyera. Vocabulario CERRADO: cada valor tiene detrás una capacidad real del
+# producto, y una capacidad que no existiera aquí sería una promesa vacía en pantalla.
+CAP_LECTURA_VISUAL = "lectura_visual"          # imágenes, diagramas y escaneados
+CAP_INVESTIGACION_VIVA = "investigacion_viva"  # normas y jurisprudencia en vivo
+CAP_DOCUMENTOS_LARGOS = "documentos_largos"    # documentos largos con su formato
+CAPABILITIES = (CAP_LECTURA_VISUAL, CAP_INVESTIGACION_VIVA, CAP_DOCUMENTOS_LARGOS)
+
+# Cómo se le dice al MODELO lo que tiene concedido. En segunda persona y sin jerga: es
+# parte del prompt del turno, no de la pantalla.
+CAPABILITY_VOICE: dict[str, str] = {
+    CAP_LECTURA_VISUAL: (
+        "Puedes leer imágenes, diagramas y documentos escaneados del expediente. Lo que "
+        "leas de una imagen se cita igual que cualquier otra fuente, con su documento."),
+    CAP_INVESTIGACION_VIVA: (
+        "Puedes consultar normas y jurisprudencia en vivo cuando el expediente no baste. "
+        "Todo lo que traigas de fuera entra como material por verificar, nunca como hecho."),
+    CAP_DOCUMENTOS_LARGOS: (
+        "Puedes producir documentos largos y estructurados, con sus títulos y su orden, "
+        "en vez de resúmenes."),
+}
+
+#: Y cómo se le dice al modelo lo que el abogado concedió pero el equipo NO tiene. Nunca se
+#: calla: callarlo dejaría al modelo sin saber por qué no puede hacer algo que se le pidió.
+CAPABILITY_UNAVAILABLE: dict[str, str] = {
+    CAP_LECTURA_VISUAL: (
+        "NO puedes leer imágenes ni documentos escaneados: este equipo no tiene la lectura "
+        "óptica instalada. Si el expediente trae uno, dilo en vez de suponer su contenido."),
+    CAP_INVESTIGACION_VIVA: (
+        "NO puedes consultar nada fuera del expediente y del conocimiento del despacho: en "
+        "este equipo no hay ayudante de investigación. Si falta una fuente, dilo."),
+    CAP_DOCUMENTOS_LARGOS: (
+        "NO puedes armar el archivo con su formato: en este equipo no hay ayudante de "
+        "documentos. Redacta el texto igual y dilo."),
+}
+
+
+def capability_available(capability: str) -> bool:
+    """¿Puede ESTA instalación cumplir la capacidad? Fail-closed: ante la duda, NO.
+
+    Se mide, no se afirma: la lectura visual depende del componente óptico de la
+    distribución, y las otras dos de que haya un ayudante de esa clase confirmado en el
+    equipo. Cualquier fallo de detección devuelve False — decirle al modelo que no puede
+    algo que sí puede le cuesta al abogado una frase de más; decirle que puede algo que no
+    puede le cuesta una afirmación sin respaldo.
+    """
+    try:
+        if capability == CAP_LECTURA_VISUAL:
+            from .. import config
+            return bool((config.optional_capabilities().get("ocr") or {}).get("available"))
+        if capability in (CAP_INVESTIGACION_VIVA, CAP_DOCUMENTOS_LARGOS):
+            from ..gateway.agent_hub import AgentHub
+            slug = "investigacion" if capability == CAP_INVESTIGACION_VIVA else "documentos"
+            estado = AgentHub().list_available()
+            return any(info.get("slug") == slug and info.get("invocation_ready")
+                       for info in estado.values())
+    except Exception:  # noqa: BLE001
+        logger.warning("no se pudo comprobar la capacidad %s; se trata como ausente",
+                       capability, exc_info=True)
+    return False
+
 # ── topes defensivos (anti-abuso; una persona es config del despacho) ────────
 MAX_PERSONAS = 24            # personas por despacho
 MAX_NAME_LEN = 64
@@ -102,6 +165,9 @@ class Persona:
     # Guías del despacho que este agente prioriza (ids de `playbooks`), en el orden elegido
     # por el abogado. Se cargan aparte (tabla persona_playbooks) — fail-open: vacío si falla.
     playbook_ids: tuple[str, ...] = ()
+    # Capacidades concedidas por el abogado (D8). Vacío = solo el encargo en prosa, que es
+    # exactamente el comportamiento anterior a esta columna.
+    capabilities: tuple[str, ...] = ()
 
     def to_public(self) -> dict:
         """Vista para la API/UI (sin jerga técnica de motor: el nivel se traduce)."""
@@ -117,6 +183,7 @@ class Persona:
             "description": self.description,
             "enabled": self.enabled,
             "playbook_ids": list(self.playbook_ids),
+            "capabilities": list(self.capabilities),
         }
 
     def turn_context(self) -> dict:
@@ -128,6 +195,7 @@ class Persona:
             "voice": render_persona_voice(self),
             "alias": resolve_persona_alias(self.model_tier),
             "playbook_ids": list(self.playbook_ids),
+            "capabilities": list(self.capabilities),
         }
 
 
@@ -178,6 +246,28 @@ def render_persona_voice(persona: Persona) -> str:
         parts.append(f"Tono: {persona.tone.strip()}")
     if persona.focus_areas:
         parts.append("Áreas de énfasis: " + ", ".join(persona.focus_areas) + ".")
+    # D8 · lo que el abogado le concedió, dicho al modelo. Sin esto, marcar una casilla en
+    # la pantalla no cambiaría una sola palabra del turno, que es justo el defecto que se
+    # corrige: el control tiene que llegar al prompt o no es un control.
+    #
+    # PERO SOLO LO QUE ESTA MÁQUINA PUEDE CUMPLIR. Conceder una capacidad y que el equipo no
+    # la tenga son dos cosas distintas —la pantalla ya las distingue— y afirmarle al modelo
+    # «puedes leer escaneados» en una instalación sin lectura óptica es exactamente la clase
+    # de premisa falsa que produce una alucinación con aire de hecho leído, en un producto
+    # cuyo absoluto es cero afirmaciones sin respaldo. Lo concedido pero no disponible se le
+    # dice al modelo como lo que es: algo que hoy NO puede hacer.
+    disponibles, ausentes = [], []
+    for c in persona.capabilities:
+        if c not in CAPABILITY_VOICE:
+            continue
+        (disponibles if capability_available(c) else ausentes).append(c)
+    if disponibles:
+        parts.append("Lo que puedes hacer en este turno:\n- "
+                     + "\n- ".join(CAPABILITY_VOICE[c] for c in disponibles))
+    if ausentes:
+        parts.append(
+            "Lo que este equipo NO tiene hoy, aunque el abogado te lo haya concedido:\n- "
+            + "\n- ".join(CAPABILITY_UNAVAILABLE[c] for c in ausentes))
     parts.append(_VOICE_GUARDRAIL)
     return "\n\n".join(p for p in parts if p and p.strip())
 
@@ -261,6 +351,31 @@ def _validate_tier(value: object) -> str:
     return s
 
 
+def _validate_capabilities(value) -> Optional[list[str]]:
+    """Capacidades válidas, sin repetidas y en el orden canónico.
+
+    Un valor desconocido REPROBA en vez de ignorarse en silencio: una capacidad que el
+    abogado cree haber concedido y que nadie aplica es peor que un error visible.
+
+    `None` devuelve `None`, no lista vacía: significa «este cuerpo no habla de capacidades»
+    y quien escribe conserva lo que hubiera. La lista vacía sí es una orden: quitarlas todas.
+    Al crear, `None` se resuelve como «ninguna», que es el comportamiento de siempre.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        raise PersonaError("No entendí las capacidades de este ayudante.")
+    pedidas = {str(v).strip() for v in value if str(v).strip()}
+    desconocidas = sorted(pedidas - set(CAPABILITIES))
+    if desconocidas:
+        raise PersonaError(
+            "No reconozco una de las capacidades que le diste a este ayudante: "
+            + ", ".join(desconocidas) + ".")
+    return [c for c in CAPABILITIES if c in pedidas]
+
+
 def _normalize_input(data: dict) -> dict:
     """Valida y normaliza el payload de crear/actualizar una persona. Lanza
     PersonaError (en llano) ante datos inválidos."""
@@ -281,6 +396,7 @@ def _normalize_input(data: dict) -> dict:
         "description": _clean_str(data.get("description"), max_len=MAX_DESCRIPTION_LEN,
                                   field_name="description"),
         "enabled": bool(data.get("enabled", True)),
+        "capabilities": _validate_capabilities(data.get("capabilities")),
     }
 
 
@@ -296,11 +412,15 @@ def _row_to_persona(row: tuple) -> Persona:
         summon_phrases=tuple(row[7] or ()),
         description=row[8] or "",
         enabled=bool(row[9]),
+        # La columna llegó con la 064 (D8). Una base sin la migración devolvería una fila
+        # más corta; el índice se lee defensivo para que ese caso salga sin capacidades en
+        # vez de reventar la pantalla entera de agentes.
+        capabilities=tuple(row[10] or ()) if len(row) > 10 else (),
     )
 
 
 _SELECT_COLS = ("id, name, title, role_prompt, tone, focus_areas, model_tier, "
-                "summon_phrases, description, enabled")
+                "summon_phrases, description, enabled, capabilities")
 
 
 def _require_uuid(value: str) -> str:
@@ -407,12 +527,14 @@ class PersonaService:
                 # respeta la suya (no la pisa la semilla).
                 await conn.execute(
                     "INSERT INTO personas (tenant_id, name, title, role_prompt, tone, "
-                    "focus_areas, model_tier, summon_phrases, description, enabled) "
-                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "focus_areas, model_tier, summon_phrases, description, enabled, "
+                    "capabilities) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (tenant_id, name) DO NOTHING",
                     (tenant_id, data["name"], data["title"], data["role_prompt"], data["tone"],
                      list(data["focus_areas"]), data["model_tier"],
-                     list(data["summon_phrases"]), data["description"], data["enabled"]),
+                     list(data["summon_phrases"]), data["description"], data["enabled"],
+                     list(data["capabilities"] or [])),
                 )
             # Marca sembrado (merge sobre config, sin pisar otras claves — patrón CP-E1).
             await conn.execute(
@@ -564,12 +686,12 @@ class PersonaService:
                 raise PersonaError(f"Ya existe una persona llamada '{clean['name']}'.")
             row = await (await conn.execute(
                 "INSERT INTO personas (tenant_id, name, title, role_prompt, tone, focus_areas, "
-                "model_tier, summon_phrases, description, enabled) "
-                "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "model_tier, summon_phrases, description, enabled, capabilities) "
+                "VALUES (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 f"RETURNING {_SELECT_COLS}",
                 (tenant_id, clean["name"], clean["title"], clean["role_prompt"], clean["tone"],
                  list(clean["focus_areas"]), clean["model_tier"], list(clean["summon_phrases"]),
-                 clean["description"], clean["enabled"]),
+                 clean["description"], clean["enabled"], list(clean["capabilities"] or [])),
             )).fetchone()
         return _row_to_persona(row)
 
@@ -587,11 +709,20 @@ class PersonaService:
             row = await (await conn.execute(
                 "UPDATE personas SET name = %s, title = %s, role_prompt = %s, tone = %s, "
                 "focus_areas = %s, model_tier = %s, summon_phrases = %s, description = %s, "
-                "enabled = %s, updated_at = now() WHERE id = %s::uuid "
+                # `capabilities` con COALESCE: si el cuerpo no trae el campo (None), lo
+                # concedido se CONSERVA. Sin esto, un guardado parcial —un interruptor de
+                # «habilitado», un cliente de otra versión— borraba en silencio lo que el
+                # abogado había concedido, y ningún gate lo habría notado porque la pantalla
+                # de hoy siempre manda el campo. La lista vacía sigue siendo la forma de
+                # quitarlas todas; el cast es obligatorio para que Postgres deduzca el tipo
+                # del parámetro NULL dentro de COALESCE.
+                "enabled = %s, capabilities = COALESCE(%s::text[], personas.capabilities), "
+                "updated_at = now() WHERE id = %s::uuid "
                 f"RETURNING {_SELECT_COLS}",
                 (clean["name"], clean["title"], clean["role_prompt"], clean["tone"],
                  list(clean["focus_areas"]), clean["model_tier"], list(clean["summon_phrases"]),
-                 clean["description"], clean["enabled"], persona_id),
+                 clean["description"], clean["enabled"], clean["capabilities"],
+                 persona_id),
             )).fetchone()
         if not row:
             raise PersonaError("Esa persona no existe en este despacho.")
