@@ -12,6 +12,7 @@ renombrar y agregar atajos propios.
     GET    /api/atajos/catalogo   todos, con su estado, + el conteo real del cupo
     POST   /api/atajos            crea un atajo propio {label, texto}
     PATCH  /api/atajos/{clave}    fija / oculta / renombra un atajo (parcial)
+    PUT    /api/atajos/orden      reordena los atajos fijados {claves: [...]}
     PUT    /api/atajos/{clave}    reescribe un atajo propio {label, texto}
     DELETE /api/atajos/{clave}    borra un atajo propio · devuelve un derivado a su estado
                                   automático
@@ -31,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from ...memory.atajos import (AtajoError, actualizar_propio, crear_propio, eliminar,
                               estado_atajos, guardar_preferencia, list_shortcuts,
-                              partir_clave)
+                              partir_clave, reordenar)
 
 router = APIRouter(prefix="/atajos", tags=["atajos"])
 logger = logging.getLogger("mia.api.atajos")
@@ -49,6 +50,12 @@ class AtajoPropioBody(BaseModel):
 
     label: str = Field(min_length=1, max_length=48)
     texto: str = Field(min_length=1, max_length=2000)
+
+
+class OrdenBody(BaseModel):
+    """El orden completo, de la primera a la última clave."""
+
+    claves: list[str] = Field(min_length=1, max_length=200)
 
 
 class PreferenciaBody(BaseModel):
@@ -111,6 +118,23 @@ async def cambiar_atajo(clave: str, body: PreferenciaBody, request: Request):
         raise HTTPException(
             status_code=502,
             detail="No pude guardar el cambio en este momento. Intenta de nuevo.",
+        )
+
+
+@router.put("/orden")
+async def ordenar_atajos(body: OrdenBody, request: Request):
+    """Guarda el orden de los atajos. Va declarada ANTES de `PUT /{clave}`: si no, «orden»
+    entra como una clave más y la reordenación nunca llega aquí."""
+    tid = _tenant(request)
+    try:
+        return await reordenar(tid, body.claves)
+    except AtajoError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception:  # noqa: BLE001
+        logger.exception("ordenar atajos falló (tenant=%s)", tid)
+        raise HTTPException(
+            status_code=502,
+            detail="No pude guardar el orden en este momento. Intenta de nuevo.",
         )
 
 

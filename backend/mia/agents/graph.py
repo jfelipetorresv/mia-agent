@@ -2379,6 +2379,21 @@ class MatterGraphBuilder:
                 }
                 md["verification"] = report
 
+        # DISPOSICIÓN DE HALLAZGOS · lo que el abogado VE antes de decidir (2026-08-25).
+        # El recibo del ledger ya dejaba constancia de lo que quedó abierto, pero DESPUÉS
+        # de aprobar: quien firma no veía la lista en el momento de firmar. Aquí el mismo
+        # extractor puro deja los hallazgos abiertos dentro del informe, para que la
+        # pantalla de revisión los pinte sin reimplementar el criterio en el frontend.
+        # Informativo, nunca bloqueante: es la misma barrera en modo AVISO.
+        if isinstance(report, dict):
+            try:
+                abiertos = hallazgos.hallazgos_del_informe(report)
+                report["hallazgos_abiertos"] = abiertos[:50]
+                report["hallazgos_abiertos_total"] = len(abiertos)
+                md["verification"] = report
+            except Exception:  # noqa: BLE001 — aviso: jamás corta el camino al abogado
+                logger.exception("no se pudieron listar los hallazgos abiertos del informe")
+
         md["stage"] = "verificador_citas"
         return {"draft": annotated, "metadata": md}
 

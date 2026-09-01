@@ -130,6 +130,36 @@ def main() -> int:
           "hallazgos_sin_disposicion" not in inspect.getsource(
               __import__("mia.memory.legal_ledger", fromlist=["x"]).verification_passes))
 
+    print("== 4 · el abogado lo VE antes de aprobar (no solo en el recibo) ==")
+    # El recibo del ledger deja constancia DESPUÉS de aprobar. Quien firma tiene que poder
+    # ver la lista EN el momento de firmar, o la constancia llega tarde para servirle.
+    src_verif = inspect.getsource(MatterGraphBuilder.verificador_citas_node)
+    check("el nodo de verificación deja los hallazgos abiertos DENTRO del informe",
+          "hallazgos_del_informe" in src_verif
+          and '"hallazgos_abiertos"' in src_verif
+          and '"hallazgos_abiertos_total"' in src_verif)
+    # Y sigue siendo aviso: la lista se calcula, no decide nada.
+    lineas_v = [ln.strip() for ln in src_verif.splitlines() if "hallazgos_abiertos" in ln]
+    check("listar los hallazgos abiertos no toca el borrador ni la decisión",
+          bool(lineas_v) and not any(ln.startswith(("dec ", "dec=", "status", "annotated"))
+                                     for ln in lineas_v))
+    # La pantalla PINTA lo que el backend extrae; no reimplementa el criterio (si lo
+    # reimplementara, el frontend y el recibo podrían decir cosas distintas del mismo caso).
+    revision = (ROOT / "frontend" / "app" / "_components" / "CitationReview.tsx").read_text(
+        encoding="utf-8")
+    check("la pantalla de revisión pinta los hallazgos abiertos",
+          "hallazgos_abiertos" in revision and "HALLAZGO_ROTULO" in revision)
+    check("la pantalla NO reimplementa el criterio de hallazgo abierto",
+          "ESTADOS_ABIERTOS" not in revision and "_disposicion_valida" not in revision)
+    check("la pantalla dice que aprobar con puntos abiertos deja constancia",
+          "deja" in revision and "constancia" in revision)
+    # Y el panel deja de esconderse cuando no hay citas: un [doc n] fantasma o una parte de
+    # otro expediente son hallazgos aunque el borrador no cite una sola norma.
+    caso = (ROOT / "frontend" / "app" / "casos" / "[id]" / "CasoConBorrador.tsx").read_text(
+        encoding="utf-8")
+    check("el panel de revisión se muestra también sin citas cuando hay puntos abiertos",
+          "hallazgos_abiertos_total" in caso)
+
     failed = [n for n, ok in _results if not ok]
     print(f"\n{len(_results) - len(failed)}/{len(_results)} checks OK")
     if failed:

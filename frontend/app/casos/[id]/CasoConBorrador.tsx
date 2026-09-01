@@ -1054,7 +1054,12 @@ function WorkspacePageContent({
               <Card className="whitespace-pre-wrap px-3 py-3 font-serif text-sm leading-relaxed">
                 {diagnosis}
               </Card>
-              {verification && verification.citas > 0 ? (
+              {/* Un borrador sin citas puede traer igual puntos abiertos (una referencia
+                  [doc n] que no existe, una parte de otro expediente, un hallazgo de la
+                  segunda revisión): condicionar el panel solo a `citas > 0` los ocultaba
+                  justo cuando no había ninguna cita que los delatara. */}
+              {verification && (verification.citas > 0 ||
+                (verification.hallazgos_abiertos_total ?? 0) > 0) ? (
                 <div className="mt-5">
                   <h3 className="mb-3 text-sm font-semibold">Citas del borrador</h3>
                   <CitationReview verification={verification} />

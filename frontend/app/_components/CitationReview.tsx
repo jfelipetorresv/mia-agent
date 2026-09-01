@@ -6,6 +6,7 @@ import {
   Ban,
   BookOpen,
   CheckCircle2,
+  ClipboardList,
   Landmark,
   RotateCcw,
   ScrollText,
@@ -103,6 +104,28 @@ export type Verification = {
     porcentaje: number;
     aviso: string;
   };
+  // DISPOSICIÓN DE HALLAZGOS · lo que esta revisión dejó abierto, dicho ANTES de aprobar.
+  // El recibo del caso ya guardaba la constancia, pero se calculaba al aprobar: quien firma
+  // no veía la lista en el momento de firmar. El backend la extrae con el mismo criterio del
+  // recibo (`memory/hallazgos.py`), así que la pantalla no reimplementa nada: pinta.
+  // `hallazgos_abiertos` viene topada a 50; `hallazgos_abiertos_total` es el número real.
+  hallazgos_abiertos?: { tipo: string; hallazgo: string; clave: string }[];
+  hallazgos_abiertos_total?: number;
+};
+
+// Cómo se nombra cada clase de hallazgo en la pantalla. El backend usa nombres técnicos
+// (`cita_omitida`, `doc_fantasma`); el abogado lee castellano. Un tipo que no esté aquí se
+// muestra con su propio nombre antes que desaparecer: nunca se pierde un hallazgo por no
+// tener rótulo.
+const HALLAZGO_ROTULO: Record<string, string> = {
+  cita_marcada: "Cita por verificar",
+  cita_anotada: "Cita sin respaldo",
+  cita_omitida: "Cita retirada del texto",
+  cita_quemada: "Cita que marcaste como falsa",
+  doc_fantasma: "Referencia a un documento que no existe",
+  afirmacion_negativa: "Afirmación de que un documento no dice algo",
+  contaminacion_expediente: "Parte de otro expediente",
+  gate_llm: "Hallazgo de la segunda revisión",
 };
 
 // Respuesta de GET /api/sources/buscar — puede venir vacía (corpus aún pequeño).
@@ -217,7 +240,7 @@ export default function CitationReview({ verification }: { verification: Verific
                   <button
                     type="button"
                     onClick={() => setOpenCita(d)}
-                    className="flex w-full items-start gap-2.5 rounded-lg border border-border bg-card px-3 py-2.5 text-left transition-colors hover:bg-accent/60"
+                    className="flex w-full items-start gap-2.5 rounded-lg border border-border/10 bg-card shadow-neu-raised px-3 py-2.5 text-left transition-all hover:bg-accent/60"
                   >
                     <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", info.className)} />
                     <div className="min-w-0 flex-1">
@@ -271,9 +294,20 @@ function AvisosDeRevision({ verification }: { verification: Verification }) {
   const haySegunda = Boolean(segunda && segunda.aviso);
   const hayBarrido = Boolean(barrido && barrido.aviso);
   const hayFuentes = Boolean(fuentes && fuentes.aviso);
+  // El total manda sobre la lista: viene topada a 50 y el número real puede ser mayor.
+  const abiertos = verification.hallazgos_abiertos || [];
+  const totalAbiertos = verification.hallazgos_abiertos_total ?? abiertos.length;
+  const hayDisposicion = totalAbiertos > 0;
+  // Un recuento por clase de hallazgo, en el orden en que aparecieron.
+  const resumenHallazgos: { tipo: string; n: number }[] = [];
+  for (const h of abiertos) {
+    const fila = resumenHallazgos.find((r) => r.tipo === h.tipo);
+    if (fila) fila.n += 1;
+    else resumenHallazgos.push({ tipo: h.tipo, n: 1 });
+  }
   if (
     !hayNeg && !hayCruce && !hayAlcance && !hayGate &&
-    !haySegunda && !hayBarrido && !hayFuentes
+    !haySegunda && !hayBarrido && !hayFuentes && !hayDisposicion
   ) {
     return null;
   }
@@ -431,13 +465,39 @@ function AvisosDeRevision({ verification }: { verification: Verification }) {
         // No es una alerta de error: es el alcance de la lectura, dicho en voz alta. Un
         // expediente voluminoso no cabe entero en un turno, y el abogado necesita saber
         // sobre cuánto material se pronunció Mia para decidir si él tiene que mirar más.
-        <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs">
+        <div className="rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/40 px-3 py-2 text-xs">
           <p className="flex items-start gap-2 font-medium text-foreground">
             <BookOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             Leí {alcance.porcentaje}% de este expediente ({alcance.leidos} de {alcance.total}{" "}
             fragmentos)
           </p>
           <p className="mt-1 text-muted-foreground">{alcance.aviso}</p>
+        </div>
+      ) : null}
+      {hayDisposicion ? (
+        // DISPOSICIÓN · va de último a propósito: resume en un número lo que los bloques de
+        // arriba dijeron uno por uno, y es lo último que el abogado lee antes de aprobar.
+        // No frena la aprobación ni añade un control que haya que llenar: la decisión del
+        // abogado es válida — lo que no puede ser es que salga sin constancia de qué quedó
+        // abierto. En gris, no en amarillo: es un recuento, no una alerta nueva.
+        <div className="rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/40 px-3 py-2 text-xs">
+          <p className="flex items-start gap-2 font-medium text-foreground">
+            <ClipboardList className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            {totalAbiertos === 1
+              ? "Esta revisión deja 1 punto abierto"
+              : `Esta revisión deja ${totalAbiertos} puntos abiertos`}
+          </p>
+          <ul className="mt-1.5 space-y-0.5">
+            {resumenHallazgos.map((r) => (
+              <li key={r.tipo} className="text-muted-foreground">
+                {HALLAZGO_ROTULO[r.tipo] || r.tipo} · {r.n === 1 ? "1 punto" : `${r.n} puntos`}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-muted-foreground/80">
+            Si apruebas el borrador con estos puntos abiertos, el recibo del caso deja
+            constancia de cuáles salieron sin cerrar.
+          </p>
         </div>
       ) : null}
     </div>
@@ -572,7 +632,7 @@ function MarcarCitaFalsa({ cita, yaRetirada }: { cita: string; yaRetirada: boole
 
   if (hecho) {
     return (
-      <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+      <p className="flex items-start gap-2 rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         {hecho}
       </p>
@@ -581,7 +641,7 @@ function MarcarCitaFalsa({ cita, yaRetirada }: { cita: string; yaRetirada: boole
 
   if (yaRetirada) {
     return (
-      <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+      <p className="flex items-start gap-2 rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         Ya marcaste esta cita como falsa, así que la retiré del borrador.
       </p>
@@ -614,7 +674,7 @@ function MarcarCitaFalsa({ cita, yaRetirada }: { cita: string; yaRetirada: boole
         onChange={(e) => setMotivo(e.target.value)}
         rows={2}
         placeholder="¿Qué está mal? (opcional — por ejemplo: la sentencia real trata otro tema)"
-        className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+        className="w-full rounded-lg shadow-neu-raised border border-border/10 border-border/10 bg-background px-2 py-1.5 text-xs"
       />
       <div className="flex items-center gap-2">
         <button

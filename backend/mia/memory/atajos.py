@@ -40,6 +40,7 @@ funciones de escritura SÍ lanzan `AtajoError` con mensaje en llano: ahí el abo
 """
 from __future__ import annotations
 
+import uuid
 import logging
 from typing import Any, Optional
 
@@ -115,11 +116,26 @@ def clave(source: str, source_id: Optional[str]) -> str:
 
 
 def partir_clave(valor: str) -> tuple[str, str]:
-    """'guia:<uuid>' → ('guia', '<uuid>'). Lanza AtajoError si no es una clave válida."""
+    """'guia:<uuid>' → ('guia', '<uuid>'). Lanza AtajoError si no es una clave válida.
+
+    El identificador tiene que ser un UUID, y se comprueba AQUÍ. Las tres columnas que lo
+    reciben son de tipo `uuid`, así que un identificador con cualquier otra forma no llegaba
+    a rebotar en la validación sino en la base, como `InvalidTextRepresentation`: eso no es
+    un `AtajoError`, caía en el `except Exception` del router y el abogado recibía un 502 con
+    «intenta de nuevo» —una invitación a repetir algo que nunca va a funcionar— más un
+    `logger.exception` que ensucia el registro como si el servicio se hubiera caído.
+    Validado aquí, es un 422 con el motivo correcto. (La inyección ya estaba cerrada por el
+    tipado y los parámetros ligados; esto arregla el mensaje y el ruido, no un agujero.)
+    """
     fuente, _, ident = str(valor or "").partition(":")
-    if fuente not in FUENTES or not ident.strip():
+    ident = ident.strip()
+    if fuente not in FUENTES or not ident:
         raise AtajoError("Ese atajo no existe o ya no está disponible.")
-    return fuente, ident.strip()
+    try:
+        uuid.UUID(ident)
+    except (ValueError, AttributeError, TypeError):
+        raise AtajoError("Ese atajo no existe o ya no está disponible.") from None
+    return fuente, ident
 
 
 # ── Composición del cupo (pura) ─────────────────────────────────────────────
@@ -404,6 +420,73 @@ async def actualizar_propio(tenant_id: str, ident: str, label: Any, texto: Any) 
     if not row:
         raise AtajoError("Ese atajo ya no existe.")
     return {"clave": clave("propio", ident), "id": ident, "label": nombre, "texto": cuerpo}
+
+
+async def reordenar(tenant_id: str, claves: list[str]) -> dict:
+    """Fija el ORDEN de los atajos fijados, en el orden en que llegan las claves.
+
+    El orden solo decide entre los FIJADOS: `componer_atajos` los coloca primero, ordenados
+    por `position`, y lo automático se reparte después con lo que sobre del cupo. Reordenar un
+    atajo que no está fijado guarda su posición igual —no se pierde— pero no cambia nada de lo
+    que se ve hasta que lo fijen. La pantalla lo dice; aquí no se inventa una regla distinta.
+
+    Sobre un derivado sin preferencia previa se crea la fila (esa es la única forma de
+    guardarle una posición) SIN fijarlo ni ocultarlo: reordenar no puede tener el efecto
+    lateral de fijar algo que el abogado no fijó. Pero solo si la guía o el agente EXISTEN:
+    sin esa comprobación, este endpoint creaba una fila por cada identificador recibido —la
+    tabla no tiene clave foránea a propósito (ver la 062) ni tope de filas—, así que un
+    cliente autenticado podía inflar `shortcut_prefs` indefinidamente con preferencias de
+    atajos que no existen y que nadie lee jamás.
+
+    Las posiciones se numeran desde 1 en el orden recibido. Una clave repetida se toma una
+    sola vez, en su primera aparición; una clave que ya no existe hace fallar la operación
+    ENTERA en vez de reordenar a medias: media reordenación es peor que ninguna, porque deja
+    la fila en un orden que el abogado no pidió y no puede explicarse. Eso se cumple de
+    verdad porque `pool.tenant_connection` abre TRANSACCIÓN: si una clave falla a mitad, lo
+    ya escrito se deshace con ella.
+    """
+    if not isinstance(claves, list) or not claves:
+        raise AtajoError("No recibí ningún atajo que ordenar.")
+    if len(claves) > 200:
+        raise AtajoError("Son demasiados atajos para ordenar de una vez.")
+
+    vistos: list[tuple[str, str]] = []
+    ya: set[str] = set()
+    for valor in claves:
+        fuente, ident = partir_clave(str(valor))  # valida el formato y levanta AtajoError
+        k = f"{fuente}:{ident}"
+        if k in ya:
+            continue
+        ya.add(k)
+        vistos.append((fuente, ident))
+
+    async with pool.tenant_connection(tenant_id) as conn:
+        for pos, (fuente, ident) in enumerate(vistos, start=1):
+            if fuente == "propio":
+                row = await (await conn.execute(
+                    "UPDATE shortcut_prefs SET position = %s, updated_at = now() "
+                    "WHERE id = %s AND source = 'propio' RETURNING id", (pos, ident),
+                )).fetchone()
+                if not row:
+                    raise AtajoError("Uno de los atajos que intentas ordenar ya no existe.")
+            else:
+                # La guía o el agente tienen que EXISTIR en este despacho. Ambas consultas
+                # van bajo RLS, así que una fila de otro despacho no cuenta como existente:
+                # el mismo candado sirve para el aislamiento y para la basura.
+                tabla = "playbooks" if fuente == "guia" else "personas"
+                existe = await (await conn.execute(
+                    f"SELECT 1 FROM {tabla} WHERE id = %s::uuid", (ident,))).fetchone()
+                if not existe:
+                    raise AtajoError(
+                        "Uno de los atajos que intentas ordenar ya no existe.")
+                await conn.execute(
+                    "INSERT INTO shortcut_prefs (tenant_id, source, source_id, position) "
+                    "VALUES (app_current_tenant(), %s, %s, %s) "
+                    "ON CONFLICT (tenant_id, source, source_id) WHERE source_id IS NOT NULL "
+                    "DO UPDATE SET position = %s, updated_at = now()",
+                    (fuente, ident, pos, pos),
+                )
+    return {"ok": True, "ordenados": len(vistos)}
 
 
 async def eliminar(tenant_id: str, valor_clave: str) -> dict:

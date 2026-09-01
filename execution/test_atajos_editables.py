@@ -217,6 +217,85 @@ async def con_db(t1: str, t2: str, g1: str, g2: str) -> None:
         ok("4e · borrarlo lo quita de la conversación",
            all(x["clave"] != creado["clave"] for x in visibles))
 
+        print("\n-- 4-bis · el ORDEN de los fijados se puede cambiar --")
+        # El abogado arrastra sus atajos fijados; sin esto el orden lo decidía la fecha de
+        # creación y no había forma de cambiarlo (deuda declarada de la sesión 61).
+        uno = await A.crear_propio(t1, "Primero", "Haz lo primero.")
+        dos = await A.crear_propio(t1, "Segundo", "Haz lo segundo.")
+        tres = await A.crear_propio(t1, "Tercero", "Haz lo tercero.")
+        propios3 = {uno["clave"], dos["clave"], tres["clave"]}
+        orden_inicial = [x["clave"] for x in await A.list_shortcuts(t1)
+                         if x["clave"] in propios3]
+        ok("4f · sin tocar nada, los propios salen en el orden en que se crearon",
+           orden_inicial == [uno["clave"], dos["clave"], tres["clave"]])
+
+        await A.reordenar(t1, [tres["clave"], uno["clave"], dos["clave"]])
+        orden_nuevo = [x["clave"] for x in await A.list_shortcuts(t1)
+                       if x["clave"] in propios3]
+        ok("4g · reordenar cambia el orden en que se muestran",
+           orden_nuevo == [tres["clave"], uno["clave"], dos["clave"]])
+
+        # C · reordenar NO renombra, NO fija y NO cambia el texto de nadie.
+        estado_tras = await A.estado_atajos(t1)
+        fila_uno = next(x for x in estado_tras["atajos"] if x["clave"] == uno["clave"])
+        ok("4h · reordenar no cambia el nombre ni el texto de un atajo",
+           fila_uno["label"] == "Primero" and fila_uno["texto"] == "Haz lo primero.")
+
+        # Un derivado SIN preferencia previa: reordenarlo le guarda posición pero NO lo fija.
+        await A.reordenar(t1, ["guia:" + str(g1)])
+        fila_guia = next(x for x in (await A.estado_atajos(t1))["atajos"]
+                         if x["clave"] == "guia:" + str(g1))
+        ok("4i · ordenar un atajo derivado NO lo fija por el camino",
+           not fila_guia["fijado"] and not fila_guia["oculto"])
+
+        # R · una clave que ya no existe hace fallar la operación ENTERA (nada a medias).
+        try:
+            await A.reordenar(t1, [dos["clave"], "propio:" + str(uuid.uuid4())])
+            ok("4j · una clave que ya no existe hace fallar la operación entera", False)
+        except A.AtajoError:
+            ok("4j · una clave que ya no existe hace fallar la operación entera", True)
+        try:
+            await A.reordenar(t1, [])
+            ok("4k · una lista vacía se rechaza", False)
+        except A.AtajoError:
+            ok("4k · una lista vacía se rechaza", True)
+        try:
+            await A.reordenar(t1, ["formato:invalido"])
+            ok("4l · una clave con formato inválido se rechaza", False)
+        except A.AtajoError:
+            ok("4l · una clave con formato inválido se rechaza", True)
+
+        # R · un identificador que no es UUID tiene que rebotar EN LA VALIDACIÓN, no en la
+        # base: allí no es AtajoError, sale como 502 «intenta de nuevo» (falso: reintentar no
+        # arregla una clave inválida) y ensucia el registro como si el servicio se cayera.
+        for basura in ["guia:no-es-uuid", "agente:" + ("x" * 300), "propio:1; DROP TABLE x"]:
+            try:
+                await A.reordenar(t1, [basura])
+                ok(f"4m · «{basura[:24]}…» se rechaza en la validación", False)
+            except A.AtajoError:
+                ok(f"4m · «{basura[:24]}…» se rechaza en la validación (no en la base)", True)
+
+        # R · reordenar NO puede crear preferencias de atajos que no existen. Sin esta
+        # comprobación, la tabla no tiene clave foránea ni tope: un cliente autenticado
+        # inflaba `shortcut_prefs` con filas que nadie lee jamás.
+        inventadas = [f"guia:{uuid.uuid4()}" for _ in range(5)]
+        try:
+            await A.reordenar(t1, inventadas)
+            ok("4n · reordenar guías inexistentes NO crea filas basura", False)
+        except A.AtajoError:
+            async with A.pool.tenant_connection(t1) as c:
+                n = (await (await c.execute(
+                    "SELECT count(*) FROM shortcut_prefs WHERE source = 'guia' "
+                    "AND source_id = ANY(%s::uuid[])",
+                    ([i.split(":", 1)[1] for i in inventadas],))).fetchone())[0]
+            ok(f"4n · reordenar guías inexistentes NO crea filas basura (quedaron {n})",
+               n == 0)
+
+        await A.eliminar(t1, uno["clave"])
+        await A.eliminar(t1, dos["clave"])
+        await A.eliminar(t1, tres["clave"])
+        await A.eliminar(t1, "guia:" + str(g1))
+
         print("\n-- 5 · aislamiento entre despachos (RLS) --")
         propio_a = await A.crear_propio(t1, "Solo de A", "Esto es de A.")
         await A.guardar_preferencia(t1, f"guia:{g1}", fijado=True)

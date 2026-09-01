@@ -43,6 +43,9 @@ import {
   Sparkles,
   Check,
   X,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import {
   Dialog,
@@ -70,6 +73,8 @@ export type AtajoCatalogo = {
   fijado: boolean;
   renombrado: boolean;
   en_conversacion: boolean;
+  /** Posición guardada. Solo decide entre los fijados; menor primero. */
+  orden: number;
 };
 
 type Cupo = {
@@ -251,6 +256,95 @@ function FilaAtajo({
 }
 
 /**
+ * EL ORDEN DE LOS FIJADOS · se arrastra, y también se mueve con el teclado.
+ *
+ * Solo aparecen aquí los fijados, porque el orden solo decide entre ellos: los
+ * automáticos los reparte Mia con lo que sobra del cupo, y prometer que se
+ * pueden ordenar sería prometer algo que no se cumple.
+ *
+ * Arrastrar NO es la única forma de hacerlo, a propósito. El arrastre no existe
+ * para quien navega con teclado ni funciona bien con el dedo, así que cada fila
+ * trae además sus flechas y ambas rutas guardan exactamente lo mismo. El orden
+ * se guarda al soltar (o al pulsar la flecha), no hay botón de confirmar.
+ */
+function OrdenFijados({
+  fijados,
+  guardando,
+  onReordenar,
+}: {
+  fijados: AtajoCatalogo[];
+  guardando: boolean;
+  onReordenar: (claves: string[]) => void;
+}) {
+  const [arrastrando, setArrastrando] = useState<number | null>(null);
+
+  if (fijados.length < 2) return null;
+
+  const mover = (desde: number, hasta: number) => {
+    if (hasta < 0 || hasta >= fijados.length || desde === hasta) return;
+    const copia = fijados.slice();
+    const [item] = copia.splice(desde, 1);
+    copia.splice(hasta, 0, item);
+    onReordenar(copia.map((a) => a.clave));
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-section">El orden en que los pongo</p>
+      <p className="text-body text-muted-foreground">
+        Arrástralos, o muévelos con las flechas. Este orden vale para los que fijaste; los
+        que propongo yo van después, con el sitio que sobre.
+      </p>
+      <ul className={cn("space-y-1.5", guardando && "pointer-events-none opacity-60")}>
+        {fijados.map((a, i) => (
+          <li
+            key={a.clave}
+            draggable
+            onDragStart={() => setArrastrando(i)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (arrastrando !== null) mover(arrastrando, i);
+              setArrastrando(null);
+            }}
+            onDragEnd={() => setArrastrando(null)}
+            className={cn(
+              "flex items-center gap-2 rounded-lg border border-border/10 bg-card shadow-neu-raised px-3 py-2",
+              arrastrando === i && "opacity-50"
+            )}
+          >
+            <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted-foreground" />
+            <span className="w-5 shrink-0 text-body text-muted-foreground">{i + 1}</span>
+            <IconoDe kind={a.kind} />
+            <span className="min-w-0 flex-1 truncate text-body">{a.label}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={i === 0}
+              onClick={() => mover(i, i - 1)}
+              title="Subirlo un puesto"
+              aria-label={`Subir ${a.label} un puesto`}
+            >
+              <ArrowUp className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={i === fijados.length - 1}
+              onClick={() => mover(i, i + 1)}
+              title="Bajarlo un puesto"
+              aria-label={`Bajar ${a.label} un puesto`}
+            >
+              <ArrowDown className="h-4 w-4" />
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * El aviso del cupo. Nunca dice «se descartaron atajos»: dice exactamente qué
  * está pasando con los números reales del despacho.
  */
@@ -391,6 +485,27 @@ export function AtajosPanel({
     });
   }
 
+  // El orden que ve el abogado es el MISMO criterio con el que Mia arma la fila: primero
+  // `orden`, y a igualdad, el nombre. Si esta pantalla ordenara distinto, arrastrar aquí
+  // movería una lista que no es la que se muestra en la conversación.
+  const fijados = atajos
+    .filter((a) => a.fijado && !a.oculto)
+    .slice()
+    .sort((x, y) => (x.orden || 0) - (y.orden || 0) || x.label.localeCompare(y.label));
+
+  function reordenar(claves: string[]) {
+    // Optimista: la lista se reacomoda al soltar y luego se confirma contra el servidor.
+    // Si la llamada falla, `cargar()` del manejador devuelve el orden real: nunca queda una
+    // pantalla mostrando un orden que no se guardó.
+    setAtajos((prev) =>
+      prev.map((a) => {
+        const i = claves.indexOf(a.clave);
+        return i === -1 ? a : { ...a, orden: i + 1 };
+      })
+    );
+    return accion("orden", () => apiSend("PUT", "/api/atajos/orden", { claves }));
+  }
+
   const propios = atajos.filter((a) => a.kind === "propio");
   const derivados = atajos.filter((a) => a.kind !== "propio");
 
@@ -431,6 +546,12 @@ export function AtajosPanel({
         </NotaMia>
 
         {cupo ? <AvisoCupo cupo={cupo} /> : null}
+
+        <OrdenFijados
+          fijados={fijados}
+          guardando={ocupado === "orden"}
+          onReordenar={(claves) => void reordenar(claves)}
+        />
 
         {error ? (
           <Card padding="sm" className="border-destructive/30 bg-destructive/5">
