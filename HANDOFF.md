@@ -9,7 +9,88 @@
 
 ---
 
-# CIERRE — 2026-08-24 · sesión 61 · D3/D4/D7 + deuda vieja en cero + segunda tanda del harness · EMPEZAR AQUÍ
+# CIERRE — 2026-09-01 · sesión 62 · los 23 puntos de UX cerrados y la deuda de la 61 en cero · EMPEZAR AQUÍ
+
+## TL;DR
+
+Cinco commits (`a2cf33a`…`82d659c`), **sin push**. La bitácora de feedback UX del 2026-08-19
+queda **cerrada: sus 23 puntos están todos hechos**, y la deuda declarada en la sesión 61 queda
+en cero salvo lo que sigue abajo con su causa. `verify.ps1 -Mode quick` VERDE: **33 suites,
+36,6 s**. Los gates se corren con `.venv\Scripts\python.exe` (el Python del sistema no tiene
+psycopg y da rojos falsos).
+
+Lo que más importa de esta sesión no es lo que se construyó, sino **lo que una revisión
+adversarial independiente encontró después**: siete defectos que los gates propios daban por
+buenos, dos de ellos DENTRO de los gates nuevos. Está todo corregido y en el aprendizaje 93.
+
+## Lo hecho
+
+- **Deuda de la 61 `a2cf33a`**: las 6 carpetas rotas retiradas y con comando propio
+  (`purgar_carpetas_rotas.py`, simulacro por defecto); los 2 rojos del banco de pruebas con
+  causa raíz —el doble no emitía los productos de etapa de la 059, el turno abortaba y no
+  había cita que omitir— **69/69**; y un tercer helper que retrocedía el vocabulario del
+  CHECK (aprendizaje 86 vivo en `init_soul_versions`), con su barrera.
+- **Revisión y atajos `12b2fc0`**: los puntos que la revisión deja abiertos se ven ANTES de
+  aprobar, no solo en el recibo; y los atajos fijados se reordenan arrastrando, con flechas
+  para quien no usa ratón. Probado en vivo: el orden cambia y sobrevive a recargar.
+- **Bienvenida `95c55ac`**: la entrevista pasa de siete pasos a cinco (fuera ciudad/país,
+  registro profesional y estándar de cierre; la firma se precarga); la jurisdicción es un solo
+  control; doce líneas rojas del oficio como borrador. Y «Cómo funciona Mia» es pantalla propia
+  (`/ayuda`) con cuándo sirve y cómo se usa cada sección.
+- **Agentes `89f16cb`**: un ayudante declara qué puede hacer (leer escaneados, buscar en vivo,
+  redactar largo). Lo marcado viaja a su prompt; **lo que el equipo no tiene NO se le afirma al
+  modelo**, se le dice que hoy no puede. Migración `064`, aditiva y sellada.
+- **Diseño `82d659c`**: 49 superficies dibujadas a mano llevadas al sistema, y la corrección
+  sellada de Pipe deja de ser un hábito y pasa a ser gate (`test_sistema_de_diseno`). Más
+  `test_puente_shell`, que impide que la pantalla llame a una ruta que la cáscara no sirve.
+
+## Lo que encontró la revisión adversarial (y por qué importa para la próxima sesión)
+
+Nueve mutaciones sobre el árbol de trabajo; **tres no pusieron rojo el gate que debían**. Ese
+número es el hallazgo: quien escribe un gate tiende a mutar lo que el gate mira, no lo que el
+gate debería mirar. Los dos casos que conviene tener presentes al escribir el próximo:
+
+- Un check que buscaba **una cadena de texto** en vez de una conducta (el nombre de un archivo
+  en el código del helper: un comentario bastaba para absolverlo). Ahora ejecuta y mide.
+- Un check que, **sin base de datos, decía «no evaluado» y aprobaba**. Un gate que aprueba
+  porque no pudo medir es peor que no tenerlo.
+
+Y el defecto de producto más caro: la honestidad sobre las capacidades estaba resuelta en la
+PANTALLA y abierta en el PROMPT. Detalle completo en el aprendizaje 93.
+
+## Decisiones de Pipe aplicadas (todas de la bitácora 2026-08-19)
+
+D6 (líneas rojas con borrador editable), D8 (capacidades del agente), D9 (registro profesional
+a Configuración), D10 (un solo selector de jurisdicción), y los puntos 5, 7, 8, 11, 12, 15,
+15b, 17 y 22. Ninguna decisión nueva: esta sesión ejecuta lo ya decidido.
+
+## Deuda declarada (con causa)
+
+- **Prueba en frío del instalador.** El puente quedó verificado por contrato (`test_puente_shell`
+  7/7) y el instalador se reensambló con el checkout limpio, pero que los botones de Protección
+  funcionen en la app instalada solo lo acredita instalarla en una máquina limpia. Es de Pipe.
+- **Cotejo visual contra los renders del pack.** Las capturas en claro y oscuro están tomadas y
+  la tabla de veredictos está en `validation/validation-log.md`; decir que se ven *como el
+  pack* exige comparar contra `docs/design/MIA-Luxury-Design-Pack/`, y eso es mirar, no medir.
+  El gate de diseño lo advierte en su propia salida.
+- **Sin push.** Los cinco commits están locales, a la espera de que Pipe los apruebe.
+- **Las imágenes de Antigravity** que menciona §0 de la bitácora siguen sin llegar al repo.
+
+## Trampas del entorno que costaron tiempo (para no repetirlas)
+
+- El build del instalador **exige checkout limpio** y lo rechaza si no lo está. Va después del
+  commit, no antes.
+- La verificación visual con navegador headless: **navegar por `localhost:3100`, no por
+  `127.0.0.1:3100`** — con la segunda, la sesión no resuelve y toda pantalla sale en el spinner
+  de carga, que leído deprisa parece que el producto está roto.
+- Un `addInitScript` de Playwright corre **antes de que exista el documento**: tocar
+  `document.documentElement` ahí siembra un error en cada página del recorrido.
+- `git grep`/`find` recursivos sobre el repo cuelgan por el antivirus: usar `git ls-files` o la
+  herramienta de búsqueda del harness.
+
+---
+
+# CIERRE — 2026-08-24 · sesión 61 · D3/D4/D7 + deuda vieja en cero + segunda tanda del harness
 
 ## TL;DR
 
