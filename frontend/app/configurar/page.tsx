@@ -213,6 +213,11 @@ export default function ConfigurarPage() {
   const [s, setS] = useState<Status | null>(null);
   const [error, setError] = useState("");
   const [abierta, setAbierta] = useState<string | null>(null);
+  // Qué paso está desplegado. `null` = el que el backend señala como siguiente;
+  // un id = el abogado eligió mirar otro, y esa elección manda hasta que la
+  // cambie. Es distinto de `abierta`, que es la guía «¿Qué es esto?» dentro del
+  // paso ya desplegado.
+  const [expandido, setExpandido] = useState<string | null>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [currentTheme, setCurrentTheme] = useState<Theme>("system");
 
@@ -328,105 +333,170 @@ export default function ConfigurarPage() {
   const brain = stats?.second_brain || {};
   const jobs = stats?.scheduler_jobs || [];
 
+  // UN PASO ABIERTO A LA VEZ (corrección de Pipe, 2026-09-01)
+  // ---------------------------------------------------------
+  // Antes los siete pasos se mostraban abiertos, y cada uno ofrecía hasta tres
+  // acciones —«Ir al paso», «¿Qué es esto?» y «Dejar para después»—: veintiún
+  // controles compitiendo en una pantalla cuyo trabajo es decir QUÉ SIGUE.
+  // Ahora lo hecho se colapsa a una línea con su palomita, el paso que sigue se
+  // ve entero con sus acciones, y lo que queda es una lista corta que se puede
+  // abrir. El backend ya dice cuál es el siguiente (`s.siguiente`); esta
+  // pantalla no lo recalcula, solo respeta esa decisión, y `expandido` permite
+  // al abogado abrir otro paso sin perder cuál era el siguiente.
+  const abiertoId = expandido ?? s.siguiente ?? null;
+
   const pasosList = (
-    <ul className="mt-6 space-y-3">
-      {s.pasos.map((p, i) => (
-        <li
-          key={p.id}
-          className={cn(
-            cardVariants(),
-            "animate-slide-up px-5 py-4 transition-colors",
-            p.estado === "listo"
-              ? "bg-muted/40"
-              : p.estado === "omitido"
-                ? "bg-card/60"
-                : "",
-          )}
-          style={staggerStyle(i, { base: 100 })}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2.5">
-                <span
-                  aria-hidden
-                  className={cn(
-                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
-                    p.estado === "listo"
-                      ? "bg-success text-success-foreground"
-                      : p.estado === "omitido"
-                        ? "bg-muted text-muted-foreground"
-                        : "border-2 border-primary/40 bg-primary/5 text-primary",
-                  )}
-                >
-                  {p.estado === "listo" ? (
-                    <Check className="h-3.5 w-3.5" />
-                  ) : p.estado === "omitido" ? (
-                    <Minus className="h-3.5 w-3.5" />
-                  ) : (
-                    <span className="text-meta font-semibold nums">{i + 1}</span>
-                  )}
-                </span>
-                <span className={cn("text-section", p.estado === "listo" && "text-muted-foreground")}>
-                  {p.titulo}
-                </span>
-                <span className="sr-only">Estado: {ESTADO_TEXTO[p.estado]}</span>
-                {p.estado === "omitido" ? (
-                  <span className="text-meta text-muted-foreground">(para después)</span>
-                ) : null}
-              </div>
-              <p className="mt-1.5 pl-[34px] text-body text-muted-foreground">{p.detalle}</p>
-              {p.guia && abierta === p.id ? (
-                <div className="ml-[34px] mt-3 space-y-2.5 rounded-lg bg-muted/60 px-4 py-3 text-body animate-fade-in">
-                  <p>
-                    <span className="font-medium">¿Qué es?</span>{" "}
-                    <span className="text-muted-foreground">{p.guia.que_es}</span>
-                  </p>
-                  <p>
-                    <span className="font-medium">¿Para qué le sirve a tu despacho?</span>{" "}
-                    <span className="text-muted-foreground">{p.guia.para_que}</span>
-                  </p>
-                  <div>
-                    <p className="mb-1 font-medium">Cómo se hace, paso a paso:</p>
-                    <ol className="list-inside list-decimal space-y-1 text-muted-foreground">
-                      {p.guia.como.map((linea, j) => (
-                        <li key={j}>{linea}</li>
-                      ))}
-                    </ol>
+    <ul className="mt-6 space-y-2">
+      {s.pasos.map((p, i) => {
+        const abierto = p.id === abiertoId;
+        const idPanel = `paso-panel-${p.id}`;
+
+        // Un paso ya hecho: una sola línea. No tiene acciones porque no hay
+        // nada que hacer en él, y ocupar media pantalla con eso empuja hacia
+        // abajo lo único que sí pide trabajo.
+        if (p.estado === "listo") {
+          return (
+            <li
+              key={p.id}
+              className="animate-slide-up flex items-center gap-2.5 px-5 py-2.5"
+              style={staggerStyle(i, { base: 60 })}
+            >
+              <span
+                aria-hidden
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-success text-success-foreground"
+              >
+                <Check className="h-3 w-3" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-body text-muted-foreground">
+                {p.titulo}
+              </span>
+              <span className="sr-only">Estado: {ESTADO_TEXTO[p.estado]}</span>
+            </li>
+          );
+        }
+
+        // El paso abierto: la tarjeta completa, con su guía y sus acciones.
+        if (abierto) {
+          return (
+            <li
+              key={p.id}
+              className={cn(
+                cardVariants(),
+                "animate-slide-up px-5 py-4 transition-colors",
+                p.estado === "omitido" ? "bg-card/60" : "",
+              )}
+              style={staggerStyle(i, { base: 60 })}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
+                        p.estado === "omitido"
+                          ? "bg-muted text-muted-foreground"
+                          : "border-2 border-primary/40 bg-primary/5 text-primary",
+                      )}
+                    >
+                      {p.estado === "omitido" ? (
+                        <Minus className="h-3.5 w-3.5" />
+                      ) : (
+                        <span className="text-meta font-semibold nums">{i + 1}</span>
+                      )}
+                    </span>
+                    <span className="text-section">{p.titulo}</span>
+                    <span className="sr-only">Estado: {ESTADO_TEXTO[p.estado]}</span>
+                    {p.estado === "omitido" ? (
+                      <span className="text-meta text-muted-foreground">(para después)</span>
+                    ) : null}
                   </div>
+                  <p className="mt-1.5 pl-[34px] text-body text-muted-foreground">{p.detalle}</p>
+                  {p.guia && abierta === p.id ? (
+                    <div className="ml-[34px] mt-3 space-y-2.5 rounded-lg bg-muted/60 px-4 py-3 text-body animate-fade-in">
+                      <p>
+                        <span className="font-medium">¿Qué es?</span>{" "}
+                        <span className="text-muted-foreground">{p.guia.que_es}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium">¿Para qué le sirve a tu despacho?</span>{" "}
+                        <span className="text-muted-foreground">{p.guia.para_que}</span>
+                      </p>
+                      <div>
+                        <p className="mb-1 font-medium">Cómo se hace, paso a paso:</p>
+                        <ol className="list-inside list-decimal space-y-1 text-muted-foreground">
+                          {p.guia.como.map((linea, j) => (
+                            <li key={j}>{linea}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  {p.enlace ? (
+                    <Button asChild size="sm" className="gap-1.5">
+                      <Link href={p.enlace}>
+                        Ir al paso
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  ) : null}
+                  {p.guia ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setAbierta((v) => (v === p.id ? null : p.id))}
+                      aria-expanded={abierta === p.id}
+                    >
+                      {abierta === p.id ? "Ocultar guía" : "¿Qué es esto?"}
+                    </Button>
+                  ) : null}
+                  <button
+                    onClick={() => toggleSkip(p)}
+                    className="rounded-md px-2 py-1 text-meta text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  >
+                    {p.estado === "omitido" ? "Retomar" : "Dejar para después"}
+                  </button>
+                </div>
+              </div>
+            </li>
+          );
+        }
+
+        // Un paso que todavía no toca: fila corta y clicable. Se puede abrir sin
+        // haber terminado el anterior — el orden es una sugerencia de Mia, no
+        // una puerta cerrada.
+        return (
+          <li key={p.id} className="animate-slide-up" style={staggerStyle(i, { base: 60 })}>
+            <button
+              type="button"
+              aria-expanded={false}
+              aria-controls={idPanel}
+              onClick={() => setExpandido(p.id)}
+              className="flex w-full items-center gap-2.5 rounded-lg px-5 py-2.5 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-meta font-semibold nums",
+                  p.estado === "omitido"
+                    ? "bg-muted text-muted-foreground"
+                    : "border border-primary/30 text-primary",
+                )}
+              >
+                {p.estado === "omitido" ? <Minus className="h-3 w-3" /> : i + 1}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-body">{p.titulo}</span>
+              <span className="sr-only">Estado: {ESTADO_TEXTO[p.estado]}</span>
+              {p.estado === "omitido" ? (
+                <span className="text-meta text-muted-foreground">(para después)</span>
               ) : null}
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-1.5">
-              {p.estado !== "listo" && p.enlace ? (
-                <Button asChild size="sm" className="gap-1.5">
-                  <Link href={p.enlace}>
-                    Ir al paso
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </Link>
-                </Button>
-              ) : null}
-              {p.guia ? (
-                <Button
-                  size="sm"
-                  variant={p.estado === "listo" ? "ghost" : "outline"}
-                  onClick={() => setAbierta((v) => (v === p.id ? null : p.id))}
-                  aria-expanded={abierta === p.id}
-                >
-                  {abierta === p.id ? "Ocultar guía" : "¿Qué es esto?"}
-                </Button>
-              ) : null}
-              {p.estado !== "listo" ? (
-                <button
-                  onClick={() => toggleSkip(p)}
-                  className="rounded-md px-2 py-1 text-meta text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  {p.estado === "omitido" ? "Retomar" : "Dejar para después"}
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </li>
-      ))}
+              <ArrowRight aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 

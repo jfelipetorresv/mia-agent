@@ -1,0 +1,121 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Cotejo visual — producto vs MIA-Luxury-Design-Pack · 2026-09-01</title>
+<style>
+  :root{--bg:#F4F6F9;--fg:#0d1117;--mut:#5b6673;--line:#d9dee5;--teal:#007C8F;--card:#fff}
+  @media (prefers-color-scheme:dark){:root{--bg:#07090b;--fg:#e8edf2;--mut:#93a0ad;--line:#1e262e;--teal:#1FBED6;--card:#0d1117}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,Segoe UI,system-ui,sans-serif}
+  header{padding:32px 28px 20px;border-bottom:1px solid var(--line)}
+  h1{margin:0 0 6px;font-size:22px;letter-spacing:-.01em}
+  h1 b{color:var(--teal)}
+  .sub{color:var(--mut);max-width:70ch;margin:0}
+  section{padding:26px 28px;border-bottom:1px solid var(--line)}
+  h2{font-size:17px;margin:0 0 4px}
+  .note{color:var(--mut);margin:0 0 16px;max-width:78ch}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:900px){.pair{grid-template-columns:1fr}}
+  figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  figcaption{padding:9px 13px;font-size:12.5px;color:var(--mut);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px}
+  figcaption b{color:var(--fg);font-weight:600}
+  img{display:block;width:100%;height:auto}
+  .tag{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+  .pack{color:var(--teal);border-color:var(--teal)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .warn{background:rgba(0,124,143,.09);border-left:3px solid var(--teal);padding:12px 16px;border-radius:0 8px 8px 0;margin:0 0 18px;max-width:80ch}
+</style>
+<header>
+  <h1>Cotejo visual — producto vs <b>MIA-Luxury-Design-Pack</b></h1>
+  <p class="sub">Capturas del 2026-09-01 (sesión 62) contra los seis renders del pack. Izquierda: el render del pack. Derecha: la pantalla real. El gate <code>test_sistema_de_diseno</code> ya dio 5/5 sobre 73 pantallas; esto es lo que el gate no puede hacer — mirar.</p>
+</header>
+
+<section>
+  <h2>1 · Centro de mando — claro</h2>
+  <p class="note">Render <code>command_center_light.jpg</code> contra <code>/dashboard</code> en tema claro.</p>
+  <div class="pair">
+    <figure><figcaption><b>Pack</b><span class="tag pack">referencia</span></figcaption><img src="../docs/design/MIA-Luxury-Design-Pack/assets/command_center_light.jpg" alt="Render del pack, centro de mando claro"></figure>
+    <figure><figcaption><b>Producto · /dashboard</b><span class="tag">06_panel-light</span></figcaption><img src="screenshots/06_2026-09-01_panel-light.png" alt="Panel real, claro"></figure>
+  </div>
+</section>
+
+<section>
+  <h2>2 · Centro de mando — oscuro</h2>
+  <p class="note">Render <code>command_center_dark.jpg</code> contra <code>/dashboard</code> en tema oscuro.</p>
+  <div class="pair">
+    <figure><figcaption><b>Pack</b><span class="tag pack">referencia</span></figcaption><img src="../docs/design/MIA-Luxury-Design-Pack/assets/command_center_dark.jpg" alt="Render del pack, centro de mando oscuro"></figure>
+    <figure><figcaption><b>Producto · /dashboard</b><span class="tag">12_panel-dark</span></figcaption><img src="screenshots/12_2026-09-01_panel-dark.png" alt="Panel real, oscuro"></figure>
+  </div>
+</section>
+
+<section>
+  <h2>3 · Casos — claro</h2>
+  <p class="note">Render <code>matters_light.jpg</code> contra <code>/casos</code> con el despacho de prueba sembrado (4 casos, uno con borrador esperando revisión).</p>
+  <div class="pair">
+    <figure><figcaption><b>Pack</b><span class="tag pack">referencia</span></figcaption><img src="../docs/design/MIA-Luxury-Design-Pack/assets/matters_light.jpg" alt="Render del pack, casos claro"></figure>
+    <figure><figcaption><b>Producto · /casos</b><span class="tag">15_casos-light</span></figcaption><img src="screenshots/15_2026-09-01_casos-light.png" alt="Casos real, claro"></figure>
+  </div>
+</section>
+
+<section>
+  <h2>4 · Casos — oscuro</h2>
+  <p class="note">Render <code>matters_dark.jpg</code> contra <code>/casos</code> en tema oscuro.</p>
+  <div class="pair">
+    <figure><figcaption><b>Pack</b><span class="tag pack">referencia</span></figcaption><img src="../docs/design/MIA-Luxury-Design-Pack/assets/matters_dark.jpg" alt="Render del pack, casos oscuro"></figure>
+    <figure><figcaption><b>Producto · /casos</b><span class="tag">16_casos-dark</span></figcaption><img src="screenshots/16_2026-09-01_casos-dark.png" alt="Casos real, oscuro"></figure>
+  </div>
+</section>
+
+<section>
+  <h2>5 · Onboarding — claro</h2>
+  <p class="note">Render <code>onboarding_light.jpg</code> contra <code>/onboarding</code> con un despacho recién registrado y sin entrevista — la única forma de que la pantalla se muestre en vez de redirigir al escritorio.</p>
+  <div class="pair">
+    <figure><figcaption><b>Pack</b><span class="tag pack">referencia</span></figcaption><img src="../docs/design/MIA-Luxury-Design-Pack/assets/onboarding_light.jpg" alt="Render del pack, onboarding claro"></figure>
+    <figure><figcaption><b>Producto · /onboarding</b><span class="tag">17_onboarding-light</span></figcaption><img src="screenshots/17_2026-09-01_onboarding-light.png" alt="Onboarding real, claro"></figure>
+  </div>
+</section>
+
+<section>
+  <h2>6 · Onboarding — oscuro</h2>
+  <p class="note">Render <code>onboarding_dark.jpg</code> contra <code>/onboarding</code> en tema oscuro.</p>
+  <div class="pair">
+    <figure><figcaption><b>Pack</b><span class="tag pack">referencia</span></figcaption><img src="../docs/design/MIA-Luxury-Design-Pack/assets/onboarding_dark.jpg" alt="Render del pack, onboarding oscuro"></figure>
+    <figure><figcaption><b>Producto · /onboarding</b><span class="tag">18_onboarding-dark</span></figcaption><img src="screenshots/18_2026-09-01_onboarding-dark.png" alt="Onboarding real, oscuro"></figure>
+  </div>
+</section>
+
+<section>
+  <h2>Tres cosas que salieron al mirar</h2>
+  <p class="warn"><b>1 · El dorado sigue en la portada del onboarding.</b> «Bienvenido» va en <code>--accent-gold</code>, no en teal. El código lo declara a propósito («el ÚNICO dorado permitido del producto, reservado a esta portada», <code>WelcomeHero.tsx:57</code> y <code>onboarding/page.tsx:509</code>), pero el pack no lo usa y la decisión del 2026-08-19 fijó el pack como referencia. <b>Es decisión de Pipe</b>, no defecto: se queda o se va al teal.</p>
+  <p class="warn"><b>2 · Las dos portadas dicen distinto.</b> <code>WelcomeHero</code> pinta «Bienvenido a» en dorado; el onboarding solo «Bienvenido», dejando «a Mia.» en el color del texto. Misma frase, dos cortes.</p>
+  <p class="warn"><b>3 · El avatar tapa «Cerrar sesión».</b> En <code>/casos</code>, claro y oscuro, el círculo de cuenta abajo a la izquierda se solapa sobre la primera letra del enlace: se lee «errar sesión». Defecto de producto, reproducible en ambas capturas.</p>
+</section>
+
+<section>
+  <h2>7 · Rótulo engañoso en la corrida anterior</h2>
+  <p class="warn">Los archivos <code>04_…onboarding-perfil-light.png</code> y <code>10_…-dark.png</code> de la corrida del 2026-09-01 <b>no son del onboarding</b>: según <code>veredicto.json</code> corresponden a la ruta <code>/memoria</code>. Se muestran abajo con su ruta verdadera. El onboarding real es el de la sección 5.</p>
+</section>
+
+<section>
+  <h2>8 · Pantallas sin render de referencia</h2>
+  <p class="note">El pack no define estas pantallas. No hay contra qué cotejarlas: el juicio aquí es si respiran el mismo lenguaje — teal 188, superficie <code>#F4F6F9</code> / <code>#07090b</code>, relieve neumórfico — no si calzan con un render.</p>
+  <div class="grid">
+    <figure><figcaption><b>/ayuda · claro</b><span class="tag">01</span></figcaption><img src="screenshots/01_2026-09-01_ayuda-manual-light.png" alt="Ayuda claro"></figure>
+    <figure><figcaption><b>/ayuda · oscuro</b><span class="tag">07</span></figcaption><img src="screenshots/07_2026-09-01_ayuda-manual-dark.png" alt="Ayuda oscuro"></figure>
+    <figure><figcaption><b>/personas · claro</b><span class="tag">02</span></figcaption><img src="screenshots/02_2026-09-01_agentes-capacidades-light.png" alt="Personas claro"></figure>
+    <figure><figcaption><b>/personas · oscuro</b><span class="tag">08</span></figcaption><img src="screenshots/08_2026-09-01_agentes-capacidades-dark.png" alt="Personas oscuro"></figure>
+    <figure><figcaption><b>/chat · claro</b><span class="tag">03</span></figcaption><img src="screenshots/03_2026-09-01_chat-atajos-light.png" alt="Chat claro"></figure>
+    <figure><figcaption><b>/chat · oscuro</b><span class="tag">09</span></figcaption><img src="screenshots/09_2026-09-01_chat-atajos-dark.png" alt="Chat oscuro"></figure>
+    <figure><figcaption><b>/memoria · claro</b><span class="tag">04</span></figcaption><img src="screenshots/04_2026-09-01_onboarding-perfil-light.png" alt="Memoria claro"></figure>
+    <figure><figcaption><b>/memoria · oscuro</b><span class="tag">10</span></figcaption><img src="screenshots/10_2026-09-01_onboarding-perfil-dark.png" alt="Memoria oscuro"></figure>
+    <figure><figcaption><b>/configurar · claro</b><span class="tag">05</span></figcaption><img src="screenshots/05_2026-09-01_configuracion-light.png" alt="Configurar claro"></figure>
+    <figure><figcaption><b>/configurar · oscuro</b><span class="tag">11</span></figcaption><img src="screenshots/11_2026-09-01_configuracion-dark.png" alt="Configurar oscuro"></figure>
+    <figure><figcaption><b>Atajos reordenados · claro</b><span class="tag">13</span></figcaption><img src="screenshots/13_2026-09-01_atajos-orden-light.png" alt="Atajos claro"></figure>
+    <figure><figcaption><b>Atajos reordenados · oscuro</b><span class="tag">14</span></figcaption><img src="screenshots/14_2026-09-01_atajos-orden-dark.png" alt="Atajos oscuro"></figure>
+  </div>
+</section>
+
+<section>
+  <h2>Qué acredita esta página y qué no</h2>
+  <p class="note">Acredita que <b>los tres pares del pack están completos</b>, en claro y oscuro: centro de mando, Casos y onboarding, cada pantalla del producto enfrentada a su render. <b>No</b> acredita que se vean como el pack: ese veredicto es de quien mira, y las tres observaciones de la sección 6 son lo que vio quien montó esta página, no una sentencia. Las cuatro capturas nuevas (15 a 18) se toman con <code>e2e/capturas_cotejo_pack.mjs</code>, que falla si una pantalla redirige o se queda en el spinner.</p>
+</section>
