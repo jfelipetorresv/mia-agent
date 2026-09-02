@@ -62,6 +62,7 @@ type Seccion = {
 export default function AyudaPage() {
   const [secciones, setSecciones] = useState<Seccion[] | null>(null);
   const [error, setError] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
   // Cuál está abierta. La primera nace abierta: una lista toda cerrada parece
   // una pantalla vacía y obliga a un clic para ver que aquí hay algo.
   const [abierta, setAbierta] = useState(0);
@@ -69,6 +70,8 @@ export default function AyudaPage() {
 
   useEffect(() => {
     let vivo = true;
+    setError("");
+    setSecciones(null);
     apiGet<{ secciones: Seccion[] }>("/api/setup/manual")
       .then((res) => {
         if (vivo) setSecciones(res.secciones || []);
@@ -81,7 +84,7 @@ export default function AyudaPage() {
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [retryKey]);
 
   return (
     <PageShell
@@ -95,8 +98,9 @@ export default function AyudaPage() {
       </NotaMia>
 
       {error ? (
-        <Card padding="sm" className="mt-block border-destructive/30 bg-destructive/5">
-          <p className="text-body text-destructive">{error}</p>
+        <Card padding="sm" className="mt-block flex flex-wrap items-center justify-between gap-3 border-destructive/30 bg-destructive/5">
+          <p role="alert" className="text-body text-destructive">{error}</p>
+          <Button size="sm" variant="outline" onClick={() => setRetryKey((n) => n + 1)}>Reintentar</Button>
         </Card>
       ) : null}
 

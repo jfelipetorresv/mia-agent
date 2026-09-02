@@ -1,4 +1,4 @@
-# Mia - start frontend (Next.js dev, Modo B, terminal 3). Puerto 3000.
+# Mia - start frontend (Next.js dev, Modo B, terminal 3). Puerto 3100.
 # ASCII puro a proposito.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot      # scripts\ -> mia\

@@ -1,6 +1,6 @@
 # Mia — CLAUDE.md
 # Constitución del proyecto · agente legal cognitivo autónomo
-# Última actualización: 2026-08-18 · Propietario: Juan Felipe Torres Varela
+# Última actualización: 2026-09-02 · Propietario: Juan Felipe Torres Varela
 # LEER ANTES DE TOCAR CUALQUIER ARCHIVO DEL PROYECTO
 
 ---
@@ -9,7 +9,7 @@
 Mia es un agente legal cognitivo autónomo desarrollado por Lexia
 Intelligence (Juan Felipe Torres Varela, Lexia Abogados, Bogotá,
 Colombia). Stack: Python 3.11 + FastAPI + LangGraph +
-PostgreSQL/pgvector + Next.js 14.
+PostgreSQL/pgvector + Next.js 16.3.
 Plataforma: Windows 11 — instalación nativa (Modo B).
 Estado: producto con login JWT, ~14 routers `/api`, política de modelo
 por defecto `quality_adaptive`, grafo jurídico con HITL por hash,
@@ -55,7 +55,7 @@ Dos memorias separadas:
   automatización, escritorio, navegación). Solo se habilitan si el
   binario está en PATH y `--help` confirma los flags. Sin confirmar,
   el catálogo los muestra con razón honesta — nunca `[VERIFICAR]`.
-- Frontend: Next.js 14 App Router · TypeScript · SSE streaming ·
+- Frontend: Next.js 16.3 App Router · TypeScript · SSE streaming ·
   login en `/login`. No son «5 pantallas»: hay asunto, revisión HITL,
   memoria, configuración (conexiones, ayudantes, protección),
   automatizaciones, misiones, sala de estrategia.

@@ -31,6 +31,8 @@
     "execution/test_suggestions_cron.py",
     "execution/test_telegram_lifespan.py",
     "execution/test_handoff.py",
+    "execution/test_config_tabs.py",
+    "execution/test_frontend_resilience.py",
     "execution/test_mcp.py",
     "execution/test_agent_hub.py",
     "execution/test_persona_capacidades.py",

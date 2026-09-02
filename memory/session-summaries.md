@@ -1,5 +1,26 @@
 # Mia — Resúmenes de sesión
 
+## 2026-09-02 — Sesión 63 · auditoría del trabajo de Claude Code y cierre del cableado
+
+TL;DR: se revisó el estado que dejó Claude Code con Opus xhigh y se contrastó con Sol, Terra y
+Luna xhigh. El punto de partida `a961131` ya estaba en `origin/main`; no había commits perdidos.
+Se corrigieron fallos de resiliencia del frontend, una referencia ARIA colgante, contratos de
+pruebas que habían quedado con rutas antiguas, portabilidad del holdout/CI, el MIME habitual de
+Word y la captura de errores sin filtrar query strings. La verificación rápida quedó en **35/35**
+(167,4 s);
+lint, TypeScript, build de 17 rutas y `cargo check` pasaron.
+
+Qué dejó Claude Code: bienvenida de 7→5 pasos y `/ayuda`; revisión previa de puntos abiertos y
+atajos reordenables; capacidades de ayudantes medidas de forma honesta; 49 superficies Luxury
+con gate del puente; purga segura de carpetas, holdout y barreras contra tests ciegos; y el nuevo
+rediseño denso de `/ayuda` y `/configurar`.
+
+Qué sigue: el instalador NSIS de disco es de 2026-08-14 y debe reensamblarse desde checkout
+limpio, instalarse y probarse en frío; falta el cotejo visual humano contra el Design Pack; la
+regresión con LiteLLM vivo y Telegram configurado; y el benchmark comparativo real con revisión
+ciega. Los expedientes muy grandes siguen limitados por la suscripción, mitigados pero no resueltos.
+Las imágenes de Antigravity siguen ausentes. No se tocó lógica jurídica ni datos reales.
+
 ## 2026-07-20 — Sesión 50 · Mia lee el expediente de verdad · no puede afirmar sin respaldo · no es de ningún país
 TL;DR: 18 commits en la rama (sin push) que atacan la tesis del producto —leer todo el expediente, razonar con el criterio del despacho y no poder afirmar nada sin respaldo—, con verificación adversarial que encontró seis defectos graves (dos frentes rechazados y rehechos) y la primera prueba en vivo contra un modelo real en varias sesiones.
 Nota de continuidad: entre la sesión 49 (2026-07-17) y esta hubo trabajo el 18 y el 19 de julio que nunca se registró en este archivo (Fase 1, incrementos 1-3, y el primer arranque en vivo); su detalle está en `HANDOFF.md`. La numeración sigue el contador de este archivo, no el número real de sesiones.

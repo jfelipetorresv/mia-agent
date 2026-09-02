@@ -9,7 +9,9 @@ Reglas duras:
 * diez o más repeticiones por caso y brazo;
 * solo datos sintéticos;
 * un brazo no está disponible porque exista su CLI: debe tener ruta del mismo grafo; Codex
-  solo puede entrar por el override eval aislado y nunca por una política productiva;
+  productivo y Codex de evaluación son rutas distintas: la política productiva usa
+  ``cli-codex`` y el benchmark usa exclusivamente el alias lateral ``cli-codex-eval``;
+  ninguna de las dos rutas se disfraza de la otra;
 * ningún ganador se declara sin ambos brazos completos, telemetría completa y revisión humana;
 * el paquete del revisor nunca contiene proveedor, modelo, costo ni la llave A/B.
 """

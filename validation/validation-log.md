@@ -182,3 +182,32 @@ se regeneran con el recorrido en dos minutos).
 
 **Lo que esto NO acredita:** que las pantallas se vean como los renders del pack. El cotejo
 contra `docs/design/MIA-Luxury-Design-Pack/` sigue siendo trabajo de mirar, y de Pipe.
+
+## [2026-09-02] Auditoría de cierre — regresión del trabajo de Claude Code
+
+Se revisó el árbol posterior a la sesión 62 con Claude Code (Opus, xhigh) y tres pasadas
+independientes de Sol, Terra y Luna (xhigh). El harness se ejecutó de verdad con `localhost:3100`;
+no se registraron secretos, query strings ni contenido de expedientes reales en las capturas.
+
+| Evidencia | Resultado |
+|---|---|
+| `scripts\verify.ps1 -Mode quick` | **35 suites verdes**, 167,4 s |
+| Configuración y deep-links | **34/34** |
+| Resiliencia del frontend | **7/7** |
+| Cotejo `/casos` y `/onboarding`, claro/oscuro | **4/4** en ruta, sin spinner; `cotejo-veredicto.json` y capturas `15–18_2026-09-02_*.png` |
+| `/ayuda` claro/oscuro | captura visual `21_2026-09-02_*.png`; sin veredicto automatizado propio asociado |
+| `/configurar` claro/oscuro | captura visual `19_2026-09-02_*.png`; sin veredicto automatizado propio asociado |
+| `/chat` móvil claro | control de nueva conversación/historial presente; captura `23_2026-09-02_chat-mobile-light.png` |
+| Lint, TypeScript y build | **0 errores**; 17 rutas generadas |
+
+La captura de cotejo ahora conserva el origen y detalle acotado de una petición fallida sin
+guardar la consulta completa; esto corrige el defecto de observabilidad del arnés. La ejecución
+real produjo 8 mensajes por pantalla, todos correspondientes a `mia-shell.localhost` (salud de
+runtime/mantenimiento) rechazado porque la prueba corre en navegador puro. Las rutas sí llegaron
+a destino y no quedaron en spinner. La prueba del puente instalado sigue pendiente.
+
+**Pendientes de evidencia:** comparar visualmente estas capturas contra
+`docs/design/MIA-Luxury-Design-Pack/`; ensamblar y probar en frío el instalador actual; repetir
+la regresión con LiteLLM en `127.0.0.1:4000`; y, si se desea probar el canal Telegram, hacerlo
+con su configuración opt-in. El benchmark Codex/Claude tiene contrato verde, pero todavía no
+es un resultado comparativo de calidad con dos brazos y revisión humana ciega.

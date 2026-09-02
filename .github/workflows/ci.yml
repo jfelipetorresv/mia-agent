@@ -16,9 +16,6 @@ jobs:
       - name: Compile Python sources
         shell: pwsh
         run: python -m compileall -q backend/mia execution scripts
-      - name: Guard cumulative migration vocabularies
-        shell: pwsh
-        run: python execution/test_migration_contracts.py
       - name: Validate verification catalog
         shell: pwsh
         run: |

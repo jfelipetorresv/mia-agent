@@ -22,13 +22,15 @@ assert db_ready < maintenance < models
 assert 'emit(&app, "maintenance"' in rust
 assert dev["maintenance"]["cmd"] and installer["maintenance"]["cmd"]
 assert "<ProtectionReminder />" in layout
-assert "maintenance_status" in reminder
+assert 'shellInvoke<ProtectionStatus>("maintenance/status")' in reminder
 assert "/configurar#proteccion" in reminder
 assert "dismiss" not in reminder.lower()
 assert 'pathname.startsWith("/login")' in reminder
 assert 'window.addEventListener("mia:recovery-key-confirmed"' in reminder
 assert 'window.dispatchEvent(new Event("mia:recovery-key-confirmed"))' in protection
-assert ".catch(() => setNeedsKey(true))" in reminder
+assert ".catch((err) =>" in reminder
+assert "setNeedsKey(!(err instanceof Error" in reminder
+assert "err.message === DESKTOP_ONLY_MESSAGE" in reminder
 
 print("PASS: Mia protege y actualiza después de la DB y antes de sus servicios")
 print("PASS: el aviso de guardar la llave persiste hasta la confirmación")

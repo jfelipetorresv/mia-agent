@@ -166,7 +166,12 @@ def source_digest() -> str:
     Complementa los digests por caso: cubre el material que un digest por caso no ve —añadir un
     caso nuevo, borrar uno, reordenarlos, o cambiar la lógica del propio sello.
     """
-    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    # El manifiesto se registra sobre el contenido versionado (LF). En Windows, Git puede
+    # entregar este archivo con CRLF por `core.autocrlf=true`; el sello debe proteger el
+    # contenido y no el formato de checkout, o el holdout queda falsamente alterado solo en
+    # esa plataforma.
+    source = Path(__file__).read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(source).hexdigest()
 
 
 def current_manifest() -> dict:

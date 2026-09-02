@@ -102,6 +102,13 @@ def main() -> int:
         "el trigger de Primeros pasos muestra el contador (s.completados/s.total)",
         "s.completados" in configurar and "s.total" in configurar,
     )
+    # Las filas cerradas son selectores de un paso, no un acordeón persistente: al hacer
+    # clic se reemplazan por la tarjeta abierta. No deben declarar `aria-controls` hacia un
+    # panel que no existe mientras la fila está cerrada.
+    check(
+        "las filas cerradas no apuntan por ARIA a paneles inexistentes",
+        "aria-controls={idPanel}" not in configurar and "const idPanel" not in configurar,
+    )
 
     # 5. Compatibilidad externa: nadie que enlace a /configurar#... quedó roto
     setup_py = (ROOT / "backend" / "mia" / "api" / "routes" / "setup.py").read_text(encoding="utf-8")

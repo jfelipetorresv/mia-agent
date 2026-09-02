@@ -1,6 +1,6 @@
 # Mia — bugs-and-risks.md
 # Riesgos abiertos y watch-outs aún no resueltos
-# Última actualización: 2026-08-07 (sesión 55)
+# Última actualización: 2026-09-02 (sesión 63)
 
 ## Actualización 2026-08-07 — Sesión 55 (UI-A · revisión commits de Pipe · honestidad-UX · migración 047)
 
@@ -1835,3 +1835,26 @@ corrió (DB dev apagada, puerto 55432) — correr con la DB encendida; patrón i
   invento con aire de hecho leído. Corregido: pantalla y prompt miden la disponibilidad con la
   misma función, fail-closed, y lo concedido-pero-ausente se le dice al modelo como tal.
   Gate `test_persona_capacidades` §2-bis.
+
+## Cierres y notas de la sesión 63 (2026-09-02)
+
+- **#90 · CERRADO · resiliencia de pantallas y ARIA.** Chat conserva el hilo anterior si una
+  carga falla, ofrece reintento, vuelve a exponer historial/nueva conversación en móvil y
+  anuncia estados dinámicos. Memoria, Ayuda y Configuración distinguen error de lista vacía y
+  ofrecen reintento. Configuración dejó de apuntar por ARIA a un panel que no existía. Gate
+  `test_frontend_resilience` 7/7 y `test_config_tabs` 34/34.
+- **#91 · CERRADO · contratos de verificación posteriores al rediseño.** Se alinearon tests
+  con rutas canónicas, la política productiva Codex (`codex`/`cli-codex`) y su alias lateral de
+  evaluación (`cli-codex-eval`), el MIME habitual de Word y los saltos de línea de Windows del
+  holdout. No se relajó ninguna barrera de seguridad ni se cambió la política para satisfacer
+  expectativas antiguas. Los gates focales quedaron verdes.
+- **#92 · MITIGADO · entorno de pruebas compartido.** Un API local que ya estaba escuchando
+  reclamaba trabajos durables de las pruebas y los ejecutaba sin sus mocks, produciendo falsos
+  rojos en carpetas multi-fuente. Al retirarlo, `test_matter_folders_multi` y
+  `test_carpeta_proyecto` pasaron 31/31. El riesgo operativo queda documentado: las regresiones
+  con colas durables deben ejecutarse sin otro worker apuntando a la misma base.
+- **Pendientes que no son bugs cerrados:** el instalador en disco es anterior al HEAD actual;
+  falta la prueba fría del puente Tauri y la firma, el cotejo visual humano contra el Design
+  Pack, una corrida con LiteLLM vivo y el benchmark de calidad comparativo con revisión humana.
+  Expedientes muy grandes siguen limitados por la suscripción, con circuit-breaker y aviso de
+  crédito pero sin solución de capacidad.

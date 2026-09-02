@@ -88,7 +88,11 @@ _ODF_MIME = {
 _CFB_EXTENSIONS = frozenset({".doc", ".ppt", ".pps", ".xls"})
 _GENERIC_DECLARED_MIMES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
 _MIME_BY_EXTENSION = {
-    ".docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",),
+    # `application/docx` aparece en conectores de correo y algunos clientes de escritorio.
+    # Sigue siendo una declaración inequívoca de DOCX; la firma ZIP + manifest interno
+    # continúa siendo la autoridad de seguridad.
+    ".docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "application/docx"),
     ".docm": ("application/vnd.ms-word.document.macroenabled.12",),
     ".odt": (_ODF_MIME[".odt"],),
     ".rtf": ("application/rtf", "text/rtf"),

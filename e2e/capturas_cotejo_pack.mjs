@@ -74,7 +74,17 @@ async function capturar({ ruta, tema, token, nombre, espera = 2500 }) {
   const page = await ctx.newPage();
   const errores = [];
   page.on("console", (m) => m.type() === "error" && errores.push(m.text()));
-  page.on("requestfailed", (r) => errores.push(`REQ ${r.url()}`));
+  page.on("requestfailed", (r) => {
+    // Conserva la causa operativa sin guardar query strings (pueden contener tokens o
+    // mensajes del abogado) en el artefacto de validación.
+    let destino = r.url();
+    try {
+      const u = new URL(r.url());
+      destino = `${u.origin}${u.pathname}`;
+    } catch {}
+    errores.push(`REQ ${r.method()} ${destino}: ${r.failure()?.errorText || "falló"}`);
+  });
+  page.on("pageerror", (e) => errores.push(`PAGE ${e.message}`));
 
   await page.goto(`${BASE}${ruta}`, { waitUntil: "networkidle", timeout: 60000 });
   await page.waitForTimeout(espera);
@@ -94,6 +104,7 @@ async function capturar({ ruta, tema, token, nombre, espera = 2500 }) {
     redirigido: url_final !== ruta,
     en_spinner: cargando,
     errores: errores.length,
+    detalle_error: errores.slice(0, 10),
     captura: archivo,
   });
   console.log(

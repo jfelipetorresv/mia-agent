@@ -196,7 +196,7 @@ def guard_for(tmp: Path, name: str, **kw):
     return spend_guard.EvalSpendGuard(session_id="s-test", ledger_path=tmp / f"{name}.json", **kw)
 
 
-def run_calls(guard, fake, n: int, messages=None, **kwargs) -> list[BaseException]:
+def run_calls(guard, fake, n: int, messages=None, *, task: str = "main", **kwargs) -> list[BaseException]:
     """Hace `n` llamadas por la maquinaria REAL de `call_llm`; devuelve lo que levantó."""
     from mia.agent import llm as llm_mod
     errs: list[BaseException] = []
@@ -205,7 +205,7 @@ def run_calls(guard, fake, n: int, messages=None, **kwargs) -> list[BaseExceptio
         for _ in range(n):
             try:
                 llm_mod.call_llm(messages if messages is not None else big_messages(),
-                                 task="main", model=model, **kwargs)
+                                 task=task, model=model, **kwargs)
             except BaseException as exc:  # noqa: BLE001 — el gate ANALIZA la excepción
                 errs.append(exc)
     return errs
@@ -386,11 +386,14 @@ def main() -> None:
     # reserva nada; el pagado sí, con su alias EXACTO. (Sustituye —y supera— al viejo check
     # de "estimar el alias más caro de la cadena": ya no hace falta adivinar el peor caso
     # por adelantado, porque cada intento se reserva con el precio que de verdad se factura.)
-    cadena = llm_mod.resolve_fallback_chain("main", None)
+    # `main` en quality_adaptive degrada entre dos aliases de Claude Code, ambos gratuitos.
+    # Para probar la reserva de un salto GRATIS→PAGADO usamos `curator`, cuyo respaldo API
+    # explícito sí contiene `claude-sonnet`.
+    cadena = llm_mod.resolve_fallback_chain("curator", None)
     g = guard_for(tmp, "fallback", run_limit_usd=100.0)
     fake = FakeProvider(fail_aliases=(cadena[0],), fail_times=99, cache_mode="creation")
     with g.case("c-fallback"):
-        run_calls(g, fake, 1, model=None)
+        run_calls(g, fake, 1, task="curator", model=None)
     servidos = fake.attempts
     check("a-25 · un salto del alias GRATIS al PAGADO dentro de una sola llamada queda "
           "reservado y contado con el alias que de verdad cobra",

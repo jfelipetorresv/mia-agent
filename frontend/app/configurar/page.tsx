@@ -311,7 +311,10 @@ export default function ConfigurarPage() {
   if (error) {
     return (
       <PageShell>
-        <p className="rounded-md bg-warning/10 px-3 py-2 text-body text-warning">{error}</p>
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-warning/10 px-3 py-2 text-body text-warning">
+          <p>{error}</p>
+          <Button size="sm" variant="outline" onClick={load}>Reintentar</Button>
+        </div>
       </PageShell>
     );
   }
@@ -349,7 +352,6 @@ export default function ConfigurarPage() {
     <ul className="mt-6 space-y-2">
       {s.pasos.map((p, i) => {
         const abierto = p.id === abiertoId;
-        const idPanel = `paso-panel-${p.id}`;
 
         // Un paso ya hecho: una sola línea. No tiene acciones porque no hay
         // nada que hacer en él, y ocupar media pantalla con eso empuja hacia
@@ -471,8 +473,6 @@ export default function ConfigurarPage() {
           <li key={p.id} className="animate-slide-up" style={staggerStyle(i, { base: 60 })}>
             <button
               type="button"
-              aria-expanded={false}
-              aria-controls={idPanel}
               onClick={() => setExpandido(p.id)}
               className="flex w-full items-center gap-2.5 rounded-lg px-5 py-2.5 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >

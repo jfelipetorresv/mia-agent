@@ -114,15 +114,17 @@ def offline_checks() -> None:
         try:
             est = resolve_persona_alias("estandar")
             loc = resolve_persona_alias(MODEL_TIER_LOCAL)
-            chain = llm.resolve_fallback_chain("main")
             check(f"clamp[{pol}]: 'estandar' → sin override (None)", est is None)
             # Fail-closed por construcción: 'local' devuelve SIEMPRE el motor local, no una
             # posición de la cadena (robusto ante reordenamientos futuros de _POLICY_CHAINS).
             check(f"clamp[{pol}]: 'local' → motor local ({LOCAL_ALIAS})", loc == LOCAL_ALIAS)
-            # El invariante duro: NINGÚN nivel produce un alias que NO esté en la cadena de
-            # la política (no puede escalar a un proveedor que la política no permite).
-            check(f"clamp[{pol}]: 'local' está DENTRO de la cadena de la política",
-                  loc in chain)
+            # El invariante duro: la persona local es un override explícito y cerrado. No
+            # se exige que aparezca en la cadena base: en suscripción/nube precisamente no
+            # debe ser un fallback silencioso, pero sí debe poder imponerse por configuración
+            # expresa de la persona.
+            check(f"clamp[{pol}]: 'local' fuerza SOLO {LOCAL_ALIAS}",
+                  llm.resolve_fallback_chain("main", model=loc) == [LOCAL_ALIAS]
+                  and len(llm.resolve_fallback_chain("main", model=loc)) == 1)
             # Y en concreto: nunca es un alias de nube conocido.
             cloud = {"claude-sonnet", "claude-haiku", "openrouter-sonnet",
                      "cli-claude", "cli-claude-haiku"}

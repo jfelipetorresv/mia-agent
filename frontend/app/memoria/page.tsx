@@ -935,6 +935,7 @@ function Sugerencias() {
   const [curator, setCurator] = useState<CuratorProposal[]>([]);
   const [report, setReport] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   // B2 · disparo manual del aprendizaje ("Revisar ahora").
   const [reviewing, setReviewing] = useState(false);
@@ -949,10 +950,22 @@ function Sugerencias() {
   const [editSaving, setEditSaving] = useState(false);
 
   async function load() {
-    setItems(await apiGet<Proposal[]>("/api/proposals").catch(() => []));
-    setCurator(await apiGet<CuratorProposal[]>("/api/curator/proposals").catch(() => []));
-    const weekly = await apiGet<{ report: string | null }>("/api/dreams/report").catch(() => ({ report: null }));
+    const results = await Promise.allSettled([
+      apiGet<Proposal[]>("/api/proposals"),
+      apiGet<CuratorProposal[]>("/api/curator/proposals"),
+      apiGet<{ report: string | null }>("/api/dreams/report"),
+    ]);
+    const proposals = results[0].status === "fulfilled" ? results[0].value : [];
+    const curatorProposals = results[1].status === "fulfilled" ? results[1].value : [];
+    const weekly = results[2].status === "fulfilled" ? results[2].value : { report: null };
+    setItems(proposals);
+    setCurator(curatorProposals);
     setReport(weekly.report);
+    setLoadError(
+      results.some((result) => result.status === "rejected")
+        ? "No pude actualizar todas las mejoras. Estos datos pueden estar incompletos."
+        : null,
+    );
   }
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -1072,6 +1085,13 @@ function Sugerencias() {
     </Card>
   );
 
+  const loadErrorBanner = loadError ? (
+    <Card padding="sm" className="flex flex-wrap items-center justify-between gap-3 border-warning/30 bg-warning/5">
+      <p role="alert" className="text-body text-warning">{loadError}</p>
+      <Button size="sm" variant="outline" onClick={load}>Reintentar</Button>
+    </Card>
+  ) : null;
+
   // Dos cosas distintas que exigen dos decisiones distintas: la limpieza se aprueba en bloque;
   // el conflicto se resuelve eligiendo. Un solo botón para ambas sería el atajo que corrompe
   // el criterio.
@@ -1087,7 +1107,7 @@ function Sugerencias() {
     );
   }
 
-  if (items.length === 0 && curator.length === 0 && !report) {
+  if (items.length === 0 && curator.length === 0 && !report && !loadError) {
     return (
       <div className="space-y-4">
         {reviewBar}
@@ -1107,6 +1127,7 @@ function Sugerencias() {
   return (
     <div className="space-y-3">
       {reviewBar}
+      {loadErrorBanner}
       {msg ? (
         <p className="rounded-md bg-warning/10 px-3 py-2 text-body text-warning">{msg}</p>
       ) : null}

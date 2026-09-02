@@ -90,13 +90,19 @@ def main() -> int:
           not purga.esta_rota(r"\\servidor-de-la-oficina\expedientes\2026"))
     check("y se reconoce como INALCANZABLE, para poder nombrarla sin tocarla",
           purga.inalcanzable(r"\\servidor-de-la-oficina\expedientes\2026"))
-    unidad_muerta = next((f"{L}:\\Casos" for L in "ZYXWV"
-                          if not os.path.isdir(f"{L}:\\")), None)
-    if unidad_muerta:
-        check("una unidad de red no mapeada NO es rota",
-              not purga.esta_rota(unidad_muerta) and purga.inalcanzable(unidad_muerta))
+    # Una letra de unidad solo tiene semántica de unidad en Windows. En Linux la misma
+    # cadena (`Z:\\Casos`) es un nombre relativo normal y no puede probar esta propiedad;
+    # el caso UNC de arriba sí es portable y sigue cubriendo el contrato de red.
+    if os.name == "nt":
+        unidad_muerta = next((f"{L}:\\Casos" for L in "ZYXWV"
+                              if not os.path.isdir(f"{L}:\\")), None)
+        if unidad_muerta:
+            check("una unidad de red no mapeada NO es rota",
+                  not purga.esta_rota(unidad_muerta) and purga.inalcanzable(unidad_muerta))
+        else:
+            print("  [----] todas las letras de prueba están mapeadas; caso no evaluado")
     else:
-        print("  [----] todas las letras de prueba están mapeadas; caso no evaluado")
+        print("  [----] unidad de red no mapeada: no aplica fuera de Windows")
 
     print("\n3 · el borrado es explícito, nunca por defecto")
     fuente = (ROOT / "execution" / "purgar_carpetas_rotas.py").read_text(encoding="utf-8")

@@ -73,6 +73,8 @@ export default function ChatPage() {
   const [panelAtajos, setPanelAtajos] = useState(false);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("");
+  const [conversationError, setConversationError] = useState("");
+  const [conversationToRetry, setConversationToRetry] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [typing, setTyping] = useState(false); // Mia "escribiendo" (typewriter activo)
   const [matterRequired, setMatterRequired] = useState(false);
@@ -84,8 +86,11 @@ export default function ChatPage() {
   async function loadConversations() {
     try {
       setConversations(await apiGet<Conversation[]>("/api/assistant/conversations"));
+      setConversationError("");
+      setConversationToRetry(null);
     } catch {
-      /* sin conversaciones todavía */
+      setConversationToRetry(null);
+      setConversationError("No pude cargar tus conversaciones. Intenta de nuevo.");
     }
   }
 
@@ -123,16 +128,25 @@ export default function ChatPage() {
 
   async function openConversation(id: string) {
     if (streaming) return;
+    const previousId = activeId;
+    const previousMessages = messages;
     setActiveId(id);
     setStatus("");
     setMatterRequired(false);
+    setConversationError("");
+    setConversationToRetry(null);
     try {
       const rows = await apiGet<{ role: Role; content: string }[]>(
         `/api/assistant/conversations/${id}/messages`,
       );
       setMessages(rows.map((r) => ({ role: r.role, content: r.content })));
     } catch {
-      setMessages([]);
+      // No sustituyas el hilo visible por una pantalla vacía: eso haría parecer que la
+      // conversación se perdió. Conserva el hilo anterior y deshace la selección fallida.
+      setActiveId(previousId);
+      setMessages(previousMessages);
+      setConversationToRetry(id);
+      setConversationError("No pude abrir esa conversación. Intenta de nuevo.");
     }
   }
 
@@ -143,6 +157,8 @@ export default function ChatPage() {
     setStatus("");
     setInput("");
     setMatterRequired(false);
+    setConversationError("");
+    setConversationToRetry(null);
     inputRef.current?.focus();
   }
 
@@ -291,6 +307,41 @@ export default function ChatPage() {
 
       {/* Hilo */}
       <div className="flex min-w-0 flex-1 flex-col bg-aurora">
+        {conversationError ? (
+          <div role="alert" className="flex items-center justify-center gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-center text-meta text-destructive">
+            <span>{conversationError}</span>
+            <Button
+              onClick={() => (conversationToRetry ? openConversation(conversationToRetry) : loadConversations())}
+              variant="outline"
+              size="sm"
+              className="h-7 shrink-0 border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              Reintentar
+            </Button>
+          </div>
+        ) : null}
+        <div className="flex items-center gap-2 border-b border-border bg-card/40 p-2 md:hidden">
+          <Button onClick={newConversation} variant="outline" size="sm" className="shrink-0 gap-1.5">
+            <Plus className="h-4 w-4" />
+            Nueva
+          </Button>
+          <label htmlFor="chat-mobile-conversation" className="sr-only">
+            Conversación abierta
+          </label>
+          <select
+            id="chat-mobile-conversation"
+            value={activeId ?? ""}
+            onChange={(e) => (e.target.value ? openConversation(e.target.value) : newConversation())}
+            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+          >
+            <option value="">Conversación nueva</option>
+            {conversations.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.title || "Conversación"}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex-1 overflow-auto">
           {empty ? (
             <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col items-center justify-center px-4 py-16 text-center">
@@ -386,6 +437,8 @@ export default function ChatPage() {
                     </div>
                   ) : null}
                   <div
+                    aria-live={m.role === "assistant" && i === lastIdx && !typing ? "polite" : undefined}
+                    aria-atomic={m.role === "assistant" && i === lastIdx && !typing ? "true" : undefined}
                     className={
                       m.role === "user"
                         ? "max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-neu-raised"
@@ -428,7 +481,7 @@ export default function ChatPage() {
         <div className="bg-gradient-to-t from-background via-background/95 to-transparent pt-2">
           <div className="mx-auto w-full max-w-2xl px-4 pb-4">
             {status ? (
-              <p className="mb-2 flex items-center gap-2 text-sm text-muted-foreground animate-fade-in">
+              <p role="status" aria-live="polite" aria-atomic="true" className="mb-2 flex items-center gap-2 text-sm text-muted-foreground animate-fade-in">
                 <span className="flex gap-1">
                   <Dot /> <Dot delay="150ms" /> <Dot delay="300ms" />
                 </span>

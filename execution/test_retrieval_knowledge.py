@@ -349,7 +349,8 @@ def run_db_checks(ids: dict, obs: dict) -> None:
         {"soul_snapshot": None}, "analysis",
         matter_context=graph_mod._matter_context_for({"documents": [], "knowledge": []}))
     expected_user = (f"Consulta del abogado:\n{MSG}\n\n"
-                     "Expediente:\n(sin documentos recuperados del expediente)")
+                     "Expediente:\n(sin documentos recuperados del expediente)\n\n"
+                     + graph_mod.legal_packs.STRATEGY_PACK_INSTRUCTION)
     got_sys = obs["c_messages"][0]["content"]
     got_user = obs["c_messages"][1]["content"]
     # Prefix caching de Anthropic: para los alias claude-* (aquí claude-sonnet) el system
@@ -408,10 +409,12 @@ def run_budget_checks() -> None:
         asyncio.run(builder.analysis_node(st))
         up = fc.messages_seen[0][1]["content"]
         idx = up.find(graph_mod.KNOWLEDGE_HEADER)
-        in_prompt = up[idx:] if idx >= 0 else ""
+        expected_section = graph_mod._render_knowledge(giant, window)
+        in_prompt = up[idx:idx + len(expected_section)] if idx >= 0 else ""
         check(f"d4 · en el prompt real la sección también cabe en el presupuesto "
               f"({estimate_tokens(in_prompt)} ≤ {budget})",
-              idx >= 0 and estimate_tokens(in_prompt) <= budget)
+              idx >= 0 and in_prompt == expected_section
+              and estimate_tokens(in_prompt) <= budget)
     finally:
         config.MIA_CONTEXT_WINDOW = saved
 

@@ -62,10 +62,13 @@ def main() -> int:
     check("cada caso corre diez veces por brazo", plan["required_turns"] == len(expected) * 10 * 2)
     check("plan tiene hash estable de 64 hex", len(plan["plan_sha256"]) == 64)
     check("Claude tiene productor jurídico aislado", plan["arms"]["claude"]["graph_producer_ready"] is True)
-    check("Codex eval no se confunde con productor del grafo",
-          plan["arms"]["codex"]["graph_producer_ready"] is False
-          and "sin_ruta_productor_juridico_en_mia"
-          in plan["arms"]["codex"]["production_blockers"])
+    codex_arm = plan["arms"]["codex"]
+    check("Codex productivo y eval no se confunden",
+          codex_arm["producer_policy"] == "codex"
+          and codex_arm["graph_producer_ready"] is True
+          and all("cli-codex-eval" not in route
+                  for route in codex_arm["legal_routes"].values())
+          and not codex_arm["production_blockers"])
     check("ruta Codex eval habilita el mismo grafo sin política productiva",
           plan["arms"]["codex"]["benchmark_graph_ready"] is True
           and plan["arms"]["codex"]["eval_provider"] == "codex"

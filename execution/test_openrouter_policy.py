@@ -169,10 +169,10 @@ def run() -> None:
 
     # === 2 · overflow ("más uso") en suscripcion y nube con clave + opt-in ===
     def _sus_overflow():
-        check("2a · [suscripcion+overflow] main inserta openrouter-sonnet antes de mia-local",
+        check("2a · [suscripcion+overflow] main añade OpenRouter tras la suscripción",
               llm.resolve_fallback_chain("main")
-              == ["cli-claude", "claude-sonnet", "openrouter-sonnet", "mia-local"])
-        check("2b · [suscripcion+overflow] curator igual",
+              == ["cli-claude", "openrouter-sonnet"])
+        check("2b · [suscripcion+overflow] curator conserva su respaldo y añade OpenRouter",
               llm.resolve_fallback_chain("curator")
               == ["cli-claude", "claude-sonnet", "openrouter-sonnet", "mia-local"])
     with_overflow("suscripcion", "sk-or-test", True, _sus_overflow)
@@ -199,7 +199,7 @@ def run() -> None:
     with_overflow_env("suscripcion", "", "sk-or-solo-en-env", True, lambda: check(
         "4b · [suscripcion] clave SOLO en el .env (config vacío) → overflow ACTIVO (MAYOR 1)",
         llm.resolve_fallback_chain("main")
-        == ["cli-claude", "claude-sonnet", "openrouter-sonnet", "mia-local"]))
+        == ["cli-claude", "openrouter-sonnet"]))
 
     # === 4c · clave en el .env pero SIN opt-in → NO overflow (regla 2 intacta) ===
     with_overflow_env("suscripcion", "", "sk-or-solo-en-env", False, lambda: check(

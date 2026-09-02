@@ -130,7 +130,7 @@ def main() -> int:  # noqa: C901
           and "conRespaldo = v.respaldadas + selladas" in rev, contexto[-120:])
     check("el resumen contempla las citas retiradas del texto",
           "retirada del texto" in rev and "v.omitidas" in rev)
-    proy = (ROOT / "frontend" / "app" / "proyectos" / "[id]" / "page.tsx").read_text(
+    proy = (ROOT / "frontend" / "app" / "casos" / "[id]" / "CasoDirecto.tsx").read_text(
         encoding="utf-8")
     check("y la respuesta de un proyecto no pierde los avisos al normalizar el informe",
           "afirmaciones_negativas" in proy and "contaminacion_expediente" in proy)

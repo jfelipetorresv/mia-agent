@@ -9,11 +9,102 @@
 
 ---
 
+# CIERRE — 2026-09-02 · sesión 63 · auditoría de Claude Code, cableado y regresión
+
+## TL;DR
+
+Se auditó el último estado que dejó Claude Code y se cerraron los huecos verificables que
+aparecieron al recorrerlo. El punto de partida era `a961131`, ya alineado con `origin/main`;
+no había commits perdidos ni cambios sin push de la sesión 62. La revisión de esta sesión se
+hizo con Claude Code (Opus, esfuerzo xhigh) y con pasadas independientes de Sol, Terra y Luna
+(xhigh), cada una sobre una superficie distinta.
+
+El desarrollo queda **verde en la verificación rápida integrada: 35 suites, 167,4 s**. También
+pasaron lint, TypeScript y el build de producción del frontend (17 rutas), además de `cargo
+check` del escritorio. La regresión completa inicial no fue verde por dos dependencias de
+entorno (LiteLLM apagado y Telegram sin canal opt-in) y por contratos de pruebas que aún
+nombraban rutas antiguas; los contratos deterministas fueron corregidos y repetidos en verde.
+
+## Qué dejó construido Claude Code
+
+- **Bienvenida y ayuda (`95c55ac`)**: la entrevista pasó de siete preguntas a cinco, la
+  jurisdicción quedó como control único y `/ayuda` se convirtió en una pantalla propia con
+  la explicación de cada sección.
+- **Revisión y atajos (`12b2fc0`)**: los puntos abiertos aparecen antes de aprobar y los
+  atajos del chat se pueden reordenar con arrastre o teclado, conservando el orden.
+- **Capacidades de ayudantes (`89f16cb`)**: lo que la máquina no tiene no se promete al modelo;
+  la pantalla y el prompt comparten la misma medición fail-closed. Incluyó la migración 064.
+- **Sistema visual y escritorio (`82d659c`)**: 49 superficies adoptaron el sistema Luxury y
+  nació el gate que comprueba que la pantalla solo invoque rutas existentes del puente seguro.
+- **Deuda y barreras (`a2cf33a`, `85893b8`, `b00f2db`)**: retiro seguro de carpetas rotas,
+  banco de citas/holdout, corrección de tests ciegos y actualización de riesgos.
+- **Pantallas densas (`a961131`)**: `/ayuda` y `/configurar` dejaron de mostrarlo todo a la
+  vez, con navegación por pestañas, deep-links y estado más legible.
+
+## Qué se corrigió en esta auditoría
+
+- Chat: una conversación que falla al cargar ya no borra el hilo visible; hay reintento,
+  controles de historial/nueva conversación en móvil y anuncios accesibles de estado/respuesta.
+- Memoria, ayuda y configuración: los errores de carga ya no se convierten en listas vacías
+  engañosas; cada pantalla ofrece reintento claro.
+- Configuración: se eliminó una referencia ARIA a paneles inexistentes y se añadió un gate
+  específico de resiliencia del frontend.
+- CI y pruebas: el contrato de migraciones corre en el job crítico que ya instala el backend;
+  el purgador de carpetas es portable; el holdout normaliza saltos de línea de Windows y conserva su sello;
+  Word acepta el MIME habitual `application/docx`; y los tests fueron alineados con las rutas
+  canónicas actuales, sin cambiar la política de motores para hacerlos pasar.
+- Evidencia: el cotejador de capturas conserva el detalle de errores sin query strings ni
+  secretos. El puente productivo sigue usando solo POST, allowlist y loopback.
+
+## Verificación ejecutada
+
+- `scripts\verify.ps1 -Mode quick`: **35/35 suites verdes** (167,4 s).
+- Gates focales: migraciones **7/7**, purgador **13/13**, configuración **34/34**, resiliencia
+  del frontend **7/7**, holdout/mutaciones **50/50**, gasto **83/83**, benchmark de proveedores
+  **20/20**, correo→expediente **24/24**, multi-carpeta de expediente **31/31**, multi-carpeta
+  de proyecto **31/31**, personas **52/52**.
+- Frontend: `npm run lint` **0**, TypeScript **0**, `npm run build` **0**; las **17 rutas** se
+  generaron. El aviso de SWC nativo fue absorbido por el fallback WASM de Next y no impidió
+  compilar. Escritorio: `cargo check` **0**.
+- Navegador: el arnés real tomó `/casos` y `/onboarding` en claro/oscuro, sin redirecciones ni
+  spinners. Registró 8 mensajes por captura, todos asociados al puente esperado `mia-shell.localhost`
+  ausente en navegador puro; esto no acredita el puente instalado.
+
+## Pendientes reales
+
+- **Instalador**: el `.exe` en `desktop/src-tauri/target/release/bundle/nsis/` sigue siendo
+  de 2026-08-14 y fue construido desde `bafbb638`; no contiene las últimas pantallas ni el
+  puente actual. Falta ejecutar el ensamblaje desde checkout limpio, probar instalación y
+  primer arranque en frío, y firmar si corresponde. El gate contractual del puente no sustituye
+  esa prueba.
+- **Cotejo visual humano**: el arnés ya produjo 4 capturas actuales de `/casos` y `/onboarding`
+  en claro/oscuro, pero aún falta compararlas visualmente contra
+  `docs/design/MIA-Luxury-Design-Pack/` y dar el visto bueno de diseño. El gate de tokens no puede
+  declarar equivalencia visual.
+- **Servicios vivos**: LiteLLM no estaba levantado en el puerto 4000 durante la regresión; el
+  bloque de reintentos y el MCP-live quedan pendientes de una corrida con ese servicio. Telegram
+  está correctamente opt-in, pero no hay `TELEGRAM_BOT_TOKEN` configurado en esta máquina.
+- **Benchmark de calidad**: la ruta Codex productiva (`codex`/`cli-codex`) y la ruta lateral de
+  evaluación (`cli-codex-eval`) ya están separadas y verificadas; todavía no existe un resultado
+  comparativo de calidad con ambos brazos completos y revisión humana ciega.
+- **Producto conocido**: expedientes muy grandes pueden agotar el tiempo de la suscripción y
+  saltar al motor de crédito; el circuit-breaker y el aviso lo mitigan, pero no aumentan el
+  límite de contexto. La lectura agéntica bajo suscripción sigue apagada y su límite está
+  declarado en pantalla.
+- Siguen sin entrar al repositorio las imágenes de Antigravity mencionadas en la bitácora.
+
+La suposición de esta auditoría es que “lo otro que quiero revisar” significa salud integral
+del proyecto: código, cableado, pruebas, frontend, escritorio, documentación y pendientes de
+release. No se tocó lógica jurídica de negocio ni se usaron datos reales de clientes.
+
+---
+
 # CIERRE — 2026-09-01 · sesión 62 · los 23 puntos de UX cerrados y la deuda de la 61 en cero · EMPEZAR AQUÍ
 
 ## TL;DR
 
-Cinco commits (`a2cf33a`…`82d659c`), **sin push**. La bitácora de feedback UX del 2026-08-19
+Registro histórico: esos cinco commits se incorporaron después a `origin/main`; al iniciar la
+sesión 63, `HEAD` y `origin/main` estaban en `a961131`. La bitácora de feedback UX del 2026-08-19
 queda **cerrada: sus 23 puntos están todos hechos**, y la deuda declarada en la sesión 61 queda
 en cero salvo lo que sigue abajo con su causa. `verify.ps1 -Mode quick` VERDE: **33 suites,
 36,6 s**. Los gates se corren con `.venv\Scripts\python.exe` (el Python del sistema no tiene
@@ -67,13 +158,14 @@ a Configuración), D10 (un solo selector de jurisdicción), y los puntos 5, 7, 8
 ## Deuda declarada (con causa)
 
 - **Prueba en frío del instalador.** El puente quedó verificado por contrato (`test_puente_shell`
-  7/7) y el instalador se reensambló con el checkout limpio, pero que los botones de Protección
-  funcionen en la app instalada solo lo acredita instalarla en una máquina limpia. Es de Pipe.
+  7/7), pero el `.exe` que quedó en disco es anterior al rediseño y al puente actual. Falta
+  reensamblarlo desde checkout limpio y acreditar los botones de Protección en una máquina limpia.
 - **Cotejo visual contra los renders del pack.** Las capturas en claro y oscuro están tomadas y
   la tabla de veredictos está en `validation/validation-log.md`; decir que se ven *como el
   pack* exige comparar contra `docs/design/MIA-Luxury-Design-Pack/`, y eso es mirar, no medir.
   El gate de diseño lo advierte en su propia salida.
-- **Sin push.** Los cinco commits están locales, a la espera de que Pipe los apruebe.
+- **Sin push (superseded).** El estado histórico ya fue incorporado a `origin/main`; cualquier
+  cambio pendiente de la sesión 63 se documenta y se commitea al cerrar esta auditoría.
 - **Las imágenes de Antigravity** que menciona §0 de la bitácora siguen sin llegar al repo.
 
 ## Trampas del entorno que costaron tiempo (para no repetirlas)
