@@ -17,7 +17,8 @@ rediseño denso de `/ayuda` y `/configurar`.
 
 Qué sigue: el instalador NSIS ya fue reensamblado desde checkout limpio (Compact/core, 167,1 MB;
 primer arranque limpio PASS), pero falta instalarlo y probar el puente real en frío; falta el cotejo visual humano contra el Design Pack; la
-regresión con LiteLLM vivo y Telegram configurado; y el benchmark comparativo real con revisión
+regresión con LiteLLM vivo y Telegram configurado; el CI remoto sobre `55680a2` quedó 3/3 verde;
+y el benchmark comparativo real con revisión
 ciega. Los expedientes muy grandes siguen limitados por la suscripción, mitigados pero no resueltos.
 Las imágenes de Antigravity siguen ausentes. No se tocó lógica jurídica ni datos reales.
 

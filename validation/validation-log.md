@@ -200,6 +200,7 @@ no se registraron secretos, query strings ni contenido de expedientes reales en 
 | `/chat` móvil claro | control de nueva conversación/historial presente; captura `23_2026-09-02_chat-mobile-light.png` |
 | Lint, TypeScript y build | **0 errores**; 17 rutas generadas |
 | Instalador Compact/core | **167,1 MB**, SHA-256 registrado; primer arranque limpio **37,8 s**; humos portable **PASS** |
+| CI remoto sobre `55680a2` | **3/3 jobs verdes**: frontend, contratos legales críticos y escritorio |
 
 La captura de cotejo ahora conserva el origen y detalle acotado de una petición fallida sin
 guardar la consulta completa; esto corrige el defecto de observabilidad del arnés. La ejecución

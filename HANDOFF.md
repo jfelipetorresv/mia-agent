@@ -66,6 +66,8 @@ nombraban rutas antiguas; los contratos deterministas fueron corregidos y repeti
 - Frontend: `npm run lint` **0**, TypeScript **0**, `npm run build` **0**; las **17 rutas** se
   generaron. El aviso de SWC nativo fue absorbido por el fallback WASM de Next y no impidió
   compilar. Escritorio: `cargo check` **0**.
+- CI remoto sobre `55680a2`: **3/3 jobs verdes** (frontend estático, contratos legales críticos
+  y cáscara de escritorio).
 - Navegador: el arnés real tomó `/casos` y `/onboarding` en claro/oscuro, sin redirecciones ni
   spinners. Registró 8 mensajes por captura, todos asociados al puente esperado `mia-shell.localhost`
   ausente en navegador puro; esto no acredita el puente instalado.
