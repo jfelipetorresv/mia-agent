@@ -72,10 +72,11 @@ nombraban rutas antiguas; los contratos deterministas fueron corregidos y repeti
 
 ## Pendientes reales
 
-- **Instalador**: el `.exe` en `desktop/src-tauri/target/release/bundle/nsis/` sigue siendo
-  de 2026-08-14 y fue construido desde `bafbb638`; no contiene las últimas pantallas ni el
-  puente actual. Falta ejecutar el ensamblaje desde checkout limpio, probar instalación y
-  primer arranque en frío, y firmar si corresponde. El gate contractual del puente no sustituye
+- **Instalador**: el build Compact/core ya se reensambló desde `59cfd71`: `Mia_0.3.0_x64-setup.exe`,
+  167,1 MB, SHA-256 `d35b243981b9443f189e93924145b501c28d4e28d6b91b0c59dd8c663751126c`.
+  El primer arranque sobre datos temporales limpios pasó en 37,8 s y los humos de frontend
+  portable/LiteLLM pasaron. Sigue pendiente instalar ese NSIS en una máquina limpia, verificar
+  el puente real dentro de Tauri y firmarlo si corresponde. El gate contractual del puente no sustituye
   esa prueba.
 - **Cotejo visual humano**: el arnés ya produjo 4 capturas actuales de `/casos` y `/onboarding`
   en claro/oscuro, pero aún falta compararlas visualmente contra

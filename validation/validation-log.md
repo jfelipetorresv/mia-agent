@@ -199,6 +199,7 @@ no se registraron secretos, query strings ni contenido de expedientes reales en 
 | `/configurar` claro/oscuro | captura visual `19_2026-09-02_*.png`; sin veredicto automatizado propio asociado |
 | `/chat` móvil claro | control de nueva conversación/historial presente; captura `23_2026-09-02_chat-mobile-light.png` |
 | Lint, TypeScript y build | **0 errores**; 17 rutas generadas |
+| Instalador Compact/core | **167,1 MB**, SHA-256 registrado; primer arranque limpio **37,8 s**; humos portable **PASS** |
 
 La captura de cotejo ahora conserva el origen y detalle acotado de una petición fallida sin
 guardar la consulta completa; esto corrige el defecto de observabilidad del arnés. La ejecución
@@ -207,7 +208,7 @@ runtime/mantenimiento) rechazado porque la prueba corre en navegador puro. Las r
 a destino y no quedaron en spinner. La prueba del puente instalado sigue pendiente.
 
 **Pendientes de evidencia:** comparar visualmente estas capturas contra
-`docs/design/MIA-Luxury-Design-Pack/`; ensamblar y probar en frío el instalador actual; repetir
+`docs/design/MIA-Luxury-Design-Pack/`; instalar y probar en frío el NSIS actual dentro de Tauri; repetir
 la regresión con LiteLLM en `127.0.0.1:4000`; y, si se desea probar el canal Telegram, hacerlo
 con su configuración opt-in. El benchmark Codex/Claude tiene contrato verde, pero todavía no
 es un resultado comparativo de calidad con dos brazos y revisión humana ciega.

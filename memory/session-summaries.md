@@ -15,8 +15,8 @@ atajos reordenables; capacidades de ayudantes medidas de forma honesta; 49 super
 con gate del puente; purga segura de carpetas, holdout y barreras contra tests ciegos; y el nuevo
 rediseño denso de `/ayuda` y `/configurar`.
 
-Qué sigue: el instalador NSIS de disco es de 2026-08-14 y debe reensamblarse desde checkout
-limpio, instalarse y probarse en frío; falta el cotejo visual humano contra el Design Pack; la
+Qué sigue: el instalador NSIS ya fue reensamblado desde checkout limpio (Compact/core, 167,1 MB;
+primer arranque limpio PASS), pero falta instalarlo y probar el puente real en frío; falta el cotejo visual humano contra el Design Pack; la
 regresión con LiteLLM vivo y Telegram configurado; y el benchmark comparativo real con revisión
 ciega. Los expedientes muy grandes siguen limitados por la suscripción, mitigados pero no resueltos.
 Las imágenes de Antigravity siguen ausentes. No se tocó lógica jurídica ni datos reales.

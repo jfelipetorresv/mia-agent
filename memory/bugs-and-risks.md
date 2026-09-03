@@ -1853,8 +1853,9 @@ corrió (DB dev apagada, puerto 55432) — correr con la DB encendida; patrón i
   rojos en carpetas multi-fuente. Al retirarlo, `test_matter_folders_multi` y
   `test_carpeta_proyecto` pasaron 31/31. El riesgo operativo queda documentado: las regresiones
   con colas durables deben ejecutarse sin otro worker apuntando a la misma base.
-- **Pendientes que no son bugs cerrados:** el instalador en disco es anterior al HEAD actual;
-  falta la prueba fría del puente Tauri y la firma, el cotejo visual humano contra el Design
-  Pack, una corrida con LiteLLM vivo y el benchmark de calidad comparativo con revisión humana.
+- **Pendientes que no son bugs cerrados:** el instalador Compact/core ya fue reensamblado desde
+  `59cfd71` (167,1 MB; primer arranque limpio PASS); falta instalarlo y probar el puente Tauri
+  real en frío y la firma, además del cotejo visual humano contra el Design Pack, una corrida con
+  LiteLLM vivo y el benchmark de calidad comparativo con revisión humana.
   Expedientes muy grandes siguen limitados por la suscripción, con circuit-breaker y aviso de
   crédito pero sin solución de capacidad.
