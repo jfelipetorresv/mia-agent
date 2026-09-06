@@ -9,6 +9,49 @@
 
 ---
 
+# EN CURSO — 2026-09-06 · memoria implementada; instalador 0.3.1
+
+Meta explícita de Pipe: implementar memoria de conversaciones largas, instalar esta
+versión y dejar el instalador accesible. Base `86164e5`, misma rama de auditoría.
+La memoria está implementada y revisada; falta construir NSIS e instalarlo.
+
+- Recupera todos los originales en páginas de 200; checkpoint persistido por despacho
+  y conversación con cursor, huella UTC, revisión y RLS forzado. Conserva primeros
+  cinco, últimos treinta y `[VERIFICAR]` textuales; invalida ante cambios de origen.
+- Reutiliza resúmenes, acepta solo ahorro, evita compresiones concurrentes del mismo
+  tramo y detiene intentos poco útiles. Si los originales caben, se usan íntegros;
+  si no caben, avisa sin responder como si recordara todo. No guarda contexto efímero.
+- Verificación consolidada de nueve casos de memoria: última pasada amplia 8/9,
+  antithrashing corregido con fechas UTC y focal 1/1; después prefijo/edición/borrado
+  forzado 2/2. No presentar como una única corrida 9/9. Dos mutaciones detectadas
+  (omitir cabeza; inyectar checkpoint de otro despacho). Proveedores simulados.
+- Regresión final: asistente 32/32, compresor 30/30, recuperación 61/61, RLS 19/19,
+  contratos SQL 7/7 y metagate 9/9. Migración 066 sellada: 63 migraciones. Su forma
+  final se aplicó a desarrollo mediante el helper del test legado. Bases temporales
+  de pruebas eliminadas. Revisión independiente aprobada.
+- Versiones frontend/desktop/Cargo/Tauri coherentes en 0.3.1; gate instalador 48/48.
+  No hay instalación registrada ni proceso Mia; LOCALAPPDATA/Mia/mia-data está vacía.
+  Prerrequisitos de build presentes. El PostgreSQL de desarrollo escucha en 55432:
+  apagarlo ordenadamente antes de abrir la instalación, que usa el mismo puerto.
+
+## Paso actual y aceptación restante
+
+1. Crear commit limpio y correr `packaging/build_installer.ps1 -BackendProfile core
+   -WebViewProfile Compact`, sin reusar payloads. Mide primer arranque en perfil nuevo.
+2. Verificar versión/commit/huella del NSIS y dejarlo en Descargas.
+3. Instalar y abrir esta versión conservando carpeta existente. Validar `/health`
+   (esquema completo), ejecutable instalado y puente nativo mediante
+   `e2e/installed_smoke.mjs`. No crear usuarios ni elegir jurisdicción del despacho.
+4. Cerrar instancia de inspección CDP y abrir normalmente. Actualizar este cierre y
+   evidencia del instalador; no declarar meta lograda antes de completar estos pasos.
+
+Diseño: `docs/chat-continuidad-idempotencia.md`. Evidencia de código:
+`validation/conversation-memory-0.3.1.json`. La lectura pagina PostgreSQL pero reúne
+originales en RAM. No hay medición de calidad semántica de modelos reales ni promesa
+monetaria; el resumen no sustituye fuentes ni verifica citas.
+
+---
+
 # CIERRE — 2026-09-06 · continuación: recuperación de envíos del chat
 
 Continúa sobre `c5281c2` en `fix/mia-audit-efficiency-20260906`. Se añadió idempotencia

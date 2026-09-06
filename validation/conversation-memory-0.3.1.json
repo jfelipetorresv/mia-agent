@@ -1,0 +1,83 @@
+{
+  "version": "0.3.1",
+  "base_commit": "86164e5",
+  "scope": "durable assistant conversation memory",
+  "memory_tests": {
+    "file": "execution/test_conversation_memory.py",
+    "verified_cases": 9,
+    "last_broad_run": {
+      "passed": 8,
+      "total": 9
+    },
+    "followups": [
+      {
+        "case": "antithrashing with canonical UTC hash",
+        "passed": 1,
+        "total": 1,
+        "seconds": 12.427
+      },
+      {
+        "case": "prefix and forced edit/retroactive insertion/tail deletion",
+        "passed": 2,
+        "total": 2,
+        "seconds": 29.523
+      }
+    ],
+    "note": "consolidated verification, not a single 9/9 run"
+  },
+  "regression": [
+    {
+      "suite": "test_assistant.py",
+      "passed": 32,
+      "total": 32
+    },
+    {
+      "suite": "test_context_compressor.py",
+      "passed": 30,
+      "total": 30
+    },
+    {
+      "suite": "test_context_recovery.py",
+      "passed": 61,
+      "total": 61
+    },
+    {
+      "suite": "test_rls.py",
+      "passed": 19,
+      "total": 19
+    },
+    {
+      "suite": "test_migration_contracts.py",
+      "passed": 7,
+      "total": 7
+    },
+    {
+      "suite": "test_gates_no_ciegos.py",
+      "passed": 9,
+      "total": 9
+    },
+    {
+      "suite": "test_installer_bundle.py",
+      "passed": 48,
+      "total": 48
+    }
+  ],
+  "mutations_detected": [
+    "omit protected first five messages",
+    "inject a checkpoint belonging to another tenant"
+  ],
+  "migration": {
+    "file": "066_assistant_conversation_memory.sql",
+    "sealed": true,
+    "total_migrations": 63,
+    "applied_to_development": true
+  },
+  "independent_review": "approved",
+  "providers": "synthetic; no real model calls",
+  "temporary_databases": "removed",
+  "limits": [
+    "originals gathered in RAM despite paged DB reads",
+    "real model summary fidelity and monetary savings not measured",
+    "installer and installed WebView verification follow separately"
+  ]
+}

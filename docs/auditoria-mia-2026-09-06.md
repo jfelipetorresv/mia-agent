@@ -1,5 +1,10 @@
 # Auditoría de Mia — 6 de septiembre de 2026
 
+Actualización posterior: la versión 0.3.1 incorpora memoria durable del chat además
+de idempotencia. Las menciones siguientes a resumen pendiente describen el primer
+cierre; el comportamiento vigente está en `docs/chat-continuidad-idempotencia.md`
+y la entrega e instalación se registran en el cierre más reciente de `HANDOFF.md`.
+
 ## Propósito y alcance comprobable
 
 Mia debe permitir que un abogado abra un asunto, aporte documentos, converse sobre ellos,

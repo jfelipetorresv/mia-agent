@@ -54,6 +54,7 @@ from ..db import pool
 from ..onboarding.soul_interview import load_soul_text
 from . import reminders as reminders_mod
 from . import chat_requests
+from . import conversation_memory
 
 logger = logging.getLogger("mia.assistant.core")
 
@@ -131,20 +132,6 @@ REMINDER_PROCEDURAL_WARNING = (
     "y debes confirmarla contra el expediente o la fuente oficial antes de actuar — "
     "yo no calculo términos legales por mi cuenta."
 )
-
-# Historial: cuántos mensajes persistidos se cargan por turno. Una conversación de años
-# no puede cargarse entera (memoria + latencia + ventana); 200 mensajes ≈ semanas de uso
-# y el compresor/truncado reduce desde ahí. Los más antiguos siguen en DB (list_messages
-# no limita), solo dejan de viajar al modelo.
-_HISTORY_MAX_MESSAGES = 200
-
-# Fallback si la COMPRESIÓN falla (excepción del compresor o de su LLM): truncado duro
-# SIN LLM — se conservan los primeros 2 y los últimos 30 mensajes (eco del patrón
-# protect del compresor) con un marcador en medio, y el turno CONTINÚA (nunca 502 por
-# no poder resumir).
-_TRUNCATE_KEEP_FIRST = 2
-_TRUNCATE_KEEP_LAST = 30
-TRUNCATION_MARKER = "[... historial antiguo omitido ...]"
 
 # Campos interpolados en bloques del sistema (p. ej. títulos de matters): máximo de chars.
 _FIELD_MAX_CHARS = 150
@@ -251,17 +238,6 @@ def _sanitize_title(value, max_chars: int = _FIELD_MAX_CHARS) -> str:
     neutralización de marcadores de sello `<<<`/`>>>` al saneo que ya existía.
     """
     return untrusted.sanitize_field(value, max_chars)
-
-
-def _truncate_history(history: list[dict]) -> list[dict]:
-    """Truncado duro SIN LLM del historial (fallback cuando la compresión falla)."""
-    if len(history) <= _TRUNCATE_KEEP_FIRST + _TRUNCATE_KEEP_LAST:
-        return history
-    return [
-        *history[:_TRUNCATE_KEEP_FIRST],
-        {"role": "user", "content": TRUNCATION_MARKER},
-        *history[-_TRUNCATE_KEEP_LAST:],
-    ]
 
 
 def _require_uuid(conversation_id: str) -> str:
@@ -404,12 +380,12 @@ class AssistantService:
         """Un turno de conversación libre. Devuelve (conversation_id, respuesta).
 
         (a) crea la conversación si no existe (título = primeras palabras);
-        (b) carga el historial PREVIO (últimos _HISTORY_MAX_MESSAGES) y añade el
+        (b) recupera el historial PREVIO íntegro o con checkpoint validado y añade el
             mensaje del abogado EN MEMORIA — no se persiste todavía: si el modelo
             falla, no queda un turno 'user' huérfano que se duplique al reintentar;
         (c) arma system (SOUL + comunicación + instrucción del asistente) + historial;
-        (d) comprime el historial si supera el umbral (55% de la ventana); si la
-            compresión falla, trunca SIN LLM y el turno continúa;
+        (d) resume solo originales persistidos sobre el umbral (55% de la ventana);
+            si falla, conserva originales si caben o emite aviso sin responder;
         (e) llama call_llm(task='main') en un thread (política del tenant ya fijada);
         (f) persiste user + assistant JUNTOS (misma transacción) tras el éxito.
         """
@@ -418,9 +394,8 @@ class AssistantService:
             raise ValueError("El mensaje está vacío.")
 
         # (a) + (b) validación/creación de la conversación + lectura del historial
-        # previo — una sola transacción bajo RLS. Solo los últimos N mensajes viajan
-        # al modelo (subquery DESC LIMIT, reordenada ASC para el orden cronológico);
-        # los más antiguos siguen en DB.
+        # previo para recordatorios deterministas. El contexto del modelo se recupera
+        # después desde TODOS los originales y su checkpoint de cobertura.
         if conversation_id:
             conversation_id = _require_uuid(conversation_id)
         async with pool.tenant_connection(tenant_id) as conn:
@@ -446,7 +421,7 @@ class AssistantService:
                 "  WHERE conversation_id = %s::uuid"
                 "  ORDER BY created_at DESC, id DESC LIMIT %s"
                 ") ultimos ORDER BY created_at, id",
-                (conversation_id, _HISTORY_MAX_MESSAGES),
+                (conversation_id, 2),
             )).fetchall()
 
         # CP-B3 · CREAR o CANCELAR un recordatorio es un flujo DETERMINISTA (sin LLM):
@@ -469,7 +444,19 @@ class AssistantService:
 
         # El mensaje del turno actual va EN MEMORIA al final del historial (se persiste
         # en (f), junto con la respuesta).
-        history = [{"role": r[0], "content": r[1]} for r in history_rows]
+        try:
+            history = await conversation_memory.assemble(
+                tenant_id, conversation_id, config.MIA_CONTEXT_WINDOW,
+                compressor_factory=ContextCompressor)
+        except Exception as error:
+            # Un aviso determinista no afirma haber recordado ni contestado. Se guarda
+            # como tal: la clave del envío es recuperable y un turno nuevo puede retomar
+            # un resumen fallido, sin ejecutar a escondidas el modelo principal.
+            reply = (str(error) if isinstance(error, conversation_memory.MemoryUnavailable)
+                     else conversation_memory.NOTICE + "La memoria no está disponible; intenta más tarde.")
+            logger.warning("No se pudo preparar la memoria de la conversación")
+            await self._persist_turn(tenant_id, conversation_id, text, reply)
+            return conversation_id, reply
         history.append({"role": "user", "content": text})
 
         # Herramienta v1 (acotada, sin framework — reales en CP-B4): si el abogado
@@ -524,32 +511,6 @@ class AssistantService:
                 logger.warning("asistente: la expansión de referencias falló conv=%s",
                                conversation_id, exc_info=True)
 
-        # (d) compresión ANTES de llamar: compresor NUEVO por turno (nunca compartido
-        # entre requests/tenants — ver docstring de la clase). Decide con su umbral
-        # (55% de la ventana) y devuelve el historial intacto si no aplica. Corre en
-        # thread porque su resumen usa call_llm síncrono (task='compression'). Si la
-        # compresión falla (excepción del compresor o de su LLM), NO se propaga 502:
-        # truncado duro sin LLM y el turno sigue.
-        # TODO: persistir el resumen comprimido por conversación (evita recomprimir cada turno) — CP futuro.
-        compressor = ContextCompressor()
-        try:
-            history = await asyncio.to_thread(
-                compressor.compress, history, config.MIA_CONTEXT_WINDOW,
-                tenant_id=tenant_id,
-            )
-            if compressor.last_compressed:
-                logger.info(
-                    "asistente: historial comprimido (%d → %d tokens) conv=%s",
-                    compressor.last_tokens_before, compressor.last_tokens_after,
-                    conversation_id,
-                )
-        except Exception:  # noqa: BLE001 — no poder resumir nunca tumba el turno
-            logger.warning(
-                "asistente: la compresión falló; se aplica truncado duro sin LLM conv=%s",
-                conversation_id, exc_info=True,
-            )
-            history = _truncate_history(history)
-
         # CP-E3: persona jurídica invocada por frase en el mensaje del abogado. Se detecta
         # sobre el mensaje ORIGINAL (`text`), no sobre la versión aumentada con bloques de
         # estado/adjuntos. El alias de motor se acota BAJO la política activa del despacho
@@ -579,6 +540,12 @@ class AssistantService:
         messages = [{"role": "system",
                      "content": build_assistant_system(tenant_id, persona, persona_playbooks)},
                     *history]
+        try:
+            conversation_memory.guard_final_context(messages, config.MIA_CONTEXT_WINDOW)
+        except conversation_memory.MemoryUnavailable as error:
+            reply = str(error)
+            await self._persist_turn(tenant_id, conversation_id, text, reply)
+            return conversation_id, reply
         resp = await asyncio.to_thread(llm.call_llm, messages, task="main", model=persona_alias)
         reply = (resp.choices[0].message.content or "").strip()
 

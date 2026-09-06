@@ -126,3 +126,17 @@ no es una medición de factura del proveedor.
   el historial de Mia es texto simple (sin tool messages ni imágenes hoy).
 - Sin redacción de secretos (el contenido es jurídico, no credenciales). Si en el futuro
   entran datos sensibles al historial, conviene portar la redacción de Hermes.
+
+## 7 · Chat con checkpoint durable (0.3.1)
+
+`assistant/conversation_memory.py` usa `summarize_segment` para reducir únicamente
+originales persistidos, con la política de compresión existente. El módulo conserva
+cursor, huella, revisión y reservas bajo RLS; acepta solo candidatos con ahorro.
+Protege primeros cinco, últimos treinta y pendientes textuales. Al reutilizar no
+reanexa el resumen como mensajes nuevos; una edición del origen invalida cobertura.
+
+El chat ya no corta la lectura en 200 mensajes ni aplica truncado silencioso si falla
+resumir. Continúa con el contexto completo cuando cabe; en caso contrario devuelve un
+aviso sin llamar al modelo principal. El prompt completo también tiene una guarda de
+tamaño, incluidos sistema y adjuntos efímeros. Detalle y límites:
+`docs/chat-continuidad-idempotencia.md`; prueba `execution/test_conversation_memory.py`.

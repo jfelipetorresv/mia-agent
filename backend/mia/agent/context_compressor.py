@@ -143,7 +143,7 @@ class ContextCompressor:
     def _serialize(self, turns: list[dict]) -> str:
         return "\n\n".join(f"[{m.get('role', '?').upper()}]: {_text(m)}" for m in turns)
 
-    def _summarize(self, turns: list[dict]) -> str:
+    def _summary_messages(self, turns: list[dict]) -> list[dict]:
         if self.enable_iterative and self._previous_summary:
             # Solo quitar nuestro checkpoint exacto: prefijos parecidos pueden
             # contener información distinta. Lo pendiente siempre queda intacto.
@@ -157,13 +157,25 @@ class ContextCompressor:
             user = _ITER_USER.format(template=_TEMPLATE, previous=self._previous_summary, turns=content)
         else:
             user = _FIRST_USER.format(template=_TEMPLATE, turns=content)
-        # task="compression" → BLOQUEADO a claude-haiku (decisión #7). Sin `model`.
-        resp = llm.call_llm(
-            [{"role": "system", "content": SUMMARIZER_PREAMBLE},
-             {"role": "user", "content": user}],
-            task="compression",
-        )
+        return [{"role": "system", "content": SUMMARIZER_PREAMBLE},
+                {"role": "user", "content": user}]
+
+    def _summarize(self, turns: list[dict]) -> str:
+        # La política de compression permanece bloqueada; ningún override de modelo.
+        resp = llm.call_llm(self._summary_messages(turns), task="compression")
         return (resp.choices[0].message.content or "").strip()
+
+    def summarize_segment(self, turns: list[dict], *, previous_summary: str,
+                          model_context_window: int) -> str:
+        """Resumen durable: el llamador conserva originales, cursor y aceptación.
+
+        El compresor es nuevo por intento; nunca comparte contexto entre despachos.
+        Comprueba el prompt real antes de pagar, incluida la plantilla iterativa.
+        """
+        self._previous_summary = previous_summary or None
+        if self._count(self._summary_messages(turns)) > model_context_window * 0.8:
+            raise ValueError("El tramo anterior es demasiado grande para resumirlo con seguridad.")
+        return self._summarize(turns)
 
     # ── entrada principal ──────────────────────────────────────────────────
     def compress(

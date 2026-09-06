@@ -858,3 +858,20 @@ respuesta podía mezclar dos conversaciones: se exige recuperar el intento o abr
 **Límites:** el identificador de la pantalla no sobrevive a recargar; dos claves distintas
 no serializan una conversación entre dispositivos. El resumen durable continúa pendiente:
 la lectura de últimos 200 mensajes pierde cobertura antes de llegar al compresor.
+
+96. **2026-09-06 · Historial guardado no es contexto recuperado.**
+El chat conservaba mensajes en PostgreSQL pero solo entregaba los últimos 200 al
+compresor; persistir ese resumen habría consolidado la omisión. La versión 0.3.1
+recorre originales, guarda cursor/huella/revisión bajo RLS y preserva pendientes
+textuales. Invalida al cambiar el origen y publica resúmenes útiles con control de
+concurrencia. No incluye en memoria los adjuntos efímeros del turno.
+**Barrera:** `execution/test_conversation_memory.py`, conectada al tramo rápido,
+comprueba un hecho del mensaje 150 en una conversación de 450 hasta el modelo
+principal, originales intactos, reutilización, cambios retroactivos y aislamiento.
+Si el resumen falla pero todos los originales caben, se usan íntegros; si no caben,
+el aviso explicita que no se respondió y conserva el avance. No truncar silenciosamente.
+Las fechas de la huella se normalizan a UTC: dos representaciones del mismo instante
+no deben invalidar cobertura ni reactivar compresiones. La prueba de antithrashing
+detectó la diferencia entre las fechas UTC del fixture y las devueltas por PostgreSQL.
+**Entrega:** un código probado no sustituye al instalador. La meta incluye bundle
+desde commit limpio, primer arranque real, instalación y prueba del puente nativo.

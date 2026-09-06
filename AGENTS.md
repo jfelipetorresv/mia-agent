@@ -43,6 +43,9 @@ importan los de la firma que desarrolla el producto.
 - Identificar reintentos por envío, despacho y usuario, nunca por similitud del texto.
   Recuperar una respuesta registrada no dispara otra inferencia. Una ejecución incierta
   no se vuelve segura por vencer un plazo: conservar el registro y comunicar el límite.
+- Memoria derivada exige originales, cobertura e invalidación comprobables. No convertir
+  una ventana reciente en historia completa ni guardar adjuntos efímeros como recuerdo.
+  Si el contexto completo no cabe, informar el límite antes de responder con omisiones.
 
 ## Verificación y cierre
 

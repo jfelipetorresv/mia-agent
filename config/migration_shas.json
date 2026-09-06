@@ -60,5 +60,6 @@
   "062_shortcut_prefs.sql": "79c2fc8f8e8dfb6e2979f606b2e63d2334187b6b41589e995f4b5ce3c31b5fa6",
   "063_turn_usage_latency.sql": "d578195fb81004d21e34dc32b28e607a248e6bf5ca45102123fede4a107b6f69",
   "064_persona_capabilities.sql": "5248d9b6aae12201118ab582a065cd5a68067bc3bfc164cc24a1643de87f9631",
-  "065_assistant_chat_requests.sql": "9e3d4e2856f79c7319989618ee8ef1b60de7a87a6d3b909c5700eeceeb075c2e"
+  "065_assistant_chat_requests.sql": "9e3d4e2856f79c7319989618ee8ef1b60de7a87a6d3b909c5700eeceeb075c2e",
+  "066_assistant_conversation_memory.sql": "b5bf097621cd57cc838238b3d8daeb5244c5e42e7e4316d3b7d0f6a638a22fd3"
 }
