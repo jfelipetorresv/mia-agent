@@ -35,8 +35,8 @@ y se fusionan p6+p7 en un solo paso. En su lugar entran las tres que hacen COMPU
 criterio: la línea de autonomía (`autonomia.*`), las líneas rojas (`nunca`) y el estándar
 de cierre (`terminado`). Mismo número de pasos, otro rendimiento.
 `## aprendido` es la sección que crece sola con el uso: no la alimenta ninguna pregunta
-— la escribe Mia desde el trabajo real vía `update_soul`. AVISO: ese escritor todavía
-NO existe (incremento aparte); hoy la sección solo se RENDERIZA si alguien pone el campo.
+— la escribe `memory.aprendido` desde borradores aprobados vía `update_soul`. Todo lo
+que llegue ahí conserva la fuente que lo originó; el perfil no se completa por conjetura.
 Todo lo retirado se SIGUE renderizando si viene en un `responses.json` viejo: un perfil
 ya creado no pierde nada ni deja de guardarse (`LEGACY_RENDERED_FIELDS`). Los campos del
 cuestionario ORIGINAL de 19 preguntas que hoy no renderiza nadie (`LEGACY_STORED_FIELDS`:
@@ -81,34 +81,9 @@ logger = logging.getLogger("mia.onboarding.soul")
 # Cada pregunta: id · block · field (sección/campo del SOUL que alimenta) · question
 # (lo que ve el abogado) · example. Las respuestas del frontend llegan como
 # {field: respuesta}; el campo es la llave.
-QUESTIONS: list[dict] = [
-    # Bloque 1 — Identidad
-    {"id": "p1", "block": "identity", "field": "identity.name",
-     "question": "¿Cómo se llama tu despacho y cómo firmas tú?",
-     "example": "Va impreso en cada escrito que redacte para ti."},
-    # Bloque 2 — Jurisdicción y práctica.
-    # NOTA (consolidación 2026-07-09, decisión de Pipe): la pregunta descriptiva de país
-    # (antes p5, field jurisdiction.base) ya NO se hace — el frontend tiene UN solo
-    # selector múltiple de países (el mismo del enrutamiento de paquetes jurídicos) y
-    # auto-llena `jurisdiction.base` con los países elegidos al completar.
-    # NOTA (rediseño 2026-07-20): p6 y p7 se FUSIONAN en un solo paso. Sigue siendo la
-    # pregunta p6 y sigue alimentando `jurisdiction.practice_areas`, pero el frontend
-    # recoge en la misma pantalla `jurisdiction.client_type` (a quién defiende). Es el
-    # único prior antes de que exista un solo documento; después Mia lo corrige sola
-    # leyendo partes y materias de los expedientes.
-    {"id": "p6", "block": "jurisdiction", "field": "jurisdiction.practice_areas",
-     "question": "¿A quién defiendes y en qué asuntos?",
-     "example": "Escribe lo tuyo con tus palabras. Nada de esto queda fijo."},
-    # Bloque 3 — Criterio. Aquí está la riqueza (rediseño 2026-07-20): lo que hace
-    # COMPUTABLE el juicio del despacho. Antes el perfil capturaba datos censales y cero
-    # criterio; `hard_nos` incluso se renderizaba sin que ninguna pregunta lo alimentara.
-    {"id": "p20", "block": "criterio", "field": "autonomia.reviso_siempre",
-     "question": "¿Qué quieres revisar siempre antes de que salga, y qué puedo resolver sin preguntarte?",
-     "example": "Sin esto solo tengo dos modos: pedirte permiso para todo, o excederme."},
-    {"id": "p21", "block": "criterio", "field": "nunca",
-     "question": "¿Qué no debo hacer nunca?",
-     "example": "Una prohibición tuya me dice más que un párrafo sobre tu estilo."},
-]
+# El perfil parte vacío. La identidad, la práctica y las preferencias no se preguntan
+# antes de trabajar ni se inventan: se completan con información real y aprobada.
+QUESTIONS: list[dict] = []
 
 # Orden canónico de los bloques (para el progreso del frontend).
 BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "criterio")
@@ -120,8 +95,8 @@ BLOCKS: tuple[str, ...] = ("identity", "jurisdiction", "criterio")
 # {"p1":…,"p2":…}). Esta lista es el contraste contra el que el endpoint valida antes de
 # escribir nada.
 
-# Los que alimenta el cuestionario de hoy (+ `aprendido`, que no pregunta nadie: lo
-# escribe Mia desde el trabajo real vía `update_soul`).
+# Campos que puede completar el uso real (+ `aprendido`, que no pregunta nadie: lo
+# escribe Mia desde el trabajo aprobado vía `update_soul`).
 CURRENT_FIELDS: frozenset[str] = frozenset({
     "identity.name",
     "jurisdiction.base", "jurisdiction.practice_areas", "jurisdiction.client_type",
@@ -367,7 +342,7 @@ def build_soul(responses: dict, *, dates: Optional[tuple[str, str]] = None) -> s
     def line(label: str, value: str) -> str:
         return f"- {label}: {value}" if value else ""
 
-    header = (f"# SOUL.md — {firm or 'Despacho'}\n"
+    header = (f"# SOUL.md — {firm or 'Perfil en aprendizaje'}\n"
               f"# Generado: {gen_date} · Próxima revisión: {review_date}\n")
 
     parts = [

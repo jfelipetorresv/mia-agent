@@ -1,4 +1,38 @@
-﻿# HANDOFF — Mia (traspaso a Cursor)
+# CIERRE DE CÓDIGO — 2026-09-06 · entrada, chat y fuentes 0.3.2
+
+Solicitud de Pipe sobre siete capturas de 0.3.1. Implementación y revisión independiente
+completadas; build completo e instalación 0.3.2 pendientes en este checkpoint.
+
+- Activación reúne Claude/Codex en «Mis suscripciones», detecta disponibilidad y separa
+  cuentas API. Reutiliza claves; Voyage queda opcional. Guardar política falla visible.
+  Suscripción no consume API por conservar un respaldo histórico; auxiliares CLI/local.
+- Se eliminan entrevista de clientes, prohibiciones y aprobación. La firma procede solo
+  del registro; perfiles existentes no se sobrescriben. Caso nuevo sin selector de modo;
+  rechaza nombre vacío y normaliza espacios. Documentos conservan aprobación obligatoria.
+- Chat muestra respuesta SSE o error HTTP/SSE comprensible, incluido borrador pendiente.
+  No cambia ese bloqueo previo ni promete continuar mientras está pendiente aprobación.
+- Carpetas locales YA vinculadas: lectura automática por referencia, sin importar al índice.
+  Importación explícita aparte. Sin Voyage hay texto/FTS. Límites por turno: 12 archivos,
+  8 MiB y 500 explorados; avisos de recorte/fallo/raíz alterada. Extractos en registros normales.
+  No descubre todas las cuentas externas ni hereda conexiones privadas de CLI.
+- Verificación sintética: fuentes 15/15, recuperación adaptativa 59/59, conocimiento 37/37,
+  referencias 43/43, resiliencia 7/7, entrada 11/11, onboarding 8/8, aprendido 34/34,
+  políticas 61/61, OpenRouter 17/17, aviso 44/44, RLS 19/19, metagate 9/9, instalador 48/48.
+  Navegador: activación 8 escenarios, alta/casos claro y móvil oscuro, chat SSE/error visible.
+  Mutaciones detectadas: exigir Voyage y permitir compresión API en suscripción.
+  TypeScript/lint/build aprobados; empaquetado recompilará último ajuste de fuentes/aria-live.
+- Revisión independiente Sol: fuentes/alta aprobadas, sonda cruzada tenant/caso vacía;
+  Terra revisó routing de Sol. Sin proveedores reales ni prueba de calidad jurídica.
+- Astra dirige esta sesión y asigna a Sol/Terra según necesidad y economía de tokens.
+  No se cambia por inferencia el catálogo de modelos del producto.
+- DB de pruebas 55439 apagada y conservada fuera del repo en Temp/mia-entry-test-db-20260906
+  tras rechazo automático al borrado. Dev3111 apagado. Sin modificación de la DB instalada.
+
+Evidencia: output/validation y output/playwright; contratos en
+`docs/entrada-conversacion-fuentes-2026-09-06.md`. Entrega: instalador core/Compact0.3.2.
+
+---
+# HANDOFF — Mia (traspaso a Cursor)
 
 > **Referencia histórica del plan (aprobado por Pipe 2026-07-21):**
 > `C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md` — "Dejar MIA funcionando

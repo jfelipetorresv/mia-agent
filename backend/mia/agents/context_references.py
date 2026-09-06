@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import untrusted
+from ..connectors.local_folders import read_matter_sources_live
 from ..db import pool
 from ..memory.tokens import estimate_tokens
 
@@ -107,6 +108,67 @@ class ContextReferenceResult:
     warnings: list[str] = field(default_factory=list)
     injected_tokens: int = 0
     expanded: bool = False
+
+
+async def attach_linked_matter_sources(
+    tenant_id: str,
+    matter_id: str,
+    message: str,
+    *,
+    query: str,
+    context_length: int,
+) -> tuple[str, bool]:
+    """Adjunta automáticamente el texto actual de las carpetas del caso.
+
+    Esta es la vía de fuentes para los ejecutores por suscripción: el backend resuelve la
+    allowlist bajo RLS y lee los archivos al vuelo. Claude/Codex reciben evidencia sellada
+    en el prompt, sin herramientas, shell, perfil personal ni importación al índice. El
+    extracto sí forma parte del estado transitorio y de los registros normales del turno,
+    sujetos a la retención de Mia. El presupuesto comparte el techo de las referencias
+    explícitas; ``_assemble_sealed`` hace visible cualquier recorte.
+    """
+    direct = await read_matter_sources_live(tenant_id, matter_id, query)
+    files = direct.files
+    if not files and not direct.warnings:
+        return message, False
+    items = [
+        (f"{row['source_label']}/{row['source_path']}", row["content"])
+        for row in files
+    ]
+    # Comparte el techo de evidencia con las referencias explícitas que ya estén en
+    # `message`: no reserva otro 20% encima de lo consumido por @expediente/@carpeta.
+    already_injected = max(0, estimate_tokens(message) - estimate_tokens(query))
+    shared_remaining = max(0, int(context_length * REF_HARD_LIMIT_FRACTION) - already_injected)
+    budget = min(int(context_length * 0.20), shared_remaining)
+    warning: Optional[str] = None
+    block: Optional[str] = None
+    truncated = False
+    if items and budget >= _MIN_USEFUL_TOKENS:
+        warning, block, truncated = _assemble_sealed(
+            ("Fuentes vinculadas al caso leídas desde su carpeta original en este turno "
+             f"({len(items)} documento(s); sin importarlas al índice de búsqueda de Mia):"),
+            "FUENTE VINCULADA",
+            items,
+            budget,
+            listing=True,
+        )
+    elif items:
+        warning = "las fuentes vinculadas no cupieron en el límite de evidencia del turno."
+    additions: list[str] = [
+        f"Aviso sobre las fuentes vinculadas: {text}" for text in direct.warnings
+    ]
+    if warning:
+        additions.append(f"Aviso sobre las fuentes vinculadas: {warning}")
+    if truncated:
+        additions.append(
+            "Aviso sobre las fuentes vinculadas: la lectura se recortó por el límite "
+            "del turno; no equivale a revisar la carpeta completa."
+        )
+    if block:
+        additions.append("--- Fuentes vinculadas automáticamente ---\n\n" + block)
+    if not additions:
+        return message, False
+    return message.rstrip() + "\n\n" + "\n\n".join(additions), True
 
 
 # ── parseo ───────────────────────────────────────────────────────────────────

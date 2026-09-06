@@ -6,8 +6,9 @@ Verifica OFFLINE (sin red, sin proxy), con un cliente OpenAI FALSO programable p
   0. "openrouter" está registrada en VALID_POLICIES.
   1. política 'openrouter' (motor principal propio): main/curator → openrouter-sonnet→mia-local;
      compression (bloqueada) y auxiliares → openrouter-haiku→mia-local.
-  2. overflow ("más uso"): con OPENROUTER_API_KEY + opt-in, 'suscripcion' y 'nube' insertan
-     openrouter-sonnet ANTES de mia-local en main/curator.
+  2. overflow ("más uso"): con OPENROUTER_API_KEY + opt-in, solo 'nube' inserta
+     openrouter-sonnet ANTES de mia-local en main/curator; las políticas de suscripción
+     ignoran el permiso histórico sin borrarlo.
   3. sin opt-in → NO se inserta el overflow (regla 2: enrutar a un tercero es decisión informada).
   4. sin clave (ni config ni .env) → NO se inserta el overflow (rompería la cadena con AUTH).
   4b. MAYOR 1: clave SOLO en el .env (config vacío, como tras set_keys) → overflow SÍ se activa
@@ -167,43 +168,47 @@ def run() -> None:
               all(llm.resolve_fallback_chain(t) == ["openrouter-haiku", "mia-local"] for t in _AUX))
     with_policy("openrouter", _or)
 
-    # === 2 · overflow ("más uso") en suscripcion y nube con clave + opt-in ===
-    def _sus_overflow():
-        check("2a · [suscripcion+overflow] main añade OpenRouter tras la suscripción",
-              llm.resolve_fallback_chain("main")
-              == ["cli-claude", "openrouter-sonnet"])
-        check("2b · [suscripcion+overflow] curator conserva su respaldo y añade OpenRouter",
-              llm.resolve_fallback_chain("curator")
-              == ["cli-claude", "claude-sonnet", "openrouter-sonnet", "mia-local"])
-    with_overflow("suscripcion", "sk-or-test", True, _sus_overflow)
+    # === 2 · permiso histórico no aplica a suscripción; nube conserva el overflow ===
+    def _sus_no_overflow():
+        check("2a · [suscripcion] permiso histórico permanece activo en contexto",
+              llm.openrouter_allowed() is True)
+        check("2b · [suscripcion] permiso+clave no insertan OpenRouter",
+              llm.resolve_fallback_chain("main") == ["cli-claude"]
+              and llm.resolve_fallback_chain("curator") == ["cli-claude", "mia-local"])
+    with_overflow("suscripcion", "sk-or-test", True, _sus_no_overflow)
+
+    with_overflow("quality_adaptive", "sk-or-test", True, lambda: check(
+        "2c · [quality_adaptive] permiso+clave tampoco insertan OpenRouter",
+        "openrouter-sonnet" not in llm.resolve_fallback_chain("main")
+        and "openrouter-sonnet" not in llm.resolve_fallback_chain("curator")))
 
     def _nube_overflow():
-        check("2c · [nube+overflow] main → claude-sonnet→openrouter-sonnet→mia-local",
+        check("2d · [nube+overflow] main → claude-sonnet→openrouter-sonnet→mia-local",
               llm.resolve_fallback_chain("main")
               == ["claude-sonnet", "openrouter-sonnet", "mia-local"])
     with_overflow("nube", "sk-or-test", True, _nube_overflow)
 
     # === 3 · sin opt-in → NO overflow ===
-    with_overflow("suscripcion", "sk-or-test", False, lambda: check(
-        "3 · [suscripcion] sin opt-in → NO se inserta openrouter",
+    with_overflow("nube", "sk-or-test", False, lambda: check(
+        "3 · [nube] sin opt-in → NO se inserta openrouter",
         "openrouter-sonnet" not in llm.resolve_fallback_chain("main")))
 
     # === 4 · sin clave (ni en config ni en el .env) → NO overflow ===
-    with_overflow_env("suscripcion", "", None, True, lambda: check(
-        "4 · [suscripcion] sin clave (config vacío + .env sin la línea) → NO se inserta openrouter",
+    with_overflow_env("nube", "", None, True, lambda: check(
+        "4 · [nube] sin clave (config vacío + .env sin la línea) → NO se inserta openrouter",
         "openrouter-sonnet" not in llm.resolve_fallback_chain("main")))
 
     # === 4b · MAYOR 1: clave SOLO en el .env (config vacío, como tras set_keys) → SÍ overflow ===
     # Reproduce el estado real: `set_keys` escribió OPENROUTER_API_KEY al .env pero NO tocó
     # config.OPENROUTER_API_KEY. `_openrouter_key_present()` la ve en disco y el overflow se activa.
-    with_overflow_env("suscripcion", "", "sk-or-solo-en-env", True, lambda: check(
-        "4b · [suscripcion] clave SOLO en el .env (config vacío) → overflow ACTIVO (MAYOR 1)",
+    with_overflow_env("nube", "", "sk-or-solo-en-env", True, lambda: check(
+        "4b · [nube] clave SOLO en el .env (config vacío) → overflow ACTIVO (MAYOR 1)",
         llm.resolve_fallback_chain("main")
-        == ["cli-claude", "openrouter-sonnet"]))
+        == ["claude-sonnet", "openrouter-sonnet", "mia-local"]))
 
     # === 4c · clave en el .env pero SIN opt-in → NO overflow (regla 2 intacta) ===
-    with_overflow_env("suscripcion", "", "sk-or-solo-en-env", False, lambda: check(
-        "4c · [suscripcion] clave en .env pero sin opt-in → NO se inserta openrouter",
+    with_overflow_env("nube", "", "sk-or-solo-en-env", False, lambda: check(
+        "4c · [nube] clave en .env pero sin opt-in → NO se inserta openrouter",
         "openrouter-sonnet" not in llm.resolve_fallback_chain("main")))
 
     # === 5 · soberano nunca enruta a OpenRouter, aun con clave + opt-in ===

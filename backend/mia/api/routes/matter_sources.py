@@ -11,7 +11,7 @@ Contrato de cada item (§G, todo en español llano, sin jerga técnica):
    "id": str | None,          # id de la fuente; None solo para el item de correo
    "nombre": str,              # etiqueta o nombre legible
    "detalle": str,             # ruta local, nombre de la carpeta remota, o "" para correo
-   "documentos": int,          # documentos que esa fuente trajo al expediente
+   "documentos": int,          # copias importadas; la lectura directa no las requiere
    "last_sync": str | None,    # ISO de la última revisión, o None si nunca corrió
    "estado": str}              # frase en llano ("3 documentos leídos", "Leyendo la carpeta…"…)
 
@@ -64,12 +64,12 @@ def _folder_name(source: dict) -> str:
 
 
 def _folder_status(documentos: int, job_status: str | None) -> str:
-    """Estado en llano de una carpeta LOCAL: revisión en vuelo > documentos leídos > vacía."""
+    """Una carpeta local se lee directamente; importar al índice es una ayuda opcional."""
     if job_status in ("queued", "running"):
-        return "Leyendo la carpeta…"
+        return "Disponible al conversar · importando para búsqueda ampliada…"
     if documentos > 0:
-        return f"{documentos} documentos leídos"
-    return "Aún sin documentos"
+        return f"Disponible al conversar · {documentos} documentos también importados"
+    return "Disponible automáticamente al conversar"
 
 
 def _drive_status(documentos: int, last_sync: str | None) -> str:

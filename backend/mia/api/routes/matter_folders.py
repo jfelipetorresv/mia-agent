@@ -1,17 +1,17 @@
 """Mia · api.routes.matter_folders — EXPEDIENTE VINCULADO (Pilar C · carpeta del asunto).
 
-Superficie HTTP para vincular carpetas del disco/nube a un expediente: sus documentos
-(PDF/Word/txt/md) se traen solos al asunto, con detección incremental por huella. Se apoya
-en el mismo conector de la allowlist (connectors/local_folders), pero con kind='matters':
-la ingesta va a documents + chunks del expediente (origin='folder'), no al conocimiento del
-despacho.
+Superficie HTTP para vincular carpetas del disco/nube a un expediente. Sus documentos
+(PDF/Word/txt/md) quedan disponibles para lectura directa en cada conversación. La
+importación incremental por huella sigue existiendo como ayuda opcional para búsquedas
+ampliadas, separada del vínculo. Se apoya en el mismo conector de la allowlist
+(connectors/local_folders), con kind='matters'.
 
 SUPERFICIE PLURAL (Bloque A · evolución de producto — un expediente admite VARIAS carpetas,
 hasta MAX_FOLDERS_PER_MATTER; cada una se sincroniza y poda de forma independiente por su
 propio `source_id`, corrigiendo el bug de poda cruzada — ver memory/bugs-and-risks.md):
 
   GET    /api/matters/{id}/folders                → lista de carpetas vinculadas
-  POST   /api/matters/{id}/folders                → vincular una carpeta MÁS + sync inicial
+  POST   /api/matters/{id}/folders                → vincular una carpeta MÁS (lectura directa)
   POST   /api/matters/{id}/folders/{source_id}/sync → sincronizar una carpeta ahora (throttle 60s)
   DELETE /api/matters/{id}/folders/{source_id}     → desvincular esa carpeta (documentos SE CONSERVAN)
 
@@ -134,7 +134,8 @@ async def list_matter_folders(matter_id: str, request: Request):
 @router.post("/matters/{matter_id}/folders")
 async def link_matter_folder(matter_id: str, body: LinkFolderBody, request: Request):
     """Vincula una carpeta MÁS al expediente (tope defensivo de MAX_FOLDERS_PER_MATTER) y
-    dispara una revisión inicial en segundo plano."""
+    la deja disponible para lectura directa en el chat. Importarla al índice queda como
+    acción separada y opcional en el panel de fuentes."""
     tid = _tenant(request)
     await assert_owns_matter(tid, matter_id)
     existing = await get_matter_sources(tid, matter_id)
@@ -156,13 +157,12 @@ async def link_matter_folder(matter_id: str, body: LinkFolderBody, request: Requ
             status_code=502,
             detail="No pude vincular la carpeta en este momento. Intenta de nuevo en unos minutos.",
         )
-    await _spawn_sync(tid, source)
     return {
         "status": "linked",
         "id": source["id"],
         "path": source["path"],
-        "message": ("Vinculé la carpeta al expediente. Estoy revisando sus documentos; "
-                    "estarán disponibles en unos minutos."),
+        "message": ("Vinculé la carpeta. Mia leerá automáticamente sus documentos "
+                    "originales cuando converses sobre este caso."),
     }
 
 
@@ -185,8 +185,8 @@ async def sync_matter_folder(matter_id: str, source_id: str, request: Request):
         return {"status": "in_progress",
                 "message": "Ya estoy revisando esa carpeta; dame un momento."}
     return {"status": "started",
-            "message": ("Estoy revisando la carpeta. Los documentos nuevos estarán "
-                        "disponibles en unos minutos.")}
+            "message": ("Estoy importando una copia de los documentos para ampliar la "
+                        "búsqueda. Puedes seguir conversando mientras tanto.")}
 
 
 @router.delete("/matters/{matter_id}/folders/{source_id}")

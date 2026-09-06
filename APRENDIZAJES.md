@@ -875,3 +875,16 @@ no deben invalidar cobertura ni reactivar compresiones. La prueba de antithrashi
 detectó la diferencia entre las fechas UTC del fixture y las devueltas por PostgreSQL.
 **Entrega:** un código probado no sustituye al instalador. La meta incluye bundle
 desde commit limpio, primer arranque real, instalación y prueba del puente nativo.
+
+97. **2026-09-06 · Conexión, lectura y aprobación son contratos separados.**
+El alta mezclaba suscripción con reparto de trabajo y exigía Voyage para leer documentos.
+La interfaz agrupa Claude Code/Codex, nombra cuentas API y reutiliza credenciales presentes.
+El router de suscripción no cae a cuentas API, incluso con permiso OpenRouter histórico.
+El perfil inicial reutiliza solo la firma registrada; no deduce identidad del contenido
+jurídico de un escrito aprobado, que puede describir a terceros. Reintentar el alta no
+borra el perfil. Los casos nuevos no piden elegir un modo de entrega; siguen bajo revisión.
+**Barreras:** `test_model_policy.py`, `test_openrouter_policy.py`,
+`test_simplified_entry.py` y `e2e/activation-simplified.mjs`. Mutación que vuelve a exigir
+Voyage para continuar con suscripción detectada en navegador. Las fuentes directas se
+limitan a carpetas vinculadas al caso; sus extractos pertenecen al turno y no sustituyen
+la verificación jurídica. Acceso por referencia no significa ausencia de registros.

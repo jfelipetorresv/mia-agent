@@ -31,12 +31,12 @@ _hub = AgentHub()
 
 # §G: etiquetas SIN jerga técnica — el abogado nunca ve "CLI", "API" ni "Ollama".
 _POLICY_LABELS: dict[str, str] = {
-    "quality_adaptive": "Calidad adaptativa (recomendado)",
-    "suscripcion": "Mi suscripción (configuración directa)",
-    "codex": "Codex en este equipo",
-    "nube": "Nube",
-    "soberano": "Todo en mi equipo",
-    "openrouter": "Tu cuenta de OpenRouter",
+    "quality_adaptive": "Mi suscripción · Claude Code",
+    "suscripcion": "Mi suscripción · Claude Code (configuración habitual)",
+    "codex": "Mi suscripción · Codex",
+    "nube": "Cuenta API de Anthropic",
+    "soberano": "IA local con Ollama",
+    "openrouter": "Cuenta API de OpenRouter",
 }
 
 

@@ -324,7 +324,7 @@ def _retrieval_budget_tokens() -> int:
 
 
 async def _read_matter_adaptive(tenant_id: str, matter_id: str, msg: str,
-                                qvec: list[float], plan) -> list[dict]:
+                                qvec: list[float] | None, plan) -> list[dict]:
     """Lee el expediente según el plan: recupera, quita repetición y reparte por pieza.
 
     Orden y porqué de cada paso:
@@ -366,7 +366,7 @@ async def _read_matter_adaptive(tenant_id: str, matter_id: str, msg: str,
     return docs
 
 
-async def _cover_unread_documents(tenant_id: str, matter_id: str, qvec: list[float],
+async def _cover_unread_documents(tenant_id: str, matter_id: str, qvec: list[float] | None,
                                   plan, docs: list[dict]) -> list[dict]:
     """Barrido de cobertura: que ninguna ZONA del expediente quede ciega.
 
@@ -453,7 +453,7 @@ def _expansion_plan(plan, top_k: int):
 
 
 async def _read_matter_agentic(tenant_id: str, matter_id: str, msg: str,
-                               qvec: list[float], plan, *,
+                               qvec: list[float] | None, plan, *,
                                enabled: Optional[bool] = None,
                                ) -> tuple[list[dict], Optional[dict]]:
     """Lee el expediente y, SI la instalación lo activó, deja que el modelo pida más.
@@ -486,7 +486,9 @@ async def _read_matter_agentic(tenant_id: str, matter_id: str, msg: str,
     """
     docs = await _read_matter_adaptive(tenant_id, matter_id, msg, qvec, plan)
     if enabled is None:
-        enabled = retrieval.agentic_reading_available()
+        enabled = qvec is not None and retrieval.agentic_reading_available()
+    elif enabled and qvec is None:
+        enabled = False
     if not enabled:
         # Sin herramientas (el caso de la suscripción, que es el modo de venta) la única
         # corrección posible al sesgo del ranking es de código: que ninguna pieza del
@@ -1404,9 +1406,12 @@ class MatterGraphBuilder:
         # None, cero llamadas extra). Ver `retrieval.agentic_reading_available`.
         agentic: Optional[dict] = None
         if stats.get("n_chunks"):
-            vecs = await asyncio.to_thread(embeddings.embed_texts, [msg])
-            qvec = vecs[0] if vecs else [0.0] * config.EMBED_DIM
-            agentic_on = retrieval.agentic_reading_available()
+            vecs = await asyncio.to_thread(embeddings.embed_texts_optional, [msg])
+            qvec = vecs[0] if vecs else None
+            # Las ampliaciones agénticas dependen de búsqueda vectorial. Sin Voyage,
+            # la lectura textual adaptativa y su barrido siguen funcionando sin exponer
+            # herramientas ni el sistema de archivos al ejecutor CLI.
+            agentic_on = qvec is not None and retrieval.agentic_reading_available()
             plan = retrieval.plan_reading(stats, msg, _retrieval_budget_tokens(),
                                           agentic=agentic_on)
             docs, agentic = await _read_matter_agentic(
@@ -1421,8 +1426,8 @@ class MatterGraphBuilder:
         has_knowledge = await retrieval.knowledge_exists(state["tenant_id"])
         if has_knowledge:
             if qvec is None:
-                vecs = await asyncio.to_thread(embeddings.embed_texts, [msg])
-                qvec = vecs[0] if vecs else [0.0] * config.EMBED_DIM
+                vecs = await asyncio.to_thread(embeddings.embed_texts_optional, [msg])
+                qvec = vecs[0] if vecs else None
             # Las notas escalan con la misma señal de complejidad que el expediente,
             # pero su sección conserva intacto su presupuesto duro del 15% al render.
             know_k = (plan.knowledge_top_k if plan is not None

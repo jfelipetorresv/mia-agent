@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ...agents.checkpointer import open_checkpointer
-from ...agents.context_references import expand_context_references
+from ...agents.context_references import attach_linked_matter_sources, expand_context_references
 from ...agents.graph import (DELEGATION_INTERRUPT_KIND, PROJECT_VERIFICATION_NODE,
                              PROPOSAL_PROMPT, build_matter_graph, build_project_graph)
 from ...agents.personas import persona_service
@@ -367,6 +367,30 @@ async def stream_matter(
     except Exception:  # noqa: BLE001 — §G: adjuntar por referencia nunca tumba el turno
         logger.exception("stream: la expansión de referencias falló (tenant=%s matter=%s)",
                          tenant_id, matter_id)
+
+    # Las carpetas locales vinculadas al caso son fuentes ya autorizadas. Se leen al
+    # vuelo en cada turno y se sellan como evidencia; el ejecutor por suscripción no
+    # recibe shell ni acceso al perfil del equipo y Mia no exige una copia/indexación.
+    # Fail-open: una unidad desmontada o un archivo bloqueado no impide conversar.
+    try:
+        expanded_message, linked = await attach_linked_matter_sources(
+            tenant_id,
+            matter_id,
+            expanded_message,
+            query=retrieval_query or message,
+            context_length=MIA_CONTEXT_WINDOW,
+        )
+        if linked and retrieval_query is None:
+            retrieval_query = message
+    except Exception:  # noqa: BLE001
+        logger.exception("stream: la lectura directa de fuentes falló (tenant=%s matter=%s)",
+                         tenant_id, matter_id)
+        expanded_message = (
+            expanded_message.rstrip()
+            + "\n\nAviso sobre las fuentes vinculadas: no pude comprobarlas en este turno."
+        )
+        if retrieval_query is None:
+            retrieval_query = message
 
     # CP-E3: persona jurídica invocada por el abogado en su mensaje (por frase). Se detecta
     # sobre el mensaje ORIGINAL (las frases de invocación están en las palabras del abogado,

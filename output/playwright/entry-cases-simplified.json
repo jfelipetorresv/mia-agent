@@ -1,0 +1,13 @@
+{
+  "synthetic": true,
+  "results": [
+    {
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "theme": "dark",
+      "passed": true
+    }
+  ]
+}

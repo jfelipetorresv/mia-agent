@@ -1,0 +1,22 @@
+{
+  "synthetic": true,
+  "database_isolated": true,
+  "external_model_api_calls": 0,
+  "passed": [
+    "sin Voyage conserva una posición nullable por texto",
+    "lee solo desde la carpeta de caso ya autorizada",
+    "prioriza por nombre la fuente pertinente",
+    "si cambia la raíz autorizada el turno recibe un aviso explícito",
+    "adjunta fuentes automáticamente",
+    "sella y neutraliza el contenido de la fuente",
+    "FTS encuentra fragmentos sin embedding",
+    "FTS conserva aislamiento por caso y despacho",
+    "inventario cuenta texto sin embedding",
+    "una consulta general conserva una muestra textual",
+    "vincular habilita lectura automática inmediata",
+    "vincular no programa una importación oculta",
+    "la fuente vinculada se lee sin importarla",
+    "desvincular confirma que la fuente quedó fuera",
+    "una fuente deshabilitada no está disponible en el turno siguiente"
+  ]
+}

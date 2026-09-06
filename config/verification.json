@@ -7,6 +7,8 @@
     "execution/test_api_launcher.py",
     "execution/test_migration_contracts.py",
     "execution/test_model_policy.py",
+    "execution/test_simplified_entry.py",
+    "execution/test_chat_sources.py",
     "execution/test_llm_fallback.py",
     "execution/test_context_recovery.py",
     "execution/test_context_compressor.py",

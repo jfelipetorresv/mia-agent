@@ -1,0 +1,10 @@
+{
+  "synthetic": true,
+  "successReplyVisible": true,
+  "backendErrorVisible": true,
+  "scenarios": [
+    "respuesta SSE visible en la conversación",
+    "detail HTTP 409 visible en la burbuja de Mia",
+    "carpeta local mostrada como disponible automáticamente al conversar"
+  ]
+}

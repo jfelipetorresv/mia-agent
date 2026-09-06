@@ -94,6 +94,43 @@ LIMIT %(topk)s
 """
 
 
+_FTS_SQL = """
+WITH params AS (
+  SELECT websearch_to_tsquery('spanish', %(qtext)s) AS qq
+),
+ranked AS (
+  SELECT c.id, ts_rank(c.content_tsv, p.qq) AS score
+  FROM chunks c
+  JOIN documents d ON d.id = c.document_id
+  CROSS JOIN params p
+  WHERE d.matter_id = %(matter)s AND c.content_tsv @@ p.qq
+  ORDER BY score DESC
+  LIMIT %(cand)s
+)
+SELECT c.id, c.content, r.score, d.filename, c.folio_ancla, c.document_id, c.ord
+FROM ranked r
+JOIN chunks c ON c.id = r.id
+JOIN documents d ON d.id = c.document_id
+ORDER BY r.score DESC
+LIMIT %(topk)s
+"""
+
+
+_TEXT_COVERAGE_SQL = """
+WITH spread AS (
+  SELECT c.id, c.content, d.filename, c.folio_ancla, c.document_id, c.ord,
+         row_number() OVER (PARTITION BY c.document_id ORDER BY c.ord) AS doc_rank
+  FROM chunks c
+  JOIN documents d ON d.id = c.document_id
+  WHERE d.matter_id = %(matter)s
+)
+SELECT id, content, 0.0 AS score, filename, folio_ancla, document_id, ord
+FROM spread
+ORDER BY doc_rank, filename, ord
+LIMIT %(topk)s
+"""
+
+
 def ef_search_for(candidates: int) -> int | None:
     """Valor de `hnsw.ef_search` para pedir `candidates` vecinos, o None si no hace falta.
 
@@ -134,7 +171,7 @@ async def retrieve_rrf(
     tenant_id: str,
     matter_id: str,
     query_text: str,
-    query_vec: list[float],
+    query_vec: list[float] | None,
     *,
     top_k: int = 8,
     candidates: int = 20,
@@ -157,18 +194,28 @@ async def retrieve_rrf(
     traer el fragmento contiguo — los tres son la diferencia entre leer MÁS y leer MEJOR.
     """
     args = {
-        "qvec": _vector_literal(query_vec),
         "qtext": query_text or "",
         "matter": matter_id,
         "cand": candidates,
         "k": RRF_K,
         "topk": top_k,
     }
+    sql = _FTS_SQL
+    if query_vec is not None:
+        args["qvec"] = _vector_literal(query_vec)
+        sql = _RRF_SQL
     async with pool.tenant_connection(tenant_id) as conn:
         # ANTES de la consulta y en su MISMA transacción: si no, pedir muchos candidatos
         # empeora el recall sin avisar (ver `ef_search_for`).
-        await _apply_ef_search(conn, candidates)
-        rows = await (await conn.execute(_RRF_SQL, args)).fetchall()
+        if query_vec is not None:
+            await _apply_ef_search(conn, candidates)
+        rows = await (await conn.execute(sql, args)).fetchall()
+        # Sin embeddings, una pregunta general como "revísalo" puede no compartir una
+        # sola palabra con el expediente. El FTS queda vacío aunque haya fuentes. Se
+        # entrega entonces una muestra repartida entre piezas para que el turno no vuelva
+        # a quedarse ciego; el barrido adaptativo completa posiciones después.
+        if query_vec is None and not rows:
+            rows = await (await conn.execute(_TEXT_COVERAGE_SQL, args)).fetchall()
     return [{"id": str(r[0]), "content": r[1], "score": float(r[2]),
              "filename": r[3], "folio_ancla": r[4],
              "document_id": str(r[5]), "ord": int(r[6])} for r in rows]
@@ -710,10 +757,30 @@ LIMIT %(topk)s
 """
 
 
+_KNOWLEDGE_FTS_SQL = """
+WITH params AS (
+  SELECT websearch_to_tsquery('spanish', %(qtext)s) AS qq
+),
+ranked AS (
+  SELECT k.id, ts_rank(k.content_tsv, p.qq) AS score
+  FROM knowledge_chunks k
+  CROSS JOIN params p
+  WHERE k.content_tsv @@ p.qq
+  ORDER BY score DESC
+  LIMIT %(cand)s
+)
+SELECT k.id, k.content, k.source, k.source_path, r.score, k.doc_status
+FROM ranked r
+JOIN knowledge_chunks k ON k.id = r.id
+ORDER BY r.score DESC
+LIMIT %(topk)s
+"""
+
+
 async def retrieve_knowledge_rrf(
     tenant_id: str,
     query_text: str,
-    query_vec: list[float],
+    query_vec: list[float] | None,
     *,
     top_k: int = 4,
     candidates: int = 12,
@@ -732,15 +799,19 @@ async def retrieve_knowledge_rrf(
     """
     candidates = max(candidates, top_k * 3)
     args = {
-        "qvec": _vector_literal(query_vec),
         "qtext": query_text or "",
         "cand": candidates,
         "k": RRF_K,
         "topk": top_k,
     }
+    sql = _KNOWLEDGE_FTS_SQL
+    if query_vec is not None:
+        args["qvec"] = _vector_literal(query_vec)
+        sql = _KNOWLEDGE_RRF_SQL
     async with pool.tenant_connection(tenant_id) as conn:
-        await _apply_ef_search(conn, candidates)
-        rows = await (await conn.execute(_KNOWLEDGE_RRF_SQL, args)).fetchall()
+        if query_vec is not None:
+            await _apply_ef_search(conn, candidates)
+        rows = await (await conn.execute(sql, args)).fetchall()
     notes = [
         {"id": str(r[0]), "content": r[1], "source": r[2],
          "source_path": r[3], "score": float(r[4]), "doc_status": r[5]}
@@ -755,7 +826,8 @@ async def retrieve_knowledge_rrf(
     # y solo AUMENTA esta lista — nunca compite en el RRF de pgvector de arriba ni
     # toca `retrieve_rrf` del EXPEDIENTE (Pinecone solo espeja `knowledge_chunks`).
     # Fail-soft total: ver `pinecone_secondary_notes`.
-    notes.extend(await pinecone_secondary_notes(tenant_id, query_vec, top_k=top_k))
+    if query_vec is not None:
+        notes.extend(await pinecone_secondary_notes(tenant_id, query_vec, top_k=top_k))
     return notes
 
 
@@ -852,8 +924,7 @@ async def knowledge_exists(tenant_id: str) -> bool:
     """
     async with pool.tenant_connection(tenant_id) as conn:
         row = await (await conn.execute(
-            "SELECT EXISTS (SELECT 1 FROM knowledge_chunks "
-            "WHERE embedding IS NOT NULL LIMIT 1)"
+            "SELECT EXISTS (SELECT 1 FROM knowledge_chunks LIMIT 1)"
         )).fetchone()
     if bool(row[0]):
         return True
@@ -870,7 +941,7 @@ async def matter_has_chunks(tenant_id: str, matter_id: str) -> bool:
     async with pool.tenant_connection(tenant_id) as conn:
         row = await (await conn.execute(
             "SELECT EXISTS (SELECT 1 FROM chunks c JOIN documents d ON d.id = c.document_id "
-            "WHERE d.matter_id = %s AND c.embedding IS NOT NULL)",
+            "WHERE d.matter_id = %s)",
             (matter_id,),
         )).fetchone()
     return bool(row[0])
@@ -995,7 +1066,7 @@ async def matter_chunk_stats(tenant_id: str, matter_id: str) -> dict:
                 "SELECT count(*)::bigint, count(DISTINCT c.document_id)::bigint, "
                 "coalesce(sum(length(c.content)), 0)::bigint "
                 "FROM chunks c JOIN documents d ON d.id = c.document_id "
-                "WHERE d.matter_id = %s AND c.embedding IS NOT NULL",
+                "WHERE d.matter_id = %s",
                 (matter_id,),
             )).fetchone()
     except Exception:  # noqa: BLE001 — medir el corpus jamás puede tumbar el turno
@@ -1126,7 +1197,7 @@ async def matter_document_inventory(tenant_id: str, matter_id: str) -> list[dict
             rows = await (await conn.execute(
                 "SELECT c.document_id, d.filename, count(*)::bigint "
                 "FROM chunks c JOIN documents d ON d.id = c.document_id "
-                "WHERE d.matter_id = %s AND c.embedding IS NOT NULL "
+                "WHERE d.matter_id = %s "
                 "GROUP BY c.document_id, d.filename",
                 (matter_id,),
             )).fetchall()
@@ -1156,7 +1227,7 @@ async def retrieve_document_ords(tenant_id: str, matter_id: str, document_id: st
                 "SELECT c.id, c.content, c.document_id, c.ord, d.filename, c.folio_ancla "
                 "FROM chunks c JOIN documents d ON d.id = c.document_id "
                 "WHERE d.matter_id = %s AND c.document_id = %s AND c.ord = ANY(%s) "
-                "AND c.embedding IS NOT NULL ORDER BY c.ord",
+                "ORDER BY c.ord",
                 (matter_id, document_id, [int(o) for o in ords]),
             )).fetchall()
     except Exception:  # noqa: BLE001

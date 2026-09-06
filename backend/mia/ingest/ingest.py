@@ -110,7 +110,7 @@ async def ingest_file(tenant_id: str, matter_id: str, path: Path) -> int:
     chunks = chunk_text(path.read_text(encoding="utf-8"))
     if not chunks:
         raise RuntimeError(f"Archivo vacío: {path}")
-    vectors = embeddings.embed_texts(chunks)
+    vectors = embeddings.embed_texts_optional(chunks)
     async with pool.tenant_connection(tenant_id) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents(tenant_id, matter_id, filename, mime) "

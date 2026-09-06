@@ -3,7 +3,7 @@ Mia · test_model_policy.py — gate de CP2 (política de modelo por tenant + pr
 
 Verifica OFFLINE (sin red, sin proxy, sin CLI real: subprocess y shutil.which van MOCKEADOS):
 
-  1. políticas 'suscripcion' y 'codex' → proveedor explícito, sin cambio silencioso de motor.
+  1. políticas de suscripción → solo CLI como salida externa, sin API ni OpenRouter silenciosos.
   2. política 'soberano' → TODO va a mia-local.
   3. política 'nube' → claude-sonnet primero y compression=claude-haiku (decisión #7 restaurada).
   4. compression sigue BLOQUEADA ante un model explícito en las 3 políticas.
@@ -129,12 +129,12 @@ def run() -> None:
               llm.resolve_fallback_chain("main")[0] == "cli-claude")
         check("1b · [suscripcion] main no cambia a API/local sin que el abogado lo elija",
               llm.resolve_fallback_chain("main") == ["cli-claude"])
-        check("1c · [suscripcion] curator conserva respaldo explícito no jurídico",
-              llm.resolve_fallback_chain("curator") == ["cli-claude", "claude-sonnet", "mia-local"])
+        check("1c · [suscripcion] curator solo conserva CLI y respaldo local",
+              llm.resolve_fallback_chain("curator") == ["cli-claude", "mia-local"])
         check("1d · [suscripcion] auxiliares → cli-claude-haiku→mia-local",
               all(llm.resolve_fallback_chain(t) == ["cli-claude-haiku", "mia-local"] for t in _AUX))
-        check("1e · [suscripcion] compression → cli-claude-haiku→claude-haiku (red barata si el CLI falla)",
-              llm.resolve_fallback_chain("compression") == ["cli-claude-haiku", "claude-haiku"])
+        check("1e · [suscripcion] compression queda solo en el CLI de la suscripción",
+              llm.resolve_fallback_chain("compression") == ["cli-claude-haiku"])
         check("1f · [suscripcion] funciones jurídicas no cambian a API/local sin consentimiento",
               all(llm.resolve_fallback_chain(t) == ["cli-claude"]
                   for t in llm.LEGAL_TASKS))
@@ -154,6 +154,11 @@ def run() -> None:
               and llm.resolve_fallback_chain("verification")[0] == llm.CLI_HAIKU_ALIAS)
         check("1g-bis · la degradación del pensador queda dentro de la suscripción (cli-*)",
               all(a.startswith("cli-") for a in llm.resolve_fallback_chain("main")))
+        subscription_tasks = ("main", *llm.LEGAL_TASKS, "curator", "compression", *_AUX)
+        check("1g-ter · [quality_adaptive] ninguna tarea estándar contiene una salida API",
+              all(all(a.startswith("cli-") or a == "mia-local"
+                      for a in llm.resolve_fallback_chain(task))
+                  for task in subscription_tasks))
         check("1h · Max solo existe para escalamiento excepcional; caso ordinario conserva xhigh",
               llm._cli_effort(llm.CLI_OPUS_ALIAS, "legal_draft") == "xhigh"
               and llm._cli_effort(llm.CLI_OPUS_ALIAS, "legal_draft", "exceptional") == "max")
@@ -213,14 +218,29 @@ def run() -> None:
                   for t in llm.LEGAL_TASKS))
     with_policy("nube", _nub)
 
-    # === 4 · compression BLOQUEADA ante model explícito en las 3 políticas ===
-    expected_locked = {"suscripcion": ["cli-claude-haiku", "claude-haiku"],
+    # === 4 · compression BLOQUEADA ante model explícito en todas las políticas ===
+    expected_locked = {"quality_adaptive": [llm.CLI_HAIKU_ALIAS],
+                       "suscripcion": ["cli-claude-haiku"],
                        "codex": [llm.CLI_CODEX_ALIAS],
                        "nube": ["claude-haiku"], "soberano": ["mia-local"]}
     for pol, exp in expected_locked.items():
         with_policy(pol, lambda pol=pol, exp=exp: check(
             f"4 · [{pol}] compression ignora model explícito → {exp[0]}",
             llm.resolve_fallback_chain("compression", model="claude-opus") == exp))
+
+    # Mutación adversarial: demuestra que la barrera ve reaparecer una API facturada
+    # dentro de «Mis suscripciones», incluso en una tarea auxiliar bloqueada.
+    original_adaptive_compression = llm._POLICY_CHAINS["quality_adaptive"]["compression"]
+    try:
+        llm._POLICY_CHAINS["quality_adaptive"]["compression"] = [
+            llm.CLI_HAIKU_ALIAS, "claude-haiku",
+        ]
+        with_policy("quality_adaptive", lambda: check(
+            "4b · mutación API en compression es detectada por la barrera de suscripción",
+            any(not (a.startswith("cli-") or a == "mia-local")
+                for a in llm.resolve_fallback_chain("compression"))))
+    finally:
+        llm._POLICY_CHAINS["quality_adaptive"]["compression"] = original_adaptive_compression
 
     # === 5 · CLI ausente (which→None) → call_llm salta al siguiente proveedor ===
     saved = patch_cli(run_fn=lambda *a, **k: _FakeProc(CLI_OK_JSON), which=None)
@@ -555,9 +575,10 @@ def run() -> None:
         check("10c-bis · Ajustes lee capabilities: Codex no disponible se deshabilita con razón",
               "capabilities?.codex?.enabled_here === false" in conexiones
               and "blocked_reason" in conexiones)
-        check("10c · UI expone Codex como motor explícito y no promete cambio silencioso",
-              "Codex en este equipo" in activation
-              and "No funciona en servidores ni cambia a Claude, nube ni otro motor" in activation
+        check("10c · UI agrupa Claude/Codex como suscripciones y conserva preferencia explícita",
+              'title="Mis suscripciones"' in activation
+              and '<option value="quality_adaptive">Claude Code</option>' in activation
+              and '<option value="codex">Codex</option>' in activation
               and "Requiere un plan Max" not in activation)
     finally:
         subscription_llm.is_available = saved_available

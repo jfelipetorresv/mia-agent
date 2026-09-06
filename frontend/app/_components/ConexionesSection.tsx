@@ -482,11 +482,11 @@ export default function ConexionesSection({
 
       {/* Motor de IA */}
       <div id="conector-motor" className="scroll-mt-24">
-      <ConnectorCard icon={Settings2} title="Motor de IA" subtitle="Con qué trabaja Mia. Puedes cambiarlo cuando quieras.">
+      <ConnectorCard icon={Settings2} title="Suscripciones y cuentas API" subtitle="Las suscripciones usan Claude Code o Codex. Las cuentas API se facturan por separado.">
         <select
           value={policy?.politica || ""}
           onChange={(e) => changePolicy(e.target.value)}
-          aria-label="Motor de IA"
+          aria-label="Conexión de inteligencia artificial"
           className="h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
         >
           {(policy?.opciones || []).map((o) => {

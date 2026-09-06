@@ -1,0 +1,37 @@
+{
+  "synthetic": true,
+  "results": [
+    {
+      "name": "Codex detectado, sin claves",
+      "passed": true
+    },
+    {
+      "name": "Claude detectado, sin claves",
+      "passed": true
+    },
+    {
+      "name": "Ninguna suscripción disponible",
+      "passed": true
+    },
+    {
+      "name": "API existente no vuelve a pedir clave",
+      "passed": true
+    },
+    {
+      "name": "API ausente bloquea solo esa conexión",
+      "passed": true
+    },
+    {
+      "name": "Voyage opcional y clave oculta",
+      "passed": true
+    },
+    {
+      "name": "Error de guardado conserva pantalla",
+      "passed": true
+    },
+    {
+      "name": "Aviso de reinicio persiste elección sin bucle",
+      "passed": true
+    }
+  ]
+}

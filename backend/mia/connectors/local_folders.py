@@ -45,6 +45,7 @@ import asyncio
 import hashlib
 import logging
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import embeddings
@@ -65,6 +66,12 @@ MAX_FILE_BYTES = 20 * 1024 * 1024   # > 20 MB → se omite con log
 MAX_FILES_PER_SYNC = 2000           # máx. archivos NUEVOS/CAMBIADOS indexados por corrida
 MAX_SCAN_FILES = 50000              # tope duro de enumeración por carpeta (defensivo)
 EMBED_BATCH = 128                   # máx chunks por llamada de embedding (igual que Obsidian)
+# Lectura al vuelo para el chat. Es deliberadamente más pequeña que una sincronización:
+# se hace en la ruta interactiva, no copia nada a Mia y nunca debe recorrer una carpeta
+# enorme ni cargar decenas de documentos en memoria durante un turno.
+LIVE_SCAN_FILES = 500
+LIVE_READ_FILES = 12
+LIVE_READ_BYTES = 8 * 1024 * 1024
 
 # Directorios de sistema: cualquier ruta que CONTENGA uno de estos segmentos se rechaza
 # (fail-closed: mejor rechazar una carpeta legítima rara que escanear el sistema).
@@ -72,6 +79,14 @@ _FORBIDDEN_PARTS = {
     "windows", "program files", "program files (x86)", "programdata", "appdata",
     "$recycle.bin", "system volume information",
 }
+
+
+@dataclass
+class LiveMatterSourceRead:
+    """Resultado de lectura directa, con cobertura explícita para el turno."""
+
+    files: list[dict] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 def _is_locked(exc: BaseException) -> bool:
@@ -354,6 +369,130 @@ async def get_matter_source(tenant_id: str, matter_id: str) -> dict | None:
             "kind": latest["kind"], "enabled": latest["enabled"], "matter_id": str(matter_id)}
 
 
+def _live_query_terms(query: str) -> set[str]:
+    """Términos simples para priorizar nombres de archivo sin usar API ni modelo."""
+    import re
+
+    return {w.casefold() for w in re.findall(r"[\wáéíóúñü]+", query or "") if len(w) >= 4}
+
+
+def _validated_live_root(raw: str) -> Path:
+    """Revalida que una raíz siga resolviendo al lugar autorizado al registrarla."""
+    stored = Path(raw)
+    root = stored.resolve()
+    _check_safe_root(root)
+    if str(root) != str(stored):
+        raise ValueError("La ubicación real de la carpeta cambió desde que fue vinculada.")
+    return root
+
+
+async def read_matter_sources_live(tenant_id: str, matter_id: str,
+                                   query: str) -> LiveMatterSourceRead:
+    """Lee al vuelo carpetas locales ya vinculadas al expediente, sin indexarlas.
+
+    La autorización se descubre en ``local_folder_sources`` bajo RLS mediante
+    ``get_matter_sources``. Luego se repiten las dos defensas del sincronizador: raíz
+    registrada todavía segura y cada archivo resuelto dentro de ella. No se entrega una
+    herramienta, una terminal ni el perfil personal del ejecutor CLI; Mia abre únicamente
+    archivos de lectura permitidos dentro de esa allowlist y devuelve texto para sellarlo
+    como evidencia no confiable en el turno.
+
+    La lectura es acotada por archivos, bytes y enumeración. Los nombres parecidos a la
+    consulta van primero; el orden estable cubre el resto cuando la consulta es general.
+    Cualquier fuente desmontada, archivo bloqueado o documento ilegible se omite sin tumbar
+    el chat. No escribe contenido ni hashes en la base.
+    """
+    result = LiveMatterSourceRead()
+    try:
+        sources = await get_matter_sources(tenant_id, matter_id)
+    except Exception:  # noqa: BLE001 — el turno recibe el límite en llano
+        logger.warning("lectura al vuelo: no pude resolver las fuentes autorizadas",
+                       exc_info=True)
+        result.warnings.append(
+            "No pude comprobar las carpetas vinculadas al caso en este turno."
+        )
+        return result
+    if not sources:
+        return result
+    terms = _live_query_terms(query)
+    sync = LocalFolderSync()
+    candidates: list[tuple[int, str, dict, Path, Path]] = []
+    for source in sources:
+        try:
+            root = _validated_live_root(source["path"])
+            # La ruta se guardó resuelta al autorizarla. Si ahora resuelve a otro sitio
+            # (junction/symlink cambiado), se cierra en vez de seguir el redireccionamiento.
+            files, omitted, truncated = await asyncio.to_thread(
+                sync._scan_folder, root, LIVE_SCAN_FILES)
+        except Exception:  # noqa: BLE001 — una fuente inaccesible nunca tumba el chat
+            logger.warning("lectura al vuelo omitida para fuente %s", source.get("id"),
+                           exc_info=True)
+            result.warnings.append(
+                f"No pude abrir la carpeta vinculada «{source.get('label') or 'sin nombre'}» "
+                "en este turno."
+            )
+            continue
+        if truncated:
+            result.warnings.append(
+                f"La carpeta «{source.get('label') or root.name}» tiene más de "
+                f"{LIVE_SCAN_FILES} archivos compatibles; la lectura de este turno es parcial."
+            )
+        if omitted:
+            result.warnings.append(
+                f"En «{source.get('label') or root.name}» omití {omitted} archivo(s) "
+                "por tamaño, seguridad o porque no se podían leer."
+            )
+        if not files:
+            result.warnings.append(
+                f"La carpeta «{source.get('label') or root.name}» no contiene archivos "
+                "compatibles que pueda leer en este turno."
+            )
+        for path in files:
+            rel = sync._rel(root, path)
+            score = sum(1 for term in terms if term in rel.casefold())
+            candidates.append((-score, rel.casefold(), source, root, path))
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    used_bytes = 0
+    skipped_for_bytes = 0
+    read_errors = 0
+    for _score, _order, source, root, path in candidates:
+        if len(result.files) >= LIVE_READ_FILES:
+            break
+        try:
+            size = path.stat().st_size
+            if size <= 0 or used_bytes + size > LIVE_READ_BYTES:
+                skipped_for_bytes += 1
+                continue
+            # Revalidación justo antes de abrir: protege contra un cambio entre escaneo
+            # y lectura (TOCTOU) y conserva el confinamiento a la raíz autorizada.
+            if not sync._resolves_inside(root, path):
+                continue
+            text, meta = await asyncio.to_thread(sync._read_text, path)
+            if not text.strip() or not meta.get("has_body", True):
+                continue
+        except Exception:  # noqa: BLE001
+            logger.warning("lectura al vuelo: no pude abrir %s", path, exc_info=True)
+            read_errors += 1
+            continue
+        used_bytes += size
+        result.files.append({
+            "source_id": source["id"],
+            "source_label": source.get("label") or root.name,
+            "source_path": sync._rel(root, path),
+            "content": text,
+        })
+    if len(candidates) > len(result.files):
+        unseen = max(0, len(candidates) - len(result.files) - read_errors - skipped_for_bytes)
+        omitted_total = unseen + read_errors + skipped_for_bytes
+        if omitted_total:
+            result.warnings.append(
+                f"La lectura directa incluyó {len(result.files)} archivo(s) y dejó "
+                f"{omitted_total} fuera por los límites del turno o por errores de lectura."
+            )
+    return result
+
+
 async def source_last_sync(tenant_id: str, source_id: str):
     """Momento de la última sincronización de una fuente (max updated_at de sus hashes),
     o None si nunca corrió. Sirve para el estado del expediente y el throttle de re-sync."""
@@ -601,7 +740,8 @@ class LocalFolderSync:
             return stats
 
     # ── escaneo (allowlist · capa 2 por archivo) ─────────────────────────────
-    def _scan_folder(self, root: Path) -> tuple[list[Path], int, bool]:
+    def _scan_folder(self, root: Path,
+                     max_files: int = MAX_SCAN_FILES) -> tuple[list[Path], int, bool]:
         """Archivos indexables bajo la raíz YA resuelta. Excluye carpetas/archivos ocultos
         ('.'/'~', node_modules, __pycache__) y directorios de SISTEMA (_FORBIDDEN_PARTS,
         case-insensitive) también en el descenso recursivo, archivos cuya ruta REAL apunte
@@ -633,11 +773,11 @@ class LocalFolderSync:
                 omitted += 1
                 continue
             files.append(p)
-            if len(files) >= MAX_SCAN_FILES:
+            if len(files) >= max_files:
                 truncated = True
                 logger.warning("carpeta %s: se alcanzó el tope duro de enumeración "
                                "(%d archivos); el escaneo queda INCOMPLETO y en esta "
-                               "corrida no se podará nada", root, MAX_SCAN_FILES)
+                               "corrida no se podará nada", root, max_files)
                 break
         return files, omitted, truncated
 
@@ -701,17 +841,17 @@ class LocalFolderSync:
         ]
 
     # ── embeddings (librería LiteLLM, batches de 128 — decisión #17 C2) ──────
-    async def _embed_chunks(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_chunks(self, texts: list[str]) -> list[list[float] | None]:
         if not texts:
             return []
-        vectors: list[list[float]] = []
+        vectors: list[list[float] | None] = []
         for i in range(0, len(texts), EMBED_BATCH):
-            vectors.extend(embeddings.embed_texts(texts[i:i + EMBED_BATCH]))
+            vectors.extend(embeddings.embed_texts_optional(texts[i:i + EMBED_BATCH]))
         return vectors
 
     # ── persistencia en knowledge_chunks (RLS por tenant) ────────────────────
     async def _upsert_chunks(self, tenant_id: str, db_source: str, filepath: str,
-                             chunks: list[dict], vectors: list[list[float]]) -> None:
+                             chunks: list[dict], vectors: list[list[float] | None]) -> None:
         """Upsert de los chunks de un archivo (ON CONFLICT) y poda de los sobrantes si
         el archivo encogió — mismo patrón que ObsidianSync."""
         async with pool.tenant_connection(tenant_id) as conn:
@@ -759,7 +899,7 @@ class LocalFolderSync:
 
     # ── espejo en Pinecone (store SECUNDARIO opt-in, Módulo A) ───────────────
     async def _pinecone_mirror_upsert(self, tenant_id: str, db_source: str, filepath: str,
-                                      chunks: list[dict], vectors: list[list[float]],
+                                      chunks: list[dict], vectors: list[list[float] | None],
                                       *, pruned_indices: list[int]) -> None:
         """Espeja el upsert (y la poda por encogimiento) de ESTE archivo en Pinecone.
         Id determinista `{db_source}:{filepath}:{chunk_index}`: un re-sync hace upsert
@@ -773,6 +913,8 @@ class LocalFolderSync:
                 if chunks:
                     vectors_pc = []
                     for chunk, vec in zip(chunks, vectors):
+                        if vec is None:
+                            continue
                         metadata = {
                             "content": (chunk["text"] or "")[:2000],
                             "source": db_source,

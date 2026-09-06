@@ -26,7 +26,7 @@ import {
   Swords,
   X,
 } from "lucide-react";
-import { apiDownload, apiGet, apiSend, apiUpload, streamPost, streamTurn } from "@/lib/api";
+import { apiDownload, apiGet, apiSend, apiUpload, plainMessage, streamPost, streamTurn } from "@/lib/api";
 import { useDictation } from "@/lib/useDictation";
 import MicButton from "../../_components/MicButton";
 import MissionBoard from "../../_components/MissionBoard";
@@ -410,7 +410,15 @@ function WorkspacePageContent({
       });
     } else if (event === "thinking") setStatus(payload.message || "Mia está analizando...");
     else if (event === "draft_ready") setStatus("Mia está redactando...");
-    else if (event === "error") setStatus(payload.message || "No se pudo completar la consulta.");
+    else if (event === "error") {
+      const mensaje = payload.message || "No se pudo completar la consulta.";
+      setStatus(mensaje);
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = { role: "mia", text: mensaje };
+        return copy;
+      });
+    }
     else if (event === "awaiting_delegation") {
       setStatus(payload.message || "Mia propone pedirle ayuda a un asistente externo.");
       setDelegation(payload.propuesta || {});
@@ -451,8 +459,14 @@ function WorkspacePageContent({
     streamAbortRef.current = controller;
     try {
       await streamPost(stream_url, { message }, handleChatEvent, controller.signal);
-    } catch {
-      setStatus("No se pudo completar la consulta.");
+    } catch (err) {
+      const mensaje = plainMessage(err, "No se pudo completar la consulta.");
+      setStatus(mensaje);
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = { role: "mia", text: mensaje };
+        return copy;
+      });
     } finally {
       setStreaming(false);
       // Cierre-auto tras el turno: diferido para que el último mensaje ya esté en
@@ -507,8 +521,14 @@ function WorkspacePageContent({
         { message: text },
       );
       await runChatStream(stream_url, text);
-    } catch {
-      setStatus("No se pudo completar la consulta.");
+    } catch (err) {
+      const mensaje = plainMessage(err, "No se pudo completar la consulta.");
+      setStatus(mensaje);
+      setMessages((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = { role: "mia", text: mensaje };
+        return copy;
+      });
     }
   }
 
@@ -924,7 +944,7 @@ function WorkspacePageContent({
         <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
           <AvisoDeCosto aviso={avisoCosto} onDismiss={() => setAvisoCosto(null)} />
           <div className="mb-2 flex min-h-5 min-w-0 items-center justify-between gap-3 text-sm">
-            <span className="shrink-0 text-muted-foreground">{status}</span>
+            <span role="status" aria-live="polite" className="shrink-0 text-muted-foreground">{status}</span>
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
               {pendingCount > 0 ? (
                 <Button

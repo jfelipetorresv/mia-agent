@@ -1,9 +1,10 @@
-"""
-Mia · test_onboarding_horizontal.py — gate de onboarding horizontal + pulido visual.
+"""Mia · gate visual estático del alta y creación simplificadas.
+
+El alta no entrevista ni presupone identidad. Crear un caso solo pide nombre, con
+descripción y jurisdicción opcionales; el modo de respuesta directa no se ofrece.
 """
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -14,152 +15,50 @@ try:
 except Exception:
     pass
 
-_results: list[tuple[str, bool]] = []
 
-
-def check(name: str, ok: bool) -> None:
-    _results.append((name, bool(ok)))
+def check(name: str, ok: bool) -> bool:
     print(("  [OK]   " if ok else "  [FAIL] ") + name)
-
-
-def sin_comentarios(src: str) -> str:
-    """El código fuente sin comentarios de línea — o sea, aproximadamente lo que el
-    abogado PUEDE llegar a ver. Los checks de promesas y de jerga se hacen sobre esto:
-    un comentario puede (y debe) nombrar los datos provisionales para explicar por qué
-    NO se prometen; lo que no puede es que esa palabra llegue a la pantalla."""
-    return "\n".join(re.sub(r"(?<!:)//.*", "", line) for line in src.split("\n"))
+    return bool(ok)
 
 
 def main() -> int:
-    print("== Onboarding horizontal ==")
+    print("== Alta y casos simplificados ==")
     onboarding = (ROOT / "frontend" / "app" / "onboarding" / "page.tsx").read_text(encoding="utf-8")
-    # C2 (Bloque C, perfil del despacho editable y unificado): COUNTRY_OPTIONS y el
-    # checklist de países se extrajeron a CountrySelector.tsx (compartido con "Mi
-    # despacho") — mismo criterio que ya usa este gate para Conexiones (configurar +
-    # ConexionesSection.tsx). `onboarding_surface` es lo que antes vivía todo inline.
-    country_selector = (ROOT / "frontend" / "app" / "_components" / "CountrySelector.tsx").read_text(encoding="utf-8")
-    onboarding_surface = onboarding + country_selector
-    # "Mi despacho" edita la MISMA fuente que la entrevista: si la entrevista deja escribir
-    # un país fuera de la lista y esta pantalla no, el abogado lo pierde al editar.
-    despacho = (ROOT / "frontend" / "app" / "_components" / "MiDespachoSection.tsx").read_text(encoding="utf-8")
-    sidebar = (ROOT / "frontend" / "app" / "_components" / "Sidebar.tsx").read_text(encoding="utf-8")
-    # D3 (2026-08, «un solo concepto Casos»): la conversación vive en /casos/[id]
-    # (CasoConBorrador + CasoDirecto); /asuntos/[id] quedó como alias de redirección
-    # sin UI. El gate lee las superficies REALES del chat, no el alias.
-    workspace = (
-        (ROOT / "frontend" / "app" / "casos" / "[id]" / "CasoConBorrador.tsx").read_text(encoding="utf-8")
-        + (ROOT / "frontend" / "app" / "casos" / "[id]" / "CasoDirecto.tsx").read_text(encoding="utf-8")
-    )
-    globals_css = (ROOT / "frontend" / "app" / "globals.css").read_text(encoding="utf-8")
+    cases = (ROOT / "frontend" / "app" / "casos" / "page.tsx").read_text(encoding="utf-8")
+    soul = (ROOT / "backend" / "mia" / "onboarding" / "soul_interview.py").read_text(encoding="utf-8")
+    ux = (ROOT / "backend" / "mia" / "api" / "routes" / "ux.py").read_text(encoding="utf-8")
 
-    # Nota (consolidación 2026-07-09, decisión de Pipe): el paso de jurisdicción SÍ
-    # hardcodea una lista fija de 21 países hispanohablantes en el frontend — es
-    # deliberado (UNA sola pregunta de país, selección múltiple; los países con paquete
-    # jurídico llevan insignia, los demás se eligen igual). El resto de conocimiento
-    # jurídico (ramas, tipo de cliente, tribunales, marcas) sigue prohibido de hardcodear.
-    forbidden = (
-        "Seguros", "Fiscal", "Civil", "Penal", "Laboral", "Contencioso", "Contratos Publicos",
-        "Aseguradoras", "Empresas", "Personas", "Sector Publico", "Sector Público",
-        "Consejo de Estado", "Corte Constitucional", "Corte Suprema", "Tribunal Adm.",
-        "Obsidian", "Claude Code", "Linear", "WhatsApp Business",
-    )
-    check("onboarding sin opciones jurídicas hardcodeadas (fuera de la lista de países)",
-          not any(x in onboarding for x in forbidden))
-    # Contrato 2026-07-20: UNA sola pregunta de país, sin país destacado. La lista sigue
-    # en orden alfabético (nadie va "primero" — regla dura: Mia no es de ningún país; la
-    # versión anterior de este check exigía Colombia arriba y contradecía esa regla).
-    paises = re.findall(r'name:\s*"([^"]+)"', country_selector)
-    check("pregunta ÚNICA de país, en orden alfabético y sin ningún país destacado",
-          "COUNTRY_OPTIONS" in onboarding_surface and '"p5"' not in onboarding
-          and len(paises) >= 20 and paises == sorted(paises)
-          # Regla de copy de Pipe: los gates verifican el CONCEPTO, nunca la redacción
-          # literal. El sujeto de la pregunta cambió de "tu despacho" a "tu firma u
-          # organización" (criterio de lenguaje 2026-08); se ancla el arranque estable.
-          and onboarding.count("¿Con las reglas jurídicas de qué país trabaja tu") == 1)
-    check("la selección de país auto-llena jurisdiction.base (nombres) además de jurisdictions (códigos)",
-          'soulResponses["jurisdiction.base"]' in onboarding and "COUNTRY_NAME_BY_CODE" in onboarding)
+    create_route = ux.split("@router.post(\"/matters\"", 1)[1].split("@router.get(\"/matters/{matter_id}\")", 1)[0]
 
-    # ── LA LISTA NO PROMETE SOLA (defecto corregido 2026-07-20) ───────────────────────
-    # Las 21 casillas se veían idénticas y no consultaban nada: un despacho chileno marcaba
-    # "Chile" creyendo que Mia traía el derecho chileno adentro, cuando el único paquete
-    # instalado es 'co'. La lista de 21 es una comodidad para no escribir el país a mano,
-    # NO un catálogo de capacidades. Estos cuatro checks impiden que vuelva a serlo.
-    selector_visible = sin_comentarios(country_selector)
-    check("el selector consulta la verdad al servidor (GET /api/jurisdictions), no la supone",
-          "/api/jurisdictions" in selector_visible)
-    # La marca se DERIVA de la respuesta. Si alguien vuelve a cablear qué países van
-    # marcados, aparecerá un código de país de dos letras fuera de COUNTRY_OPTIONS.
-    codigos_lista = set(re.findall(r'code:\s*"([a-z]{2})"', country_selector))
-    codigos_sueltos = set(re.findall(r'"([a-z]{2})"', country_selector))
-    check("la marca de país preparado NO es un literal cableado (se deriva de la respuesta)",
-          codigos_sueltos == codigos_lista and "prepared" in selector_visible
-          and "COUNTRY_OPTIONS" in country_selector)
-    # Fail-soft: un fallo de red no puede dejar a nadie sin poder darse de alta (ese
-    # bloqueante ya se cometió una vez). apiGetSoft nunca lanza, y el estado "unknown"
-    # existe para callar en vez de afirmar que no hay material para ningún país.
-    check("si la consulta falla, el paso sigue y no se afirma nada (fail-soft)",
-          "apiGetSoft" in selector_visible and '"unknown"' in selector_visible
-          and '"/api/jurisdictions", null' in selector_visible)
-    # Lo prometido tiene que caber en lo que el paquete 'co' trae DE VERDAD: fuentes
-    # oficiales (corpus_sources), forma de citar (citation_style) y marcadores de
-    # documento. Festivos y términos son PROVISIONALES (`_complete: false`) y el
-    # resolutor de plazos ni siquiera está cableado a ellos: prometerlos sería mentira
-    # con consecuencia procesal. Y nada de jerga técnica en pantalla (§G).
-    promesas_prohibidas = ("festivo", "plazo", "término procesal", "vencimiento",
-                           "calcul", "jurisprudencia de tu país")
-    check("no promete festivos ni cálculo de plazos (esos datos son provisionales)",
-          not any(x in selector_visible.lower() for x in promesas_prohibidas))
-    check("el texto del país no usa jerga técnica (paquete/pack/corpus/instalado)",
-          not any(x in selector_visible.lower()
-                  for x in ("pack", "corpus", "instalad", "paquete", "jurisdiction pack")))
-    # LA SALIDA. Sin esto, un despacho de un país que no está entre las casillas no puede
-    # terminar el alta — cierra mercados enteros y choca de frente con la regla dura del
-    # producto. Se exige la vía completa: campo libre + que baste para avanzar + que el
-    # dato llegue al perfil + modo general cuando no hay ningún código de paquete.
-    check("un país FUERA de la lista tiene salida y no bloquea el alta",
-          "JURISDICTION_OTHER_FIELD" in onboarding
-          and "asList(answers[JURISDICTION_OTHER_FIELD]).length > 0" in onboarding
-          and "GENERIC_JURISDICTION" in onboarding
-          and "...otros" in onboarding)
-    check("«Mi despacho» también deja editar un país fuera de la lista",
-          "otherCountries" in despacho and "GENERIC_JURISDICTION" in despacho)
-    # El cuestionario vigente: p6 (a quién defiende / en qué asuntos) y p20/p21 (autonomía,
-    # líneas rojas) son chips libres; p22 (estándar de cierre) es texto libre.
-    check("P6/P20/P21 son tags libres y P22 texto libre",
-          all(f'"{x}"' in onboarding for x in ("p6", "p20", "p21", "p22"))
-          and "TAG_IDS" in onboarding and "TEXT_IDS" in onboarding)
-    # p19 (modo profundo) es la excepción: se nombra SOLO para filtrarlo si el backend
-    # todavía lo enviara (Riesgo #27 — no se ofrece lo que no está implementado).
-    check("las preguntas retiradas NO volvieron al wizard (P3/P4/P5/P7-P18)",
-          not any(f'"{x}"' in onboarding for x in
-                  ("p3", "p4", "p5", "p7", "p8", "p9", "p10", "p11", "p12", "p13",
-                   "p14", "p15", "p16", "p17", "p18")))
-    check("el modo profundo (p19) solo aparece para quedar OCULTO del wizard",
-          'HIDDEN_QUESTION_IDS = new Set(["p19"])' in onboarding
-          and onboarding.count('"p19"') == 1)
-    check("barra de progreso thin", "h-0.5 w-full" in onboarding)
-    check("pregunta centrada", "text-center text-2xl" in onboarding)
-    # Los 3 checks siguientes se actualizaron al design system del pase wow
-    # (2026-07, aprobado por Pipe): tokens HSL de shadcn en vez de hex crudos.
-    # El CONTRATO es el mismo — estado activo visible en el sidebar, burbujas
-    # diferenciadas usuario/Mia, paleta definida — con las clases vigentes.
-    check("sidebar activo con estado visible (tokens DS)",
-          "text-primary" in sidebar and ("bg-accent" in sidebar or "bg-primary/10" in sidebar))
-    check("chat usa burbuja de usuario en primario y Mia en tarjeta",
-          "bg-primary" in workspace and "text-primary-foreground" in workspace
-          and "bg-card" in workspace)
-    check("paleta con tokens HSL (claro y oscuro) y primario definido",
-          "--primary:" in globals_css and "hsl(var(--" in globals_css
-          and globals_css.count("--background:") >= 2)
-
-    passed = sum(1 for _, ok in _results if ok)
-    total = len(_results)
-    print(f"\nRESULT: {passed}/{total} checks PASS")
-    if passed == total:
-        print("Onboarding horizontal OK.")
-        return 0
-    print("Onboarding horizontal FAIL.")
-    return 1
+    results = [
+        check("el alta no muestra una entrevista",
+              'apiSend("POST", "/api/onboarding/complete", { responses: {} })' in onboarding
+              and "questions" not in onboarding and "CountrySelector" not in onboarding),
+        check("el alta explica el siguiente paso sin exponer implementación",
+              "Tu espacio está listo." in onboarding
+              and "Crea un caso y conversa con Mia." in onboarding
+              and "Cada documento se entrega como borrador para tu" in onboarding
+              and "El contexto de tu firma u organización se completará" in onboarding
+              and "Puedes revisarlo en Configuración." in onboarding
+              and "no necesito una entrevista" not in onboarding
+              and "no asumirá quién defiendes" not in onboarding),
+        check("las preguntas obligatorias ya no existen",
+              "QUESTIONS: list[dict] = []" in soul and "¿A quién defiendes" not in soul
+              and "¿Qué quieres revisar siempre" not in soul and "¿Qué no debo hacer nunca" not in soul),
+        check("un perfil vacío queda marcado como aprendizaje, sin identidad inventada",
+              "Perfil en aprendizaje" in soul and "if body.responses:" in ux),
+        check("el diálogo de caso solo pide nombre y contexto opcional",
+              "Descripción (opcional)" in cases and "Jurisdicción de este caso" in cases
+              and "Modo de trabajo" not in cases and "radiogroup" not in cases),
+        check("la pantalla no envía un modo elegible al crear", "kind," not in cases and "setKind" not in cases),
+        check("el servidor fija los casos nuevos al flujo con aprobación",
+              'kind = "asunto"' in create_route and "body.kind not in _MATTER_KINDS" in create_route),
+        check("la lista comunica que todo borrador requiere aprobación",
+              "borrador queda esperando tu aprobación" in cases),
+    ]
+    passed = sum(results)
+    print(f"\nRESULT: {passed}/{len(results)} checks PASS")
+    return 0 if passed == len(results) else 1
 
 
 if __name__ == "__main__":

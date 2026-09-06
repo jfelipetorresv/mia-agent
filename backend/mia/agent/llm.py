@@ -194,8 +194,12 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
         "legal_analysis": [CLI_OPUS_ALIAS, CLI_SONNET_ALIAS],
         **{t: [CLI_SONNET_ALIAS]
            for t in LEGAL_TASKS if t != "legal_analysis"},
-        "curator": [CLI_SONNET_ALIAS, "claude-sonnet", "mia-local"],
-        "compression": [CLI_HAIKU_ALIAS, "claude-haiku"],
+        # La tarjeta «Mis suscripciones» promete usar la cuenta conectada del
+        # titular. Sus tareas no pueden caer en una API facturada por tener una
+        # clave histórica en la instalación; el único respaldo permitido aquí
+        # es local y solo donde ya forma parte del contrato de la tarea.
+        "curator": [CLI_SONNET_ALIAS, "mia-local"],
+        "compression": [CLI_HAIKU_ALIAS],
         **{t: [CLI_HAIKU_ALIAS, "mia-local"] for t in _AUX_TASKS},
     },
     # Suscripción de Claude Code: en funciones jurídicas no hay red pagada/local.
@@ -204,10 +208,10 @@ _POLICY_CHAINS: dict[str, dict[str, list[str]]] = {
     "suscripcion": {
         "main": ["cli-claude"],
         **{t: ["cli-claude"] for t in LEGAL_TASKS},
-        "curator": ["cli-claude", "claude-sonnet", "mia-local"],
-        # Sigue BLOQUEADA (model explícito no la cambia), pero con red: si el CLI
-        # falla, cae a la API haiku barata (ajuste de la revisión CP2, decisión #27).
-        "compression": ["cli-claude-haiku", "claude-haiku"],
+        "curator": ["cli-claude", "mia-local"],
+        # Sigue BLOQUEADA (model explícito no la cambia) y permanece dentro de
+        # la suscripción: un fallo del CLI se comunica, no compra uso de API.
+        "compression": ["cli-claude-haiku"],
         **{t: ["cli-claude-haiku", "mia-local"] for t in _AUX_TASKS},
     },
     # Codex es un proveedor productivo alternativo, no un alias de evaluación ni un
@@ -431,11 +435,10 @@ _allow_openrouter: ContextVar[bool] = ContextVar("mia_allow_openrouter", default
 
 
 # ── CAMBIOS DE MOTOR del turno (sesión 52) ────────────────────────────────────
-# El modo de venta es la SUSCRIPCIÓN que el abogado ya paga, y la cadena de respaldo puede
-# acudir a crédito de API o a OpenRouter cuando la suscripción no alcanza — eso es deliberado
-# (decisión de Pipe). Lo que faltaba era DECÍRSELO: en el piloto con un expediente real la
-# suscripción expiró y el turno se atendió con crédito de tarjeta sin que nada en pantalla lo
-# mencionara. Un cargo que el abogado no esperaba es un cargo que no autorizó.
+# Las políticas de suscripción no salen de su CLI: si el cupo no alcanza, solo pueden
+# continuar con otro CLI de suscripción o con el motor local. En las políticas que sí
+# permiten crédito de API, cualquier cambio de motor se acumula para avisarlo en pantalla;
+# un cargo que el abogado no esperaba es un cargo que no autorizó.
 #
 # Aquí solo se ACUMULA el hecho; el aviso en llano lo arma `aviso_cambio_de_motor` y quien
 # pinta la pantalla decide dónde ponerlo. Se usa un ContextVar (mismo patrón que la política de
@@ -536,9 +539,8 @@ def aviso_cambio_de_motor(cambios: list[dict] | None) -> dict | None:
             "siempre; el crédito solo entra cuando ella se queda corta."
         ),
         "sugerencia": (
-            "Esto es exactamente lo que evita un plan Max: los expedientes grandes caben "
-            "completos en lo que ya pagas, sin cargos aparte y sin que yo tenga que quedarme a "
-            "medias. Si trabajas casos de este tamaño, te lo recomiendo de una."
+            "Revisa los límites y condiciones de tu plan antes de volver a intentar un trabajo "
+            "de este tamaño. También puedes elegir otra conexión en Configuración."
         ),
     }
 
@@ -695,17 +697,18 @@ def _active_chains() -> dict[str, list[str]]:
     policy = get_model_policy()
     merged.update(_POLICY_CHAINS[policy])
     # CP-S3/CP-OR: OpenRouter entra como respaldo/overflow ("más uso") SOLO si se cumplen
-    # TRES condiciones — política 'nube' O 'suscripcion', opt-in explícito del despacho Y
+    # TRES condiciones — política 'nube', opt-in explícito del despacho Y
     # clave de OpenRouter REALMENTE disponible (`_openrouter_key_present`: config del proceso
     # vivo O el `.env` en disco — ver MAYOR 1, para que el overflow no quede inerte tras
     # guardar la clave + reiniciar el proxy en caliente). El opt-in por tenant satisface la
     # regla 2: enrutar los datos del cliente a un TERCERO adicional (OpenRouter, con su propia
     # política de datos) es decisión informada del despacho, no un efecto colateral de que
-    # exista una clave. NO aplica a 'soberano' (nada sale del equipo) ni a 'openrouter' (ahí
-    # OpenRouter YA es el motor principal, sin necesidad de insertarlo). Orden del AND: el
-    # opt-in (ContextVar barato) va antes que `_openrouter_key_present` (relee el `.env` con
-    # cache) para no tocar disco cuando el despacho no autorizó el overflow.
-    if (policy in ("nube", "suscripcion") and openrouter_allowed()
+    # exista una clave. Tampoco aplica a las políticas de suscripción: una autorización
+    # histórica se conserva, pero no convierte «Mis suscripciones» en una ruta de pago.
+    # 'openrouter' ya es su propio motor principal. Orden del AND: el opt-in (ContextVar
+    # barato) va antes que `_openrouter_key_present` (relee el `.env` con cache) para no
+    # tocar disco cuando el despacho no autorizó el overflow.
+    if (policy == "nube" and openrouter_allowed()
             and _openrouter_key_present()):
         merged = _with_openrouter_fallback(merged)
     return merged
@@ -1188,7 +1191,7 @@ def _call_with_retries(
                 raise _FallbackNeeded(kind, exc) from exc
 
             # CP-S3/CP-OR (revisión capa 2, H2): los aliases de OpenRouter (respaldo
-            # opcional en 'nube'/'suscripcion' o motor principal en 'openrouter'). Si la
+            # opcional en 'nube' o motor principal en 'openrouter'). Si la
             # clave es inválida o no tiene saldo (AUTH/402 → no saltable) y hay un
             # proveedor DESPUÉS en la cadena (mia-local), no debe matar el turno: se salta
             # al siguiente. Sin next_alias sí falla claro (era el último recurso). Cubre

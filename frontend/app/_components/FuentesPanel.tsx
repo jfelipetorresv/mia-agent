@@ -90,10 +90,10 @@ function fmtRelative(iso?: string | null): string {
   return `hace ${diffDay} ${diffDay === 1 ? "día" : "días"}`;
 }
 
-// Mientras una fuente está en pleno escaneo, el backend lo dice en llano
-// ("Leyendo la carpeta…") — con eso basta para decidir si seguimos sondeando.
+// Mientras una fuente se está importando o revisando, el backend lo dice en llano;
+// con eso basta para decidir si seguimos sondeando.
 function algunaEnLectura(list: Fuente[]): boolean {
-  return list.some((f) => /leyendo/i.test(f.estado));
+  return list.some((f) => /leyendo|importando/i.test(f.estado));
 }
 
 export default function FuentesPanel({ matterId, onChanged }: Props) {
@@ -196,7 +196,16 @@ export default function FuentesPanel({ matterId, onChanged }: Props) {
           ? `/api/matters/${matterId}/folders/${f.id}/sync`
           : `/api/drive/sources/${f.id}/sync`;
       const res = await apiSend<{ status: string; message: string }>("POST", path);
-      setMsgs((m) => ({ ...m, [key]: { text: res.message || "Estoy revisando esta fuente." } }));
+      setMsgs((m) => ({
+        ...m,
+        [key]: {
+          text:
+            res.message ||
+            (f.tipo === "carpeta"
+              ? "Estoy importando los documentos para ampliar la búsqueda."
+              : "Estoy revisando esta fuente."),
+        },
+      }));
     } catch (err) {
       setMsgs((m) => ({
         ...m,
@@ -352,7 +361,9 @@ export default function FuentesPanel({ matterId, onChanged }: Props) {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => syncSource(f)} disabled={isBusy}>
-                          {isBusy ? "Revisando…" : "Revisar ahora"}
+                          {isBusy
+                            ? f.tipo === "carpeta" ? "Importando…" : "Revisando…"
+                            : f.tipo === "carpeta" ? "Importar para búsqueda ampliada" : "Revisar ahora"}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => setUnlinkTarget(f)} className="text-destructive">
                           Desvincular
@@ -363,7 +374,9 @@ export default function FuentesPanel({ matterId, onChanged }: Props) {
                 </div>
                 <div className="mt-2 text-muted-foreground">
                   {f.estado}
-                  {f.last_sync ? ` · última revisión ${fmtRelative(f.last_sync)}` : ""}
+                  {f.last_sync
+                    ? ` · última ${f.tipo === "carpeta" ? "importación" : "revisión"} ${fmtRelative(f.last_sync)}`
+                    : ""}
                 </div>
                 {msg && msg.text ? (
                   <p className="mt-1.5 text-muted-foreground">

@@ -7,17 +7,17 @@ import { POP_SPRING, useReducedMotion } from "./motion";
 import { cn } from "@/lib/utils";
 
 export interface WelcomeProgressProps {
-  /** Etiquetas de los pasos del viaje completo. Por defecto, el viaje de 4 pasos. */
+  /** Etiquetas de los pasos del viaje completo. Por defecto, el viaje de 3 pasos. */
   steps?: string[];
   /** Índice (0-based) del paso actual. Los anteriores se muestran cumplidos. */
   current: number;
   className?: string;
 }
 
-// Los 4 pasos del viaje de bienvenida. Fuente única de verdad: se re-exporta
+// Los 3 pasos del viaje de bienvenida. Fuente única de verdad: se re-exporta
 // desde `_welcome` para que otras pantallas (p. ej. /activar) la importen en vez
 // de duplicarla y arriesgar que se desincronicen.
-export const JOURNEY_STEPS = ["Tu despacho", "Activar", "Conocerte", "Listo"];
+export const JOURNEY_STEPS = ["Tu espacio", "Conectar", "Empezar"];
 
 /**
  * Progreso "constelación" que abarca TODO el viaje de bienvenida (no un % por

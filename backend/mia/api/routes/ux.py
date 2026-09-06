@@ -56,7 +56,7 @@ from ...memory import legal_ledger
 from ...observability import audit
 from ...onboarding.soul_interview import (
     KNOWN_FIELDS, SoulInterview, build_soul, build_summary, derive_firm_profile,
-    firm_name, load_responses, soul_status, validate_soul,
+    firm_name, load_responses, load_soul_text, soul_status, validate_soul,
 )
 from ...onboarding.workspace import scaffold_matter_workspace
 from ...output.docx_export import draft_to_docx
@@ -219,26 +219,33 @@ async def create_matter(request: Request, body: MatterCreate):
     tid = _tenant(request)
     if body.kind not in _MATTER_KINDS:
         raise HTTPException(status_code=422, detail="Ese tipo de espacio no existe")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Escribe un nombre para el caso")
+    # Los casos nuevos siempre conversan y dejan los resultados como borradores para
+    # aprobación. Se conserva `kind` en el contrato por compatibilidad de lectura con
+    # casos históricos, pero un cliente no puede quitar esta garantía al crear uno nuevo.
+    kind = "asunto"
     jurisdictions = await _matter_jurisdictions(tid, body.jurisdictions)
     async with pool.tenant_connection(tid) as conn:
         row = await (await conn.execute(
             "INSERT INTO matters (tenant_id, title, description, kind, jurisdictions) "
             "VALUES (%s::uuid, %s, %s, %s, %s::jsonb) "
             "RETURNING id, status, created_at",
-            (tid, body.name, body.description, body.kind, Json(jurisdictions)))).fetchone()
+            (tid, name, body.description, kind, Json(jurisdictions)))).fetchone()
     # Andamiaje en disco del expediente (solo Asuntos): alias = UUID del asunto (convención
     # crítica y consistente). El disco es ACCESORIO — jamás debe tumbar el alta, así que va
     # fuera del event loop y en try/except que solo loguea.
-    if body.kind == "asunto":
+    if kind == "asunto":
         try:
             await run_in_threadpool(
-                scaffold_matter_workspace, tid, str(row[0]), titulo=body.name)
+                scaffold_matter_workspace, tid, str(row[0]), titulo=name)
         except Exception:
             logger.exception(
                 "no se pudo andamiar el expediente en disco (tenant=%s matter=%s)",
                 tid, str(row[0]))
-    return {"id": str(row[0]), "name": body.name, "description": body.description,
-            "status": row[1], "created_at": row[2], "kind": body.kind,
+    return {"id": str(row[0]), "name": name, "description": body.description,
+            "status": row[1], "created_at": row[2], "kind": kind,
             "jurisdictions": jurisdictions}
 
 
@@ -395,7 +402,7 @@ async def upload_document(matter_id: str, request: Request, response: Response,
         raise HTTPException(status_code=400, detail="El documento está vacío o no tiene texto.")
     # El proveedor de embeddings es síncrono y puede hacer E/S de red. Sacarlo del
     # event loop evita congelar las demás solicitudes mientras responde.
-    vectors = await asyncio.to_thread(embeddings.embed_texts, [c for c, _ in pairs])
+    vectors = await asyncio.to_thread(embeddings.embed_texts_optional, [c for c, _ in pairs])
     async with pool.tenant_connection(tid) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, origin) "
@@ -443,7 +450,7 @@ async def create_output(matter_id: str, request: Request, response: Response, bo
                 "message": "Ese archivo ya estaba guardado en este caso — no lo dupliqué."}
     chunks = chunk_text(body.content)
     try:
-        vectors = await asyncio.to_thread(embeddings.embed_texts, chunks) if chunks else []
+        vectors = await asyncio.to_thread(embeddings.embed_texts_optional, chunks) if chunks else []
     except Exception:
         # M1 (mismo criterio que upload_document): si falla el embebido no se deja NADA
         # a medias — aquí todavía no se insertó nada en documents/chunks.
@@ -1902,8 +1909,8 @@ async def _load_onboarding_draft(tid: str) -> dict | None:
 async def onboarding_questions(request: Request):
     """Las preguntas de la entrevista (id/block/field/question/example).
 
-    Son 6: el frontend añade encima su paso local de jurisdicción (selector de países)
-    para un total de 7 pasos. El número no está cableado aquí — sale de `QUESTIONS`."""
+    El alta simplificada no pregunta nada: el perfil se completa con información real
+    durante el uso. El endpoint se conserva para clientes anteriores."""
     _tenant(request)
     return await SoulInterview().get_questions()
 
@@ -1937,14 +1944,34 @@ async def onboarding_complete(request: Request, body: OnboardingComplete):
     # '_jurisdicciones') jamás forman parte del perfil — el frontend ya las extrae,
     # pero una llamada directa al API no debe poder colarlas en responses.json.
     body.responses = {k: v for k, v in body.responses.items() if not str(k).startswith("_")}
-    # Guardián conectado (arreglo 2026-07-20): antes se llamaba `run_interview` a ciegas y
-    # cualquier payload devolvía 200 con un perfil de dos líneas. Ahora se valida ANTES de
-    # escribir: forma, se descartan las llaves que el generador no lee (422 solo si NO
-    # queda ninguna legible) y se exige que el perfil resultante tenga dueño. Si algo
-    # falla, no se toca el disco.
+    # Un alta vacía es válida: evita inventar una identidad o preferencias antes del
+    # primer caso. Si el cliente sí aporta datos, se conserva la validación completa.
     _validate_responses_shape(body.responses)
-    body.responses = _known_fields_only(body.responses, origen="onboarding")
-    _reject_empty_profile(body.responses)
+    # La pantalla simplificada siempre envía `{}`. Si el perfil ya existe, este POST es
+    # un reintento inocuo: no vuelve a generar el SOUL ni borra lo que Mia o el abogado
+    # ya incorporaron. Es especialmente importante tras un refresh o doble clic.
+    if not body.responses and soul_status(tid)["completed"]:
+        current = load_responses(tid)
+        return {
+            "soul_content": load_soul_text(tid) or build_soul(current),
+            "summary": build_summary(current),
+            "path": f"soul_{tid}.md",
+            "generated_by": "deterministic",
+            "puede_importar_guias": True,
+        }
+    if not body.responses:
+        # La firma u organización ya fue declarada al registrar la cuenta. Se reutiliza
+        # ese dato autenticado para el perfil inicial, sin deducir abogado, práctica ni
+        # ninguna otra preferencia.
+        async with pool.tenant_connection(tid) as conn:
+            row = await (await conn.execute(
+                "SELECT name FROM tenants WHERE id = %s::uuid", (tid,))).fetchone()
+        registered_firm = str(row[0]).strip() if row and row[0] else ""
+        if registered_firm:
+            body.responses = {"identity.name": {"firm": registered_firm}}
+    if body.responses:
+        body.responses = _known_fields_only(body.responses, origen="onboarding")
+        _reject_empty_profile(body.responses)
     # Persistir la(s) jurisdicción(es) elegidas (Fase 0.C). Es la fuente del routing
     # jurisdiccional del SAT-Graph, calendario, chunker y PII (resolve_jurisdictions).
     if body.jurisdictions:

@@ -1,12 +1,11 @@
 """
-Mia · test_cambio_de_motor_aviso.py — gate: la suscripción se apalanca, el crédito se avisa.
+Mia · test_cambio_de_motor_aviso.py — gate de saltos y avisos de costo.
 
-DECISIÓN DE PRODUCTO QUE ESTO CUSTODIA (Pipe, sesión 52): MIA se vende corriendo sobre la
-suscripción que el abogado YA paga; si la suscripción no alcanza, la cadena puede acudir a
-crédito de API o a OpenRouter. Eso es deliberado. Lo que NO puede pasar es que ocurra en
-silencio: en el piloto con un expediente real la suscripción expiró tres veces (300s cada una,
-15 minutos tirados), el turno se resolvió con crédito de tarjeta —USD 0,57— y nada en pantalla
-lo mencionó. Un cargo que el abogado no esperaba es un cargo que no autorizó.
+Las políticas de suscripción usan solo los CLI de la cuenta conectada como salida externa.
+En tareas auxiliares pueden caer al motor local; nunca a una API facturada ni a un permiso
+histórico de OpenRouter. Las políticas de API conservan sus rutas propias. Si una transición
+pagada explícita queda registrada, el aviso debe llegar al abogado sin prometer cobertura ni
+precio de un plan.
 
 Qué se verifica (sin red, sin modelo):
 
@@ -15,10 +14,9 @@ Qué se verifica (sin red, sin modelo):
      el defecto costaba eran 15 minutos de espera antes de hacer lo que iba a hacer igual.
   2. Los timeouts de OTROS proveedores conservan su reintento (ahí sí suele ser transitorio).
   3. El cambio de motor queda REGISTRADO, con desde/hacia/motivo.
-  4. El aviso solo aparece cuando el abogado va a PAGAR: de suscripción a un motor de pago sí;
-     entre motores de nube no (no cambia quién paga); a motor local tampoco (no cuesta dinero).
-  5. El aviso dice qué pasó, que hay costo, y que la suscripción se usa primero SIEMPRE.
-  6. Trae la sugerencia del plan Max (petición expresa de Pipe).
+  4. El aviso solo aparece ante una transición registrada hacia pago; entre motores de nube o
+     hacia local no inventa un cargo.
+  5. El aviso dice qué pasó y recomienda revisar límites sin prometer cobertura o precio.
   7. §G: ni un alias técnico, ni un nombre de proveedor, ni la palabra 'fallback' en lo que lee
      el abogado.
 
@@ -108,13 +106,11 @@ def _correr_turno_sse(fallar: bool, registrar: bool) -> list[dict]:
 
 
 def _gate_circuit_breaker() -> None:
-    """Ejerce call_llm COMPLETO (cadena real de la política 'suscripcion') con un doble que
-    hace expirar la suscripción y responder la nube. Verifica que dentro del MISMO turno la
-    suscripción solo paga el timeout una vez, y que el turno siguiente vuelve a intentarla.
+    """Ejerce call_llm COMPLETO con la cadena real de ``suscripcion``.
 
-    2026-08-14: las políticas de membresía dejaron main/legal en cadenas de UN proveedor
-    (fallan claro, sin salto). La cadena real con respaldo que queda en 'suscripcion' es la
-    de curator (cli-claude → claude-sonnet → mia-local): el gate ejerce esa."""
+    La suscripción puede degradar a local en tareas auxiliares, pero nunca a una API
+    facturada. Dentro del mismo turno el timeout del CLI se paga una vez; el turno
+    siguiente vuelve a intentarlo. El salto local no genera un aviso de costo."""
 
     class _Resp:
         choices: list = []
@@ -138,19 +134,21 @@ def _gate_circuit_breaker() -> None:
     politica_tok = llm.set_model_policy("suscripcion")
     try:
         with llm.recolectar_cambios_de_motor() as cambios:
-            # Nodo 1 del grafo: la suscripción expira y se salta a la nube.
+        # Nodo 1 del grafo: la suscripción expira y se salta al respaldo local.
             llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
             tras_nodo_1 = list(invocaciones)
             # Nodos 2 y 3 del mismo turno: la suscripción NO debe volver a intentarse.
             llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
             llm.call_llm([{"role": "user", "content": "hola"}], task="curator")
-        check("el primer nodo intentó la suscripción y saltó a la nube",
-              tras_nodo_1 == ["cli-claude", "claude-sonnet"], str(tras_nodo_1))
+        check("el primer nodo intentó la suscripción y saltó solo al motor local",
+              tras_nodo_1 == ["cli-claude", "mia-local"], str(tras_nodo_1))
         cli_total = invocaciones.count("cli-claude")
         check("los nodos siguientes del turno NO volvieron a pagar el timeout",
               cli_total == 1, f"cli-claude se intentó {cli_total} veces en el turno")
-        check("cada nodo saltado quedó registrado para el aviso de costo",
+        check("cada salto local queda registrado para observabilidad",
               len(cambios) == 3, f"{len(cambios)} cambios")
+        check("un respaldo local no inventa un aviso de costo",
+              llm.aviso_cambio_de_motor(cambios) is None)
 
         # Turno NUEVO: el breaker murió con el anterior y la suscripción va primero otra vez.
         invocaciones.clear()
@@ -186,8 +184,8 @@ def _gate_enganche_backend() -> None:
         data = json.loads(normales[-1]["data"])
         check("el evento lleva el texto que lee el abogado",
               "costo" in data.get("message", "").lower())
-        check("y la recomendación del plan Max",
-              "max" in (data.get("sugerencia") or "").lower())
+        check("y la recomendación honesta sobre límites",
+              "límites y condiciones" in (data.get("sugerencia") or "").lower())
 
     sin_cambio = [e["event"] for e in _correr_turno_sse(fallar=False, registrar=False)]
     check("un turno que NO cambió de motor no dice nada",
@@ -230,7 +228,7 @@ def _gate_enganche_frontend() -> None:
 
 
 def main() -> int:  # noqa: C901
-    print("== gate: la suscripción se apalanca, el crédito se avisa ==")
+    print("== gate: rutas de suscripción aisladas y avisos de costo honestos ==")
 
     # Sin dormir de verdad entre reintentos (el gate no puede tardar minutos).
     original_sleep = llm.time.sleep
@@ -300,10 +298,13 @@ def main() -> int:  # noqa: C901
           and "grande" in a["aviso"].lower())
     check("cuenta cuántas veces pasó", a["veces"] == 1)
 
-    print("\n6 · la sugerencia del plan Max (petición expresa de Pipe)")
-    check("sugiere el plan Max", "max" in a["sugerencia"].lower())
-    check("y explica el beneficio en llano (cabe en lo que ya pagas)",
-          "ya pagas" in a["sugerencia"].lower())
+    print("\n6 · la sugerencia no promete cobertura ni precio del plan")
+    check("remite a los límites y condiciones reales",
+          "límites y condiciones" in a["sugerencia"].lower())
+    promesas_aviso = [p for p in ("plan max", "caben completos", "sin cargos", "ya pagas")
+                       if p in a["sugerencia"].lower()]
+    check("no promete plan, cobertura ni ausencia de cargos", not promesas_aviso,
+          f"aparece: {', '.join(promesas_aviso)}")
 
     print("\n7 · §G — nada técnico en lo que lee el abogado")
     prohibido = ["fallback", "cli-claude", "claude-sonnet", "openrouter", "alias", "timeout",
@@ -312,27 +313,18 @@ def main() -> int:  # noqa: C901
     check("ni jerga ni nombres de motor en el texto del abogado",
           not filtrados, f"aparece: {', '.join(filtrados)}")
 
-    print("\n8 · la recomendación del plan Max también en la INSTALACIÓN")
-    # Pipe: el aviso no puede llegar solo cuando ya se gastó crédito; al elegir el motor, el
-    # abogado tiene que leer que para expedientes grandes le conviene un plan Max.
+    print("\n8 · la instalación no promete cobertura ni costo de la suscripción")
     activar = (ROOT / "frontend" / "app" / "activar" / "page.tsx").read_text(encoding="utf-8")
-    check("la pantalla de activación existe y ofrece la suscripción",
-          'title="Mi suscripción"' in activar)
-    check("recomienda el plan Max al elegir el motor", "plan Max" in activar)
-    # Se exige el CONCEPTO, no una redacción literal: el texto se ha reescrito dos veces por
-    # claridad y un check atado a las palabras exactas lo rompe cada vez sin que nada haya
-    # empeorado. Lo sustantivo es que diga que con Max no se paga aparte.
-    beneficio = any(f in activar for f in ("ya pagas", "sin costo extra", "sin cargos"))
-    check("y explica el beneficio en llano (con Max no se paga aparte)", beneficio)
-    check("nombra el problema que evita (el expediente que no cabe)",
-          "no me cabe" in activar or "no cabe" in activar or "a medias" in activar)
-    check("lo dice donde se elige la suscripción, no en otra pantalla suelta",
-          activar.index("plan Max") > activar.index('title="Mi suscripción"')
-          and activar.index("plan Max") - activar.index('title="Mi suscripción"') < 1200)
-    # §G también aquí: la pantalla la lee un abogado, no un ingeniero.
-    trozo = activar[activar.index('title="Mi suscripción"'):][:1200].lower()
-    jerga = [p for p in ("api", "token", "fallback", "litellm", "endpoint") if p in trozo]
-    check("sin jerga técnica en ese texto", not jerga, f"aparece: {', '.join(jerga)}")
+    check("la pantalla agrupa Claude y Codex bajo Mis suscripciones",
+          'title="Mis suscripciones"' in activar
+          and '<option value="quality_adaptive">Claude Code</option>' in activar
+          and '<option value="codex">Codex</option>' in activar)
+    promesas = [p for p in ("plan Max", "sin costo extra", "sin cargos", "el expediente cabe")
+                if p in activar]
+    check("no promete plan, cobertura ni ausencia de cargos", not promesas,
+          f"aparece: {', '.join(promesas)}")
+    check("sí remite a los límites y condiciones reales del plan",
+          "límites y condiciones de tu plan" in activar)
 
     print("\n9 · el aviso LLEGA A LA PANTALLA (enganche, sesión 53)")
     # El defecto que esto custodia: en la sesión 52 el aviso quedó calculado y probado, pero

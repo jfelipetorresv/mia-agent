@@ -520,21 +520,21 @@ class ObsidianSync:
         return [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
 
     # ── embeddings (librería LiteLLM, batches de 128) ────────────────────────
-    async def _embed_chunks(self, texts: list[str]) -> list[list[float]]:
+    async def _embed_chunks(self, texts: list[str]) -> list[list[float] | None]:
         """Embebe los textos en batches de EMBED_BATCH vía embeddings.embed_texts
         (voyage-law-2). NO usa call_llm: los embeddings van por la librería, no el proxy
         chat (decisión #17 C2 / Riesgo #4)."""
         if not texts:
             return []
-        vectors: list[list[float]] = []
+        vectors: list[list[float] | None] = []
         for i in range(0, len(texts), EMBED_BATCH):
             batch = texts[i:i + EMBED_BATCH]
-            vectors.extend(embeddings.embed_texts(batch))
+            vectors.extend(embeddings.embed_texts_optional(batch))
         return vectors
 
     # ── persistencia en knowledge_chunks (RLS por tenant) ────────────────────
     async def _upsert_chunks(self, tenant_id: str, filepath: str,
-                             chunks: list[dict], vectors: list[list[float]]) -> None:
+                             chunks: list[dict], vectors: list[list[float] | None]) -> None:
         """Upsert de los chunks de un archivo en knowledge_chunks. Re-indexa en sitio
         (ON CONFLICT) y borra los chunks sobrantes si el archivo encogió.
 
@@ -595,7 +595,7 @@ class ObsidianSync:
 
     # ── espejo en Pinecone (store SECUNDARIO opt-in, Módulo A) ───────────────
     async def _pinecone_mirror_upsert(self, tenant_id: str, filepath: str,
-                                      chunks: list[dict], vectors: list[list[float]],
+                                      chunks: list[dict], vectors: list[list[float] | None],
                                       *, pruned_indices: list[int]) -> None:
         """Espeja el upsert (y la poda por encogimiento) de ESTA nota en Pinecone. Id
         determinista `{SOURCE}:{filepath}:{chunk_index}`: un re-sync hace upsert en
@@ -609,6 +609,8 @@ class ObsidianSync:
                 if chunks:
                     vectors_pc = []
                     for chunk, vec in zip(chunks, vectors):
+                        if vec is None:
+                            continue
                         metadata = {
                             "content": (chunk["text"] or "")[:2000],
                             "source": SOURCE,

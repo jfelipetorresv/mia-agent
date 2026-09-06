@@ -148,3 +148,32 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         while len(_query_cache) > _QUERY_CACHE_SIZE:
             _query_cache.popitem(last=False)
     return vectors
+
+
+def embed_texts_optional(texts: list[str]) -> list[list[float] | None]:
+    """Embebe cuando Voyage está configurado; conserva el texto cuando no lo está.
+
+    Los documentos y las notas también tienen un índice full-text en PostgreSQL. En una
+    instalación que usa Claude/Codex por suscripción no debe exigirse una segunda cuenta
+    de API solo para que Mia guarde y encuentre las fuentes que el abogado ya autorizó.
+    ``None`` es un valor válido para la columna ``embedding`` y mantiene la correspondencia
+    uno-a-uno con ``texts`` para que ningún llamador pierda fragmentos al hacer ``zip``.
+
+    Solo la ausencia explícita de clave activa este camino. Un fallo real del proveedor se
+    propaga: degradar en silencio después de haber contratado embeddings ocultaría una
+    incidencia y podría dejar una indexación parcialmente peor sin avisar.
+    """
+    if not texts:
+        return []
+    try:
+        return list(embed_texts(texts))
+    except RuntimeError as exc:
+        # `embed_texts` es la única fuente de verdad de la precondición. Mantener la
+        # detección aquí basada en el tipo + estado permite además sustituir ese cliente
+        # en pruebas sin depender de una clave ficticia.
+        if not config.VOYAGE_API_KEY and "VOYAGE_API_KEY" in str(exc):
+            logger.info(
+                "embeddings omitidos: Voyage no está configurado; se usará búsqueda textual"
+            )
+            return [None] * len(texts)
+        raise

@@ -321,7 +321,7 @@ async def _ingest_document(tenant_id: str, matter_id: str, filename: str, mime: 
         return
     # El cliente de embeddings es síncrono (y normalmente hace red): no debe
     # bloquear el event loop que atiende el resto de la API.
-    vectors = await asyncio.to_thread(embeddings.embed_texts, [c for c, _ in pairs])
+    vectors = await asyncio.to_thread(embeddings.embed_texts_optional, [c for c, _ in pairs])
     async with pool.tenant_connection(tenant_id) as conn:
         doc_id = (await (await conn.execute(
             "INSERT INTO documents (tenant_id, matter_id, filename, mime, sha256, "

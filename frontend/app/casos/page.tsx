@@ -1,9 +1,8 @@
 "use client";
 
-// D3 · «Casos»: lista ÚNICA. Antes había dos pestañas («Asuntos» y «Proyectos»)
-// para la MISMA tabla (matters, columna kind — migración 028). El abogado ve un
-// solo concepto: el caso. Lo único que cambia entre casos es cómo entrega Mia su
-// trabajo, y eso se elige al crear (y se puede cambiar dentro del caso).
+// Lista única de casos. Los casos nuevos siempre usan el flujo de conversación con
+// borrador pendiente de aprobación; los `kind` históricos se conservan solo para
+// que los datos ya creados sigan abriendo correctamente.
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -11,10 +10,8 @@ import Link from "next/link";
 import {
   ArrowRight,
   ChevronRight,
-  FileCheck2,
   FileClock,
   FolderOpen,
-  MessageSquareText,
   Plus,
 } from "lucide-react";
 import { apiGet, apiSend } from "@/lib/api";
@@ -34,8 +31,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
-import { KIND_LABEL, type CaseKind } from "./[id]/_components/ModoDeTrabajo";
 
 type Caso = {
   id: string;
@@ -46,11 +41,6 @@ type Caso = {
   pending_review?: boolean;
   kind?: string;
   jurisdictions?: string[];
-};
-
-const KIND_HELP: Record<CaseKind, string> = {
-  asunto: "Mia investiga y te entrega un borrador que tú apruebas antes de que nada salga.",
-  proyecto: "Mia te responde de una vez en la conversación y tú guardas lo que te sirva.",
 };
 
 function fmtDate(s?: string): string {
@@ -92,7 +82,6 @@ function CasosPageContent() {
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [kind, setKind] = useState<CaseKind>("asunto");
   const [organizationJurisdictions, setOrganizationJurisdictions] = useState<string[]>([]);
   const [selectedJurisdictions, setSelectedJurisdictions] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
@@ -135,7 +124,6 @@ function CasosPageContent() {
   function openModal() {
     setName("");
     setDescription("");
-    setKind("asunto");
     setSelectedJurisdictions([]);
     setError("");
     setShowModal(true);
@@ -153,7 +141,6 @@ function CasosPageContent() {
       const m = await apiSend<Caso>("POST", "/api/matters", {
         name: name.trim(),
         description: description.trim(),
-        kind,
         ...(selectedJurisdictions.length > 0 ? { jurisdictions: selectedJurisdictions } : {}),
       });
       setShowModal(false);
@@ -187,16 +174,14 @@ function CasosPageContent() {
         </Button>
       </div>
 
-      {/* La antigua división Asuntos/Proyectos ahora es UNA decisión dentro del caso. */}
       <NotaMia
         id="casos-lista-unificada"
         icon={FolderOpen}
         titulo="Todos tus casos viven aquí"
         className="mb-6"
       >
-        En cada caso decides cómo te entrego mi trabajo: con un borrador que tú
-        apruebas, o respondiéndote directo en la conversación. Lo eliges al crearlo
-        y puedes cambiarlo dentro del caso.
+        Cada caso reúne sus documentos, sus fuentes y tu conversación con Mia. Cualquier
+        borrador queda esperando tu aprobación antes de salir.
       </NotaMia>
 
       {loading ? (
@@ -228,8 +213,7 @@ function CasosPageContent() {
           <h2 className="text-lg font-semibold tracking-tight">Crea tu primer caso</h2>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
             Un caso reúne los documentos, las carpetas conectadas y tu conversación con
-            Mia. Tú decides si Mia te entrega un borrador para aprobar o te responde
-            directo — y puedes cambiarlo cuando quieras.
+            Mia. Conversa conmigo y revisa cada borrador antes de aprobarlo.
           </p>
           <Button onClick={openModal} className="mt-6 gap-2 shadow-neu-raised hover:-translate-y-0.5 active:shadow-neu-sunken transition-all duration-200">
             <Plus className="h-4 w-4" />
@@ -239,8 +223,6 @@ function CasosPageContent() {
       ) : (
         <ul className="space-y-3">
           {casos.map((c, i) => {
-            const directo = c.kind === "proyecto";
-            const KindIcon = directo ? MessageSquareText : FileCheck2;
             return (
               <li key={c.id} className="animate-slide-up" style={{ animationDelay: `${i * 45}ms`, animationFillMode: "backwards" }}>
                 {/* Fila = enlace nativo "extendido" (el ::after cubre la tarjeta): conserva
@@ -258,18 +240,6 @@ function CasosPageContent() {
                       >
                         {c.name}
                       </Link>
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                          directo
-                            ? "border-border bg-muted/60 text-muted-foreground"
-                            : "border-primary/25 bg-primary/10 text-primary",
-                        )}
-                        title={KIND_HELP[directo ? "proyecto" : "asunto"]}
-                      >
-                        <KindIcon className="h-3 w-3" />
-                        {KIND_LABEL[directo ? "proyecto" : "asunto"]}
-                      </span>
                       {c.pending_review ? (
                         <Badge className="gap-1 border-transparent bg-cta/15 text-cta-strong hover:bg-cta/20">
                           <FileClock className="h-3 w-3" />
@@ -309,13 +279,12 @@ function CasosPageContent() {
       )}
 
       <Dialog open={showModal} onOpenChange={(o) => { if (!creating) { setShowModal(o); if (!o) setError(""); } }}>
-        {/* max-h + scroll: el diálogo de creación es alto (modo + jurisdicciones) y el
-            botón «Crear caso» debe seguir alcanzable en pantallas bajas. */}
+        {/* Jurisdicción y descripción son contexto opcional del caso. */}
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Nuevo caso</DialogTitle>
             <DialogDescription>
-              Dale un nombre claro y elige cómo quieres que Mia te entregue su trabajo.
+              Dale un nombre claro. Puedes agregar contexto ahora o mientras trabajas.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-1">
@@ -334,47 +303,6 @@ function CasosPageContent() {
                   }
                 }}
               />
-            </div>
-
-            <div className="space-y-2">
-              <Label>¿Cómo te entrega Mia su trabajo aquí?</Label>
-              <div role="radiogroup" aria-label="Modo de trabajo" className="space-y-2">
-                {(["asunto", "proyecto"] as CaseKind[]).map((k) => {
-                  const OptIcon = k === "asunto" ? FileCheck2 : MessageSquareText;
-                  const activo = kind === k;
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      role="radio"
-                      aria-checked={activo}
-                      onClick={() => setKind(k)}
-                      className={cn(
-                        "flex w-full items-start gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-all duration-200",
-                        activo
-                          ? "border-primary/50 bg-primary/10 shadow-neu-sunken"
-                          : "border-border bg-card shadow-neu-raised hover:-translate-y-0.5",
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                          activo ? "bg-primary text-primary-foreground" : "bg-secondary text-primary shadow-neu-sunken",
-                        )}
-                      >
-                        <OptIcon className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold">{KIND_LABEL[k]}</div>
-                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{KIND_HELP[k]}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Podrás cambiarlo después, dentro del caso.
-              </p>
             </div>
 
             {organizationJurisdictions.length > 0 ? (

@@ -25,7 +25,7 @@ import {
   Send,
   Sparkles,
 } from "lucide-react";
-import { apiDownload, apiGet, apiSend, streamPost } from "@/lib/api";
+import { apiDownload, apiGet, apiSend, plainMessage, streamPost } from "@/lib/api";
 import MicButton from "../../_components/MicButton";
 import FuentesPanel from "../../_components/FuentesPanel";
 import AvisoDeCosto, { type AvisoDeCostoData } from "../../_components/AvisoDeCosto";
@@ -295,8 +295,8 @@ export default function CasoDirecto({
         { message: text },
       );
       await streamPost(stream_url, { message: text }, handleProjectEvent, controller.signal);
-    } catch {
-      const mensaje = "No se pudo completar la consulta.";
+    } catch (err) {
+      const mensaje = plainMessage(err, "No se pudo completar la consulta.");
       setStatus(mensaje);
       setMessages((m) => {
         const copy = [...m];
@@ -453,7 +453,7 @@ export default function CasoDirecto({
           </div>
           <div className="border-t border-border bg-gradient-to-t from-background to-transparent px-6 py-3">
             <AvisoDeCosto aviso={avisoCosto} onDismiss={() => setAvisoCosto(null)} />
-            <div className="mb-2 flex min-h-5 items-center text-sm text-muted-foreground">{status}</div>
+            <div role="status" aria-live="polite" className="mb-2 flex min-h-5 items-center text-sm text-muted-foreground">{status}</div>
             <div className="flex items-end gap-2 rounded-lg border border-border/20 bg-secondary/30 p-2 shadow-neu-sunken transition-colors focus-within:border-primary/40">
               <textarea
                 value={input}

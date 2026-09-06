@@ -54,7 +54,7 @@ modelo concreto — lo decide la política de modelo del despacho (`_POLICY_CHAI
 ```
 _LOCKED_TASKS = frozenset({"compression"})     # el override de model no la toca
 # cadena de compression por política:
-#   suscripcion → ["cli-claude-haiku", "claude-haiku"]
+#   suscripcion → ["cli-claude-haiku"]
 #   nube        → ["claude-haiku"]
 #   soberano    → ["mia-local"]           (Ollama, cero salida de datos)
 #   openrouter  → ["openrouter-haiku", "mia-local"]
@@ -73,7 +73,8 @@ El router ya **no** es `task -> alias único`. Son dos capas (en `agent/llm.py`)
 - **`_TASK_FALLBACK_CHAINS`** — mapa BASE `task -> [alias, …]`: cada task trae una CADENA
   de fallback, no un solo alias. Se conserva por compat con los gates que lo leen/mutan.
 - **`_POLICY_CHAINS`** (CP2 · decisión #27) — por cada **política de tenant**
-  (`suscripcion` | `nube` | `soberano` | `openrouter`), la cadena que de verdad se usa.
+  (`quality_adaptive` | `suscripcion` | `codex` | `nube` | `soberano` | `openrouter`),
+  la cadena que de verdad se usa.
   `_active_chains()` superpone la política activa sobre el mapa base y
   `resolve_fallback_chain(task, model)` la resuelve.
 
@@ -81,18 +82,20 @@ El router ya **no** es `task -> alias único`. Son dos capas (en `agent/llm.py`)
 (`should_fallback`), pasa al siguiente. Aliases: `cli-claude*` (CLI de la suscripción de
 Claude Code del abogado), `claude-sonnet`/`claude-haiku` (API Anthropic vía proxy),
 `openrouter-*` (cuenta de OpenRouter del despacho), `mia-local` (Ollama). Cadenas por
-política (default `suscripcion`):
+política (default `quality_adaptive`):
 
-| task                          | suscripcion                            | nube                      | soberano  | openrouter                    |
-|-------------------------------|----------------------------------------|---------------------------|-----------|-------------------------------|
-| `main` / `curator` / None     | cli-claude → claude-sonnet → mia-local | claude-sonnet → mia-local | mia-local | openrouter-sonnet → mia-local |
-| `compression` (**bloqueada**) | cli-claude-haiku → claude-haiku        | claude-haiku              | mia-local | openrouter-haiku → mia-local  |
-| auxiliares (`verification`, `vision`, `title_generation`, `session_search`, `web_extract`, `soul`, …) | cli-claude-haiku → mia-local | claude-haiku → mia-local | mia-local | openrouter-haiku → mia-local |
+| task | quality_adaptive | suscripcion | codex | nube | soberano | openrouter |
+|---|---|---|---|---|---|---|
+| `main` | cli-claude-opus → cli-claude-sonnet | cli-claude | cli-codex | claude-sonnet → mia-local | mia-local | openrouter-sonnet → mia-local |
+| `curator` | cli-claude-sonnet → mia-local | cli-claude → mia-local | cli-codex | claude-sonnet → mia-local | mia-local | openrouter-sonnet → mia-local |
+| `compression` (**bloqueada**) | cli-claude-haiku | cli-claude-haiku | cli-codex | claude-haiku | mia-local | openrouter-haiku → mia-local |
+| auxiliares (`verification`, `vision`, `title_generation`, `session_search`, `web_extract`, `soul`, …) | cli-claude-haiku → mia-local | cli-claude-haiku → mia-local | cli-codex | claude-haiku → mia-local | mia-local | openrouter-haiku → mia-local |
 
-Notas: en `soberano` TODO resuelve a `mia-local` (cero salida de datos). OpenRouter
-también puede entrar como **respaldo/overflow opcional** de `main`/`curator` en las
-políticas `nube`/`suscripcion`, pero SOLO con opt-in explícito del despacho **y** clave
-presente (`_with_openrouter_fallback`). Solo se referencian alias que **existen** en
+Notas: en `soberano` TODO resuelve a `mia-local` (cero salida de datos). Las tres políticas
+de suscripción (`quality_adaptive`, `suscripcion`, `codex`) no insertan API ni OpenRouter.
+OpenRouter puede entrar como **respaldo/overflow opcional** de `main`/`curator` solo en
+`nube`, con opt-in explícito del despacho **y** clave presente (`_with_openrouter_fallback`).
+Solo se referencian alias que **existen** en
 `litellm_config.yaml`; un alias inexistente sería un 404 latente.
 
 ---
