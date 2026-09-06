@@ -1,0 +1,31 @@
+{
+  "version": "0.3.2",
+  "source_commit": "95a24d5bcaad0b3a1e518694679342bc2bedc195",
+  "build_exit": 0,
+  "reused_payloads": false,
+  "first_run_ms": 40977,
+  "installer": "C:\\Users\\USER\\Downloads\\Mia_0.3.2_x64-setup.exe",
+  "bytes": 175245565,
+  "sha256": "7f99b8b6e67c989ec3dc8f5abf98bccfe9817f3d25971afc982760ceeabc81bb",
+  "install_exit": 0,
+  "executable_version": "0.3.2",
+  "registry_version": "0.3.2",
+  "native_ui_smoke": "passed",
+  "native_activation_visible": true,
+  "migrations": 63,
+  "changed_connections": false,
+  "opened_matters": false,
+  "created_user": false,
+  "shutdown_verified": true,
+  "independent_review": "approved",
+  "functional_tests": "synthetic, no external provider calls",
+  "limitations": [
+    "Local folders must already be linked and authorized",
+    "Live reads are bounded and partial reads warn",
+    "Pending draft approval still blocks another query",
+    "No legal model quality assessment",
+    "Core profile without optional OCR or voice"
+  ],
+  "normal_reopen_health": "ok",
+  "debug_port_closed": true
+}

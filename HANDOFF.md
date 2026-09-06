@@ -1,3 +1,27 @@
+# ENTREGA VERIFICADA — 2026-09-06 · Mia 0.3.2 instalada
+
+Build completo core/Compact, exit 0, sin skips ni reutilización, desde
+`95a24d5bcaad0b3a1e518694679342bc2bedc195`. Servicios e interfaz recompilados;
+TypeScript aprobado, primera ejecución sintética 40.977 ms. NSIS final aprobado.
+
+- Instalador en `C:\Users\USER\Downloads\Mia_0.3.2_x64-setup.exe`, 175.245.565 bytes.
+  SHA-256 `7f99b8b6e67c989ec3dc8f5abf98bccfe9817f3d25971afc982760ceeabc81bb`.
+  Copia de entrega cotejada con manifiesto. Instalación silenciosa exit 0;
+  registro y ejecutable confirman 0.3.2 en AppData/Local/Mia.
+- WebView REAL instalada aprobada: puentes nativos, salud, 63/63 migraciones,
+  pantalla «Mis suscripciones» con Claude detectado y Codex con sesión. Captura
+  final inspeccionada tras completar la animación. No se cambiaron conexiones,
+  abrieron expedientes ni crearon usuarios. El primer intento del smoke llegó
+  antes del frontend; se corrigió su espera y pasó con la pantalla cargada.
+- Cierre ordenado verificado, servicios y puertos cerrados; reabierta normalmente,
+  salud correcta y puerto de depuración 9231 cerrado. Se deja Mia abierta.
+  Observación menor de accesibilidad cerrada y revisada por Sol antes del build:
+  ambos estados persistentes anuncian errores mediante role=status/aria-live.
+- Evidencia adicional en output/validation/entry-0.3.2.json y
+  output/playwright/mia-installed-0.3.2.{json,png}. Sin pruebas de calidad jurídica
+  con proveedores reales. Límites funcionales y pruebas en el checkpoint siguiente.
+
+---
 # CIERRE DE CÓDIGO — 2026-09-06 · entrada, chat y fuentes 0.3.2
 
 Solicitud de Pipe sobre siete capturas de 0.3.1. Implementación y revisión independiente

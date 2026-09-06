@@ -30,4 +30,4 @@ una acción explícita separada. Los extractos forman parte de los registros nor
 del turno; la lectura limitada avisa que no revisó toda la carpeta.
 
 Entrega de escritorio: versión 0.3.2. Validación y fuente exacta del instalador se
-registrarán en HANDOFF.md y validation/entry-0.3.2.json.
+registraron en HANDOFF.md y output/validation/entry-0.3.2.json.

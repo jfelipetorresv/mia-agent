@@ -1,0 +1,11 @@
+{
+  "version": "0.3.2",
+  "passed": true,
+  "native_bridges": true,
+  "health": true,
+  "migrations": 63,
+  "activationVisible": true,
+  "changed_connections": false,
+  "opened_matters": false,
+  "created_user": false
+}

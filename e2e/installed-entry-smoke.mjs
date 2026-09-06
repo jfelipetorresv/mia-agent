@@ -6,7 +6,12 @@ import { chromium } from 'playwright';
 const version='0.3.2';
 const browser=await chromium.connectOverCDP('http://127.0.0.1:9231');
 try {
- const page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://localhost:3100'));
+ let page;
+ const deadline=Date.now()+60000;
+ while(!page && Date.now()<deadline){
+   page=browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://localhost:3100'));
+   if(!page) await new Promise(resolve=>setTimeout(resolve,500));
+ }
  assert.ok(page,'Ventana real de Mia');
  await page.waitForLoadState('domcontentloaded');
  const bridge=await page.evaluate(async()=>{
@@ -26,6 +31,8 @@ try {
  if(signedIn){
    await page.goto('http://localhost:3100/activar',{waitUntil:'domcontentloaded',timeout:60000});
    await page.getByRole('radio',{name:/Mis suscripciones/}).waitFor({timeout:30000});
+   await page.getByText('Conecta lo que ya usas',{exact:true}).last().waitFor({timeout:30000});
+   await page.getByRole('button',{name:'Continuar',exact:true}).waitFor({timeout:30000});
    activationVisible=true;
    assert.equal(await page.getByRole('radio',{name:/Calidad jurídica adaptativa/}).count(),0);
  }
