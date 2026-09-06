@@ -1,11 +1,70 @@
 ﻿# HANDOFF — Mia (traspaso a Cursor)
 
-> **PLAN MAESTRO VIGENTE (aprobado por Pipe 2026-07-21):**
+> **Referencia histórica del plan (aprobado por Pipe 2026-07-21):**
 > `C:\Users\USER\.claude\plans\fable-puedes-estructurar-un-sleepy-sifakis.md` — "Dejar MIA funcionando
 > en los términos de la visión". Fases F0→F6 + 2 sesiones de Pipe; dynamic workflows con matriz
 > Opus/Sonnet/Haiku/Codex; refutado por Codex en xhigh. El prompt de arranque está en su sección
-> «Arranque en una terminal nueva». Toda sesión de implementación empieza leyendo ese plan + la
-> entrada más reciente de este archivo.
+> «Arranque en una terminal nueva». La ruta externa ya no existe en esta máquina (comprobado
+> 2026-09-06); entrar por `AGENTS.md`, `CLAUDE.md`, `TRASPASO-MODELO.md` y el cierre más reciente.
+
+---
+
+# CIERRE — 2026-09-06 · auditoría, reglas genéricas y referencias Grok
+
+Rama `fix/mia-audit-efficiency-20260906`, base `8a5ac10`. Pipe pidió revisar propósito,
+cableado y calidad de Mia e incorporar principios generales de Lexia Litigio. Añadió
+`grokrouter-main.zip` y `grokky-main.zip` como referencias. Comparación y matriz completas:
+`docs/auditoria-mia-2026-09-06.md`; no se copió código sujeto a sus licencias restrictivas.
+
+## Cambios comprobados
+
+- Compresión que aumenta tokens se rechaza; checkpoint propio no duplicado; ante contexto
+  excesivo no se reintenta si el compresor no redujo el prompt. Preserva advertencias.
+- Aprobación que regenera borrador devuelve estado pendiente real, texto, huella e informe
+  nuevos. La pantalla exige otra revisión y bloquea ediciones concurrentes mientras espera.
+- Métrica Codex de tokens leídos de caché llega al recorder, sin doble conteo ni fingir
+  precio medido para cuota de suscripción.
+- `AGENTS.md` incorpora principios genéricos y conecta las pruebas con sus productores;
+  el catálogo rápido suma compresión y recibo de revisión.
+
+## Verificación y estado del cierre
+
+- Focales: compresor 30/30, recuperación 61/61, recibos HITL 4/4, Codex 31/31.
+  Negativos/mutaciones detectaron las versiones anteriores. Revisión independiente aprobada;
+  la observación de edición concurrente se corrigió y re-revisó.
+- UI: build de producción, lint y tipos verdes. Navegador claro/oscuro con API sintética:
+  nueva versión + nueva huella + nueva constancia + controles bloqueados. Cero errores de
+  página; axe WCAG A/AA sin incidencias. Capturas en `output/playwright/`.
+- Primer quick: 31/35, tres fallos por PostgreSQL en recuperación y timeout MCP. Los tres
+  de base ya pasaron al recuperarse. Original conservado en `validation/audit-2026-09-06-quick.json`.
+- Regresión ampliada cerrada: **95/95 suites seleccionadas**, 2.963 checks contabilizados
+  (no total de aserciones únicas), en `validation/audit-2026-09-06-system.json`. RLS 19/19
+  verificado aparte y E2E sintético 60/60 incluido. MCP offline+DB recuperado 40/40;
+  parte live omitida. No se declara regresión exhaustiva; 57 omisiones justificadas.
+- `cargo check --locked` **inconcluso**: se detuvo el proceso propio durante copia de
+  recursos Tauri, tras observar progreso de E/S lento (más de 500 MB copiados). No falló
+  una comprobación de Rust; tampoco se acredita compilación. Log local en
+  `%TEMP%/mia-audit-cargo-20260906.log`. No se modificó fuente de escritorio.
+- PostgreSQL portable queda encendido tras recuperarse. Servidor temporal de frontend
+  cerrado; no quedan pruebas ni compilaciones corriendo. No se arrancó API de producción
+  ni canales externos.
+
+## Pendientes y límites
+
+- No se reconstruyó ni instaló el NSIS con estos cambios. Cotejo formal de Cursor pendiente:
+  el CLI encontrado devuelve ayuda del editor al pedir ayuda del agente; no hubo dictamen.
+  Codex sí inspeccionó las capturas y ejecutó navegador/accesibilidad.
+- Faltan prueba de instalación limpia, puente Tauri instalado y servicios opt-in; modelos
+  reales no evaluados en esta auditoría. No hay ahorro monetario de producción acreditado.
+- Resumen persistido por conversación e idempotencia por envío son propuestas, no funciones
+  añadidas. Sus criterios y fronteras de aislamiento constan en el informe.
+- No se cambiaron fuentes de clientes, precios, proveedores ni doctrina de jurisdicción.
+
+## Hallazgos de Cursor (capa 3)
+
+Pendiente dictamen de Cursor sobre las capturas de revisión. Comprobar que tras cambiar
+selección aparece la nueva versión, queda desmarcada la constancia humana y no se permite
+editar durante la espera. La lógica ya cuenta con revisión independiente y pruebas.
 
 ---
 

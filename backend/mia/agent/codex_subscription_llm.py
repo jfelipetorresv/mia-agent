@@ -242,7 +242,7 @@ def _command(exe: Path, *, schema: Path, output: Path, effort: str) -> list[str]
 
 
 def _usage(events: str) -> SimpleNamespace:
-    prompt = completion = total = 0
+    prompt = completion = total = cached = 0
     for line in events.splitlines():
         try:
             event = json.loads(line)
@@ -254,8 +254,13 @@ def _usage(events: str) -> SimpleNamespace:
         prompt = int(raw.get("input_tokens", raw.get("prompt_tokens", prompt)) or 0)
         completion = int(raw.get("output_tokens", raw.get("completion_tokens", completion)) or 0)
         total = int(raw.get("total_tokens", total) or 0)
+        # Codex incluye la lectura de caché dentro de input_tokens. Se expone
+        # aparte para el recorder existente, sin sumarla otra vez al total.
+        value = raw.get("cached_input_tokens")
+        cached = value if type(value) is int and value >= 0 else 0
     return SimpleNamespace(prompt_tokens=prompt, completion_tokens=completion,
-                           total_tokens=total or prompt + completion)
+                           total_tokens=total or prompt + completion,
+                           prompt_tokens_details={"cached_tokens": cached})
 
 
 def call_cli(messages: list[dict], *, timeout: float = DEFAULT_TIMEOUT,

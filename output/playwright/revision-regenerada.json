@@ -1,0 +1,12 @@
+[
+  {
+    "theme": "light",
+    "status": "passed",
+    "checks": "version,hash,attestation,inflight-lock,selection,pageerrors"
+  },
+  {
+    "theme": "dark",
+    "status": "passed",
+    "checks": "version,hash,attestation,inflight-lock,selection,pageerrors"
+  }
+]

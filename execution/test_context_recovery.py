@@ -420,6 +420,32 @@ def run(trace_dir: str) -> None:
     check("e3 · el cupo del turno también se consume por este camino",
           md_e.get("llm_turn", {}).get("compression_attempted") is True)
 
+    # Sin reducción real, volver a pagar el mismo prompt no puede resolver el error.
+    # El compresor real devuelve estos dos mensajes intactos (protección 5+30).
+    unchanged_messages = [{"role": "system", "content": "s"},
+                          {"role": "user", "content": "z" * 8000}]
+    for variant in ("real", "copia igual", "mayor"):
+        if variant != "real":
+            builder._compressor = SimpleNamespace(compress=lambda messages, *_a, **_k:
+                [dict(m) for m in messages] + (
+                    [{"role": "user", "content": "más contexto"}] if variant == "mayor" else []))
+        original_error = context_exc()
+        fc = install({"claude-sonnet": [original_error, ok_response("REINTENTO INDEBIDO")]})
+        md_unchanged: dict = {}
+        propagated = None
+        try:
+            asyncio.run(builder._llm(unchanged_messages, task="main", state=make_state(),
+                                     md=md_unchanged))
+        except Exception as error:
+            propagated = error
+        finally:
+            builder._compressor = saved_comp
+        check(f"e4 · {variant}: sin ahorro propaga la excepción original",
+              propagated is original_error)
+        check(f"e5 · {variant}: sin llamada redundante ni cupo consumido",
+              fc.count("claude-sonnet") == 1
+              and not md_unchanged.get("llm_turn", {}).get("compression_attempted"))
+
     # === f · rescate CON material de AMPLIACIÓN presente (lectura adaptativa) ==========
     # Este camino no se ejercitaba: los gates de la lectura adaptativa terminan en el
     # `return` de agentic_expand y los de aquí usaban listas homogéneas. Es justo el cruce

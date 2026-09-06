@@ -144,7 +144,7 @@ export default function ComentariosBorrador({
   }, [capturarSeleccion]);
 
   function comentarSeleccion() {
-    if (!burbuja) return;
+    if (enviando || !burbuja) return;
     const ancla = anclaDe(draft, burbuja.seleccion);
     const id = nuevoId();
     onChange([...comentarios, { id, instruccion: "", ...ancla }]);
@@ -159,10 +159,12 @@ export default function ComentariosBorrador({
   }
 
   function editar(id: string, instruccion: string) {
+    if (enviando) return;
     onChange(comentarios.map((c) => (c.id === id ? { ...c, instruccion } : c)));
   }
 
   function eliminar(id: string) {
+    if (enviando) return;
     const fuera = comentarios.find((c) => c.id === id);
     onChange(comentarios.filter((c) => c.id !== id));
     setBorrandoTexto(fuera ? "Comentario eliminado." : "");
@@ -179,7 +181,7 @@ export default function ComentariosBorrador({
           className="absolute z-30 animate-fade-in"
           style={{ top: burbuja.top, left: burbuja.left }}
         >
-          <Button size="sm" variant="outline" className="gap-2 shadow-lg" onClick={comentarSeleccion}>
+          <Button size="sm" variant="outline" className="gap-2 shadow-lg" onClick={comentarSeleccion} disabled={enviando}>
             <MessageSquarePlus className="h-4 w-4" />
             Comentar
           </Button>
@@ -220,6 +222,7 @@ export default function ComentariosBorrador({
                 size="sm"
                 className="h-7 px-2 text-meta text-muted-foreground hover:text-destructive"
                 onClick={() => eliminar(c.id)}
+                disabled={enviando}
                 aria-label={`Eliminar el comentario ${i + 1}`}
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -232,6 +235,7 @@ export default function ComentariosBorrador({
             <Textarea
               id={`comentario-${c.id}`}
               value={c.instruccion}
+              disabled={enviando}
               onChange={(e) => editar(c.id, e.target.value)}
               onFocus={() => setActivo(c.id)}
               placeholder="Por ejemplo: aquí suaviza el tono, cita la cláusula quinta, este monto está mal…"

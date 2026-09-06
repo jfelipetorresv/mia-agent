@@ -33,7 +33,7 @@ except Exception:
     pass
 
 from mia.agent import llm
-from mia.agent.context_compressor import ContextCompressor, SUMMARY_PREFIX, _text
+from mia.agent.context_compressor import ContextCompressor, SUMMARY_PREFIX, SUMMARY_END_MARKER, _text
 from mia.memory.trace_capture import TraceCapture
 
 _results: list[tuple[str, bool]] = []
@@ -155,6 +155,57 @@ def main() -> int:
         out_at = cc_at.compress(convo, 1000)
         check("anti-thrashing: tras 2 compresiones inefectivas, no recomprime",
               out_at is convo and not cc_at.last_compressed)
+
+        # Regresiones de ahorro: nunca reemplazar contexto por un candidato mayor.
+        rejected_trace = SimpleNamespace(capture_event=lambda **kw: rejected_events.append(kw))
+        rejected_events = []
+        cc_bad = ContextCompressor(trace_capture=rejected_trace)
+        cc_bad._previous_summary = "checkpoint vigente"
+        attempts = []
+        def oversized(turns):
+            attempts.append(turns)
+            return "texto " * 10000
+        cc_bad._summarize = oversized
+        rejected_results = []
+        for _ in range(3):
+            rejected = cc_bad.compress(convo, 1000, tenant_id="t-rejected")
+            rejected_results.append(rejected is convo and not cc_bad.last_compressed
+                                    and cc_bad.last_tokens_after == cc_bad.last_tokens_before)
+        check("resumen mayor rechazado sin cambiar historial", all(rejected_results))
+        check("rechazo conserva estadísticas del contexto devuelto",
+              not cc_bad.last_compressed and cc_bad.last_tokens_after == cc_bad.last_tokens_before
+              and cc_bad.last_savings_pct == 0)
+        check("rechazos activan antithrashing tras dos intentos", len(attempts) == 2)
+        check("rechazo conserva checkpoint y no emite éxito",
+              cc_bad._previous_summary == "checkpoint vigente" and not rejected_events)
+        equal_convo = [convo[0], {"role": "user", "content":
+            f"{SUMMARY_PREFIX}\n{SPANISH_SUMMARY}\n\n{SUMMARY_END_MARKER}"}, convo[-1]]
+        cc_equal = ContextCompressor(protect_first_n=1, protect_last_n=1)
+        equal_out = cc_equal.compress(equal_convo, 1)
+        check("candidato de igual tamaño también se rechaza",
+              equal_out is equal_convo and not cc_equal.last_compressed
+              and cc_equal._ineffective_count == 1)
+
+        cc_iter = ContextCompressor()
+        first_out = cc_iter.compress(convo, 1000)
+        # Su propia salida más turnos nuevos: ruta de recompresión real.
+        cc_iter.compress(first_out + make_convo(40), 1000)
+        iterative_payload = fake.chat.completions.last["messages"][1]["content"]
+        check("checkpoint propio aparece una sola vez al recomprimir",
+              iterative_payload.count(SPANISH_SUMMARY) == 1)
+        foreign = {"role": "user", "content": SUMMARY_PREFIX + "\nOTRO resumen con dato único"}
+        foreign_convo = first_out[:6] + [foreign] + first_out[6:] + make_convo(40)
+        cc_iter.compress(foreign_convo, 1000)
+        check("resumen ajeno no se descarta por compartir prefijo",
+              "OTRO resumen con dato único" in fake.chat.completions.last["messages"][1]["content"])
+        cc_pending = ContextCompressor()
+        cc_pending._previous_summary = "[VERIFICAR] pendiente único"
+        pending = {"role": "user", "content":
+            f"{SUMMARY_PREFIX}\n{cc_pending._previous_summary}\n\n{SUMMARY_END_MARKER}"}
+        pending_convo = convo[:5] + [pending] + convo[5:]
+        pending_out = cc_pending.compress(pending_convo, 1000)
+        check("checkpoint propio con [VERIFICAR] permanece verbatim",
+              any(m is pending for m in pending_out))
     finally:
         llm.reset_model_policy(_tok)
         llm._client = original_client

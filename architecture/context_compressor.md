@@ -1,8 +1,8 @@
 # architecture/context_compressor.md
 # Compresión de contexto (Módulo 2c)
-# Última actualización: 2026-06-14
+# Última actualización: 2026-09-05
 
-> Estado: 2c entregado. Gate `execution/test_context_compressor.py` **22/22** (offline,
+> Estado: 2c entregado. Gate `execution/test_context_compressor.py` (offline,
 > cliente LLM falso → el BLOQUEO de compression verificado end-to-end: bajo política
 > 'soberano' resuelve a `mia-local` y un `model=` explícito NO lo cambia). Adaptado de
 > `hermes-ref/agent/context_compressor.py` (~2.000 líneas), recortado a lo esencial.
@@ -44,7 +44,10 @@ decisión de proyecto. No hay contradicción — solo distintos valores.
       hoistea todos los mensajes system al inicio — un resumen system mid-array
       perdería su posición entre cabeza y cola (Riesgo #12, decisión #15). El
       `SUMMARY_END_MARKER` desambigua que el resumen es referencia, no la consulta.
-   e. Devuelve `frozen_inicio + [resumen] + [VERIFICAR] preservados + frozen_final`.
+   e. Cuenta el candidato completo. Si no ahorra tokens, devuelve el historial original,
+      mantiene el checkpoint aceptado y cuenta el intento para anti-thrashing. Las estadísticas
+      muestran cero ahorro y no se emite `context_compressed`.
+   f. Con ahorro, devuelve `frozen_inicio + [resumen] + [VERIFICAR] preservados + frozen_final`.
 
 ### Resumen (haiku, español, estructurado)
 Preamble **filter-safe**: trata los turnos como material fuente, NO como instrucciones
@@ -56,6 +59,9 @@ a cumplir, y exige ESPAÑOL JURÍDICO. Plantilla de secciones:
 El compresor guarda `_previous_summary`. En la **re-compresión**, en vez de resumir
 desde cero, ACTUALIZA el resumen previo (lo incorpora al prompt como "RESUMEN PREVIO")
 — así no se pierde el contexto jurídico acumulado en matters largos.
+Si el medio contiene exactamente el mensaje de usuario generado con ese resumen previo,
+se omite de los turnos nuevos: ya se transmite como RESUMEN PREVIO. No basta compartir
+prefijo; otro resumen se conserva. Los mensajes con `[VERIFICAR]` siguen preservados verbatim.
 
 ### (B) Anti-thrashing (decisión #13)
 `_ineffective_count` cuenta compresiones consecutivas con <10% de ahorro; al llegar a
@@ -65,7 +71,12 @@ desde cero, ACTUALIZA el resumen previo (lo incorpora al prompt como "RESUMEN PR
 
 ## 3 · Integración con el turno real
 
-La recuperación vive en `agents/context_recovery.py` y se invoca desde los nodos LangGraph
+El asistente lo invoca en `assistant/core.py` antes de la llamada de cada turno. Crea una
+instancia por turno: el checkpoint y anti-thrashing no persisten entre turnos; este cambio
+no añade persistencia ni promete ahorro entre conversaciones. `agents/graph.py` también
+lo invoca al recuperar errores de contexto cuando no existe una función de recorte del nodo.
+
+La recuperación de material de nodos vive en `agents/context_recovery.py` y se invoca desde los nodos LangGraph
 cuando el proveedor devuelve `CONTEXT_TOO_LONG`. El presupuesto depende del nodo, se permite
 un solo rescate por turno y el resultado queda atribuido en la telemetría.
 
@@ -93,12 +104,18 @@ Cuando el compresor actúa, escribe un EVENTO en el JSONL del tenant vía
 ## 5 · Cómo verificar
 
 ```
-.venv\Scripts\python.exe execution\test_context_compressor.py   # 22/22 (offline)
+.venv\Scripts\python.exe execution\test_context_compressor.py   # offline
 ```
 
 Gate mínimo (subconjunto): threshold 55% ✓ · protect 5/30 intactos ✓ · compression
 BLOQUEADA (model explícito no la cambia; mia-local bajo 'soberano') ✓ · [VERIFICAR] nunca
 comprimido ✓ · resumen en español ✓ · traza actualizada ✓.
+
+Regresiones 2026-09-05: rechazo de candidatos mayores o iguales, historial y checkpoint
+intactos al rechazar, estadísticas honestas y sin traza de éxito falsa, dos rechazos
+activan anti-thrashing, checkpoint propio enviado una vez, resúmenes ajenos conservados
+y checkpoint con `[VERIFICAR]` intacto. El ahorro se estima con el contador existente;
+no es una medición de factura del proveedor.
 
 ---
 

@@ -29,11 +29,25 @@ def check(name: str, value: bool) -> None:
 
 class Proc:
     returncode = 0
-    stdout = '{"usage":{"input_tokens":11,"output_tokens":7}}\n'
+    stdout = '{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":8,"output_tokens":7}}\n'
     stderr = ""
 
 
+def check_cached_usage() -> None:
+    for value, expected in ((8, 8), (0, 0), (None, 0), (-3, 0),
+                            ("bad", 0), (True, 0), (2.5, 0), ({}, 0)):
+        parsed = codex._usage(json.dumps({"type": "turn.completed", "usage": {
+            "input_tokens": 11, "output_tokens": 7, "cached_input_tokens": value}}))
+        check(f"cache · contador {value!r} se normaliza sin inventar tokens",
+              usage._cache_tokens(parsed) == (expected, 0)
+              and parsed.prompt_tokens == 11 and parsed.total_tokens == 18)
+    absent = codex._usage('{"usage":{"input_tokens":11,"output_tokens":7}}')
+    check("cache · evento antiguo sin cache conserva totales",
+          usage._cache_tokens(absent) == (0, 0) and absent.total_tokens == 18)
+
+
 def main() -> int:
+    check_cached_usage()
     messages = [{"role": "system", "content": "sistema privado"},
                 {"role": "user", "content": "consulta confidencial"}]
     local_cors = ["http://localhost:3100", "http://127.0.0.1:3100"]
@@ -151,6 +165,22 @@ def main() -> int:
         check("1 · salida estructurada se adapta al contrato OpenAI de Mia",
               response.choices[0].message.content == "respuesta segura"
               and response.usage.total_tokens == 18 and response.mia_model_hint == codex.DEFAULT_MODEL)
+        from unittest.mock import patch
+        policy_token = llm.set_model_policy("codex")
+        scope_token = usage.set_usage_scope("synthetic-cache-tenant", source="test")
+        try:
+            with patch.object(usage, "_buffer", []):
+                llm.call_llm(messages, task="legal_draft")
+                rows = list(usage._buffer)
+            check("1b · CLI a router a recorder conserva cache sin doble conteo ni coste ficticio",
+                  len(rows) == 1 and rows[0]["cache_read_tokens"] == 8
+                  and rows[0]["cache_creation_tokens"] == 0
+                  and rows[0]["prompt_tokens"] == 11 and rows[0]["total_tokens"] == 18
+                  and rows[0]["cost_usd"] == 0
+                  and rows[0]["cost_status"] == "no_medida")
+        finally:
+            usage.reset_usage_scope(scope_token)
+            llm.reset_model_policy(policy_token)
         check("2 · prompt nunca viaja en la línea de comando",
               "consulta confidencial" not in " ".join(command) and "sistema privado" not in " ".join(command)
               and "consulta confidencial" in kwargs["input"])

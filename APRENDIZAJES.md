@@ -826,3 +826,21 @@ inventados contra el endpoint, tres aplicaciones seguidas de la migración, nuev
 sobre el árbol de trabajo— y **tres de esas nueve mutaciones NO pusieron rojo el gate que
 debían**. Ese número es el hallazgo: la prueba de mutación de quien escribe el gate tiende a
 mutar lo que el gate mira. La de un tercero muta lo que el gate debería mirar.
+
+94. **2026-09-06 · Compresión, recibo y métricas deben acreditar su resultado real.**
+La auditoría encontró tres señales que describían intención: un resumen se registraba
+como compresión aunque aumentara tokens; una aprobación decía `approved` aunque el grafo
+había generado otra versión para revisar; Codex informaba caché pero su adaptador la
+descartaba. El rescate de contexto además reenviaba el mismo prompt tras no reducirlo.
+**Corrección:** comparar antes/después incluyendo envoltorio, excluir solo el checkpoint
+propio exacto duplicado, propagar el error original sin reintento inútil, leer el checkpoint
+final para el recibo y preservar la métrica de caché en el formato del recorder existente.
+**Barrera:** `test_context_compressor.py` (30/30), `test_context_recovery.py` (61/61),
+`test_hitl_resume_state.py` (4 casos) y `test_codex_production_provider.py` (31/31), con
+negativos que fallaron contra el código anterior. No doble conteo ni precio inventado.
+**Revisor:** encontró que editar texto/matriz/comentarios durante la regeneración perdía
+trabajo. Se bloquearon controles y handlers en vuelo. `e2e/revision_regenerada.mjs` prueba
+el navegador real con respuestas sintéticas en claro/oscuro, nueva huella y constancia;
+axe sin incidencias. Las sondas de compresión independientes preservaron pendientes.
+**Límite:** historial persistido no equivale a resumen persistido: el asistente todavía
+crea compresor por turno. Una mejora futura debe incluir cursor, invalidación y RLS.

@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "mode": "quick",
+  "status": "failed",
+  "started_at": "2026-09-06T02:07:54.1890067Z",
+  "duration_seconds": 380.3,
+  "suite_count": 35,
+  "failed": [
+    "test_api_launcher.py",
+    "test_migration_contracts.py",
+    "test_medicion_por_nodo.py"
+  ],
+  "timed_out": [
+    "test_mcp.py"
+  ],
+  "suites": [
+    {
+      "name": "check_env_pins.py",
+      "status": "passed",
+      "duration_seconds": 1.976
+    },
+    {
+      "name": "test_gates_no_ciegos.py",
+      "status": "passed",
+      "duration_seconds": 6.97
+    },
+    {
+      "name": "test_api_launcher.py",
+      "status": "failed",
+      "duration_seconds": 2.442
+    },
+    {
+      "name": "test_migration_contracts.py",
+      "status": "failed",
+      "duration_seconds": 13.484
+    },
+    {
+      "name": "test_model_policy.py",
+      "status": "passed",
+      "duration_seconds": 48.204
+    },
+    {
+      "name": "test_llm_fallback.py",
+      "status": "passed",
+      "duration_seconds": 0.464
+    },
+    {
+      "name": "test_context_recovery.py",
+      "status": "passed",
+      "duration_seconds": 3.39
+    },
+    {
+      "name": "test_assistant_matter_boundary.py",
+      "status": "passed",
+      "duration_seconds": 11.024
+    },
+    {
+      "name": "test_async_embedding_routes.py",
+      "status": "passed",
+      "duration_seconds": 0.268
+    },
+    {
+      "name": "test_cors_contract.py",
+      "status": "passed",
+      "duration_seconds": 6.461
+    },
+    {
+      "name": "test_document_derivation.py",
+      "status": "passed",
+      "duration_seconds": 10.935
+    },
+    {
+      "name": "test_matter_jurisdictions.py",
+      "status": "passed",
+      "duration_seconds": 5.737
+    },
+    {
+      "name": "test_p0_legal_ledger.py",
+      "status": "passed",
+      "duration_seconds": 2.839
+    },
+    {
+      "name": "test_durable_learning.py",
+      "status": "passed",
+      "duration_seconds": 0.95
+    },
+    {
+      "name": "test_codex_production_provider.py",
+      "status": "passed",
+      "duration_seconds": 2.731
+    },
+    {
+      "name": "test_cambio_de_motor_aviso.py",
+      "status": "passed",
+      "duration_seconds": 1.987
+    },
+    {
+      "name": "test_optional_capabilities.py",
+      "status": "passed",
+      "duration_seconds": 0.415
+    },
+    {
+      "name": "test_catalogo_barreras.py",
+      "status": "passed",
+      "duration_seconds": 58.651
+    },
+    {
+      "name": "test_modo_barreras.py",
+      "status": "passed",
+      "duration_seconds": 2.789
+    },
+    {
+      "name": "test_raices_datos.py",
+      "status": "passed",
+      "duration_seconds": 0.49
+    },
+    {
+      "name": "test_purgar_carpetas_rotas.py",
+      "status": "passed",
+      "duration_seconds": 0.802
+    },
+    {
+      "name": "test_sistema_de_diseno.py",
+      "status": "passed",
+      "duration_seconds": 0.347
+    },
+    {
+      "name": "test_medicion_por_nodo.py",
+      "status": "failed",
+      "duration_seconds": 1.608
+    },
+    {
+      "name": "test_disposicion_hallazgos.py",
+      "status": "passed",
+      "duration_seconds": 1.809
+    },
+    {
+      "name": "test_packs_preflight.py",
+      "status": "passed",
+      "duration_seconds": 0.562
+    },
+    {
+      "name": "test_stage_gate.py",
+      "status": "passed",
+      "duration_seconds": 1.729
+    },
+    {
+      "name": "test_suggestions_cron.py",
+      "status": "passed",
+      "duration_seconds": 0.719
+    },
+    {
+      "name": "test_telegram_lifespan.py",
+      "status": "passed",
+      "duration_seconds": 0.795
+    },
+    {
+      "name": "test_handoff.py",
+      "status": "passed",
+      "duration_seconds": 0.725
+    },
+    {
+      "name": "test_config_tabs.py",
+      "status": "passed",
+      "duration_seconds": 0.215
+    },
+    {
+      "name": "test_frontend_resilience.py",
+      "status": "passed",
+      "duration_seconds": 0.194
+    },
+    {
+      "name": "test_mcp.py",
+      "status": "timeout",
+      "duration_seconds": 181.375
+    },
+    {
+      "name": "test_agent_hub.py",
+      "status": "passed",
+      "duration_seconds": 5.656
+    },
+    {
+      "name": "test_persona_capacidades.py",
+      "status": "passed",
+      "duration_seconds": 1.225
+    },
+    {
+      "name": "test_puente_shell.py",
+      "status": "passed",
+      "duration_seconds": 0.273
+    }
+  ]
+}

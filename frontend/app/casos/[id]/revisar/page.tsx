@@ -164,8 +164,7 @@ type LearningReceipt = {
   learning?: { status?: "queued" | "partially_queued" | "blocked" | "completed" | "needs_attention" | "not_applicable" };
   final_ready?: boolean;
   final_status?: string;
-  // Solo cuando la operación fue «aplicar mis comentarios»: el borrador corregido y
-  // el informe de qué cambió en cada punto.
+  // Una corrección o cambio de selección devuelve la nueva versión para revisar.
   message?: string;
   draft?: string;
   draft_hash?: string;
@@ -231,11 +230,13 @@ function ArgumentMatrix({
   argumentos,
   descartes,
   selected,
+  disabled,
   onToggle,
 }: {
   argumentos: Argumento[];
   descartes: Descarte[];
   selected: Record<string, boolean>;
+  disabled: boolean;
   onToggle: (id: string) => void;
 }) {
   return (
@@ -259,6 +260,7 @@ function ArgumentMatrix({
                 type="checkbox"
                 id={`arg-${arg.id}`}
                 checked={on}
+                disabled={disabled}
                 onChange={() => onToggle(arg.id as string)}
                 className="mt-1 h-4 w-4 shrink-0 rounded border-input text-primary accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
@@ -394,8 +396,21 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
       );
       setFinalReady(Boolean(receipt.final_ready));
       if (!receipt.final_ready) {
+        if (receipt.final_status === "awaiting_review") {
+          // La selección produjo otra versión. Ninguna constancia ni comentario
+          // anclado al texto anterior acredita el borrador que acaba de llegar.
+          setDraft(receipt.draft ?? "");
+          setText(receipt.draft ?? "");
+          setDraftHash(receipt.draft_hash ?? "");
+          setVerification(receipt.verification ?? null);
+          setCitasVerificadas(false);
+          setRevisionAtestada(false);
+          setEditing(false);
+          setComentarios([]);
+          setInformeComentarios(null);
+        }
         setBusy(false);
-        setActionMsg("Tu revisión quedó registrada, pero el documento todavía no puede salir como final.");
+        setActionMsg(receipt.message || "Tu revisión quedó registrada, pero el documento todavía no puede salir como final.");
         return;
       }
       const learningStatus = receipt.learning?.status;
@@ -430,7 +445,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
   // Enviar los comentarios NO aprueba ni rechaza: pide una corrección acotada y el
   // borrador corregido vuelve a esta misma pantalla, con el informe de qué cambió.
   async function enviarComentarios() {
-    if (comentariosBusy || !draftHash) return;
+    if (busy || comentariosBusy || !draftHash) return;
     const utiles = comentarios.filter((c) => c.instruccion.trim().length > 0);
     if (utiles.length === 0) return;
     setComentariosBusy(true);
@@ -577,6 +592,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
               argumentos={argumentos}
               descartes={descartes}
               selected={argSelected}
+              disabled={busy || comentariosBusy}
               onToggle={(id) => setArgSelected((prev) => ({ ...prev, [id]: prev[id] === false }))}
             />
           ) : null}
@@ -608,6 +624,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
                         variant="ghost"
                         size="sm"
                         onClick={() => setText(draft)}
+                        disabled={busy || comentariosBusy}
                         className="h-7 px-2 text-meta"
                       >
                         Restaurar propuesta de Mia
@@ -617,6 +634,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
                 </div>
                 <textarea
                   value={text}
+                  disabled={busy || comentariosBusy}
                   onChange={(e) => setText(e.target.value)}
                   aria-label="Tu versión del borrador"
                   className="h-[60vh] w-full rounded-lg border border-input bg-card p-6 font-serif text-body leading-relaxed outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
@@ -629,7 +647,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
               comentarios={comentarios}
               onChange={setComentarios}
               onEnviar={enviarComentarios}
-              enviando={comentariosBusy}
+              enviando={busy || comentariosBusy}
               error={comentariosError}
               informe={informeComentarios}
             >
@@ -652,6 +670,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
               type="checkbox"
               id="citas-verificadas"
               checked={citasVerificadas}
+              disabled={busy || comentariosBusy}
               onChange={(e) => setCitasVerificadas(e.target.checked)}
               className="h-4 w-4 shrink-0 rounded border-input text-primary accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
@@ -665,6 +684,7 @@ export default function RevisarPage({ params }: { params: Promise<{ id: string }
             type="checkbox"
             id="revision-humana"
             checked={revisionAtestada}
+            disabled={busy || comentariosBusy}
             onChange={(e) => setRevisionAtestada(e.target.checked)}
             className="h-4 w-4 shrink-0 rounded border-input text-primary accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />

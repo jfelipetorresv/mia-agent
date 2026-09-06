@@ -1286,6 +1286,13 @@ class MatterGraphBuilder:
                     tenant_id=(state or {}).get("tenant_id"),
                     matter_id=(state or {}).get("matter_id"),
                 )
+                before = sum(estimate_tokens(m.get("content", "")) for m in messages)
+                after = sum(estimate_tokens(m.get("content", "")) for m in reduced)
+                if after >= before:
+                    logger.warning("call_llm context_too_long (task=%s): el compresor "
+                                   "no redujo el prompt (%d→%d tok est.) — se propaga sin reintento",
+                                   task, before, after)
+                    raise
             turn.mark_compressed(node)
             md["llm_turn"] = turn.to_dict()
             logger.warning("call_llm context_too_long (task=%s) → contexto %s, reintento "

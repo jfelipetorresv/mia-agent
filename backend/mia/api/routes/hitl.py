@@ -116,20 +116,28 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
             t1 = _time.perf_counter()
             await require_awaiting_review(graph, cfg)
             t_estado = _time.perf_counter() - t1
-            final_draft = None
-            final_metadata: dict = {}
             t2 = _time.perf_counter()
-            async for chunk in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
-                if "finalize" in chunk:
-                    final_draft = (chunk["finalize"] or {}).get("draft")
-                    final_metadata = (chunk["finalize"] or {}).get("metadata") or {}
+            async for _ in graph.astream(Command(resume=command), cfg, stream_mode="updates"):
+                pass
+            # Una selección distinta vuelve a redacción y pausa otra vez. El comando
+            # solicitado no es el desenlace: solo el checkpoint persistido lo acredita.
+            state = await graph.aget_state(cfg)
+            values = (state.values or {}) if state else {}
+            awaiting_review = bool(state and "hitl_checkpoint" in (state.next or ()))
+            if not values or (state.next and not awaiting_review):
+                raise RuntimeError("La revisión no alcanzó un estado de cierre reconocible.")
+            final_draft = values.get("draft")
+            final_metadata = values.get("metadata") or {}
             t_grafo = _time.perf_counter() - t2
             logger.info("resume(%s): abrir=%.1fs estado=%.1fs grafo=%.1fs (tenant=%s matter=%s)",
                         command.get("decision"), t_abrir, t_estado, t_grafo,
                         tenant_id, matter_id)
-            final_ready = bool(final_metadata.get("final_ready"))
-            pending_review = (command.get("decision") in ("approved", "editing")
-                              and not final_ready)
+            final_ready = bool(final_metadata.get("final_ready")) and not awaiting_review
+            actual_status = ("awaiting_review" if awaiting_review else
+                             str(final_metadata.get("final_status") or "verification_required"))
+            if not final_ready and actual_status in ("approved", "editing"):
+                actual_status = "verification_required"
+            pending_review = awaiting_review or actual_status == "verification_required"
             async with pool.tenant_connection(tenant_id) as conn:
                 await conn.execute(
                     "UPDATE matters SET pending_review = %s, "
@@ -138,8 +146,6 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
             # La respuesta distingue dos hechos distintos: la decisión ya quedó
             # persistida; el aprendizaje apenas quedó en cola (o bloqueado). Nunca
             # promete "Mia aprendió" antes de que el worker termine.
-            actual_status = str(final_metadata.get("final_status")
-                                or command.get("decision") or "rejected")
             learning_internal = final_metadata.get("learning") or {
                 "decision_saved": True, "status": "not_applicable", "jobs": []}
             jobs = learning_internal.get("jobs") or []
@@ -150,9 +156,14 @@ async def _resume(request: Request, matter_id: str, command: dict) -> EventSourc
                               if job.get("status") in ("queued", "running")),
                 "completed": sum(1 for job in jobs if job.get("status") == "succeeded"),
             }
-            message = ("Documento final verificado." if final_ready else
+            message = ("Actualicé el borrador con tu selección. Revisa esta nueva versión antes de aprobarla."
+                       if awaiting_review else
+                       "Documento final verificado." if final_ready else
                        "Guardé tu revisión, pero el documento aún no supera todos los controles.")
             yield sse("done", message, draft=final_draft, status=actual_status,
+                      draft_hash=legal_ledger.content_hash(final_draft or ""),
+                      verification=final_metadata.get("verification"),
+                      awaiting_review=awaiting_review,
                       final_ready=final_ready, final_status=actual_status,
                       decision_saved=True, learning=learning)
 

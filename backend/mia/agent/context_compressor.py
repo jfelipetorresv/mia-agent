@@ -144,6 +144,14 @@ class ContextCompressor:
         return "\n\n".join(f"[{m.get('role', '?').upper()}]: {_text(m)}" for m in turns)
 
     def _summarize(self, turns: list[dict]) -> str:
+        if self.enable_iterative and self._previous_summary:
+            # Solo quitar nuestro checkpoint exacto: prefijos parecidos pueden
+            # contener información distinta. Lo pendiente siempre queda intacto.
+            own_checkpoint = f"{SUMMARY_PREFIX}\n{self._previous_summary}\n\n{SUMMARY_END_MARKER}"
+            turns = [m for m in turns if not (
+                m.get("role") == "user" and _text(m) == own_checkpoint
+                and not _has_verificar(m)
+            )]
         content = self._serialize(turns)
         if self.enable_iterative and self._previous_summary:
             user = _ITER_USER.format(template=_TEMPLATE, previous=self._previous_summary, turns=content)
@@ -208,8 +216,17 @@ class ContextCompressor:
         }
         compressed = [*first, summary_msg, *preserved, *last]
 
-        self.last_tokens_after = self._count(compressed)
-        saved = self.last_tokens_before - self.last_tokens_after
+        candidate_tokens = self._count(compressed)
+        saved = self.last_tokens_before - candidate_tokens
+        if saved <= 0:
+            if self.enable_anti_thrash:
+                self._ineffective_count += 1
+            logger.warning("compresión descartada sin ahorro: %d -> %d tokens",
+                           self.last_tokens_before, candidate_tokens)
+            # Estadísticas describen lo devuelto, no el candidato rechazado.
+            # Tampoco sustituir el último checkpoint aceptado ni emitir éxito.
+            return messages
+        self.last_tokens_after = candidate_tokens
         self.last_savings_pct = (saved / self.last_tokens_before * 100) if self.last_tokens_before else 0.0
         self.last_compressed = True
 
