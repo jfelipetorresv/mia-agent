@@ -9,11 +9,12 @@
 
 ---
 
-# EN CURSO — 2026-09-06 · memoria implementada; instalador 0.3.1
+# CIERRE — 2026-09-06 · memoria larga e instalación 0.3.1 completadas
 
 Meta explícita de Pipe: implementar memoria de conversaciones largas, instalar esta
 versión y dejar el instalador accesible. Base `86164e5`, misma rama de auditoría.
-La memoria está implementada y revisada; falta construir NSIS e instalarlo.
+Meta cumplida: memoria implementada y revisada, NSIS completo construido desde
+`9453c4c6d4d3289df4f81c5c9c7aa0da80c02b12`, instalado y abierto en esta máquina.
 
 - Recupera todos los originales en páginas de 200; checkpoint persistido por despacho
   y conversación con cursor, huella UTC, revisión y RLS forzado. Conserva primeros
@@ -30,20 +31,31 @@ La memoria está implementada y revisada; falta construir NSIS e instalarlo.
   final se aplicó a desarrollo mediante el helper del test legado. Bases temporales
   de pruebas eliminadas. Revisión independiente aprobada.
 - Versiones frontend/desktop/Cargo/Tauri coherentes en 0.3.1; gate instalador 48/48.
-  No hay instalación registrada ni proceso Mia; LOCALAPPDATA/Mia/mia-data está vacía.
-  Prerrequisitos de build presentes. El PostgreSQL de desarrollo escucha en 55432:
-  apagarlo ordenadamente antes de abrir la instalación, que usa el mismo puerto.
+  PostgreSQL de desarrollo apagado ordenadamente; el puerto 55432 pertenece ahora
+  a la instalación. No iniciar simultáneamente la base de desarrollo en ese puerto.
 
-## Paso actual y aceptación restante
+## Entrega e instalación verificadas
 
-1. Crear commit limpio y correr `packaging/build_installer.ps1 -BackendProfile core
-   -WebViewProfile Compact`, sin reusar payloads. Mide primer arranque en perfil nuevo.
-2. Verificar versión/commit/huella del NSIS y dejarlo en Descargas.
-3. Instalar y abrir esta versión conservando carpeta existente. Validar `/health`
-   (esquema completo), ejecutable instalado y puente nativo mediante
-   `e2e/installed_smoke.mjs`. No crear usuarios ni elegir jurisdicción del despacho.
-4. Cerrar instancia de inspección CDP y abrir normalmente. Actualizar este cierre y
-   evidencia del instalador; no declarar meta lograda antes de completar estos pasos.
+1. Build completo core/Compact, sin skips ni payloads reutilizados, exit 0 (~50 min).
+   Backend, LiteLLM y frontend empaquetados y probados; TypeScript aprobado.
+   Primera ejecución aislada aprobada en 88.763 ms; Tauri y NSIS aprobados.
+2. Instalador: `C:\Users\USER\Downloads\Mia_0.3.1_x64-setup.exe`, 175.244.104 bytes.
+   SHA-256: `a1f9d79fb312738f0a9319970d70ef69317789c16ba44f95d53ed451e5b58c8a`.
+   Copia de entrega cotejada contra el artefacto y su manifiesto.
+3. Instalación exit 0 en `C:\Users\USER\AppData\Local\Mia`; registro y ejecutable
+   confirman 0.3.1. Se corrigió una ruta NSIS antigua recordada con `/D` explícito.
+   El ejecutable NSIS difiere del release solo en el marcador normal `UNK→NSS`;
+   normalizar esos tres bytes en memoria produce exactamente el hash instalado.
+4. `e2e/installed_smoke.mjs` aprobado sobre la WebView real instalada: bienvenida
+   visible, puentes nativos de estado/protección, DB/pgvector/checkpointer/provenance
+   listos y 63/63 migraciones. Captura inspeccionada visualmente. No se crearon
+   usuarios ni se eligió jurisdicción. Perfil core: OCR y voz opcionales no incluidos.
+5. Cierre ordenado comprobado, incluidos servicios y PostgreSQL. Reabierta normalmente
+   sin CDP (9231 cerrado), con salud correcta. Se deja Mia abierta para el ingreso inicial.
+
+Evidencia de entrega: `validation/installed-release-0.3.1.json`; manifiesto original
+en `desktop/src-tauri/target/release/bundle/nsis/mia-release-manifest.json`.
+Captura local: `output/playwright/mia-installed-0.3.1.png`. No hubo push ni merge.
 
 Diseño: `docs/chat-continuidad-idempotencia.md`. Evidencia de código:
 `validation/conversation-memory-0.3.1.json`. La lectura pagina PostgreSQL pero reúne

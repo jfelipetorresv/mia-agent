@@ -1,0 +1,109 @@
+{
+  "version": "0.3.1",
+  "source_commit": "9453c4c6d4d3289df4f81c5c9c7aa0da80c02b12",
+  "verified_at_utc": "2026-09-06T04:28:03.6941386Z",
+  "installer": {
+    "schema_version": 1,
+    "product": "Mia",
+    "version": "0.3.1",
+    "commit": "9453c4c6d4d3289df4f81c5c9c7aa0da80c02b12",
+    "created_at_utc": "2026-09-06T04:21:30.4328567Z",
+    "reused_payloads": false,
+    "backend_profile": "core",
+    "webview_profile": "compact",
+    "capabilities": {
+      "ocr": false,
+      "voice": false
+    },
+    "first_run_ms": 88763,
+    "installed_payload_bytes": 597406352,
+    "target_installer_bytes": 335000000,
+    "target_applicable": true,
+    "target_met": true,
+    "installer": {
+      "file": "Mia_0.3.1_x64-setup.exe",
+      "bytes": 175244104,
+      "sha256": "a1f9d79fb312738f0a9319970d70ef69317789c16ba44f95d53ed451e5b58c8a"
+    },
+    "payloads": {
+      "mia-backend": {
+        "files": 2925,
+        "bytes": 215982010
+      },
+      "mia-litellm": {
+        "files": 3571,
+        "bytes": 115779482
+      },
+      "mia-frontend": {
+        "files": 2270,
+        "bytes": 138846176
+      },
+      "pgsql": {
+        "files": 1680,
+        "bytes": 126798684
+      }
+    }
+  },
+  "delivered_path": "C:\\Users\\USER\\Downloads\\Mia_0.3.1_x64-setup.exe",
+  "installation_path": "C:\\Users\\USER\\AppData\\Local\\Mia",
+  "installer_exit": 0,
+  "installed_exe_sha256": "e7ca58f7ff8a401be27ffeb2b69155a98f0593d5414f69c0c784d28f4eda34b9",
+  "installed_exe_verification": "Only three bytes differ from release: Tauri bundle marker UNK -> NSS. In-memory normalization gives exact installed hash.",
+  "native_webview": {
+    "expected_version": "0.3.1",
+    "passed": true,
+    "url": "http://localhost:3100/login",
+    "title": "Mia — tu asistente jurídica",
+    "native_runtime_bridge": true,
+    "native_protection_bridge": true,
+    "runtime_notice_stage": null,
+    "protection_recovery_key_created": false,
+    "checkpointer": true,
+    "migrations_applied": 63,
+    "migrations_expected": 63,
+    "onboarding_visible": true,
+    "created_user": false
+  },
+  "screenshot": "output/playwright/mia-installed-0.3.1.png",
+  "normal_restart_health": {
+    "status": "ok",
+    "db": true,
+    "pgvector": "0.8.2",
+    "embed_model": "voyage-law-2",
+    "embed_dim": 1024,
+    "migrations_expected": 63,
+    "migrations_applied": 63,
+    "checkpointer": true,
+    "provenance_ready": true,
+    "capabilities": {
+      "ocr": {
+        "available": false,
+        "included": false,
+        "reason": "La lectura óptica no está incluida; los PDF con texto siguen funcionando."
+      },
+      "voice": {
+        "available": false,
+        "included": false,
+        "reason": "El componente de voz no está incluido en esta instalación."
+      },
+      "anydoc": {
+        "available": true,
+        "reason": ""
+      },
+      "telegram": {
+        "available": false,
+        "reason": "Sin TELEGRAM_BOT_TOKEN el puente no arranca (opt-in)."
+      }
+    }
+  },
+  "normal_restart_frontend_http": 200,
+  "graceful_shutdown_verified": true,
+  "debug_port_closed": true,
+  "left_open": true,
+  "notes": [
+    "NSIS remembered a legacy folder via HKCU Software lexia Mia; corrected with explicit /D.",
+    "No user created and no provider inference performed.",
+    "core/Compact profile excludes optional OCR and voice.",
+    "Development PostgreSQL stopped; installed PostgreSQL owns port 55432."
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "expected_version": "0.3.1",
+  "passed": true,
+  "url": "http://localhost:3100/login",
+  "title": "Mia — tu asistente jurídica",
+  "native_runtime_bridge": true,
+  "native_protection_bridge": true,
+  "runtime_notice_stage": null,
+  "protection_recovery_key_created": false,
+  "checkpointer": true,
+  "migrations_applied": 63,
+  "migrations_expected": 63,
+  "onboarding_visible": true,
+  "created_user": false
+}
