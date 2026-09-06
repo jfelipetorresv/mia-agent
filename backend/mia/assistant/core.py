@@ -53,6 +53,7 @@ from ..agents.personas import (
 from ..db import pool
 from ..onboarding.soul_interview import load_soul_text
 from . import reminders as reminders_mod
+from . import chat_requests
 
 logger = logging.getLogger("mia.assistant.core")
 
@@ -315,6 +316,30 @@ class AssistantService:
     iterativo se lo entregaría al modelo del siguiente ("PRESERVA toda la información
     previa"): fuga de información confidencial entre tenants, por fuera del RLS.
     """
+
+    async def prepare_chat(self, tenant_id, user_id, conversation_id, message,
+                           *, request_id=None, before_execute=None):
+        return await chat_requests.prepare(
+            tenant_id, user_id, conversation_id, message,
+            request_id=request_id, before_execute=before_execute)
+
+    async def chat_prepared(self, turn: chat_requests.PreparedChat) -> dict:
+        if turn.cached is not None:
+            return {**turn.cached, "request_id": turn.request_id, "cached": True}
+        try:
+            conversation_id, reply = await self.chat(
+                turn.tenant_id, turn.user_id, turn.conversation_id, turn.message)
+            result = {"conversation_id": conversation_id, "reply": reply}
+            await chat_requests.complete(turn, result)
+            return {**result, "request_id": turn.request_id, "cached": False}
+        except BaseException:
+            # Cancelar SSE no garantiza cancelar asyncio.to_thread ni al proveedor.
+            # Nunca liberar la reserva: incluso si este UPDATE falla, running bloquea.
+            try:
+                await chat_requests.uncertain(turn)
+            except BaseException:
+                logger.warning("No se pudo registrar el cierre incierto del envío")
+            raise
 
     # ── consultas de solo lectura (las usa el router) ────────────────────────
     async def list_conversations(self, tenant_id: str, user_id: str | None) -> list[dict]:

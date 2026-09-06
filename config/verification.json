@@ -12,6 +12,7 @@
     "execution/test_context_compressor.py",
     "execution/test_hitl_resume_state.py",
     "execution/test_assistant_matter_boundary.py",
+    "execution/test_assistant_chat_requests.py",
     "execution/test_async_embedding_routes.py",
     "execution/test_cors_contract.py",
     "execution/test_document_derivation.py",

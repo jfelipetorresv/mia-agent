@@ -108,7 +108,7 @@ código, prompts, marcas ni activos de esos proyectos.
 | Observación | Comparación con Mia | Decisión |
 |---|---|---|
 | Métrica de caché del proveedor (`grokky/src/main/providers/codex-provider.ts`, `grokrouter/runtime/run-provider.mjs`) | Mia ya almacenaba esa métrica, pero su adaptador Codex la perdía | Implementada la traducción propia; 31 checks, recorrido hasta recorder y revisión independiente |
-| Control de turnos concurrentes y huella de petición | El chat libre de Mia persiste historial pero no tiene idempotencia por envío | Siguiente mejora: clave por despacho/conversación, respuesta durable y exclusión de concurrencia; jamás deduplicar por texto |
+| Control de turnos concurrentes y huella de petición | El chat libre de Mia persiste historial pero no tiene idempotencia por envío | Implementada en continuación: clave por despacho/usuario/envío y respuesta durable; un reenvío no ejecuta otro turno. No serializa claves distintas entre dispositivos |
 | Continuidad de hilos del proveedor | Mia usa Codex efímero deliberadamente y arma contexto explícito | Mantener aislamiento; no importar hilos duraderos del proveedor automáticamente |
 | Continuidad de conversación | El asistente de Mia solo carga 200 mensajes y crea compresor por turno | Propuesta propia: resumen persistido más cursor de cobertura y originales conservados; no es función encontrada en los ZIP |
 | Historial local, enrutamiento, actividad de ayudantes | Mia ya tiene PostgreSQL/RLS, políticas por despacho, telemetría y búsqueda de trazas | No duplicar infraestructura ni confundir historial con memoria semántica nueva |
@@ -117,5 +117,10 @@ Para resumen persistido e idempotencia, los criterios de aceptación serían: ai
 entre despachos; reintento de un mismo envío sin segunda inferencia; preguntas iguales con
 identificadores distintos permitidas; resumen invalidado al cambiar su alcance; ninguna
 advertencia perdida; recuperación tras reinicio; medición conjunta de costo y calidad.
-No se implantaron en esta auditoría: requieren un cambio de estado durable y sus pruebas
-propias, más amplio que reparar el cableado y la medición existentes.
+En el primer cierre no se implantaron. Tras la instrucción de continuar se incorporó
+idempotencia propia del chat: clave por despacho/usuario/envío, reserva durable,
+recuperación de respuestas completadas y reintento desde la pantalla. Los estados
+inciertos no se ejecutan de nuevo automáticamente. El resumen persistido sigue pendiente.
+Los contratos, límites de recuperación y diseño de continuidad constan en
+`docs/chat-continuidad-idempotencia.md`; el cierre más reciente de `HANDOFF.md` registra
+la verificación de esta continuación.

@@ -1,0 +1,75 @@
+{
+  "date": "2026-09-06",
+  "base_commit": "c5281c2",
+  "scope": "assistant chat idempotency; synthetic providers; local PostgreSQL",
+  "checks": [
+    {
+      "suite": "execution/test_assistant_chat_requests.py",
+      "passed": 7,
+      "total": 7,
+      "seconds": 13.018,
+      "database": "temporary isolated; migration 065 applied twice; removed afterwards"
+    },
+    {
+      "suite": "execution/test_assistant.py",
+      "passed": 32,
+      "total": 32
+    },
+    {
+      "suite": "execution/test_migration_contracts.py",
+      "passed": 7,
+      "total": 7
+    },
+    {
+      "suite": "execution/test_rls.py",
+      "passed": 19,
+      "total": 19
+    },
+    {
+      "suite": "execution/test_assistant_matter_boundary.py",
+      "status": "passed; JSON and SSE reject substantive legal requests before preparation"
+    },
+    {
+      "suite": "execution/test_frontend_resilience.py",
+      "passed": 7,
+      "total": 7
+    },
+    {
+      "suite": "frontend lint and production build with TypeScript",
+      "status": "passed"
+    },
+    {
+      "suite": "e2e/chat-idempotency.mjs",
+      "status": "passed",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "checks_per_theme": 13,
+      "evidence": "output/playwright/chat-idempotency.json"
+    }
+  ],
+  "mutation": {
+    "change": "bypass completed response cache branch",
+    "result": "detected; assertion No debe llamar proveedor"
+  },
+  "review": {
+    "independent": "approved; frontend pending-attempt thread mixing found and corrected",
+    "visual": "retry light and recovered dark screenshots inspected"
+  },
+  "environment": {
+    "initial_database": "connection timeout; PostgreSQL was stopped",
+    "recovery": "ready 2026-09-05 21:50:42 America/Bogota",
+    "frontend_test_server": "stopped",
+    "portable_postgres": "running 55432"
+  },
+  "limits": [
+    "no real model or cost evaluation",
+    "migration not applied to installed application",
+    "desktop installer not rebuilt",
+    "browser request key is not persisted across page reload",
+    "distinct keys across devices are not serialized per conversation",
+    "durable conversation summary designed but not implemented",
+    "full previous 95 suite audit not repeated"
+  ]
+}

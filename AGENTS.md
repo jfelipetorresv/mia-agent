@@ -40,6 +40,9 @@ importan los de la firma que desarrolla el producto.
 - Respetar los presupuestos y rutas de modelos existentes; no crear otra política paralela.
   Medir tokens, tiempo, reintentos y calidad juntos. Costo no medido no es costo cero;
   un ahorro estimado de tokens no se presenta como ahorro monetario real.
+- Identificar reintentos por envío, despacho y usuario, nunca por similitud del texto.
+  Recuperar una respuesta registrada no dispara otra inferencia. Una ejecución incierta
+  no se vuelve segura por vencer un plazo: conservar el registro y comunicar el límite.
 
 ## Verificación y cierre
 

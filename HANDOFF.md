@@ -9,6 +9,48 @@
 
 ---
 
+# CIERRE — 2026-09-06 · continuación: recuperación de envíos del chat
+
+Continúa sobre `c5281c2` en `fix/mia-audit-efficiency-20260906`. Se añadió idempotencia
+propia del chat JSON/SSE: `request_id` opcional, registro por despacho/usuario/envío,
+recuperación de respuesta completada antes del control de presupuesto y reserva que
+no caduca ante fallos o cancelación. No se repite una inferencia de desenlace incierto.
+La pantalla conserva la clave al reintentar, evita duplicar burbujas y bloquea otro
+envío hasta recuperar el pendiente o abrir una conversación nueva.
+
+- Migración aditiva `065_assistant_chat_requests.sql`, RLS forzado, sellada sin cambiar
+  SQL históricos. El aplicador existente la descubre automáticamente. Aplicada dos
+  veces en una base temporal propia; no aplicada a la instalación del usuario.
+- Nueva suite `execution/test_assistant_chat_requests.py`: 7/7 en PostgreSQL real,
+  proveedor sustituido. Seis solicitudes concurrentes ejecutan un solo turno; replay
+  entre instancias, claves distintas, RLS, cancelación, fallo de recibo, JSON/SSE y
+  presupuesto comprobados. Mutación que omite caché detectada en rojo. Bases limpiadas.
+- Compatibilidad: asistente 32/32, contratos de migración 7/7, RLS 19/19, frontera
+  jurídica JSON/SSE verde y resiliencia frontend 7/7. Evidencia consolidada en
+  `validation/chat-idempotency-2026-09-06.json`. No se repitieron las 95 suites anteriores.
+- Frontend: lint y build final con TypeScript verdes. Navegador real con API sintética,
+  13 comprobaciones por tema en claro/oscuro, cero errores de página. Capturas y detalle
+  en `output/playwright/chat-idempotency.json`; root inspeccionó reintento claro y
+  recuperación oscura. Revisión independiente detectó y cerró mezcla de hilos tras fallo.
+- PostgreSQL portable se encontró detenido (WAL writer, excepción Windows), se reinició
+  y terminó recuperación a las 21:50:42 hora local. No se contó ese timeout como verde.
+  Servidor temporal de frontend 3111 detenido; modelos y canales externos no usados.
+
+## Límites y siguiente trabajo
+
+- La respuesta durable sobrevive al servidor; la clave de la pantalla no sobrevive a
+  recargar/cerrar navegador. Dos claves distintas entre dispositivos no serializan el
+  mismo hilo. Fallar el recibo después del historial deja incertidumbre, no otro consumo.
+- Memoria de conversaciones largas revisada, **no implementada**: últimos 200 mensajes
+  omiten historia antes del compresor. Un resumen durable requiere cursor de cobertura,
+  originales y pendientes preservados, control de carreras e información de cobertura
+  parcial. Diseño y criterios en `docs/chat-continuidad-idempotencia.md`.
+- Cambios locales en rama: no merge, push, despliegue ni NSIS actualizado. Mantienen los
+  pendientes de instalación, puente Tauri, evaluación real de modelos y dictamen Cursor
+  del cierre anterior. No se acredita producto sin bugs ni ahorro monetario real.
+
+---
+
 # CIERRE — 2026-09-06 · auditoría, reglas genéricas y referencias Grok
 
 Rama `fix/mia-audit-efficiency-20260906`, base `8a5ac10`. Pipe pidió revisar propósito,

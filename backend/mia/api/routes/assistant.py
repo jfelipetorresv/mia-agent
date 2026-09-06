@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ...assistant.core import AssistantService, ConversationNotFound
+from ...assistant.chat_requests import ChatRequestConflict
 from ...assistant.reminders import ReminderService
 from ...policy import budget as policy_budget
 from ._common import sse
@@ -83,6 +84,27 @@ async def _user_id(request: Request, tenant_id: str) -> str | None:
 class ChatBody(BaseModel):
     message: str = Field(min_length=1, max_length=100_000)
     conversation_id: str | None = None
+    request_id: uuid.UUID | None = None
+
+
+async def _prepare_chat(body: ChatBody, request: Request, tid: str):
+    async def budget():
+        await policy_budget.enforce_budget(tid)
+    try:
+        uid = await _user_id(request, tid)
+        return await _service.prepare_chat(
+            tid, uid, body.conversation_id, body.message,
+            request_id=str(body.request_id) if body.request_id is not None else None,
+            before_execute=budget)
+    except policy_budget.BudgetExceeded as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    except ChatRequestConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception:
+        logger.exception("No se pudo preparar el envío del asistente (tenant=%s)", tid)
+        raise HTTPException(status_code=502, detail="No pude confirmar este envío. Intenta recuperarlo de nuevo.")
 
 
 @router.post("/chat")
@@ -91,16 +113,11 @@ async def assistant_chat(body: ChatBody, request: Request):
     tid = _tenant(request)
     if requires_legal_matter(body.message):
         raise HTTPException(status_code=409, detail=_MATTER_REDIRECT_MESSAGE)
-    # CP-E1: tope de gasto de IA del despacho (política activa) antes del turno.
+    turn = await _prepare_chat(body, request, tid)
     try:
-        await policy_budget.enforce_budget(tid)
-    except policy_budget.BudgetExceeded as e:
-        raise HTTPException(status_code=402, detail=str(e))
-    uid = await _user_id(request, tid)
-    try:
-        conversation_id, reply = await _service.chat(
-            tid, uid, body.conversation_id, body.message
-        )
+        result = await _service.chat_prepared(turn)
+    except ChatRequestConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ConversationNotFound:
         raise HTTPException(status_code=404, detail="No encontré esa conversación.")
     except ValueError as e:
@@ -109,9 +126,10 @@ async def assistant_chat(body: ChatBody, request: Request):
         logger.exception("assistant_chat falló (tenant=%s)", tid)
         raise HTTPException(
             status_code=502,
-            detail="No pude responder en este momento. Intenta de nuevo en unos minutos.",
+            detail=("No pude confirmar cómo terminó este envío. Revisa el historial antes de enviar otro."
+                    if body.request_id else "No pude responder en este momento. Intenta de nuevo en unos minutos."),
         )
-    return {"conversation_id": conversation_id, "reply": reply}
+    return result
 
 
 @router.post("/chat/stream")
@@ -135,19 +153,16 @@ async def assistant_chat_stream(body: ChatBody, request: Request):
             yield sse("matter_required", _MATTER_REDIRECT_MESSAGE, redirect="/")
 
         return EventSourceResponse(matter_required(), ping=SSE_PING_SECONDS)
-    # CP-E1: tope de gasto de IA del despacho ANTES de abrir el stream (como en stream.py).
-    try:
-        await policy_budget.enforce_budget(tid)
-    except policy_budget.BudgetExceeded as e:
-        raise HTTPException(status_code=402, detail=str(e))
-    uid = await _user_id(request, tid)
+    # Cache validado antes del tope; un envío NUEVO conserva el 402 previo al SSE.
+    turn = await _prepare_chat(body, request, tid)
 
     async def gen() -> AsyncIterator[dict]:
         yield sse("thinking", "Mia está pensando…")
         try:
-            conversation_id, reply = await _service.chat(
-                tid, uid, body.conversation_id, body.message
-            )
+            result = await _service.chat_prepared(turn)
+        except ChatRequestConflict as e:
+            yield sse("error", str(e))
+            return
         except ConversationNotFound:
             yield sse("error", "No encontré esa conversación.")
             return
@@ -157,9 +172,11 @@ async def assistant_chat_stream(body: ChatBody, request: Request):
             return
         except Exception:  # noqa: BLE001 — §G: nunca exponer el error técnico al abogado
             logger.exception("assistant_chat_stream falló (tenant=%s)", tid)
-            yield sse("error", "No pude responder en este momento. Intenta de nuevo en unos minutos.")
+            yield sse("error", "No pude confirmar cómo terminó este envío. Revisa el historial antes de enviar otro."
+                      if body.request_id else "No pude responder en este momento. Intenta de nuevo en unos minutos.")
             return
-        yield sse("reply", reply, conversation_id=conversation_id)
+        yield sse("reply", result["reply"], conversation_id=result["conversation_id"],
+                  request_id=result["request_id"], cached=result["cached"])
 
     return EventSourceResponse(gen(), ping=SSE_PING_SECONDS)
 

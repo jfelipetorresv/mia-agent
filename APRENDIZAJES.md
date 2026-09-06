@@ -844,3 +844,17 @@ el navegador real con respuestas sintéticas en claro/oscuro, nueva huella y con
 axe sin incidencias. Las sondas de compresión independientes preservaron pendientes.
 **Límite:** historial persistido no equivale a resumen persistido: el asistente todavía
 crea compresor por turno. Una mejora futura debe incluir cursor, invalidación y RLS.
+
+95. **2026-09-06 · Un reintento necesita identidad y un recibo durable.**
+Un doble clic o una desconexión pueden reenviar un turno que ya consumió IA. Deduplicar
+por texto impediría preguntas intencionalmente repetidas; desbloquear por timeout puede
+ejecutar de nuevo un proveedor que siguió trabajando. El chat incorpora una clave por
+despacho/usuario/envío y una reserva que no caduca: respuesta completada se recupera;
+ejecución incierta se comunica sin repetir. La recuperación precede al control de gasto,
+pero un envío nuevo conserva el presupuesto existente. La pantalla reutiliza clave y
+burbuja al reintentar y bloquea nuevos envíos mientras hay un intento pendiente.
+La revisión independiente encontró que enviar otro mensaje tras perder la primera
+respuesta podía mezclar dos conversaciones: se exige recuperar el intento o abrir otra.
+**Límites:** el identificador de la pantalla no sobrevive a recargar; dos claves distintas
+no serializan una conversación entre dispositivos. El resumen durable continúa pendiente:
+la lectura de últimos 200 mensajes pierde cobertura antes de llegar al compresor.

@@ -1,0 +1,50 @@
+[
+  {
+    "theme": "light",
+    "passed": true,
+    "requests": 3,
+    "checks": [
+      "double-enter-single-request",
+      "stable-retry-id-and-payload",
+      "uuid-v4",
+      "null-conversation-retry",
+      "no-duplicate-user",
+      "new-intent-new-id",
+      "uncertain-attempt-blocks-new-message",
+      "typewriter-lock",
+      "history-load-lock",
+      "reply-survives-late-disconnect",
+      "duplicate-terminal-ignored",
+      "no-sensitive-localstorage",
+      "no-pageerrors"
+    ],
+    "screenshots": [
+      "chat-reintento-light.png",
+      "chat-recuperado-light.png"
+    ]
+  },
+  {
+    "theme": "dark",
+    "passed": true,
+    "requests": 3,
+    "checks": [
+      "double-enter-single-request",
+      "stable-retry-id-and-payload",
+      "uuid-v4",
+      "null-conversation-retry",
+      "no-duplicate-user",
+      "new-intent-new-id",
+      "uncertain-attempt-blocks-new-message",
+      "typewriter-lock",
+      "history-load-lock",
+      "reply-survives-late-disconnect",
+      "duplicate-terminal-ignored",
+      "no-sensitive-localstorage",
+      "no-pageerrors"
+    ],
+    "screenshots": [
+      "chat-reintento-dark.png",
+      "chat-recuperado-dark.png"
+    ]
+  }
+]

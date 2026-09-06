@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 type Conversation = { id: string; title: string; updated_at: string };
 type Role = "user" | "assistant";
 type Message = { role: Role; content: string };
+type ChatAttempt = { message: string; conversation_id: string | null; request_id: string };
 // Atajo de la firma u organización: un clic PRE-LLENA el cuadro de mensaje
 // con `texto` — el abogado revisa y decide si lo envía (consent-first, nunca se auto-envía).
 // `clave` identifica el atajo para la pantalla donde el abogado los gobierna ("guia:<id>",
@@ -77,6 +78,10 @@ export default function ChatPage() {
   const [conversationToRetry, setConversationToRetry] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [typing, setTyping] = useState(false); // Mia "escribiendo" (typewriter activo)
+  const [loadingConversation, setLoadingConversation] = useState(false);
+  const [retryAttempt, setRetryAttempt] = useState<ChatAttempt | null>(null);
+  // El ref cierra el intervalo entre dos eventos y el siguiente render de React.
+  const busyRef = useRef(false);
   const [matterRequired, setMatterRequired] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const typerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -127,7 +132,9 @@ export default function ChatPage() {
   }, [messages, status]);
 
   async function openConversation(id: string) {
-    if (streaming) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setLoadingConversation(true);
     const previousId = activeId;
     const previousMessages = messages;
     setActiveId(id);
@@ -140,6 +147,7 @@ export default function ChatPage() {
         `/api/assistant/conversations/${id}/messages`,
       );
       setMessages(rows.map((r) => ({ role: r.role, content: r.content })));
+      setRetryAttempt(null);
     } catch {
       // No sustituyas el hilo visible por una pantalla vacía: eso haría parecer que la
       // conversación se perdió. Conserva el hilo anterior y deshace la selección fallida.
@@ -147,11 +155,15 @@ export default function ChatPage() {
       setMessages(previousMessages);
       setConversationToRetry(id);
       setConversationError("No pude abrir esa conversación. Intenta de nuevo.");
+    } finally {
+      busyRef.current = false;
+      setLoadingConversation(false);
     }
   }
 
   function newConversation() {
-    if (streaming) return;
+    if (busyRef.current) return;
+    setRetryAttempt(null);
     setActiveId(null);
     setMessages([]);
     setStatus("");
@@ -185,27 +197,35 @@ export default function ChatPage() {
         clearInterval(typerRef.current);
         typerRef.current = null;
         setTyping(false);
+        if (!abortRef.current) busyRef.current = false;
       }
     }, 16);
   }
 
-  async function send(preset?: string) {
-    const text = (preset ?? input).trim();
-    if (!text || streaming) return;
-    setInput("");
+  async function send(preset?: string, retry?: ChatAttempt) {
+    const text = retry?.message ?? (preset ?? input).trim();
+    if (!text || busyRef.current || (!retry && retryAttempt)) return;
+    busyRef.current = true;
+    const attempt = retry ?? { message: text, conversation_id: activeId, request_id: crypto.randomUUID() };
+    setRetryAttempt(null);
+    if (!retry) setInput("");
     setMatterRequired(false);
-    setMessages((m) => [...m, { role: "user", content: text }, { role: "assistant", content: "" }]);
+    setMessages((m) => retry
+      ? [...m.slice(0, -1), { role: "assistant", content: "" }]
+      : [...m, { role: "user", content: text }, { role: "assistant", content: "" }]);
     setStatus("Mia está pensando…");
     setStreaming(true);
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     let answered = false;
+    let failure = "";
     try {
       await streamPost(
         "/api/assistant/chat/stream",
-        { message: text, conversation_id: activeId },
+        attempt,
         (event, data) => {
+          if (controller.signal.aborted || answered) return;
           const payload = data as { message?: string; conversation_id?: string };
           if (event === "thinking") {
             setStatus(payload.message || "Mia está pensando…");
@@ -227,7 +247,7 @@ export default function ChatPage() {
               return copy;
             });
           } else if (event === "error") {
-            answered = true;
+            failure = payload.message || "No pude responder en este momento.";
             setStatus("");
             setMessages((m) => {
               const copy = [...m];
@@ -241,15 +261,17 @@ export default function ChatPage() {
         },
         controller.signal,
       );
-      if (!answered) throw new Error("sin respuesta");
+      if (!answered) throw new Error(failure || "No pude responder en este momento. Reintenta este mensaje.");
       // Refresca la lista: una conversación nueva estrena título con este turno.
       loadConversations();
     } catch (err) {
+      if (controller.signal.aborted || answered) return;
+      setRetryAttempt(attempt);
       setStatus("");
       const msg =
         err instanceof ApiError && !err.message.startsWith("Error ")
           ? err.message
-          : "No pude responder en este momento. Intenta de nuevo en unos minutos.";
+          : failure || "No pude responder en este momento. Reintenta este mensaje.";
       setMessages((m) => {
         const copy = [...m];
         if (copy.length && copy[copy.length - 1].role === "assistant") {
@@ -258,19 +280,22 @@ export default function ChatPage() {
         return copy;
       });
     } finally {
+      abortRef.current = null;
       setStreaming(false);
+      if (!typerRef.current) busyRef.current = false;
     }
   }
 
   const empty = messages.length === 0;
   const lastIdx = messages.length - 1;
+  const busy = streaming || typing || loadingConversation;
 
   return (
     <div className="flex h-[100dvh] min-h-0">
       {/* Historial de conversaciones — se pliega en móvil para dar todo el ancho al hilo. */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card/40 md:flex">
         <div className="p-3">
-          <Button onClick={newConversation} variant="outline" className="w-full justify-start gap-2">
+          <Button onClick={newConversation} disabled={busy} variant="outline" className="w-full justify-start gap-2">
             <Plus className="h-4 w-4" />
             Nueva conversación
           </Button>
@@ -289,6 +314,7 @@ export default function ChatPage() {
                 <li key={c.id}>
                   <button
                     onClick={() => openConversation(c.id)}
+                    disabled={busy}
                     className={cn(
                       "relative w-full truncate rounded-lg px-3 py-2 text-left text-sm transition-colors",
                       c.id === activeId
@@ -312,6 +338,7 @@ export default function ChatPage() {
             <span>{conversationError}</span>
             <Button
               onClick={() => (conversationToRetry ? openConversation(conversationToRetry) : loadConversations())}
+              disabled={busy}
               variant="outline"
               size="sm"
               className="h-7 shrink-0 border-destructive/30 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -321,7 +348,7 @@ export default function ChatPage() {
           </div>
         ) : null}
         <div className="flex items-center gap-2 border-b border-border bg-card/40 p-2 md:hidden">
-          <Button onClick={newConversation} variant="outline" size="sm" className="shrink-0 gap-1.5">
+          <Button onClick={newConversation} disabled={busy} variant="outline" size="sm" className="shrink-0 gap-1.5">
             <Plus className="h-4 w-4" />
             Nueva
           </Button>
@@ -331,6 +358,7 @@ export default function ChatPage() {
           <select
             id="chat-mobile-conversation"
             value={activeId ?? ""}
+            disabled={busy}
             onChange={(e) => (e.target.value ? openConversation(e.target.value) : newConversation())}
             className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm text-foreground"
           >
@@ -370,6 +398,7 @@ export default function ChatPage() {
                   <button
                     key={ex.text}
                     onClick={() => send(ex.text)}
+                    disabled={busy}
                     className="group animate-slide-up rounded-lg border border-border/10 bg-card/80 px-4 py-3.5 text-left text-sm text-card-foreground shadow-neu-raised backdrop-blur transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-[var(--neu-raised),_0_12px_24px_-8px_hsl(var(--primary)/0.12)]"
                     style={{ animationDelay: `${180 + i * 70}ms`, animationFillMode: "backwards" }}
                   >
@@ -465,6 +494,16 @@ export default function ChatPage() {
                 </div>
               ))}
               <div ref={endRef} />
+              {retryAttempt ? (
+                <div className="mb-6 flex flex-col items-center gap-2 text-center">
+                  <p role="status" className="text-sm text-muted-foreground">
+                    Recupera la respuesta con Reintentar o abre una conversación nueva para empezar otra consulta.
+                  </p>
+                  <Button variant="outline" disabled={busy} onClick={() => send(undefined, retryAttempt)}>
+                    Reintentar mensaje
+                  </Button>
+                </div>
+              ) : null}
               {matterRequired ? (
                 <div className="mb-6 flex justify-center animate-slide-up">
                   <Button onClick={() => router.push("/")} variant="cta" className="gap-2">
@@ -492,6 +531,7 @@ export default function ChatPage() {
               <textarea
                 ref={inputRef}
                 value={input}
+                disabled={Boolean(retryAttempt)}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -505,7 +545,7 @@ export default function ChatPage() {
               />
               <Button
                 onClick={() => send()}
-                disabled={streaming || !input.trim()}
+                disabled={busy || Boolean(retryAttempt) || !input.trim()}
                 size="icon"
                 aria-label="Enviar"
                 className="transition-transform active:scale-95"
