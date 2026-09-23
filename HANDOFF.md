@@ -1,3 +1,7 @@
+# CAMBIO PUNTUAL — 2026-09-23 · llamadas a Claude Code sin transcript
+
+Commit `416f9f9`. `subscription_llm.py` y el conector `claude_code` de `gateway/agent_hub.py` pasan `--no-session-persistence`: cada turno dejaba un transcript de un solo mensaje en `~/.claude/projects` del operador (408 acumulados). Verificado con `.venv\Scripts\python.exe`: `test_model_policy.py` 62/62 y rojo al quitar la opción; `test_claude_code_no_session_persistence` en verde. No corrió la parte de `test_agent_hub.py` que necesita Postgres local. Sin build ni instalador nuevos: el cambio llega a la app instalada en la próxima entrega. `execution/purgar_piloto.py` sigue sirviendo para lo ya acumulado.
+
 # ENTREGA VERIFICADA — 2026-09-06 · Mia 0.3.2 instalada
 
 Build completo core/Compact, exit 0, sin skips ni reutilización, desde
