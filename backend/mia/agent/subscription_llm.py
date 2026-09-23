@@ -18,6 +18,15 @@ Flags verificados EN VIVO con `claude --help` + llamadas de prueba (2026-07-01):
     proyecto → sesión limpia. Probado en vivo.
   · `--model haiku`            → alias aceptado (exit 0, is_error=false) en prueba viva;
     la suscripción puede rutearlo a su modelo pequeño por defecto.
+  · `--no-session-persistence` → confirmado en `claude --help` (solo aplica con -p/--print,
+    que es exactamente este modo): "Disable session persistence - sessions will not be
+    saved to disk". Cada llamada de este módulo es `-p` + `--max-turns 1`, sin `--resume`
+    ni `--continue` ni lectura posterior del transcript — nada depende de que el CLI
+    persista la sesión. Sin este flag, cada turno de un abogado dejaba un transcript de
+    UN mensaje bajo `~/.claude/projects/<slug de MIA_HOME>` (408 acumulados detectados en
+    la máquina de Pipe, 2026-09-23): ruido en el historial de Claude Code del operador de
+    Mia, no del despacho. `execution/purgar_piloto.py` ya sabía barrer esos transcripts
+    por-turno del piloto; esto ataca la causa en vez de solo el síntoma.
 
 SEGURIDAD (revisión CP2, 2026-07-01):
   · TODO el contenido (system + conversación) viaja por STDIN con separadores claros
@@ -84,6 +93,11 @@ _BASE_FLAGS = [
     "--strict-mcp-config",      # sin --mcp-config ⇒ ningún servidor MCP
     "--setting-sources", "project",  # sin settings/CLAUDE.md del usuario
     "--system-prompt", _PERSONA_OVERRIDE,  # anula la persona concisa de Claude Code (estática, sin tenant)
+    "--no-session-persistence",  # solo aplica con -p (confirmado en `claude --help`,
+                                  # 2026-09-23): esta llamada no usa --resume/--continue
+                                  # ni relee el transcript, así que no persistir la sesión
+                                  # no pierde nada y deja de ensuciar el historial del CLI
+                                  # con un transcript de un solo mensaje por turno.
 ]
 
 # Aliases de modelo que el CLI acepta: "haiku" confirmado en vivo (exit 0, is_error=false);

@@ -70,6 +70,19 @@ def _prompt_flag(flag: str) -> Callable[[str], list[str]]:
     return lambda prompt: [flag, prompt]
 
 
+def _claude_code_args(prompt: str) -> list[str]:
+    """Args del conector `claude_code`: es el ÚNICO conector de este catálogo cuyo binario
+    es el CLI real `claude`/`claude-code` (los demás son otros productos que también usan
+    `-p`). `--no-session-persistence` confirmado con `claude --help` (2026-09-23): "Disable
+    session persistence - sessions will not be saved to disk"; solo aplica con -p/--print,
+    que es exactamente este modo. Esta invocación es de un solo turno (sin --resume ni
+    --continue, y nadie relee el transcript después), así que apagar la persistencia no
+    pierde nada y evita que cada delegación deje otro transcript de un mensaje bajo
+    `~/.claude/projects/...` del equipo del despacho (mismo hallazgo que en
+    `agent/subscription_llm.py`, ver su docstring)."""
+    return ["-p", "--no-session-persistence", prompt]
+
+
 # Flags que cada conector debe exhibir en `--help` para considerarse listo.
 # Codex no usa -p: el prompt va por stdin (mismo aislamiento del proveedor productivo).
 _HELP_NEEDLES: dict[str, tuple[str, ...]] = {
@@ -84,7 +97,7 @@ CONNECTORS: dict[str, Connector] = {
     "hermes": Connector("hermes", "investigacion", "Asistente de investigación jurídica",
                         ("hermes",), "MIA_HERMES_BIN", _prompt_flag("-p"), marca="Hermes"),
     "claude_code": Connector("claude_code", "documentos", "Editor de documentos",
-                             ("claude", "claude-code"), "MIA_CLAUDE_BIN", _prompt_flag("-p"),
+                             ("claude", "claude-code"), "MIA_CLAUDE_BIN", _claude_code_args,
                              marca="Claude Code"),
     # Codex con el MISMO aislamiento del proveedor productivo (codex_subscription_llm):
     # prompt por stdin (nunca argv), efímero, sin config/reglas del usuario, sandbox de

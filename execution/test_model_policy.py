@@ -313,6 +313,11 @@ def run() -> None:
         check("6c · flags base confirmados en vivo (-p, json, max-turns, tools, strict-mcp)",
               "-p" in cmd and "--output-format" in cmd and "json" in cmd
               and "--max-turns" in cmd and "--tools" in cmd and "--strict-mcp-config" in cmd)
+        check("6c-bis · --no-session-persistence presente (confirmado en `claude --help`, "
+              "2026-09-23): esta llamada es -p/--max-turns 1, sin --resume/--continue, así "
+              "que no persistir la sesión no pierde nada y deja de acumular un transcript "
+              "de un mensaje por turno en el historial de Claude Code del operador",
+              "--no-session-persistence" in cmd)
         stdin_text = captured["kw"].get("input", "")
         # 6d refinado (fix de calidad 2026-07-01): el CLI recibe un --system-prompt
         # ESTÁTICO (persona de Mia, constante del módulo, SIN contenido del tenant)

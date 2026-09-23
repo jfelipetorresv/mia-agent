@@ -138,6 +138,38 @@ def test_detection_and_invoke():
               for k in ("hermes", "claude_code", "codex", "antigravity", "openclaw")))
 
 
+# ── offline: claude_code es el ÚNICO conector que invoca el CLI real `claude`, y por
+# eso el ÚNICO al que le corresponde --no-session-persistence (2026-09-23: cada
+# invocación de Mia al CLI de la suscripción dejaba un transcript de un solo mensaje en
+# ~/.claude/projects/<slug de MIA_HOME>, ensuciando el historial del abogado con 408
+# corridas acumuladas en un piloto). hermes/antigravity/openclaw comparten el flag -p
+# pero son OTROS binarios: no deben heredar un flag de un CLI que no es el suyo.
+def test_claude_code_no_session_persistence():
+    orig_which = ah.shutil.which
+    ah.shutil.which = lambda name: f"/fake/{name}"
+    try:
+        captured: dict = {}
+
+        def recorder(args, *, cwd=None, timeout=None):
+            captured["args"] = args
+            return (0, "ok", "")
+
+        hub = AgentHub(env={}, runner=recorder)
+        hub.invoke_result("claude_code", "redacta esto", "t-1")
+        cmd = captured["args"]
+        check("claude_code: --no-session-persistence viaja en los args del CLI real",
+              "--no-session-persistence" in cmd)
+        check("claude_code: sigue siendo -p + el prompt como último elemento",
+              "-p" in cmd and cmd[-1] == "redacta esto")
+
+        captured.clear()
+        hub.invoke_result("hermes", "investiga esto", "t-1")
+        check("hermes (otro binario, mismo -p): NO hereda --no-session-persistence",
+              "--no-session-persistence" not in captured["args"])
+    finally:
+        ah.shutil.which = orig_which
+
+
 # ── offline: rutas con espacio + fallos del runner ─────────────────────────
 def test_space_path_and_failures():
     tmp = tempfile.mkdtemp()
@@ -329,6 +361,7 @@ def api_checks(a):
 def main() -> int:
     print("== Módulo 1e · Agent Hub ==")
     test_detection_and_invoke()
+    test_claude_code_no_session_persistence()
     test_space_path_and_failures()
 
     a, b = setup_data()
