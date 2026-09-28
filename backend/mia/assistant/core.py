@@ -339,13 +339,14 @@ class AssistantService:
             for r in rows
         ]
 
-    async def list_messages(self, tenant_id: str, conversation_id: str) -> list[dict]:
+    async def list_messages(self, tenant_id: str, conversation_id: str, *, user_id: str | None = None) -> list[dict]:
         """Mensajes de una conversación del tenant. Ajena/inexistente → ConversationNotFound."""
         conversation_id = _require_uuid(conversation_id)
         async with pool.tenant_connection(tenant_id) as conn:
             owned = await (await conn.execute(
-                "SELECT 1 FROM assistant_conversations WHERE id = %s::uuid",
-                (conversation_id,),
+                "SELECT 1 FROM assistant_conversations WHERE id = %s::uuid "
+                + ("AND user_id=%s::uuid" if user_id is not None else ""),
+                (conversation_id, user_id) if user_id is not None else (conversation_id,),
             )).fetchone()
             if not owned:
                 raise ConversationNotFound(conversation_id)

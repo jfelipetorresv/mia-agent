@@ -1,0 +1,28 @@
+{
+  "browser": "msedge",
+  "passed": 2,
+  "results": [
+    {
+      "name": "prefetch-remove-own-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "prefetch-preserve-renewed-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    }
+  ],
+  "reviewed_hashes": {
+    "frontend/app/chat/page.tsx": "490CACA5D897703D8642C9D89128D0B9EDC242C299A43E1739FBA041E5B98DE7",
+    "e2e/chat-recovery.mjs": "8FE8683B60212FA4D2585A24A932923C3B52B082080714675D9065AA73727CD7",
+    "output/playwright/chat-recovery-prefetch-remove-own-marker.png": "47AB25EF3698C52C1A30EC902155D45E2D3BC45363245CAE2A582FBE4D50BC72",
+    "frontend/lib/api.ts": "4BE97BC108AF8273443A8376CBD2757AF1CF5128CD082863EBA404C1A4A54F37",
+    "output/playwright/chat-recovery-prefetch-preserve-renewed-marker.png": "47AB25EF3698C52C1A30EC902155D45E2D3BC45363245CAE2A582FBE4D50BC72"
+  },
+  "visual_review": "Both screenshots inspected, light theme, session-change notice visible, input disabled."
+}

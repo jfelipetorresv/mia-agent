@@ -240,14 +240,22 @@ export async function streamPost(
   body: unknown,
   onEvent: SseHandler,
   signal?: AbortSignal,
+  expectedToken?: string,
+  onRejected?: () => Promise<void>,
 ): Promise<void> {
+  if (expectedToken !== undefined && getToken() !== expectedToken) {
+    await onRejected?.();
+    throw new ApiError("La sesión cambió. Recarga antes de enviar este mensaje.", 401);
+  }
   const res = await fetch(`${API}${streamPath}`, {
     method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
+    headers: expectedToken === undefined ? authHeaders({ "Content-Type": "application/json" })
+      : { "Content-Type": "application/json", Authorization: `Bearer ${expectedToken}` },
     body: JSON.stringify(body),
     signal,
     cache: "no-store",
   });
+  if (expectedToken !== undefined && [401,402,422].includes(res.status)) await onRejected?.();
   await checkResponse(res);
   await consumeSse(res, onEvent);
 }

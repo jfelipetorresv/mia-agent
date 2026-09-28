@@ -1,0 +1,240 @@
+﻿{
+    "schema_version":  1,
+    "mode":  "quick",
+    "status":  "failed",
+    "started_at":  "2026-09-28T17:57:06.6499162Z",
+    "duration_seconds":  913.6,
+    "suite_count":  44,
+    "failed":  [
+                   "test_hitl_resume_state.py",
+                   "test_p0_legal_ledger.py",
+                   "test_modo_barreras.py",
+                   "test_sistema_de_diseno.py"
+               ],
+    "timed_out":  [
+                      "test_medicion_por_nodo.py",
+                      "test_mcp.py"
+                  ],
+    "suites":  [
+                   {
+                       "name":  "check_env_pins.py",
+                       "status":  "passed",
+                       "duration_seconds":  3.074
+                   },
+                   {
+                       "name":  "test_gates_no_ciegos.py",
+                       "status":  "passed",
+                       "duration_seconds":  1.934
+                   },
+                   {
+                       "name":  "test_api_launcher.py",
+                       "status":  "passed",
+                       "duration_seconds":  24.929
+                   },
+                   {
+                       "name":  "test_migration_contracts.py",
+                       "status":  "passed",
+                       "duration_seconds":  5.772
+                   },
+                   {
+                       "name":  "test_model_policy.py",
+                       "status":  "passed",
+                       "duration_seconds":  3.325
+                   },
+                   {
+                       "name":  "test_simplified_entry.py",
+                       "status":  "passed",
+                       "duration_seconds":  3.521
+                   },
+                   {
+                       "name":  "test_chat_sources.py",
+                       "status":  "passed",
+                       "duration_seconds":  7.18
+                   },
+                   {
+                       "name":  "test_llm_fallback.py",
+                       "status":  "passed",
+                       "duration_seconds":  1.419
+                   },
+                   {
+                       "name":  "test_context_recovery.py",
+                       "status":  "passed",
+                       "duration_seconds":  3.053
+                   },
+                   {
+                       "name":  "test_context_compressor.py",
+                       "status":  "passed",
+                       "duration_seconds":  1.658
+                   },
+                   {
+                       "name":  "test_hitl_resume_state.py",
+                       "status":  "failed",
+                       "duration_seconds":  3.257
+                   },
+                   {
+                       "name":  "test_gate_evidence.py",
+                       "status":  "passed",
+                       "duration_seconds":  2.777
+                   },
+                   {
+                       "name":  "test_gate_units.py",
+                       "status":  "passed",
+                       "duration_seconds":  1.353
+                   },
+                   {
+                       "name":  "test_legal_context.py",
+                       "status":  "passed",
+                       "duration_seconds":  6.612
+                   },
+                   {
+                       "name":  "test_assistant_matter_boundary.py",
+                       "status":  "passed",
+                       "duration_seconds":  2.453
+                   },
+                   {
+                       "name":  "test_assistant_chat_requests.py",
+                       "status":  "passed",
+                       "duration_seconds":  17.5
+                   },
+                   {
+                       "name":  "test_conversation_memory.py",
+                       "status":  "passed",
+                       "duration_seconds":  157.553
+                   },
+                   {
+                       "name":  "test_async_embedding_routes.py",
+                       "status":  "passed",
+                       "duration_seconds":  1.168
+                   },
+                   {
+                       "name":  "test_cors_contract.py",
+                       "status":  "passed",
+                       "duration_seconds":  0.985
+                   },
+                   {
+                       "name":  "test_document_derivation.py",
+                       "status":  "passed",
+                       "duration_seconds":  9.766
+                   },
+                   {
+                       "name":  "test_matter_jurisdictions.py",
+                       "status":  "passed",
+                       "duration_seconds":  2.975
+                   },
+                   {
+                       "name":  "test_p0_legal_ledger.py",
+                       "status":  "failed",
+                       "duration_seconds":  5.196
+                   },
+                   {
+                       "name":  "test_durable_learning.py",
+                       "status":  "passed",
+                       "duration_seconds":  1.736
+                   },
+                   {
+                       "name":  "test_codex_production_provider.py",
+                       "status":  "passed",
+                       "duration_seconds":  122.383
+                   },
+                   {
+                       "name":  "test_cambio_de_motor_aviso.py",
+                       "status":  "passed",
+                       "duration_seconds":  9.429
+                   },
+                   {
+                       "name":  "test_optional_capabilities.py",
+                       "status":  "passed",
+                       "duration_seconds":  0.774
+                   },
+                   {
+                       "name":  "test_catalogo_barreras.py",
+                       "status":  "passed",
+                       "duration_seconds":  47.625
+                   },
+                   {
+                       "name":  "test_modo_barreras.py",
+                       "status":  "failed",
+                       "duration_seconds":  10.493
+                   },
+                   {
+                       "name":  "test_raices_datos.py",
+                       "status":  "passed",
+                       "duration_seconds":  2.551
+                   },
+                   {
+                       "name":  "test_purgar_carpetas_rotas.py",
+                       "status":  "passed",
+                       "duration_seconds":  2.064
+                   },
+                   {
+                       "name":  "test_sistema_de_diseno.py",
+                       "status":  "failed",
+                       "duration_seconds":  11.818
+                   },
+                   {
+                       "name":  "test_medicion_por_nodo.py",
+                       "status":  "timeout",
+                       "duration_seconds":  180.092
+                   },
+                   {
+                       "name":  "test_disposicion_hallazgos.py",
+                       "status":  "passed",
+                       "duration_seconds":  15.092
+                   },
+                   {
+                       "name":  "test_packs_preflight.py",
+                       "status":  "passed",
+                       "duration_seconds":  2.267
+                   },
+                   {
+                       "name":  "test_stage_gate.py",
+                       "status":  "passed",
+                       "duration_seconds":  3.954
+                   },
+                   {
+                       "name":  "test_suggestions_cron.py",
+                       "status":  "passed",
+                       "duration_seconds":  3.999
+                   },
+                   {
+                       "name":  "test_telegram_lifespan.py",
+                       "status":  "passed",
+                       "duration_seconds":  3.323
+                   },
+                   {
+                       "name":  "test_handoff.py",
+                       "status":  "passed",
+                       "duration_seconds":  2.958
+                   },
+                   {
+                       "name":  "test_config_tabs.py",
+                       "status":  "passed",
+                       "duration_seconds":  3.895
+                   },
+                   {
+                       "name":  "test_frontend_resilience.py",
+                       "status":  "passed",
+                       "duration_seconds":  1.214
+                   },
+                   {
+                       "name":  "test_mcp.py",
+                       "status":  "timeout",
+                       "duration_seconds":  180.063
+                   },
+                   {
+                       "name":  "test_agent_hub.py",
+                       "status":  "passed",
+                       "duration_seconds":  9.428
+                   },
+                   {
+                       "name":  "test_persona_capacidades.py",
+                       "status":  "passed",
+                       "duration_seconds":  5.396
+                   },
+                   {
+                       "name":  "test_puente_shell.py",
+                       "status":  "passed",
+                       "duration_seconds":  25.483
+                   }
+               ]
+}

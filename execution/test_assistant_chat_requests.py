@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 import json
 from pathlib import Path
@@ -25,7 +26,8 @@ from mia.api.routes import assistant as api  # noqa: E402
 class ChatRequestTests(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
-        env = dotenv_values(ROOT / ".env")
+        from isolated_test_env import select
+        env = select(os.environ)
         cls.dbname = "mia_idempotency_test_" + uuid.uuid4().hex
         cls.admin = dict(host=env.get("PG_HOST", "127.0.0.1"),
                          port=env.get("PG_PORT", "5432"), dbname="postgres",
@@ -212,6 +214,52 @@ class ChatRequestTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.provider.await_count, 2)
         with self.assertRaises(ValueError):
             await self.service.prepare_chat(self.tid, None, None, "hola", request_id=str(uuid.uuid4()))
+
+    async def test_recovery_get_is_read_only_and_user_scoped(self):
+        from starlette.responses import Response
+        rid = str(uuid.uuid4())
+        first = await self.service.chat_prepared(await self.prepare(rid))
+        user2 = str(uuid.uuid4())
+        with psycopg.connect(**{**self.admin, "dbname": self.dbname}, autocommit=True) as conn:
+            conn.execute("INSERT INTO users VALUES(%s,%s,'second@example.test')", (user2,self.tid))
+        request = SimpleNamespace(state=SimpleNamespace(tenant_id=self.tid, email="synthetic@example.test"))
+        denied = AsyncMock(side_effect=AssertionError("GET must not check budget or prepare a turn"))
+        with patch.object(api, "_service", self.service), patch.object(api, "_prepare_chat", denied), patch.object(api.policy_budget, "enforce_budget", denied):
+            response = Response()
+            identity = await api.chat_identity(request, response)
+            self.assertEqual(identity, {"tenant_id": self.tid, "user_id": self.uid})
+            self.assertEqual(response.headers["cache-control"], "no-store")
+            for _ in range(2):
+                response = Response()
+                result = await api.chat_request_status(uuid.UUID(rid),request,response)
+                self.assertEqual(result["response"]["reply"],first["reply"])
+                self.assertEqual(response.headers["cache-control"],"no-store")
+            self.provider.assert_awaited_once()
+            denied.assert_not_awaited()
+            self.assertEqual(len(await api.assistant_messages(first["conversation_id"],request)),2)
+            for tid, email in [(self.tid,"second@example.test"),(self.other_tid,"synthetic@example.test")]:
+                foreign = SimpleNamespace(state=SimpleNamespace(tenant_id=tid,email=email))
+                with self.assertRaises(api.HTTPException) as caught:
+                    await api.chat_request_status(uuid.UUID(rid),foreign,Response())
+                self.assertEqual(caught.exception.status_code,404)
+                with self.assertRaises(api.HTTPException) as caught:
+                    await api.assistant_messages(first["conversation_id"],foreign)
+                self.assertEqual(caught.exception.status_code,404)
+
+    async def test_pending_get_keeps_status_and_timestamp(self):
+        rid = str(uuid.uuid4())
+        turn = await self.prepare(rid)
+        async def snapshot():
+            async with self.connection(self.tid) as conn:
+                return await (await conn.execute("SELECT status,updated_at FROM assistant_chat_requests WHERE request_id=%s AND user_id=%s",(rid,self.uid))).fetchone()
+        for expected in ("running","uncertain"):
+            before = await snapshot()
+            result = await cr.lookup_status(self.tid,self.uid,rid)
+            self.assertEqual(result["status"],expected)
+            self.assertEqual(before,await snapshot())
+            if expected == "running":
+                await cr.uncertain(turn)
+        self.provider.assert_not_awaited()
 
 
 if __name__ == "__main__":

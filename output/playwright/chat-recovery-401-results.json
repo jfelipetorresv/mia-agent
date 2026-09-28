@@ -1,0 +1,15 @@
+{
+  "browser": "msedge",
+  "passed": 1,
+  "results": [
+    {
+      "name": "http-401",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+      ]
+    }
+  ]
+}

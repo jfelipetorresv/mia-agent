@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "status": "passed_focal_validations",
+  "author": "Sol executor",
+  "database": "isolated PostgreSQL 127.0.0.1:55448 synthetic data",
+  "initial_quick": {
+    "artifact": "output/validation/mia-improvements-quick-20260928.json",
+    "status": "failed",
+    "suite_count": 44,
+    "passed": 38,
+    "failed": [
+      "test_hitl_resume_state.py",
+      "test_p0_legal_ledger.py",
+      "test_modo_barreras.py",
+      "test_sistema_de_diseno.py"
+    ],
+    "timed_out": [
+      "test_medicion_por_nodo.py",
+      "test_mcp.py"
+    ]
+  },
+  "final_focal_results": [
+    {
+      "name": "test_gate_evidence.py",
+      "exit_code": 0,
+      "seconds": 15.63,
+      "passed_count": 15,
+      "log": "output/validation/test_gate_evidence-final-20260928.log"
+    },
+    {
+      "name": "test_gate_units.py",
+      "exit_code": 0,
+      "seconds": 3.62,
+      "passed_count": 6,
+      "log": "output/validation/test_gate_units-final-20260928.log"
+    },
+    {
+      "name": "test_legal_context.py",
+      "exit_code": 0,
+      "seconds": 78.61,
+      "passed_count": 4,
+      "log": "output/validation/test_legal_context-final-20260928.log"
+    },
+    {
+      "name": "test_hitl_resume_state.py",
+      "exit_code": 0,
+      "seconds": 6.4,
+      "passed_count": 4,
+      "log": "output/validation/test_hitl_resume_state-final-20260928.log"
+    },
+    {
+      "name": "test_contenido_no_continente.py",
+      "exit_code": 0,
+      "seconds": 3.79,
+      "passed_count": 30,
+      "log": "output/validation/test_contenido_no_continente-final-20260928.log"
+    },
+    {
+      "name": "test_e2e.py",
+      "exit_code": 0,
+      "passed_count": 56,
+      "log": "output/validation/e2e-final-unbuffered-20260928.log",
+      "prior_failures": "54/60 stale questionnaire and unstructured APTO fixtures; later buffered180s timeout, diagnostic25s in MuPDF; final -u original180s passed"
+    },
+    {
+      "name": "test_hitl_flow.py",
+      "exit_code": 0,
+      "passed_count": 21
+    },
+    {
+      "name": "test_citation_seals.py",
+      "exit_code": 0,
+      "passed_count": 20,
+      "note": "real node test confirms seal identity does not skip textual gate"
+    },
+    {
+      "name": "test_assistant_chat_requests.py",
+      "exit_code": 0,
+      "passed_count": 9,
+      "note": "resolved email identity and real tenant/user isolation"
+    },
+    {
+      "name": "test_p0_legal_ledger.py",
+      "exit_code": 0,
+      "passed_count": 29,
+      "repair": "shared textual audit helper replaced inline prompt assertion"
+    },
+    {
+      "name": "test_modo_barreras.py",
+      "exit_code": 0,
+      "passed_count": 33,
+      "repair": "fixtures include checker version and exact evidence coverage"
+    },
+    {
+      "name": "test_sistema_de_diseno.py",
+      "exit_code": 0,
+      "passed_count": 5,
+      "repair": "chat new notice and preexisting activation select shadow style; single line authorized"
+    },
+    {
+      "name": "test_medicion_por_nodo.py",
+      "exit_code": 0,
+      "passed_count": 9,
+      "log": "output/validation/medicion-focal-20260928.log",
+      "prior": "quick timeout180s; isolated focal passed"
+    },
+    {
+      "name": "test_mcp.py",
+      "exit_code": 0,
+      "passed_count": 40,
+      "log": "output/validation/mcp-focal-fixed-20260928.log",
+      "prior": "quick and first focal timeout180s; old fixture override repository .env attempted a connection outside intended test environment; no installed DB accessibility/writes established; fixture now requires isolated helper/CI",
+      "skip": "MCP live gateway absent"
+    },
+    {
+      "name": "test_installer_bundle.py",
+      "exit_code": 0,
+      "passed_count": 48,
+      "note": "0.3.3 package/locks/Cargo/Tauri aligned; actual package build parent owned"
+    },
+    {
+      "name": "typescript",
+      "exit_code": 0,
+      "command": "npx tsc --noEmit"
+    },
+    {
+      "name": "eslint focal",
+      "session_id": 52150,
+      "command": "node node_modules/eslint/bin/eslint.js app/chat/page.tsx lib/api.ts app/activar/page.tsx",
+      "exit_code": 0
+    }
+  ],
+  "independent_ui": {
+    "artifact": "output/playwright/chat-recovery-final-summary.json",
+    "approved_scenarios": 21,
+    "reviewer": "Astra separate context"
+  },
+  "limits": [
+    "Model semantic assessment is not a legal correctness guarantee",
+    "Derived sources without original cannot support an approved unit; exclusion requires explicit auditor reason",
+    "Originals exceeding the existing budget remain inconclusive",
+    "No measured token savings claimed",
+    "Production frontend build and installer owned by parent; not installed by executor",
+    "Initial quick remains red as historical evidence; unchanged green suites not repeated"
+  ],
+  "opus_recheck_delta": {
+    "results": [
+      {
+        "name": "test_gate_evidence.py",
+        "exit_code": 0,
+        "passed_count": 18,
+        "log": "output/validation/test_gate_evidence-delta-20260928.log",
+        "prior": "first delta run 17/18: PowerShell precheck exit1; repaired clear precheck and exit2; final 18/18"
+      },
+      {
+        "name": "test_gate_units.py",
+        "exit_code": 0,
+        "passed_count": 6,
+        "log": "output/validation/test_gate_units-delta-20260928.log"
+      },
+      {
+        "name": "test_legal_context.py",
+        "exit_code": 0,
+        "passed_count": 4,
+        "log": "output/validation/test_legal_context-delta-20260928.log",
+        "evidence": "real audited HITL final includes explicit norm omitted by LLM; original full_text and identity mutations deny export409; restoring original permits PK export"
+      },
+      {
+        "name": "typescript delta",
+        "exit_code": 0,
+        "command": "node node_modules/typescript/bin/tsc --noEmit"
+      },
+      {
+        "name": "eslint delta",
+        "exit_code": 0,
+        "command": "node node_modules/eslint/bin/eslint.js lib/api.ts"
+      }
+    ],
+    "production_files": [
+      "backend/mia/agents/gate_evidence.py",
+      "backend/mia/agents/graph.py",
+      "frontend/lib/api.ts",
+      "scripts/verify.ps1"
+    ],
+    "test_files": [
+      "execution/test_gate_evidence.py",
+      "execution/test_legal_context.py"
+    ],
+    "ui_delta": "independent tester pending Next readiness; do not infer pass from earlier21 scenarios",
+    "review": "third independent Opus review parent owned"
+  },
+  "final_visible_status_cleanup": {
+    "change": "frontend/app/chat/page.tsx invalidateIdentity adds only setStatus empty",
+    "typescript_exit_code": 0,
+    "eslint_chat_exit_code": 0,
+    "independent_capture": "pending tester; no DB needed"
+  }
+}

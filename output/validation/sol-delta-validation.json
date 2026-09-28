@@ -1,0 +1,35 @@
+{
+  "status": "backend_focals_passed_ui_delta_pending",
+  "results": [
+    {
+      "name": "test_gate_evidence.py",
+      "exit_code": 0,
+      "passed_count": 18,
+      "log": "output/validation/test_gate_evidence-delta-20260928.log",
+      "prior": "first delta run 17/18: PowerShell precheck exit1; repaired clear precheck and exit2; final 18/18"
+    },
+    {
+      "name": "test_gate_units.py",
+      "exit_code": 0,
+      "passed_count": 6,
+      "log": "output/validation/test_gate_units-delta-20260928.log"
+    },
+    {
+      "name": "test_legal_context.py",
+      "exit_code": 0,
+      "passed_count": 4,
+      "log": "output/validation/test_legal_context-delta-20260928.log",
+      "evidence": "real audited HITL final includes explicit norm omitted by LLM; original full_text and identity mutations deny export409; restoring original permits PK export"
+    },
+    {
+      "name": "typescript delta",
+      "exit_code": 0,
+      "command": "node node_modules/typescript/bin/tsc --noEmit"
+    },
+    {
+      "name": "eslint delta",
+      "exit_code": 0,
+      "command": "node node_modules/eslint/bin/eslint.js lib/api.ts"
+    }
+  ]
+}

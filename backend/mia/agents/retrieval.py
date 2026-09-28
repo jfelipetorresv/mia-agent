@@ -16,6 +16,8 @@ aunque el checkpoint se persista aparte (decisión #9).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from ..memory.source_fingerprints import fingerprint
 import json
 import logging
 import math
@@ -562,6 +564,10 @@ def dedupe_chunks(rows: list[dict], *, similarity: float | None = None,
 
     # Pasada 3 · solape entre contiguos. Se indexa por (pieza, posición) sobre lo que
     # sobrevivió; solo se recorta cuando AMBOS fragmentos están en este mismo prompt.
+    for row in kept:
+        row["source_kind"] = "chunk"
+        row["source_id"] = str(row.get("id") or "")
+        row.setdefault("origin_hash", fingerprint("chunk", row))
     by_pos: dict[tuple[str, int], dict] = {}
     for row in kept:
         doc_id, ord_ = row.get("document_id"), row.get("ord")
@@ -575,6 +581,8 @@ def dedupe_chunks(rows: list[dict], *, similarity: float | None = None,
                                         str(row.get("content") or ""), overlap)
         if trimmed != row.get("content"):
             row["content"] = trimmed
+    for row in kept:
+        row["reviewed_hash"] = hashlib.sha256(str(row.get("content") or "").encode("utf-8")).hexdigest()
     return [r for r in kept if str(r.get("content") or "").strip()]
 
 

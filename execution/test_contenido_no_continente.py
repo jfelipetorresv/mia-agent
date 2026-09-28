@@ -111,12 +111,12 @@ def r_regresion() -> None:
 
 def c_caso_correcto() -> None:
     print("\n-- C · una fuente bien identificada y bien copiada no genera ruido --")
-    check("c1 · sin hallazgos devuelve None", B.revisar_fuentes([FUENTE_SANA]) is None)
+    check("c1 · fuente sana devuelve cobertura sin aviso", B.revisar_fuentes([FUENTE_SANA])["cobertura_completa"] and not B.revisar_fuentes([FUENTE_SANA])["aviso"])
     check("c2 · sin fuentes devuelve None", B.revisar_fuentes([]) is None)
     check("c3 · una fuente sin contenido no es un defecto: es no verificable",
           B.revisar_fuentes([{"referencia": "Ley 1437 de 2011", "tipo": "ley",
                               "numero": "1437", "fecha": "2011",
-                              "pasaje": "algo"}]) is None)
+                              "pasaje": "algo"}])["no_verificables_total"] == 1)
 
 
 def i_identificacion() -> None:
@@ -152,12 +152,12 @@ def u_umbral() -> None:
                             "lesionada en un derecho subjetivo suyo amparado en una norma "
                             "jurídica vigente podrá pedir que se declare la nulidad")
     check("u2 · con el umbral del harness la copia con deriva pasa",
-          B.revisar_fuentes([con_deriva]) is None)
+          not B.revisar_fuentes([con_deriva])["pasaje_no_coincide"])
     res = B.revisar_fuentes([con_deriva], umbral=0.95)
     check("u3 · subir el umbral la caza y el umbral usado viaja en el informe",
           isinstance(res, dict) and res.get("umbral") == 0.95)
     check("u4 · bajarlo lo relaja",
-          B.revisar_fuentes([FUENTE_CONTENIDO_AJENO], umbral=0.05) is None)
+          not B.revisar_fuentes([FUENTE_CONTENIDO_AJENO], umbral=0.05)["pasaje_no_coincide"])
 
 
 def d_aviso() -> None:

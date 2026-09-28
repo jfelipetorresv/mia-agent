@@ -1,0 +1,213 @@
+{
+  "verdict": "APTO focal chat",
+  "synthetic_api": true,
+  "installed_app_tested": false,
+  "real_models_tested": false,
+  "passed_unique_cases": 23,
+  "engines": [
+    "Chromium headless shell: base12",
+    "Microsoft Edge headless: focal11 (9 earlier + 2 prefetch final)"
+  ],
+  "results": [
+    {
+      "name": "auth-switch",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "auth-switch-before-storage-event",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "auth-switch-during-recovery",
+      "posts": 0,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "corrupt-discard",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "corrupt-replaced",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "history-fallback",
+      "posts": 0,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+      ]
+    },
+    {
+      "name": "http-401",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+      ]
+    },
+    {
+      "name": "http-402",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 402 (Payment Required)"
+      ]
+    },
+    {
+      "name": "http-409",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)"
+      ]
+    },
+    {
+      "name": "http-422",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)"
+      ]
+    },
+    {
+      "name": "http-502",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+      ]
+    },
+    {
+      "name": "late-open-conversation",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "lost-sse-reload",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "name": "no-web-locks",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "normal-typewriter",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "other-user",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "reload-typewriter",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "running",
+      "posts": 0,
+      "recoveryGets": 2,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "storage-failure",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "two-tabs",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "name": "uncertain",
+      "posts": 0,
+      "recoveryGets": 2,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "prefetch-remove-own-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "prefetch-preserve-renewed-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    }
+  ],
+  "sources": [
+    "chat-recovery-results.json",
+    "chat-recovery-auth-switch-results.json",
+    "chat-recovery-http-results.json",
+    "chat-recovery-late-callback-results.json",
+    "chat-recovery-401-results.json",
+    "chat-recovery-prefetch-results.json"
+  ],
+  "notes": [
+    "Auth source contains 3 successful auth cases before a test timing race in HTTP422; HTTP cases were rerun with an explicit rejection-message wait and passed.",
+    "HTTP401 failed before product fix; original failure retained in chat-recovery-401-before-fix.json; final case passed.",
+    "Browser environment stalls prompted Edge fallback; no acceptance claimed for those attempts.",
+    "Prefetch environment timeout preserved in chat-recovery-prefetch-timeout.json. Functional previsual success and stale-status screenshot preserved separately. Final two prefetch scenarios include no-thinking assertion and both screenshots visually inspected.",
+    "Original 21 cases were not repeated for the focused prefetch callback and one-line status reset; final review hashes updated."
+  ],
+  "reviewed_hashes": {
+    "frontend/app/chat/page.tsx": "6888C9E10C721ABD12FE1E399B45A1CC4A26C9835F2D443904C6204A71716F4B",
+    "backend/mia/assistant/chat_requests.py": "29F28AFF782A67FE351D045C291CD688DFBC968683379BBF42F866F6C8811181",
+    "backend/mia/api/routes/assistant.py": "91CB077D605420D358FAD49947F26AD09222572DC0EEC5D9766E50CD9A86FB9F",
+    "backend/mia/assistant/core.py": "806B01A1A45D3133EB3586C3DAD909EC72B9F38C0F29789C6329EAA69478B9A4",
+    "frontend/lib/api.ts": "4BE97BC108AF8273443A8376CBD2757AF1CF5128CD082863EBA404C1A4A54F37",
+    "e2e/chat-recovery.mjs": "EAAAD20F3355FEA87E83B362E044C9E2212FC30A6B26DEF3D2C13B87B9EAD111"
+  }
+}

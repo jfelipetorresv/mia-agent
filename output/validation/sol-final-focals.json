@@ -1,0 +1,27 @@
+[
+  {
+    "name": "test_gate_evidence.py",
+    "exit_code": 0,
+    "seconds": 15.63
+  },
+  {
+    "name": "test_gate_units.py",
+    "exit_code": 0,
+    "seconds": 3.62
+  },
+  {
+    "name": "test_legal_context.py",
+    "exit_code": 0,
+    "seconds": 78.61
+  },
+  {
+    "name": "test_hitl_resume_state.py",
+    "exit_code": 0,
+    "seconds": 6.4
+  },
+  {
+    "name": "test_contenido_no_continente.py",
+    "exit_code": 0,
+    "seconds": 3.79
+  }
+]

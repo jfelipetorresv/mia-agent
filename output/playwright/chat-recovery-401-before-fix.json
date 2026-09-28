@@ -1,0 +1,5 @@
+{
+  "passed": 0,
+  "results": [],
+  "error": "AssertionError [ERR_ASSERTION]: Definitive HTTP 401 must not leave a nonexistent pending request\n+ actual - expected\n\n+ '{\"request_id\":\"b36ceb83-656e-4895-ba86-42e38245b60b\",\"conversation_id\":null}'\n- null\n\n    at file:///D:/Inteligencia%20Artificial/Mia-Super%20Agent/mia/e2e/chat-recovery.mjs:300:16\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at process.processImmediate (node:internal/timers:472:9)"
+}

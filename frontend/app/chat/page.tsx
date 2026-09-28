@@ -16,7 +16,7 @@ import {
   SlidersHorizontal,
   Pin,
 } from "lucide-react";
-import { apiGet, streamPost, ApiError } from "@/lib/api";
+import { apiGet, streamPost, ApiError, getToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import MiaMarkdown from "@/components/MiaMarkdown";
 import { AtajosPanel } from "./_components/AtajosPanel";
@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 type Conversation = { id: string; title: string; updated_at: string };
 type Role = "user" | "assistant";
 type Message = { role: Role; content: string };
+type PendingRequest = { request_id: string; conversation_id: string | null };
 type ChatAttempt = { message: string; conversation_id: string | null; request_id: string };
 // Atajo de la firma u organización: un clic PRE-LLENA el cuadro de mensaje
 // con `texto` — el abogado revisa y decide si lo envía (consent-first, nunca se auto-envía).
@@ -65,6 +66,28 @@ function saludoDelDia(): string {
   return "Buenas noches";
 }
 
+function validMarker(value: unknown): value is PendingRequest {
+  if (!value || typeof value !== "object") return false;
+  const p = value as PendingRequest;
+  return typeof p.request_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.request_id) &&
+    (p.conversation_id === null || typeof p.conversation_id === "string");
+}
+
+async function removeMarker(key: string, requestId: string | null, allowCorrupt = false): Promise<boolean> {
+  if (!navigator.locks) throw new Error("Web Locks unavailable");
+  return navigator.locks.request(`${key}:lock`, () => {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return true;
+    let stored: unknown;
+    try { stored = JSON.parse(raw); } catch { if (!allowCorrupt) return false; }
+    if (validMarker(stored)) {
+      if (stored.request_id !== requestId) return false;
+    } else if (!allowCorrupt) return false;
+    window.localStorage.removeItem(key);
+    return true;
+  });
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -79,7 +102,12 @@ export default function ChatPage() {
   const [streaming, setStreaming] = useState(false);
   const [typing, setTyping] = useState(false); // Mia "escribiendo" (typewriter activo)
   const [loadingConversation, setLoadingConversation] = useState(false);
-  const [retryAttempt, setRetryAttempt] = useState<ChatAttempt | null>(null);
+  const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(null);
+  const [storageKey, setStorageKey] = useState<string | null>(null);
+  const [initializing, setInitializing] = useState(true);
+  const [checkingPending, setCheckingPending] = useState(false);
+  const [pendingNotice, setPendingNotice] = useState("");
+  const [corruptPending, setCorruptPending] = useState(false);
   // El ref cierra el intervalo entre dos eventos y el siguiente render de React.
   const busyRef = useRef(false);
   const [matterRequired, setMatterRequired] = useState(false);
@@ -87,24 +115,168 @@ export default function ChatPage() {
   const typerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const identityTokenRef = useRef<string | null>(null);
+  const invalidateIdentity = useCallback(() => {
+    identityTokenRef.current = null;
+    abortRef.current?.abort();
+    if (typerRef.current) clearInterval(typerRef.current);
+    typerRef.current = null;
+    busyRef.current = false;
+    setStorageKey(null);
+    setPendingRequest(null);
+    setCorruptPending(false);
+    setMessages([]);
+    setConversations([]);
+    setActiveId(null);
+    setInput("");
+    setStatus("");
+    setStreaming(false);
+    setTyping(false);
+    setCheckingPending(false);
+    setPendingNotice("La sesión cambió. Recarga para continuar con la cuenta actual.");
+  }, []);
 
   async function loadConversations() {
+    const token = getToken();
     try {
-      setConversations(await apiGet<Conversation[]>("/api/assistant/conversations"));
+      const rows = await apiGet<Conversation[]>("/api/assistant/conversations");
+      if (getToken() !== token) return;
+      setConversations(rows);
       setConversationError("");
       setConversationToRetry(null);
     } catch {
+      if (getToken() !== token) return;
       setConversationToRetry(null);
       setConversationError("No pude cargar tus conversaciones. Intenta de nuevo.");
     }
   }
 
+  const recoverPending = useCallback(async (pending: PendingRequest, key: string) => {
+    const token = identityTokenRef.current;
+    if (!token || getToken() !== token) return;
+    setCheckingPending(true);
+    try {
+      const result = await apiGet<{ status: string; response?: { conversation_id: string; reply: string } }>(
+        `/api/assistant/chat/requests/${pending.request_id}`);
+      if (getToken() !== token || identityTokenRef.current !== token) return;
+      if (result.status === "completed" && result.response) {
+        let recovered: Message[];
+        let historyNotice = "";
+        try {
+          const rows = await apiGet<Message[]>(`/api/assistant/conversations/${result.response.conversation_id}/messages`);
+          recovered = rows.map((r) => ({ role: r.role, content: r.content }));
+        } catch {
+          recovered = [{ role: "assistant", content: result.response.reply }];
+          historyNotice = "Recuperé la respuesta del envío. El historial completo no estuvo disponible.";
+        }
+        if (getToken() !== token || identityTokenRef.current !== token) return;
+        setActiveId(result.response.conversation_id);
+        setMessages(recovered);
+        if (!await removeMarker(key, pending.request_id)) {
+          setPendingNotice("Recuperé la respuesta; existe otro pendiente en este equipo que debo conservar.");
+          return;
+        }
+        setPendingRequest(null);
+        setPendingNotice(historyNotice);
+        void apiGet<Conversation[]>("/api/assistant/conversations").then((rows) => {
+          if (getToken() === token && identityTokenRef.current === token) setConversations(rows);
+        }).catch(() => {
+          if (getToken() !== token || identityTokenRef.current !== token) return;
+          setConversationError("La respuesta está recuperada; no pude actualizar la lista de conversaciones.");
+        });
+      } else {
+        setPendingNotice(result.status === "running"
+          ? "Este envío sigue en curso o aún no confirmó su cierre. Comprueba su estado antes de enviar otro."
+          : "No se confirmó cómo terminó este envío. Revisa el historial antes de enviar otro.");
+      }
+    } catch (err) {
+      setPendingNotice(err instanceof ApiError && err.status === 404
+        ? "No encontré un registro de este envío. Puedes descartar el pendiente después de revisar el historial."
+        : "No pude recuperar este envío. Lo conservo pendiente para evitar duplicarlo.");
+    } finally { setCheckingPending(false); }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function restore() {
+      try {
+        const token = getToken();
+        const identity = await apiGet<{ tenant_id: string; user_id: string }>("/api/assistant/chat/identity");
+        if (!active) return;
+        if (!token || getToken() !== token) { invalidateIdentity(); return; }
+        identityTokenRef.current = token;
+        const key = `mia.chat.pending:${identity.tenant_id}:${identity.user_id}`;
+        const saved = window.localStorage.getItem(key);
+        setStorageKey(key);
+        if (saved) {
+          let pending: unknown;
+          try { pending = JSON.parse(saved); } catch { pending = null; }
+          if (!validMarker(pending)) {
+            setCorruptPending(true);
+            setPendingNotice("El registro guardado de un envío no se puede leer. Revisa el historial y descártalo expresamente para continuar.");
+          } else {
+            setPendingRequest(pending);
+            await recoverPending(pending, key);
+          }
+        }
+      } catch {
+        if (active) {
+          setStorageKey(null);
+          setPendingNotice("No pude comprobar tus envíos guardados. Recarga la página antes de enviar otro.");
+        }
+      } finally { if (active) setInitializing(false); }
+    }
+    void restore();
+    return () => { active = false; };
+  }, [recoverPending, invalidateIdentity]);
+
+  async function clearPending(requestId = pendingRequest?.request_id ?? null) {
+    if (!identityTokenRef.current || getToken() !== identityTokenRef.current) return false;
+    if (!storageKey) return false;
+    try {
+      if (!await removeMarker(storageKey, requestId, corruptPending)) {
+        setPendingNotice("Este registro corresponde a otro envío. Comprueba su estado antes de descartarlo.");
+        return false;
+      }
+      setPendingRequest(null);
+      setCorruptPending(false);
+      setPendingNotice("");
+      return true;
+    } catch {
+      setPendingNotice("No pude actualizar el registro guardado de este envío. Recarga y comprueba su estado.");
+      return false;
+    }
+  }
+
+  useEffect(() => {
+    function changedIdentity(event: StorageEvent) {
+      if (event.key === "mia_token" && event.newValue !== identityTokenRef.current) invalidateIdentity();
+    }
+    window.addEventListener("storage", changedIdentity);
+    return () => window.removeEventListener("storage", changedIdentity);
+  }, [invalidateIdentity]);
+
+  useEffect(() => {
+    if (!storageKey) return;
+    function changed(event: StorageEvent) {
+      if (event.key !== storageKey) return;
+      if (!event.newValue) { setPendingRequest(null); setCorruptPending(false); return; }
+      let marker: unknown;
+      try { marker = JSON.parse(event.newValue); } catch { marker = null; }
+      if (validMarker(marker)) { setPendingRequest(marker); setCorruptPending(false); }
+      else { setCorruptPending(true); }
+    }
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, [storageKey]);
+
   // Los atajos se recargan también tras cada cambio en la pantalla de atajos, para que el
   // abogado vea el efecto de fijar, ocultar o renombrar sin recargar la página.
   const cargarAtajos = useCallback(() => {
+    const token = getToken();
     apiGet<{ atajos: Atajo[] }>("/api/atajos")
-      .then((res) => setAtajos(res.atajos || []))
-      .catch(() => setAtajos([]));
+      .then((res) => { if (getToken() === token) setAtajos(res.atajos || []); })
+      .catch(() => { if (getToken() === token) setAtajos([]); });
   }, []);
 
   useEffect(() => {
@@ -132,7 +304,9 @@ export default function ChatPage() {
   }, [messages, status]);
 
   async function openConversation(id: string) {
-    if (busyRef.current) return;
+    const token = identityTokenRef.current;
+    if (!token || getToken() !== token) { invalidateIdentity(); return; }
+    if (busyRef.current || checkingPending || initializing) return;
     busyRef.current = true;
     setLoadingConversation(true);
     const previousId = activeId;
@@ -146,9 +320,10 @@ export default function ChatPage() {
       const rows = await apiGet<{ role: Role; content: string }[]>(
         `/api/assistant/conversations/${id}/messages`,
       );
+      if (getToken() !== token || identityTokenRef.current !== token) return;
       setMessages(rows.map((r) => ({ role: r.role, content: r.content })));
-      setRetryAttempt(null);
     } catch {
+      if (getToken() !== token || identityTokenRef.current !== token) return;
       // No sustituyas el hilo visible por una pantalla vacía: eso haría parecer que la
       // conversación se perdió. Conserva el hilo anterior y deshace la selección fallida.
       setActiveId(previousId);
@@ -162,8 +337,7 @@ export default function ChatPage() {
   }
 
   function newConversation() {
-    if (busyRef.current) return;
-    setRetryAttempt(null);
+    if (busyRef.current || checkingPending || initializing) return;
     setActiveId(null);
     setMessages([]);
     setStatus("");
@@ -177,7 +351,7 @@ export default function ChatPage() {
   // Revela la respuesta de Mia carácter a carácter: el motor responde en bloque,
   // así que la sensación de escritura la damos en el navegador (nunca un pegote de
   // golpe). ~2 s para textos largos; los cortos aparecen casi al instante.
-  function typewriter(full: string) {
+  function typewriter(full: string, onComplete?: () => void) {
     if (typerRef.current) clearInterval(typerRef.current);
     setTyping(true);
     let shown = 0;
@@ -197,22 +371,46 @@ export default function ChatPage() {
         clearInterval(typerRef.current);
         typerRef.current = null;
         setTyping(false);
+        onComplete?.();
         if (!abortRef.current) busyRef.current = false;
       }
     }, 16);
   }
 
-  async function send(preset?: string, retry?: ChatAttempt) {
-    const text = retry?.message ?? (preset ?? input).trim();
-    if (!text || busyRef.current || (!retry && retryAttempt)) return;
+  async function send(preset?: string) {
+    const identityToken = identityTokenRef.current;
+    if (!identityToken || getToken() !== identityToken) { invalidateIdentity(); return; }
+    const text = (preset ?? input).trim();
+    if (!text || busyRef.current || pendingRequest || corruptPending || initializing || !storageKey || checkingPending) return;
     busyRef.current = true;
-    const attempt = retry ?? { message: text, conversation_id: activeId, request_id: crypto.randomUUID() };
-    setRetryAttempt(null);
-    if (!retry) setInput("");
+    const attempt: ChatAttempt = { message: text, conversation_id: activeId, request_id: crypto.randomUUID() };
+    const marker: PendingRequest = { request_id: attempt.request_id, conversation_id: attempt.conversation_id };
+    try {
+      if (!navigator.locks) throw new Error("Web Locks unavailable");
+      const reserved = await navigator.locks.request(`${storageKey}:lock`, () => {
+        if (getToken() !== identityToken || identityTokenRef.current !== identityToken) return false;
+        const existing = window.localStorage.getItem(storageKey);
+        if (existing) {
+          let saved: unknown;
+          try { saved = JSON.parse(existing); } catch { saved = null; }
+          if (validMarker(saved)) setPendingRequest(saved);
+          else setCorruptPending(true);
+          setPendingNotice("Ya hay un envío pendiente en este equipo. Comprueba su estado antes de enviar otro.");
+          return false;
+        }
+        window.localStorage.setItem(storageKey, JSON.stringify(marker));
+        setPendingRequest(marker);
+        return true;
+      });
+      if (!reserved) { busyRef.current = false; return; }
+    } catch {
+      busyRef.current = false;
+      setPendingNotice("No pude guardar la identificación del envío en este equipo. No se envió el mensaje.");
+      return;
+    }
+    setInput("");
     setMatterRequired(false);
-    setMessages((m) => retry
-      ? [...m.slice(0, -1), { role: "assistant", content: "" }]
-      : [...m, { role: "user", content: text }, { role: "assistant", content: "" }]);
+    setMessages((m) => [...m, { role: "user", content: text }, { role: "assistant", content: "" }]);
     setStatus("Mia está pensando…");
     setStreaming(true);
     abortRef.current?.abort();
@@ -225,6 +423,7 @@ export default function ChatPage() {
         "/api/assistant/chat/stream",
         attempt,
         (event, data) => {
+          if (getToken() !== identityToken || identityTokenRef.current !== identityToken) { invalidateIdentity(); return; }
           if (controller.signal.aborted || answered) return;
           const payload = data as { message?: string; conversation_id?: string };
           if (event === "thinking") {
@@ -233,9 +432,10 @@ export default function ChatPage() {
             answered = true;
             setStatus("");
             if (payload.conversation_id) setActiveId(payload.conversation_id);
-            typewriter(payload.message || "");
+            typewriter(payload.message || "", () => { void clearPending(attempt.request_id); });
           } else if (event === "matter_required") {
             answered = true;
+            void clearPending(attempt.request_id);
             setStatus("");
             setMatterRequired(true);
             setMessages((m) => {
@@ -260,13 +460,25 @@ export default function ChatPage() {
           }
         },
         controller.signal,
+        identityToken,
+        async () => { await removeMarker(storageKey, attempt.request_id); },
       );
       if (!answered) throw new Error(failure || "No pude responder en este momento. Reintenta este mensaje.");
       // Refresca la lista: una conversación nueva estrena título con este turno.
       loadConversations();
     } catch (err) {
       if (controller.signal.aborted || answered) return;
-      setRetryAttempt(attempt);
+      if (getToken() !== identityToken || identityTokenRef.current !== identityToken) { invalidateIdentity(); return; }
+      if (err instanceof ApiError && [401, 402, 422].includes(err.status)) {
+        await clearPending(attempt.request_id);
+        if (getToken() !== identityToken || identityTokenRef.current !== identityToken) { invalidateIdentity(); return; }
+        setInput(text);
+        setPendingNotice(err.message);
+        setMessages((m) => m.slice(0, -2));
+        setStatus("");
+        return;
+      }
+      setPendingNotice("El envío quedó pendiente. Comprueba su estado; no hace falta reenviar el mensaje.");
       setStatus("");
       const msg =
         err instanceof ApiError && !err.message.startsWith("Error ")
@@ -288,7 +500,7 @@ export default function ChatPage() {
 
   const empty = messages.length === 0;
   const lastIdx = messages.length - 1;
-  const busy = streaming || typing || loadingConversation;
+  const busy = streaming || typing || loadingConversation || initializing || checkingPending;
 
   return (
     <div className="flex h-[100dvh] min-h-0">
@@ -494,16 +706,7 @@ export default function ChatPage() {
                 </div>
               ))}
               <div ref={endRef} />
-              {retryAttempt ? (
-                <div className="mb-6 flex flex-col items-center gap-2 text-center">
-                  <p role="status" className="text-sm text-muted-foreground">
-                    Recupera la respuesta con Reintentar o abre una conversación nueva para empezar otra consulta.
-                  </p>
-                  <Button variant="outline" disabled={busy} onClick={() => send(undefined, retryAttempt)}>
-                    Reintentar mensaje
-                  </Button>
-                </div>
-              ) : null}
+
               {matterRequired ? (
                 <div className="mb-6 flex justify-center animate-slide-up">
                   <Button onClick={() => router.push("/")} variant="cta" className="gap-2">
@@ -519,6 +722,17 @@ export default function ChatPage() {
         {/* Barra de escritura */}
         <div className="bg-gradient-to-t from-background via-background/95 to-transparent pt-2">
           <div className="mx-auto w-full max-w-2xl px-4 pb-4">
+            {(pendingRequest || corruptPending || pendingNotice) ? (
+              <div role="status" aria-live="polite" className="mb-3 rounded-lg border border-border bg-card p-3 text-sm shadow-neu-raised">
+                <p>{pendingNotice || "Envío pendiente de confirmación."}</p>
+                {pendingRequest && storageKey ? <div className="mt-2 flex flex-wrap gap-2">
+                  <Button variant="outline" disabled={busy} onClick={() => recoverPending(pendingRequest, storageKey)}>Comprobar envío</Button>
+                  <Button variant="outline" disabled={busy} onClick={() => void clearPending()}>Descartar este pendiente</Button>
+                  <p className="w-full text-xs text-muted-foreground">Descartar borra este aviso en el equipo; no cancela un envío que siga ejecutándose.</p>
+                </div> : null}
+                {corruptPending && storageKey ? <Button variant="outline" disabled={busy} onClick={() => void clearPending()}>Descartar registro ilegible</Button> : null}
+              </div>
+            ) : null}
             {status ? (
               <p role="status" aria-live="polite" aria-atomic="true" className="mb-2 flex items-center gap-2 text-sm text-muted-foreground animate-fade-in">
                 <span className="flex gap-1">
@@ -531,7 +745,7 @@ export default function ChatPage() {
               <textarea
                 ref={inputRef}
                 value={input}
-                disabled={Boolean(retryAttempt)}
+                disabled={Boolean(pendingRequest) || corruptPending || initializing || !storageKey}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -545,7 +759,7 @@ export default function ChatPage() {
               />
               <Button
                 onClick={() => send()}
-                disabled={busy || Boolean(retryAttempt) || !input.trim()}
+                disabled={busy || Boolean(pendingRequest) || corruptPending || !storageKey || !input.trim()}
                 size="icon"
                 aria-label="Enviar"
                 className="transition-transform active:scale-95"

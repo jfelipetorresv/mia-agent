@@ -41,14 +41,12 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-from dotenv import load_dotenv
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT / "execution"))
 
@@ -542,7 +540,8 @@ if __name__ == "__main__":
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
-    load_dotenv(ROOT / ".env", override=True)
+    from isolated_test_env import load
+    load()
     if os.getenv("PG_PASSWORD"):
         with _ci_local_key_backend():
             asyncio.run(db_checks())

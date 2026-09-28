@@ -23,6 +23,7 @@ from typing import Any
 from ..jurisdiction.pack import load_pack
 from ..jurisdiction.resolver import resolve_jurisdictions
 from ..rag.sat_graph import SATGraph
+from ..memory.source_fingerprints import fingerprint
 from . import untrusted, verification
 
 logger = logging.getLogger("mia.agents.research")
@@ -250,11 +251,19 @@ async def gather_sources(
     for n in norms:
         i += 1
         ref = _norm_reference(n)
-        body = _clip(n.get("summary") or n.get("full_text"))
+        original = str(n.get("full_text") or "")
+        body = _clip(n.get("summary") or original)
         compact.append({"tipo": "norma", "referencia": ref,
                         "titulo": _clip(n.get("title"), 200),
-                        "pasaje": _clip(body, 280),
-                        "source_passage_hash": hashlib.sha256(body.encode("utf-8")).hexdigest()})
+                        "pasaje": _clip(original, 280) if original else _clip(body, 280),
+                        "summary": str(n.get("summary") or ""),
+                        "source_passage_hash": hashlib.sha256((_clip(original, 280) if original else _clip(body, 280)).encode("utf-8")).hexdigest(),
+                        "content": original, "evidence_kind": "primary_text" if original else "derived_summary",
+                        "tipo_documento": str(n.get("norm_type") or ""), "numero": str(n.get("norm_number") or ""), "fecha": str(n.get("effective_date") or ""),
+                        "source_kind": "legal_norm",
+                        "source_id": str(n.get("id") or ""),
+                        "origin_hash": fingerprint("legal_norm", n),
+                        "reviewed_hash": hashlib.sha256(original.encode("utf-8")).hexdigest()})
         # CP-S1: sello vía el módulo de cuarentena (mismo formato; suma el
         # anti-escape del contenido y el saneo de la referencia).
         blocks.append(untrusted.fence_block(
@@ -262,11 +271,18 @@ async def gather_sources(
     for r in rulings:
         i += 1
         ref = _ruling_reference(r)
-        body = _clip(r.get("ratio_decidendi") or r.get("obiter_dicta"))
+        original = str(r.get("ratio_decidendi") or r.get("obiter_dicta") or "")
+        body = _clip(original)
         compact.append({"tipo": "providencia", "referencia": ref,
                         "titulo": _clip(r.get("topic"), 200),
                         "pasaje": _clip(body, 280),
-                        "source_passage_hash": hashlib.sha256(body.encode("utf-8")).hexdigest()})
+                        "source_passage_hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                        "content": original, "evidence_kind": "derived_ratio",
+                        "numero": str(r.get("radicado") or r.get("decision_number") or ""), "fecha": str(r.get("decision_date") or ""),
+                        "source_kind": "jurisprudence",
+                        "source_id": str(r.get("id") or ""),
+                        "origin_hash": hashlib.sha256(original.encode("utf-8")).hexdigest(),
+                        "reviewed_hash": hashlib.sha256(original.encode("utf-8")).hexdigest()})
         blocks.append(untrusted.fence_block(
             "FUENTE", f"{_clip(r.get('topic'), 200)}\n{body}", index=i, source=ref))
 

@@ -271,6 +271,12 @@ def main() -> int:
     cargo_raw = CARGO_TOML.read_text(encoding="utf-8") if CARGO_TOML.is_file() else ""
     cargo_match = re.search(r'^version\s*=\s*"([^"]+)"', cargo_raw, re.MULTILINE)
     versions.append(cargo_match.group(1) if cargo_match else "")
+    for package_path in (FRONTEND_PACKAGE, DESKTOP_PACKAGE):
+        lock = json.loads(package_path.with_name("package-lock.json").read_text(encoding="utf-8"))
+        versions.extend([str(lock.get("version", "")), str(lock.get("packages", {}).get("", {}).get("version", ""))])
+    cargo_lock = CARGO_TOML.with_name("Cargo.lock").read_text(encoding="utf-8")
+    lock_match = re.search(r'name = "mia-desktop"\s+version = "([^"]+)"', cargo_lock)
+    versions.append(lock_match.group(1) if lock_match else "")
     check("tauri/frontend/desktop/cargo declaran la misma versión no vacía",
           bool(versions[0]) and len(set(versions)) == 1)
     check("el release rechaza un checkout Git sucio", "status --porcelain" in bi)

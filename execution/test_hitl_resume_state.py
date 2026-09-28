@@ -15,7 +15,9 @@ from mia.api.routes import hitl  # noqa: E402
 
 class ResumeStateTests(unittest.IsolatedAsyncioTestCase):
     async def receipt(self, decision, *, status=None, ready=False, pending=False, fail=False):
-        report = {"gate_llm": {"veredicto": "apto"}, "citas": 0}
+        report = {"gate_llm": {"veredicto": "apto", "checker_version":
+                  hitl.legal_ledger.CHECKER_VERSIONS["citation_verification"]},
+                  "evidence_coverage": {"complete": True}, "citas": 0}
         snapshot = SimpleNamespace(
             next=("hitl_checkpoint",) if pending else (),
             values={"draft": "Versión persistida nueva", "metadata": {

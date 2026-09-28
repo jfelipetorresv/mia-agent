@@ -80,7 +80,7 @@ from . import barreras_harness
 from . import comentarios as comentarios_borrador
 from . import (context_recovery, delegate_intent, delegate_proposal, delegation,
                handoff as matter_handoff, packs as legal_packs, reasoning_filter,
-               research, retrieval, stage_gate, untrusted, verification)
+               research, retrieval, stage_gate, untrusted, verification, gate_evidence, gate_units)
 from .state import HITL_OUTCOME, MatterState
 
 logger = logging.getLogger("mia.agents.graph")
@@ -2315,81 +2315,7 @@ class MatterGraphBuilder:
             md["stage"] = "verificador_citas"
             return {"draft": annotated, "metadata": md}
 
-        # F2 · SELLO como caché de verificación: si el borrador no trae NADA nuevo que
-        # auditar — cero citas, o todas resueltas por sello (ya respaldadas Y aprobadas por
-        # el abogado antes) sin marcas ni avisos pendientes — el gate LLM se SALTA entero.
-        # Es la palanca que abarata el sistema al madurar sin bajar el estándar: lo nuevo
-        # se audita siempre; lo sellado, nunca dos veces.
-        citas = int(report.get("citas") or 0)
-        pendientes = citas - int(report.get("selladas") or 0)
-        sin_avisos = not any((report.get("marcadas"), report.get("anotadas"),
-                              report.get("omitidas"), report.get("quemadas"),
-                              report.get("afirmaciones_negativas"),
-                              report.get("contaminacion_expediente")))
-        if citas == 0 or (pendientes <= 0 and sin_avisos):
-            if isinstance(report, dict):
-                report["gate_llm"] = {
-                    "veredicto": "sin_citas" if citas == 0 else "sello",
-                    "detalle": ("El borrador no contiene citas jurídicas que auditar."
-                                if citas == 0 else
-                                "Todas las citas de este borrador ya estaban verificadas y "
-                                "aprobadas por ti en borradores anteriores (sello del "
-                                "despacho). No se repitió la auditoría."),
-                }
-                md["verification"] = report
-            md["stage"] = "verificador_citas"
-            return {"draft": annotated, "metadata": md}
-
-        resumen_muro = json.dumps(
-            {k: report.get(k) for k in ("citas", "respaldadas", "marcadas", "omitidas",
-                                        "quemadas", "afirmaciones_negativas",
-                                        "contaminacion_expediente", "alcance_lectura")
-             if report.get(k) not in (None, 0, [], {})},
-            ensure_ascii=False, default=str)[:4000]
-
-        try:
-            turn_budget.authorize_expensive(
-                md, "legal_verification",
-                authorized=bool(md.get("authorize_expensive_pass")))
-        except turn_budget.TurnBudgetExceeded as exc:
-            if isinstance(report, dict):
-                report["gate_llm"] = {"veredicto": "unavailable", "detalle": str(exc)}
-                md["verification"] = report
-            md["stage"] = "verificador_citas"
-            return {"draft": annotated, "metadata": md}
-
-        pack_txt = json.dumps(
-            legal_packs.compact_source_pack(stage_gate.load_source_pack(md)),
-            ensure_ascii=False)[:4000]
-        try:
-            veredicto, usage = await self._llm([
-                {"role": "system", "content": prompt_builder.build_gate_system()},
-                {"role": "user", "content": (
-                    f"Borrador (ya anotado por el muro determinista):\n{annotated}\n\n"
-                    f"Pack de fuentes (referencia + hash de chunk):\n{pack_txt}\n\n"
-                    f"Informe del muro (JSON):\n{resumen_muro}")},
-            ], task="legal_verification", state=state, md=md, node="verificador_citas",
-                model=_persona_alias(state))
-            turn_budget.record_expensive_call(md, "legal_verification")
-            _accum_usage(md, usage)
-            primera = (veredicto or "").strip().splitlines()[0].strip().upper() if veredicto else ""
-            if isinstance(report, dict):
-                report["gate_llm"] = {
-                    # Solo el APTO limpio aprueba: "APTO CON REPAROS" u otra coletilla es
-                    # un hallazgo (fail-closed; auditoría 2026-08-14).
-                    "veredicto": "apto" if primera.rstrip(".:") == "APTO" else "hallazgos",
-                    "detalle": (veredicto or "Sin veredicto del revisor independiente.").strip()[:2000],
-                }
-                md["verification"] = report
-        except Exception:  # noqa: BLE001 — el gate LLM nunca corta el camino al abogado
-            logger.exception("verificador_citas: el gate LLM falló; el turno sigue con el "
-                             "muro determinista solo")
-            if isinstance(report, dict):
-                report["gate_llm"] = {
-                    "veredicto": "unavailable",
-                    "detalle": "La revisión independiente no estuvo disponible; el borrador sigue siendo revisable, pero no puede salir como final.",
-                }
-                md["verification"] = report
+        await self._audit_textual_evidence(state, md, annotated, report)
 
         # DISPOSICIÓN DE HALLAZGOS · lo que el abogado VE antes de decidir (2026-08-25).
         # El recibo del ledger ya dejaba constancia de lo que quedó abierto, pero DESPUÉS
@@ -2408,6 +2334,128 @@ class MatterGraphBuilder:
 
         md["stage"] = "verificador_citas"
         return {"draft": annotated, "metadata": md}
+
+    async def _audit_textual_evidence(self, state: MatterState, md: dict,
+                                      text: str, report: dict, *, authorized: bool = False) -> None:
+        """Both generated drafts and exact human edits use the same textual gate."""
+        previous_selection = md.pop("audited_evidence_selection", None)
+        system = prompt_builder.build_gate_system()
+        summary = json.dumps(report, ensure_ascii=False, default=str)
+        budget = context_recovery.budget_for("verificador_citas", config.MIA_CONTEXT_WINDOW)
+        used_sources, used_documents = gate_evidence.select_used(
+            text, md.get("research_sources") or [], state.get("documents") or [], report)
+        evidence = gate_evidence.build(used_sources, used_documents,
+                                       budget_tokens=budget - estimate_tokens(text + system + summary), text=text, report=report)
+        coverage = {k: v for k, v in evidence.items() if k != "payload"}
+        report["evidence_coverage"] = coverage
+        if not evidence["complete"]:
+            report["gate_llm"] = {"veredicto": "unavailable",
+                                  "detalle": "Faltan originales o la evidencia excede el presupuesto; cobertura incompleta."}
+            md["verification"] = report
+            return
+        previous_valid = (previous_selection and
+            previous_selection.get("text_hash") == (md.get("audited_units") or {}).get("text_hash") and
+            previous_selection.get("manifest_hash") == evidence["manifest_hash"] and
+            previous_selection.get("selection_hash") == gate_evidence.selection_hash(
+                previous_selection.get("sources") or [],previous_selection.get("documents") or []))
+        unit_plan = gate_units.plan(text, evidence, list(state.get("jurisdictions") or []),
+                                    md.get("audited_units") if previous_valid and not evidence["exclusion_candidates"] else None,
+                                    tenant_id=str(state.get("tenant_id") or ""),
+                                    matter_id=str(state.get("matter_id") or ""))
+        report["unit_coverage"] = {"total": len(unit_plan["units"]),
+                                   "reviewed": len(unit_plan["pending"]),
+                                   "inherited": len(unit_plan["inherited"]),
+                                   "full": unit_plan["full"]}
+        if not unit_plan["pending"] and unit_plan["units"]:
+            if (previous_selection and previous_selection.get("manifest_hash") == evidence["manifest_hash"] and
+                    previous_selection.get("selection_hash") == gate_evidence.selection_hash(
+                        previous_selection.get("sources") or [],previous_selection.get("documents") or [])):
+                md["audited_evidence_selection"] = {**previous_selection, "text_hash": gate_evidence.digest(text)}
+            else:
+                report["gate_llm"] = {"veredicto":"unavailable", "detalle":"La selección auditada previa no tiene huella vigente."}
+                md["verification"] = report
+                return
+            report["gate_llm"] = {"veredicto": "apto", "detalle": "Unidades idénticas ya auditadas con la misma evidencia y contexto.",
+                                  "checker_version": gate_evidence.CHECKER_VERSION}
+            md["verification"] = report
+            return
+        instruction = json.dumps({"unidades": unit_plan["units"], "revisar": unit_plan["pending"]}, ensure_ascii=False)
+        instruction += ("\nResponde JSON estricto {veredicto: APTO|HALLAZGOS, impacto_global: boolean, unidades: [{id, apto: boolean, "
+                        "dependencias_unidades: [ids], dependencias_fuentes: [localizadores], alcance: local|global}]}. "
+                        "Declara dependencias explícitas, incluso vacías; global por defecto si no puedes demostrar independencia. "
+                        "Recibes todo el texto como contexto; detecta impactos globales fuera de las unidades a revisar.")
+        instruction += ("\nLas fuentes con available=false carecen de original: nunca pueden ser dependencia. "
+                        "Para cada exclusion_candidates declara fuentes_no_utilizadas:[{locator,motivo}] "
+                        "con razón explícita de por qué ninguna afirmación depende de ella. "
+                        "Si el texto necesita una fuente no disponible, responde HALLAZGOS. "
+                        "Fuentes pendientes: " + json.dumps(evidence["exclusion_candidates"], ensure_ascii=False))
+        if estimate_tokens(instruction + evidence["payload"] + text + system + summary) > budget:
+            report["evidence_coverage"]["complete"] = False
+            report["gate_llm"] = {"veredicto": "unavailable", "detalle": "La auditoría y su cobertura exceden el presupuesto."}
+            md["verification"] = report
+            return
+        try:
+            turn_budget.authorize_expensive(md, "legal_verification", authorized=authorized or bool(md.get("authorize_expensive_pass")))
+            verdict, usage = await self._llm([
+                {"role": "system", "content": system},
+                {"role": "user", "content": (
+                    f"Texto exacto a auditar (no lo reescribas):\n{text}\n\n"
+                    f"Evidencia textual original con identidad, localizador y huella (JSON):\n{evidence['payload']}\n\n"
+                    f"Informe del muro (JSON):\n{summary}\n\nCobertura solicitada:\n{instruction}")},
+            ], task="legal_verification", state=state, md=md, node="verificador_citas",
+                model=_persona_alias(state))
+            turn_budget.record_expensive_call(md, "legal_verification")
+            _accum_usage(md, usage)
+            entries = json.loads(evidence["payload"])
+            available_ids = {e["locator"] for e in entries if e["available"]}
+            structured_ok, receipts = gate_units.accept(verdict, unit_plan, available_ids)
+            excluded = evidence["exclusion_candidates"]
+            used_ids = {s for row in (receipts or {}).get("units", []) for s in row["source_dependencies"]}
+            used_ids |= gate_evidence.explicit_dependencies(text,used_sources,used_documents,report)
+            structured_ok = structured_ok and used_ids <= available_ids
+            structured_ok = structured_ok and bool(used_ids)
+            if structured_ok and excluded:
+                parsed = gate_units.decode(verdict)
+                rows = parsed.get("fuentes_no_utilizadas")
+                expected = {e["locator"] for e in excluded}
+                structured_ok = (isinstance(rows, list) and len(rows) == len(expected) and
+                    all(isinstance(row, dict) and isinstance(row.get("motivo"), str) and row["motivo"].strip() for row in rows) and
+                    {row.get("locator") for row in rows} == expected)
+                structured_ok = structured_ok and bool(used_ids)
+                report["evidence_coverage"].update(scope="audited_dependencies", exclusions=rows,
+                    complete=bool(structured_ok), used_locators=sorted(used_ids))
+            passed = structured_ok
+            if structured_ok:
+                md["audited_units"] = receipts
+                selected = {e["locator"] for e in entries if e["locator"] in used_ids}
+                kept_sources = [s for i,s in enumerate(used_sources,1) if gate_evidence.source_locator(s,i) in selected]
+                kept_documents = [d for i, d in enumerate(used_documents,1) if str(d.get("gate_locator") or f"[doc {i}]") in selected]
+                md["audited_evidence_selection"] = {"text_hash": gate_evidence.digest(text),
+                    "manifest_hash": evidence["manifest_hash"], "sources": kept_sources, "documents": kept_documents}
+                import copy
+                md["audited_evidence_selection"] = copy.deepcopy(md["audited_evidence_selection"])
+                md["audited_evidence_selection"]["selection_hash"] = gate_evidence.selection_hash(kept_sources,kept_documents)
+                if excluded:
+                    report["gate_llm_exclusions_notice"] = "Fuentes sin original excluidas por el auditor: " + "; ".join(
+                        f"{r['locator']}: {r['motivo']}" for r in rows)
+                    report["fuentes"] = {**(report.get("fuentes") or {}),
+                        "aviso": "\n".join(filter(None,[(report.get("fuentes") or {}).get("aviso"),report["gate_llm_exclusions_notice"]]))}
+            else:
+                md.pop("audited_units", None)
+                md.pop("audited_evidence_selection", None)
+            report["gate_llm"] = {
+                "veredicto": "apto" if passed else "hallazgos",
+                "detalle": ((verdict or "Sin veredicto del revisor independiente.").strip()[:2000]
+                            + ("\n" + report["gate_llm_exclusions_notice"] if structured_ok and excluded else "")),
+                "checker_version": gate_evidence.CHECKER_VERSION,
+            }
+        except turn_budget.TurnBudgetExceeded as exc:
+            report["gate_llm"] = {"veredicto": "unavailable", "detalle": str(exc)}
+        except Exception:
+            logger.exception("auditoría textual independiente no disponible")
+            report["gate_llm"] = {"veredicto": "unavailable",
+                                  "detalle": "La revisión independiente no estuvo disponible; queda como borrador."}
+        md["verification"] = report
 
     # ── work (Bloque A · PROYECTO: espacio de trabajo libre, sin HITL) ───────
     async def work_node(self, state: MatterState) -> dict:
@@ -2617,6 +2665,10 @@ class MatterGraphBuilder:
         # final descargable sin evidencia.
         run_id = str(md.get("ledger_run_id") or uuid.uuid4())
         md["ledger_run_id"] = run_id
+        selected_sources, selected_docs = gate_evidence.reviewed_selection(
+            draft, md, state.get("documents") or [])
+        verification_context = legal_ledger.make_context(
+            run_id, list(state.get("jurisdictions") or []), selected_sources, selected_docs)
         source_hashes = citation_seals.active_source_hashes(
             md.get("research_sources") or [], state.get("documents") or [])
         try:
@@ -2629,7 +2681,8 @@ class MatterGraphBuilder:
                 gate="citation_verification",
                 passed=legal_ledger.verification_passes(md.get("verification")),
                 evidence=md.get("verification") or {},
-                run_id=run_id, trace_id=run_id, checker_version="citation-verifier-v2",
+                run_id=run_id, trace_id=run_id, checker_version=gate_evidence.CHECKER_VERSION,
+                    verification_context=verification_context,
                 jurisdictions=list(state.get("jurisdictions") or []),
                 source_hashes=source_hashes,
             )
@@ -2714,33 +2767,8 @@ class MatterGraphBuilder:
             md["verification"] = report_md.get("verification") or {}
             # Edición humana = autorización explícita de una segunda pasada cara.
             md["authorize_expensive_pass"] = True
-            try:
-                turn_budget.authorize_expensive(md, "legal_verification", authorized=True)
-                summary = json.dumps(md["verification"], ensure_ascii=False, default=str)[:4000]
-                pack_txt = json.dumps(
-                    legal_packs.compact_source_pack(stage_gate.load_source_pack(md)),
-                    ensure_ascii=False)[:4000]
-                verdict, usage = await self._llm([
-                    {"role": "system", "content": prompt_builder.build_gate_system()},
-                    {"role": "user", "content": (
-                        f"Versión exacta editada por el abogado (no la reescribas):\n{final}\n\n"
-                        f"Pack de fuentes (referencia + hash de chunk):\n{pack_txt}\n\n"
-                        f"Informe del muro (JSON):\n{summary}")},
-                ], task="legal_verification", state=state, md=md, node="verificador_citas",
-                    model=_persona_alias(state))
-                turn_budget.record_expensive_call(md, "legal_verification")
-                _accum_usage(md, usage)
-                first = (verdict or "").strip().splitlines()[0].strip().upper()
-                md["verification"]["gate_llm"] = {
-                    "veredicto": "apto" if first.rstrip(".:") == "APTO" else "hallazgos",
-                    "detalle": (verdict or "Sin veredicto del revisor independiente.").strip()[:2000],
-                }
-            except Exception:  # noqa: BLE001 -- deja revisar, bloquea final
-                logger.exception("verificación independiente de edición no disponible")
-                md["verification"]["gate_llm"] = {
-                    "veredicto": "unavailable",
-                    "detalle": "La versión editada no pudo pasar la revisión independiente; queda como borrador.",
-                }
+            await self._audit_textual_evidence(state, md, final, md["verification"],
+                                               authorized=True)
         else:
             # approved / rejected: se conserva el borrador (el rechazo queda en la traza).
             final = draft
@@ -2772,6 +2800,11 @@ class MatterGraphBuilder:
             # Los recibos se registran sobre la huella FINAL. Una edición invalida
             # automáticamente los recibos del borrador porque su hash cambia.
             final_hash = legal_ledger.content_hash(final)
+            selected_sources, selected_docs = gate_evidence.reviewed_selection(
+                final, md, state.get("documents") or [])
+            verification_context = legal_ledger.make_context(
+                str(md.get("ledger_run_id") or trace_id), list(state.get("jurisdictions") or []),
+                selected_sources, selected_docs)
             try:
                 if status == "editing":
                     await legal_ledger.append_artifact(
@@ -2786,7 +2819,8 @@ class MatterGraphBuilder:
                     passed=legal_ledger.verification_passes(md.get("verification")),
                     evidence=md.get("verification") or {},
                     run_id=str(md.get("ledger_run_id") or trace_id), trace_id=trace_id,
-                    checker_version="citation-verifier-v2",
+                    checker_version=gate_evidence.CHECKER_VERSION,
+                    verification_context=verification_context,
                     jurisdictions=list(state.get("jurisdictions") or []),
                     source_hashes=citation_seals.active_source_hashes(
                         md.get("research_sources") or [], state.get("documents") or []),
@@ -2809,12 +2843,14 @@ class MatterGraphBuilder:
                               "hallazgos_sin_disposicion_total": len(sin_disposicion)},
                     run_id=str(md.get("ledger_run_id") or trace_id), trace_id=trace_id,
                     checker_version="human-attestation-v1",
+                    verification_context=verification_context,
                     jurisdictions=list(state.get("jurisdictions") or []),
                 )
                 md["final_ready"] = await legal_ledger.finalise_if_gated(
                     state["tenant_id"], state["matter_id"], final,
                     parent_hash=md.get("draft_hash") or "", trace_id=trace_id,
                     metadata={"human_decision": status},
+                    verification_context=verification_context,
                 )
             except Exception:  # noqa: BLE001 -- no se habilita un final sin ledger
                 logger.exception("no se pudo registrar el final jurídico; queda solo borrador")
@@ -2890,9 +2926,9 @@ class MatterGraphBuilder:
         if (status in ("approved", "editing") and md.get("final_ready")
                 and legal_ledger.verification_passes(md.get("verification"))):
             # F2 · SELLAR: las citas que el muro dio por RESPALDADAS dentro de un borrador
-            # que el abogado APROBÓ quedan selladas — no se re-auditan con modelo en los
-            # turnos siguientes. Es la mitad "escritura" del sello; la lectura vive en
-            # _verify_draft (estado "sellada") y en el salto del gate. Fail-soft y rápido
+            # que el abogado APROBÓ quedan selladas para cotejar identidad en los
+            # turnos siguientes. La auditoría textual conserva su cobertura propia.
+            # La lectura vive en _verify_draft (estado "sellada"). Fail-soft y rápido
             # (un INSERT idempotente por cita respaldada).
             try:
                 n_selladas = await citation_seals.seal_from_approved_report(

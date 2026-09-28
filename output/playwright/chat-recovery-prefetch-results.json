@@ -1,0 +1,28 @@
+{
+  "browser": "msedge",
+  "passed": 2,
+  "results": [
+    {
+      "name": "prefetch-remove-own-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "prefetch-preserve-renewed-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    }
+  ],
+  "reviewed_hashes": {
+    "output/playwright/chat-recovery-prefetch-remove-own-marker.png": "E35C5670BD94A2C8E7986687BA78BF4BFC77383897CC48528CC9FABFA5B75311",
+    "output/playwright/chat-recovery-prefetch-preserve-renewed-marker.png": "E35C5670BD94A2C8E7986687BA78BF4BFC77383897CC48528CC9FABFA5B75311",
+    "frontend/app/chat/page.tsx": "6888C9E10C721ABD12FE1E399B45A1CC4A26C9835F2D443904C6204A71716F4B",
+    "e2e/chat-recovery.mjs": "EAAAD20F3355FEA87E83B362E044C9E2212FC30A6B26DEF3D2C13B87B9EAD111",
+    "frontend/lib/api.ts": "4BE97BC108AF8273443A8376CBD2757AF1CF5128CD082863EBA404C1A4A54F37"
+  },
+  "visual_review": "Both final screenshots inspected: no stale thinking indicator; session-change notice visible and input disabled. Assertion for absent thinking status passed."
+}

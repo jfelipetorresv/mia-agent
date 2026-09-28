@@ -35,3 +35,8 @@ mia-spend-guard-*/
 
 # Evidencia visual del E2E (PNGs pesados; la bitacora es validation/validation-log.md)
 validation/screenshots/
+
+# Logs transitorios de validación; los informes y capturas se conservan.
+/output/**/*.log
+/output/validation/claude-review-working.diff
+/output/validation/claude-opus55-*.json

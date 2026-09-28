@@ -1,0 +1,36 @@
+{
+  "passed": 4,
+  "results": [
+    {
+      "name": "auth-switch",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "auth-switch-before-storage-event",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "auth-switch-during-recovery",
+      "posts": 0,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "http-402",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 402 (Payment Required)"
+      ]
+    }
+  ],
+  "error": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ '{\"request_id\":\"2d990744-a35e-40ea-b3a0-37155d7c3461\",\"conversation_id\":null}'\n- null\n\n    at file:///D:/Inteligencia%20Artificial/Mia-Super%20Agent/mia/e2e/chat-recovery.mjs:297:16\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at process.processImmediate (node:internal/timers:472:9)"
+}

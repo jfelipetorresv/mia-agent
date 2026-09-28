@@ -1,0 +1,42 @@
+{
+  "browser": "msedge",
+  "passed": 4,
+  "results": [
+    {
+      "name": "http-402",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 402 (Payment Required)"
+      ]
+    },
+    {
+      "name": "http-422",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)"
+      ]
+    },
+    {
+      "name": "http-409",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)"
+      ]
+    },
+    {
+      "name": "http-502",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+      ]
+    }
+  ]
+}

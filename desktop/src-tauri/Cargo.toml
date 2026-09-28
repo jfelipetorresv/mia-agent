@@ -1,6 +1,6 @@
 [package]
 name = "mia-desktop"
-version = "0.3.2"
+version = "0.3.3"
 description = "Mia — cáscara orquestadora de escritorio"
 authors = ["Lexia Intelligence"]
 edition = "2021"

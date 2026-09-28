@@ -1,3 +1,70 @@
+# CHECKPOINT DE CÓDIGO — 2026-09-28 · evidencia y continuidad 0.3.3
+
+Encargo autorizado: cinco mejoras de fuentes, cobertura, vigencia del final, revisión
+incremental y recuperación del chat. Rama `codex/mia-evidencia-continuidad-20260928`,
+base `9834c6b`. Plan y aceptación: `docs/mejoras-evidencia-continuidad-2026-09-28.md`.
+Astra dirige/revisa en esfuerzo medio; Sol implementa en esfuerzo medio. Un solo
+escritor de código. El director mantiene este documento y hace los commits.
+
+**Arreglo cerrado en código; empaquetado pendiente por checkpoint solicitado por Pipe.**
+Versiones y locks coherentes en 0.3.3. No se construyó ni instaló 0.3.3. Harness intacto.
+El commit que contiene esta entrada conserva la implementación, pruebas y evidencias.
+
+- Auditor recibe originales, procedencia y cobertura; derivados necesarios sin
+  original no habilitan final. Derivados ajenos requieren exclusión motivada.
+- Recibos y descarga validan texto, ejecución, fuentes, jurisdicción y revisor.
+  Las referencias explícitas no dependen de que el LLM declare todas sus dependencias.
+- Párrafos se reutilizan solo con dependencias y contexto vigentes. Selección inválida
+  o procedencia cambiada exige revisión completa. Los sellos no reutilizan índices viejos.
+- Chat recupera por usuario/despacho sin reenviar; protege cambios de sesión, carreras
+  entre ventanas y callbacks tardíos. Solo persiste IDs, no mensajes ni tokens nuevos.
+
+**Verificación:** Sol ejecutó fuentes 18/18, unidades 6/6, contexto real 4/4 y
+focales documentados; integración 56/56, aislamiento 19/19, tipos y lint aprobados.
+Astra aprobó el core con cinco pruebas y una sonda propias. Claude Code confirmó
+`claude-opus-5-5 --effort high`: dos NO APTO corregidos y tercera pasada APTO estático.
+Su reserva de navegador se cerró después con 23 escenarios únicos por Astra
+(Chromium/Edge, APIs sintéticas), incluidas capturas finales sin estado residual.
+La única línea visual posterior a Opus limpia `status`; tipos, lint y revisor de UI
+la verificaron. No atribuir a Opus ejecución de pruebas ni aprobación del escritorio.
+
+Evidencias principales:
+- `docs/mejoras-evidencia-continuidad-2026-09-28.md`: matriz, decisiones y límites.
+- `output/validation/claude-opus55-{review,recheck,final}.md`: dictámenes completos.
+- `output/validation/sol-final-validation.json` y `sol-delta-validation.json`:
+  resultados del ejecutor, incluidos estados pendientes a la hora de cada captura.
+- `output/playwright/chat-recovery-final-summary.json`: cierre independiente 23/23
+  y huellas. Prevalece sobre las reservas UI anteriores del ejecutor y de Opus.
+- La corrida rápida inicial roja se conserva; los fallos/timeouts tienen correcciones
+  focales, sin reescribir la historia como una corrida única verde. MCP real omitido
+  por ausencia de gateway. Sin proveedores jurídicos reales, medición de ahorro ni
+  prueba de la app instalada; las fuentes locales no acreditan vigencia normativa externa.
+
+**Procesos:** pruebas, tres revisiones Claude y navegadores concluidos. Servidor Next
+propio y depurador cerrados (3111/9229); PostgreSQL sintético detenido con salida 0
+(55448). No quedan tareas propias ejecutándose. La demora del último servidor fue
+compilación fría de `/chat` (166 s según traza); no se demostró su causa interna.
+
+**Retomar:** comprobar estado Git y este checkpoint; no rehacer los gates aprobados
+salvo cambios relevantes. Siguiente paso: desde checkout limpio, ejecutar el build
+completo `packaging/build_installer.ps1 -BackendProfile core -WebViewProfile Compact`,
+sin `-SkipPayloads`. Comprobar primer arranque sintético, manifiesto y SHA-256; copiar
+el instalador a Downloads y cotejarlo. Instalación y WebView reales siguen pendientes;
+no inferir estado instalado del registro histórico de 0.3.2 que sigue más abajo.
+
+Pruebas de DB usan clúster temporal propio, nunca el puerto instalado 55432.
+Entorno conservado y detenido: `C:\Users\USER\AppData\Local\Temp\mia-evidence-test-20260928-01a0e8f8`,
+puerto 55448, configuración en `app\.env`, clúster en `pgdata`, 64 migraciones
+(incluida 067). Si se necesita repetir un focal, verificar/reiniciar ese clúster
+con `pg_ctl`, puerto 55448 y escucha 127.0.0.1; no conectar a la base instalada.
+
+Para pruebas locales con DB, establecer explícitamente `MIA_TEST_ENV_FILE` con la
+ruta absoluta del `.env` de un clúster sintético aislado ANTES de `scripts/verify.ps1`.
+En esta sesión: `C:\Users\USER\AppData\Local\Temp\mia-evidence-test-20260928-01a0e8f8\app\.env`.
+El helper rechaza ausencia de configuración y puerto local instalado 55432: ese
+fallo es protección, no se corrige cargando `.env` del repositorio. En CI, el helper
+admite exclusivamente las variables PG_* explícitas del servicio efímero.
+
 # CAMBIO PUNTUAL — 2026-09-23 · llamadas a Claude Code sin transcript
 
 Commit `416f9f9`. `subscription_llm.py` y el conector `claude_code` de `gateway/agent_hub.py` pasan `--no-session-persistence`: cada turno dejaba un transcript de un solo mensaje en `~/.claude/projects` del operador (408 acumulados). Verificado con `.venv\Scripts\python.exe`: `test_model_policy.py` 62/62 y rojo al quitar la opción; `test_claude_code_no_session_persistence` en verde. No corrió la parte de `test_agent_hub.py` que necesita Postgres local. Sin build ni instalador nuevos: el cambio llega a la app instalada en la próxima entrega. `execution/purgar_piloto.py` sigue sirviendo para lo ya acumulado.

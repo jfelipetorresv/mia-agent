@@ -888,3 +888,34 @@ borra el perfil. Los casos nuevos no piden elegir un modo de entrega; siguen baj
 Voyage para continuar con suscripción detectada en navegador. Las fuentes directas se
 limitan a carpetas vinculadas al caso; sus extractos pertenecen al turno y no sustituyen
 la verificación jurídica. Acceso por referencia no significa ausencia de registros.
+
+98. **2026-09-28 · La huella del original se toma antes de transformar el pasaje.**
+Conservar esa huella al eliminar solapes, incluso si la depuración corre dos veces;
+calcular aparte la del texto presentado. Un resumen o un sello de identidad no sustituye
+el original ante el auditor. Barreras: `test_gate_evidence.py`, `test_citation_seals.py`
+y la regresión de doble depuración de `test_legal_context.py`.
+La selección auditada necesita copia independiente y huella propia, además de la del texto.
+Un `[doc n]` sellado pertenece a su turno: resolver por huella o revisar todos los
+documentos actuales antes de reutilizarlo; no aceptar la posición antigua.
+
+99. **2026-09-28 · Aprobación y descarga deben comprobar el mismo contexto.**
+Vincular ambos recibos al texto, ejecución, fuentes identificadas, jurisdicción y versión
+del revisor. Releer las fuentes usadas al descargar. El HTTP 200 de aprobación no prueba
+un final: `test_legal_context.py` atraviesa auditoría, edición humana, finalización y DOCX;
+exige rechazo de la descarga tras cambiar el original y conserva el texto humano exacto.
+Unir referencias explícitas a las dependencias declaradas por el auditor: su omisión
+no puede retirar una norma citada del contexto que se vuelve a comprobar al exportar.
+
+100. **2026-09-28 · La revisión incremental requiere dependencias explícitas.**
+Un párrafo idéntico puede depender de otro cambiado. Exigir cobertura estructurada,
+huellas y alcance; incertidumbre o impacto global exige revisión completa. Rechazar
+JSON incompleto y el antiguo APTO textual. Barrera: `test_gate_units.py`.
+
+101. **2026-09-28 · Recuperar un envío no equivale a reenviarlo.**
+Conservar solo sus identificadores por usuario y despacho hasta reflejar la respuesta
+completa; consultar el estado sin ejecutar el modelo. Serializar la reserva entre
+ventanas y no borrar un marcador renovado. La limitación de recarga del punto 95 queda
+resuelta por `test_assistant_chat_requests.py` y `e2e/chat-recovery.mjs`; los estados
+inciertos siguen pendientes hasta recuperación o descarte explícito del aviso local.
+La identidad consultada, el token enviado y los callbacks deben pertenecer a la misma
+sesión: comprobar solo localStorage al montar no cubre cambios de cuenta en otra ventana.

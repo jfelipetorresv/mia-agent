@@ -50,6 +50,23 @@ async def _lookup(turn: PreparedChat):
         )).fetchone()
 
 
+async def lookup_status(tenant_id: str, user_id: str, request_id: str) -> dict | None:
+    """Read-only recovery: no reservation, budget check, model call or status update."""
+    async with pool.tenant_connection(tenant_id) as conn:
+        row = await (await conn.execute(
+            "SELECT r.status, r.response, EXISTS(SELECT 1 FROM assistant_conversations c "
+            "WHERE c.id::text=r.response->>'conversation_id' AND c.user_id=%s::uuid) "
+            "FROM assistant_chat_requests r WHERE r.tenant_id=%s::uuid AND r.user_id=%s::uuid "
+            "AND r.request_id=%s::uuid", (user_id,tenant_id,user_id,request_id))).fetchone()
+    if not row:
+        return None
+    if row[0] == "completed":
+        if not row[2] or not isinstance(row[1], dict):
+            return None
+        return {"status": "completed", "request_id": request_id, "response": row[1]}
+    return {"status": str(row[0]), "request_id": request_id}
+
+
 async def prepare(tenant_id: str, user_id: str | None, conversation_id: str | None,
                   message: str, *, request_id: str | None = None,
                   before_execute: Callable[[], Awaitable[None]] | None = None) -> PreparedChat:

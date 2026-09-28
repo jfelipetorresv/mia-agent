@@ -34,19 +34,20 @@ async def resolve_jurisdictions(tenant_id: str, matter_id: str | None = None) ->
     aportar una jurisdicción.
     """
     async with pool.tenant_connection(tenant_id) as conn:
-        if matter_id:
-            cur = await conn.execute(
-                "SELECT jurisdictions FROM matters WHERE id = %s::uuid", (str(matter_id),)
-            )
-            row = await cur.fetchone()
-            matter_codes = _codes(row[0] if row else None)
-            if matter_codes:
-                return matter_codes
-        cur = await conn.execute(
-            "SELECT config->'jurisdictions' FROM tenant_settings WHERE tenant_id = %s::uuid",
-            (str(tenant_id),),
-        )
-        row = await cur.fetchone()
+        return await resolve_jurisdictions_in_connection(conn, tenant_id, matter_id)
 
-    codes = _codes(row[0] if row else None)
-    return codes or [GENERIC_CODE]
+
+async def resolve_jurisdictions_in_connection(conn, tenant_id: str,
+                                             matter_id: str | None = None) -> list[str]:
+    """Same routing rule inside a caller's existing source-validation transaction."""
+    if matter_id:
+        row = await (await conn.execute(
+            "SELECT jurisdictions FROM matters WHERE id=%s::uuid AND tenant_id=%s::uuid",
+            (str(matter_id), str(tenant_id)))).fetchone()
+        codes = _codes(row[0] if row else None)
+        if codes:
+            return codes
+    row = await (await conn.execute(
+        "SELECT config->'jurisdictions' FROM tenant_settings WHERE tenant_id=%s::uuid",
+        (str(tenant_id),))).fetchone()
+    return _codes(row[0] if row else None) or [GENERIC_CODE]

@@ -31,6 +31,25 @@ if (-not (Test-Path -LiteralPath $python)) {
 $timeout = [int]$catalog.default_timeout_seconds
 if ($TimeoutSeconds -gt 0) { $timeout = $TimeoutSeconds }
 
+if ($Mode -eq 'quick') {
+    # One rule shared with the isolated fixtures; this only validates configuration.
+    $executionDir = Join-Path $root 'execution'
+    $precheckCode = @'
+import os, sys
+sys.path.insert(0, sys.argv[1])
+from isolated_test_env import select
+try:
+    select(os.environ)
+except (RuntimeError, ValueError, OSError):
+    sys.exit(2)
+'@
+    & $python -B -c $precheckCode $executionDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error 'PRECHECK: quick requiere MIA_TEST_ENV_FILE valido de una base temporal; CI admite PG_* explicitas del servicio efimero. No se ejecutaron suites.' -ErrorAction Continue
+        exit 2
+    }
+}
+
 if ($Mode -eq 'full' -and $catalog.full_requires_database) {
     $pgReady = 'D:\Inteligencia Artificial\Mia-Super Agent\tools\postgres16-portable\pgsql\bin\pg_isready.exe'
     if (-not (Test-Path -LiteralPath $pgReady)) {

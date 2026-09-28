@@ -8,8 +8,7 @@ Qué prueba (con mutación, regla de APRENDIZAJES #1-2):
   3 · DB (RLS real): sellar desde un informe aprobado escribe; las respaldadas entran,
       las anotadas no; re-sellar es idempotente; el sello de OTRO tenant no se ve.
   4 · REVOCACIÓN: quemar la cita borra su sello (incluso con complementos de forma).
-  5 · SALTO DEL GATE: la mecánica del veredicto — sin citas nuevas ni avisos, no hay
-      nada que auditar (se comprueba sobre el informe, la condición exacta del nodo).
+  5 · GATE: una identidad sellada conserva la auditoría independiente del contenido.
 
 Script directo (no pytest): [OK]/[FAIL], exit 1 si falla. Necesita la DB portable.
 """
@@ -107,17 +106,21 @@ def parte_pura() -> None:
     check("la cita quemada+sellada sale QUEMADA", quemada_ok, str(estados2))
     check("y selladas=0", (report2.get("selladas") or 0) == 0, str(report2.get("selladas")))
 
-    print("5 · condición de salto del gate (la del nodo, sobre el informe)")
-    _t3, r3 = v.annotate_draft(f"Conforme a la {CITA}, procede.", sealed=sellos)
-    citas = int(r3.get("citas") or 0)
-    pendientes = citas - int(r3.get("selladas") or 0)
-    sin_avisos = not any((r3.get("marcadas"), r3.get("anotadas"), r3.get("omitidas"),
-                          r3.get("quemadas")))
-    check("todo sellado y sin avisos → el gate no tiene nada que auditar",
-          citas > 0 and pendientes <= 0 and sin_avisos, str(r3))
-    _t4, r4 = v.annotate_draft(BORRADOR, sealed=sellos)
-    pendientes4 = int(r4.get("citas") or 0) - int(r4.get("selladas") or 0)
-    check("con una cita nueva, el gate SÍ audita (mutación)", pendientes4 > 0, str(r4))
+    print("5 · sello de identidad conserva auditoría textual independiente")
+    from unittest.mock import AsyncMock
+    from mia.agents.graph import MatterGraphBuilder
+    async def audit_sealed():
+        builder = object.__new__(MatterGraphBuilder)
+        async def wall(state, md, text):
+            md["verification"] = {"citas": 1, "selladas": 1}
+            return text
+        builder._verify_draft = wall
+        builder._audit_textual_evidence = AsyncMock()
+        result = await builder.verificador_citas_node({"draft": CITA, "metadata": {}})
+        check("una identidad sellada SÍ llama la auditoría de contenido",
+              builder._audit_textual_evidence.await_count == 1)
+        check("la auditoría conserva el texto humano", result["draft"] == CITA)
+    asyncio.run(audit_sealed())
 
 
 async def parte_db() -> None:
@@ -197,7 +200,7 @@ def main() -> int:
     if FALLOS:
         print("sello de verificación FALLA:", ", ".join(FALLOS))
         return 1
-    print("sello OK — lo aprobado no se re-audita; lo quemado no revive; lo nuevo se audita siempre.")
+    print("sello OK — conserva identidad; lo quemado no revive; el contenido se audita.")
     return 0
 
 

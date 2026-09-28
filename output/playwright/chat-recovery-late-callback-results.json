@@ -1,0 +1,13 @@
+{
+  "browser": "msedge",
+  "passed": 1,
+  "results": [
+    {
+      "name": "late-open-conversation",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    }
+  ]
+}

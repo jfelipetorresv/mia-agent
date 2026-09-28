@@ -588,7 +588,7 @@ async def get_draft(matter_id: str, request: Request):
     return {"draft": draft, "awaiting_review": awaiting, "hitl_outcome": hitl_outcome,
             "draft_hash": draft_hash, "final_ready": final_ready,
             "final_status": ("verified" if final_ready else
-                             str(md.get("final_status") or "awaiting_verification")),
+                             "awaiting_verification"),
             "diagnosis": strip_diagnosis_closing(md.get("diagnosis") or "") or None,
             "diagnosis_summary": md.get("diagnosis_summary"),
             # CP9: informe del especialista de verificación de citas (None en
@@ -722,7 +722,7 @@ async def download_final_docx(matter_id: str, request: Request):
     tid = _tenant(request)
     await assert_owns_matter(tid, matter_id)
     try:
-        final = await legal_ledger.latest_final(tid, matter_id)
+        final = await legal_ledger.validated_latest_final(tid, matter_id)
     except Exception as exc:  # noqa: BLE001 -- no degradar a borrador si falla el ledger
         logger.exception("no se pudo leer el ledger jurídico")
         raise HTTPException(status_code=409,

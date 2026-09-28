@@ -16,12 +16,13 @@ import re
 import uuid
 from typing import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from ...assistant.core import AssistantService, ConversationNotFound
 from ...assistant.chat_requests import ChatRequestConflict
+from ...assistant import chat_requests
 from ...assistant.reminders import ReminderService
 from ...policy import budget as policy_budget
 from ._common import sse
@@ -85,6 +86,29 @@ class ChatBody(BaseModel):
     message: str = Field(min_length=1, max_length=100_000)
     conversation_id: str | None = None
     request_id: uuid.UUID | None = None
+
+
+@router.get("/chat/identity")
+async def chat_identity(request: Request, response: Response):
+    tid = _tenant(request)
+    uid = await _user_id(request, tid)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Vuelve a iniciar sesión para recuperar tus envíos.")
+    response.headers["Cache-Control"] = "no-store"
+    return {"tenant_id": tid, "user_id": uid}
+
+
+@router.get("/chat/requests/{request_id}")
+async def chat_request_status(request_id: uuid.UUID, request: Request, response: Response):
+    tid = _tenant(request)
+    uid = await _user_id(request, tid)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Vuelve a iniciar sesión para recuperar tus envíos.")
+    result = await chat_requests.lookup_status(tid, uid, str(request_id))
+    if result is None:
+        raise HTTPException(status_code=404, detail="No encontré un registro de este envío para tu usuario.")
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 async def _prepare_chat(body: ChatBody, request: Request, tid: str):
@@ -193,8 +217,11 @@ async def assistant_conversations(request: Request):
 async def assistant_messages(conversation_id: str, request: Request):
     """Historial de una conversación. Ajena o inexistente → 404 (nunca datos de otro despacho)."""
     tid = _tenant(request)
+    uid = await _user_id(request, tid)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Vuelve a iniciar sesión.")
     try:
-        return await _service.list_messages(tid, conversation_id)
+        return await _service.list_messages(tid, conversation_id, user_id=uid)
     except ConversationNotFound:
         raise HTTPException(status_code=404, detail="No encontré esa conversación.")
 

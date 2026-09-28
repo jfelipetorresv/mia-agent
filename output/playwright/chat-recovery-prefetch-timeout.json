@@ -1,0 +1,10 @@
+{
+  "phase": "Before HTTP readiness; observed tool output preserved separately after final focal run",
+  "passed": 0,
+  "browser": "Microsoft Edge",
+  "server": "Next recheck Turbopack",
+  "tool_session": 99235,
+  "error": "page.goto: Timeout 120000ms exceeded. Navigating to http://127.0.0.1:3111/chat, waiting until load",
+  "interpretation": "Environment failure, not an executed product assertion",
+  "source": "Observed exec/write_stdin output, not a successful acceptance run"
+}

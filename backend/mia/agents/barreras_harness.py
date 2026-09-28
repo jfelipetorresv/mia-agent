@@ -487,7 +487,7 @@ def revisar_fuentes(sources: Optional[list], *,
     - `no_verificables`: la fuente no trae contenido contra el cual cotejar. Se dice; no
       se cuenta como verificada ni como defecto.
 
-    Devuelve None si no hay fuentes o si todas están limpias.
+    Devuelve cobertura incluso sin hallazgos; None solo si no hay fuentes.
     """
     filas = [s for s in (sources or []) if isinstance(s, dict)]
     if not filas:
@@ -530,9 +530,6 @@ def revisar_fuentes(sources: Optional[list], *,
         else:
             verificadas += 1
 
-    if not (no_coincide or sin_id):
-        return None
-
     partes: list[str] = []
     if no_coincide:
         partes.append(
@@ -545,12 +542,16 @@ def revisar_fuentes(sources: Optional[list], *,
             f"{len(sin_id)} no se pueden identificar por completo (falta tipo, número o "
             "fecha): " + ", ".join(d["referencia"] for d in sin_id[:5])
             + ("." if len(sin_id) <= 5 else " y otras."))
-    partes.append("Verifica esas fuentes antes de apoyarte en ellas."
-                  if not exigir_real else
-                  "Esas fuentes no entraron al escrito.")
+    if no_verificables:
+        partes.append(f"{len(no_verificables)} fuentes no tienen original textual para cotejar; su contenido sigue sin verificar.")
+    if no_coincide or sin_id:
+        partes.append("Verifica esas fuentes antes de apoyarte en ellas."
+                      if not exigir_real else "Esas fuentes no entraron al escrito.")
 
     return {
-        "estado": "exigido" if exigir_real else "aviso",
+        "estado": ("exigido" if exigir_real else "aviso") if no_coincide or sin_id else "cobertura",
+        "cobertura_completa": verificadas == len(filas) and not sin_id,
+        "no_verificables_total": len(no_verificables),
         "umbral": umbral_real,
         "total": len(filas),
         "verificadas": verificadas,

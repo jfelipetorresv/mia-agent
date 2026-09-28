@@ -67,7 +67,7 @@ def v_gate_lanzador_health() -> str:
 def v_verification_unavailable_no_final() -> str:
     """Funcional: fail-closed de verdad — sin informe o con alertas abiertas no hay final."""
     from mia.memory.legal_ledger import verification_passes
-    ok_gate = {"gate_llm": {"veredicto": "apto"}}
+    ok_gate = {"gate_llm": {"veredicto": "apto", "checker_version": "citation-verifier-v3"}, "evidence_coverage": {"complete": True}}
     bloquea_sin_informe = verification_passes(None) is False
     bloquea_marcadas = verification_passes({"marcadas": 1, **ok_gate}) is False
     bloquea_quemadas = verification_passes({"quemadas": 1, **ok_gate}) is False
@@ -157,7 +157,7 @@ def _clave_informe_no_bloquea(clave: str) -> None:
     from mia.memory.legal_ledger import verification_passes
     report = {"citas": 1, "marcadas": 0, "respaldadas": 1, "anotadas": 0,
               clave: {"n_a_revisar": 2, "aviso": "prueba"},
-              "gate_llm": {"veredicto": "apto"}}
+              "gate_llm": {"veredicto": "apto", "checker_version": "citation-verifier-v3"}, "evidence_coverage": {"complete": True}}
     if verification_passes(report) is not True:
         raise AssertionError(
             f"la clave '{clave}' EMPEZÓ a bloquear el final: eso es un muro sin declarar")

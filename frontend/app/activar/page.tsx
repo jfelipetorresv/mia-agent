@@ -451,7 +451,7 @@ export default function ActivarPage() {
             <p>{etiquetaCodex(status) || "Codex no detectado."}</p>
             {status.motor_detectado.claude && status.motor_detectado.codex && <label className="block">
               Conexión preferida
-              <select aria-label="Conexión preferida" className="mt-2 w-full rounded-lg border bg-background p-3"
+              <select aria-label="Conexión preferida" className="mt-2 w-full rounded-lg border border-input bg-background p-3 shadow-neu-sunken"
                 value={politica === "codex" ? "codex" : "quality_adaptive"}
                 onChange={(e) => setPolitica(e.target.value as Politica)}>
                 <option value="quality_adaptive">Claude Code</option><option value="codex">Codex</option>

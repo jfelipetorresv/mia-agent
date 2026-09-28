@@ -36,7 +36,8 @@ def main() -> int:
     check("un informe sin alertas y APTO habilita el gate de citas",
           legal_ledger.verification_passes({"citas": 0, "marcadas": 0, "anotadas": 0,
                                              "omitidas": 0, "quemadas": 0,
-                                             "gate_llm": {"veredicto": "apto"}}))
+                                             "evidence_coverage": {"complete": True},
+                                             "gate_llm": {"veredicto": "apto", "checker_version": "citation-verifier-v3"}}))
     for key in ("marcadas", "anotadas", "omitidas", "quemadas"):
         check(f"{key} bloquea un final", not legal_ledger.verification_passes({key: 1}))
     check("hallazgos independientes bloquean un final",
@@ -50,7 +51,8 @@ def main() -> int:
     check("la edición usa exactamente edited_text", "final = str(decision.get(\"edited_text\") or \"\")" in editing)
     check("el LLM posterior solo verifica y no reescribe la edición",
           "Devuelve el borrador corregido" not in editing
-          and "Versión exacta editada por el abogado (no la reescribas)" in editing)
+          and "await self._audit_textual_evidence(state, md, final" in editing
+          and "Texto exacto a auditar (no lo reescribas)" in graph)
     check("el final exige ambos recibos", all(g in legal_ledger.REQUIRED_FINAL_GATES for g in
                                                ("citation_verification", "human_approval")))
 
