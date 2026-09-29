@@ -1,3 +1,29 @@
+# CHECKPOINT DE EMPAQUETADO — 2026-09-28 · control de arranque
+
+Continuación autorizada con Claude Code `claude-opus-5-5 --effort high`.
+La implementación 0.3.3 está en `2d08474c`, subida a GitHub y con CI aprobado.
+La primera reconstrucción completa Core/Compact terminó roja en el humo frontend
+(20 s sin HTTP 200), tras aprobar backend, LiteLLM, Next y TypeScript.
+No hubo NSIS ni primer arranque. Se conserva la historia y evidencia del fallo.
+
+El mismo frontend pasó la repetición exacta del humo en 4,578 s y 14 escenarios
+sintéticos de chat en Edge, con revisión visual independiente. Eso no demuestra
+la causa del timeout inicial, ni equivale a un instalador aprobado.
+
+Se ajusta únicamente el control de arranque: margen 180 s/sondeo 4 s acorde a la
+shell, diagnóstico sin cuerpos privados, logs TEMP fuera del payload y limpieza
+del proceso propio. Sol implementa; Opus emitió APTO estático focal. El director
+revisó el diff final: suite conductual 3/3, focal posterior de los menores, parser PS5,
+frontend 24/24 y contrato del instalador 48/48 aprobados.
+
+Plan, matriz, evidencias y reservas: `docs/empaquetado-033-2026-09-28.md`.
+Siguiente paso: reconstrucción completa Core/Compact sin SkipPayloads desde el
+commit que contiene este checkpoint. Verificar primer arranque, manifiesto,
+privacidad e integridad y copiar a Downloads. No instalar sobre datos del usuario.
+La app instalada, WebView nativo y calidad con modelos jurídicos reales siguen
+pendientes. Harness de Lexia permanece intacto.
+
+---
 # CHECKPOINT DE CÓDIGO — 2026-09-28 · evidencia y continuidad 0.3.3
 
 Encargo autorizado: cinco mejoras de fuentes, cobertura, vigencia del final, revisión

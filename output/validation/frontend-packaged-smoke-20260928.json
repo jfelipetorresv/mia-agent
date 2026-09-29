@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "kind": "independent packaged frontend smoke",
+  "source_commit": "2d08474c0fb81d440694fb8738f7ddb75520a21f",
+  "url": "http://127.0.0.1:3111/",
+  "status_code": 200,
+  "first_observed_request_ms": 267,
+  "headers": {
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff"
+  },
+  "listener_pid": 58804,
+  "executable": "packaging/dist/mia-frontend/node.exe",
+  "command": "node.exe server.js",
+  "initial_build_smoke": "failed: no 200 within20s; cause unproven",
+  "limits": [
+    "Loopback HOSTNAME differs from original smoke wildcard bind",
+    "No native WebView or installation test"
+  ]
+}

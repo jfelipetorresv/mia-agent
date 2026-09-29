@@ -1,0 +1,20 @@
+{
+  "browser": "msedge",
+  "passed": 2,
+  "results": [
+    {
+      "name": "prefetch-remove-own-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "prefetch-preserve-renewed-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    }
+  ]
+}

@@ -1,0 +1,216 @@
+{
+  "verdict": "APTO focal del chat del frontend empaquetado",
+  "version": "0.3.3",
+  "build_id": "4jB2JdP5W0wZWVCfSvT2n",
+  "url": "http://127.0.0.1:3111",
+  "browser": "msedge",
+  "passed": 14,
+  "failed": 0,
+  "runner_temp": "C:\\Users\\USER\\AppData\\Local\\Temp\\mia-packaged-033-a7a34bfe-9f2d-4535-beba-37ec3cc60f6e.mjs",
+  "runner_temp_sha256": "69CA7AEC5809EB5BBD7F8D37DAB107A0A734C16F59501ABD85A7EA761EA2D591",
+  "runner_change": "Solo ruta de evidencia; runner fuente sin cambios",
+  "cases": [
+    {
+      "name": "lost-sse-reload",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "name": "running",
+      "posts": 0,
+      "recoveryGets": 2,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "uncertain",
+      "posts": 0,
+      "recoveryGets": 2,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "two-tabs",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "name": "other-user",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "corrupt-discard",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "corrupt-replaced",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "no-web-locks",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "storage-failure",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "history-fallback",
+      "posts": 0,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+      ]
+    },
+    {
+      "name": "normal-typewriter",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "reload-typewriter",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "prefetch-remove-own-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "prefetch-preserve-renewed-marker",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    }
+  ],
+  "visual_inspected": [
+    "chat-recovery-lost-sse-reload.png",
+    "chat-recovery-uncertain.png",
+    "chat-recovery-prefetch-remove-own-marker.png",
+    "chat-recovery-prefetch-preserve-renewed-marker.png"
+  ],
+  "visual_result": "Tema claro; respuesta recuperada sin duplicados; aviso uncertain correcto; cambio de sesión sin estado Mia está pensando residual",
+  "console_result": "Sin pageErrors; ERR_FAILED y 503 esperados por fallos sintéticos inyectados",
+  "limits": [
+    "APIs sintéticas: no valida backend real, DB instalada ni inferencia de modelos",
+    "No valida aplicación instalada ni instalador",
+    "No resuelve por sí solo humo inicial del build con timeout 20s"
+  ],
+  "bundle_and_source_hashes": [
+    {
+      "file": "e2e\\chat-recovery.mjs",
+      "sha256": "EAAAD20F3355FEA87E83B362E044C9E2212FC30A6B26DEF3D2C13B87B9EAD111"
+    },
+    {
+      "file": "packaging\\dist\\mia-frontend\\package.json",
+      "sha256": "50AE756A1451EC098B5F9B9DC7B512868A4F1DF417E6C132A88D2D262449E7F9"
+    },
+    {
+      "file": "packaging\\dist\\mia-frontend\\server.js",
+      "sha256": "10E213349C34E69549471626706A2FC451C6EB8A68A18BE722117F0DC29DDBB6"
+    },
+    {
+      "file": "packaging\\dist\\mia-frontend\\.next\\BUILD_ID",
+      "sha256": "A1C0DF6C50CF36099EEC347A6189C45FCF4C02C2F53DC530CA95DF4CA8AD406A"
+    }
+  ],
+  "evidence_sha256": [
+    {
+      "file": "chat-recovery-corrupt-discard.png",
+      "sha256": "DEC1A0B85BC15A52115AEA6125A17808C4CCC172A753EC946DE3AE00C3A663E5"
+    },
+    {
+      "file": "chat-recovery-corrupt-replaced.png",
+      "sha256": "B85962A4B4A6C76D9CA3609A28602B088E9A4C1B5C5A0D73469317EF649DB9F4"
+    },
+    {
+      "file": "chat-recovery-history-fallback.png",
+      "sha256": "14498AEA40021E81805950ACB27F3D4300A1DDA63DF1B74344B681000A803292"
+    },
+    {
+      "file": "chat-recovery-lost-sse-reload.png",
+      "sha256": "829EEFFCBCEB41D38BD287E5F91A482370B2D111CA5332D4E5DEB8FAC6AE00D7"
+    },
+    {
+      "file": "chat-recovery-no-web-locks.png",
+      "sha256": "DC43BB4E5E717D9D48F6BF99CB2E85A755B55C8CC79BF6BC72DDDC406E6D3A1E"
+    },
+    {
+      "file": "chat-recovery-normal-typewriter.png",
+      "sha256": "829EEFFCBCEB41D38BD287E5F91A482370B2D111CA5332D4E5DEB8FAC6AE00D7"
+    },
+    {
+      "file": "chat-recovery-other-user.png",
+      "sha256": "DEC1A0B85BC15A52115AEA6125A17808C4CCC172A753EC946DE3AE00C3A663E5"
+    },
+    {
+      "file": "chat-recovery-prefetch-preserve-renewed-marker.png",
+      "sha256": "94A5319EE647B7C900B9E4D7E7A6301018C38E71C56EF5F5C49ED1968ABA5328"
+    },
+    {
+      "file": "chat-recovery-prefetch-remove-own-marker.png",
+      "sha256": "94A5319EE647B7C900B9E4D7E7A6301018C38E71C56EF5F5C49ED1968ABA5328"
+    },
+    {
+      "file": "chat-recovery-prefetch-results.json",
+      "sha256": "1D64FEE88BF22D5F692FE2083EED6AC53F1AD8FFFF68F15E56D18572FC83166D"
+    },
+    {
+      "file": "chat-recovery-reload-typewriter.png",
+      "sha256": "829EEFFCBCEB41D38BD287E5F91A482370B2D111CA5332D4E5DEB8FAC6AE00D7"
+    },
+    {
+      "file": "chat-recovery-results.json",
+      "sha256": "6DD6EAFBC439E6C1357D2640FAD439311A7E4824656639115E1D3741BA5E5A6E"
+    },
+    {
+      "file": "chat-recovery-running.png",
+      "sha256": "9EBF49EB5563F443662EAD742DD2A1B4CD51E01B364E7BC13257921C34EB4617"
+    },
+    {
+      "file": "chat-recovery-storage-failure.png",
+      "sha256": "DC43BB4E5E717D9D48F6BF99CB2E85A755B55C8CC79BF6BC72DDDC406E6D3A1E"
+    },
+    {
+      "file": "chat-recovery-two-tabs.png",
+      "sha256": "8FC6B01C58833DCD91385A0E89B37EE91A26385BFAE5282F1999A981FF585152"
+    },
+    {
+      "file": "chat-recovery-uncertain.png",
+      "sha256": "4BE4D4D7EC2C0322690F3DFC3E1EAE81759036D520C17554C8A9A86BEFB32499"
+    }
+  ],
+  "created_utc": "2026-09-29T01:24:06.1928450Z"
+}

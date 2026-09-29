@@ -919,3 +919,13 @@ resuelta por `test_assistant_chat_requests.py` y `e2e/chat-recovery.mjs`; los es
 inciertos siguen pendientes hasta recuperación o descarte explícito del aviso local.
 La identidad consultada, el token enviado y los callbacks deben pertenecer a la misma
 sesión: comprobar solo localStorage al montar no cubre cambios de cuenta en otra ventana.
+
+
+102. **2026-09-28 · El humo debe conservar la causa y respetar el arranque real.**
+Un límite de 20 s podía rechazar un servidor que el producto espera hasta 180 s.
+La regresión conductual compara arranque a 24 s con la mutación del límite antiguo,
+y comprueba rechazo por caída y cabeceras incorrectas. Conservar tipo/estado HTTP
+sin cuerpo de respuesta; guardar stdout/stderr fuera del payload y retener el
+handle de proceso para no perder ExitCode en PowerShell 5. El fallo original no
+prueba coldstart ni antivirus. Una repetición verde no reescribe una build roja.
+Barrera: execution/test_frontend_smoke.py; revisión estática independiente Opus5.5.

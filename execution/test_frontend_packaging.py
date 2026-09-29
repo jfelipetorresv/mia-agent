@@ -106,7 +106,7 @@ def main() -> int:
     # el puerto ya está ocupado por un proceso ajeno ("squatter") que responde
     # 200 en su lugar. El script debe: (a) detectar puerto ocupado y resolverlo
     # (buscar uno libre), (b) detectar si el proceso murió durante el polling
-    # (HasExited) y abortar con el stderr real en vez de esperar el timeout
+    # (HasExited) y conservar los logs fuera del payload en vez de esperar el timeout
     # completo, y (c) verificar identidad mínima tras el 200 (el proceso sigue
     # vivo y es efectivamente quien escucha en el puerto).
     check(
@@ -118,8 +118,10 @@ def main() -> int:
         "3190" in build_script,
     )
     check(
-        "build_frontend.ps1 revisa $proc.HasExited dentro del lazo de polling y vuelca stderr antes de abortar",
-        build_script.count("HasExited") >= 2,
+        "build_frontend.ps1 detecta muerte temprana y conserva logs sin volcar contenido privado",
+        build_script.count("HasExited") >= 2
+        and "Logs conservados fuera del payload" in build_script
+        and "Get-Content $stderrLog -Raw" not in build_script,
     )
     check(
         "build_frontend.ps1 verifica identidad mínima tras el 200 (OwningProcess del listener == PID de nuestro proceso)",

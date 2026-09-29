@@ -15,7 +15,7 @@
     3. Prueba de humo: arranca el ensamblado con el node.exe PORTABLE (no el
        del PATH), espera código 200 en GET /, y lo apaga. Si el puerto pedido
        ya está ocupado (squatter), busca automáticamente uno libre desde 3190;
-       si el proceso muere durante el arranque, vuelca su stdout/stderr y
+       si el proceso muere durante el arranque, conserva las rutas de sus logs y
        aborta de inmediato (no espera el timeout completo); y tras el 200,
        confirma que el proceso que sigue vivo y escuchando en el puerto es
        realmente el nuestro (fix Fase 1 · capa 2 · M3).
@@ -176,7 +176,6 @@ Write-Step "Prueba de humo (puerto $Port) con node.exe portable"
 
 # Gotcha HOSTNAME (ver docstring arriba): limpiar antes de lanzar.
 $prevHostname = $env:HOSTNAME
-Remove-Item Env:\HOSTNAME -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
 # 4a. Selección robusta de puerto (fix Fase 1 · capa 2 · M3)
@@ -222,18 +221,23 @@ if (Test-PortListening -TestPort $Port) {
     }
     Write-Host "  Puerto libre encontrado: $Port" -ForegroundColor Yellow
 }
+$prevPort = $env:PORT
 $env:PORT = "$Port"
 
 $proc = $null
 try {
-    $stdoutLog = Join-Path $DistDir "smoke-stdout.log"
-    $stderrLog = Join-Path $DistDir "smoke-stderr.log"
+    $smokeLogBase = Join-Path ([System.IO.Path]::GetTempPath()) ("mia-frontend-smoke-" + [Guid]::NewGuid().ToString('N'))
+    $stdoutLog = "$smokeLogBase.stdout.log"
+    $stderrLog = "$smokeLogBase.stderr.log"
+    Remove-Item Env:\HOSTNAME -ErrorAction SilentlyContinue
     $proc = Start-Process -FilePath (Join-Path $DistDir "node.exe") `
         -ArgumentList "server.js" `
         -WorkingDirectory $DistDir `
         -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutLog `
         -RedirectStandardError  $stderrLog
+    # Keep the process handle so PowerShell 5 can report an early exit code.
+    $null = $proc.Handle
 
     # Gotcha verificado empíricamente (2026-07-10): en esta máquina "localhost" resuelve
     # primero a ::1 (IPv6) vía Invoke-WebRequest/.NET, y como Node solo escucha en la
@@ -241,33 +245,33 @@ try {
     # IPv4 y agota el TimeoutSec sin conectar (Test-NetConnection confirmó: TCP a ::1
     # falla, TCP a 127.0.0.1 conecta). Se usa 127.0.0.1 explícito para evitar esta espera.
     $ready = $false
-    $deadline = (Get-Date).AddSeconds(20)
+    $deadline = (Get-Date).AddSeconds(180)
+    $lastProbe = "No request completed"
     while ((Get-Date) -lt $deadline) {
         # Fix M3: si el proceso ya murió (crash de arranque, EADDRINUSE tardío,
         # etc.), seguir haciendo polling hasta agotar el timeout solo produce un
         # mensaje genérico e inútil. Detectamos la muerte del proceso de
-        # inmediato, volcamos su stdout/stderr real, y abortamos con la causa.
+        # inmediato y conservamos sus logs fuera del payload al abortar.
         if ($proc.HasExited) {
+            $proc.WaitForExit()
             Write-Host "  El proceso node.exe (PID $($proc.Id)) terminó inesperadamente (exit code $($proc.ExitCode)) durante el arranque." -ForegroundColor Red
-            Write-Host "--- stdout ---"
-            Write-Host (Get-Content $stdoutLog -Raw -ErrorAction SilentlyContinue)
-            Write-Host "--- stderr ---"
-            Write-Host (Get-Content $stderrLog -Raw -ErrorAction SilentlyContinue)
-            throw "El proceso del ensamblado terminó antes de responder (exit code $($proc.ExitCode)). Ver stdout/stderr arriba."
+            throw "El proceso del ensamblado terminó antes de responder (exit code $($proc.ExitCode)); ultimo sondeo: $lastProbe."
         }
         Start-Sleep -Milliseconds 500
         try {
-            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -TimeoutSec 2
+            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -TimeoutSec 4
+            $lastProbe = "HTTP $($resp.StatusCode)"
             if ($resp.StatusCode -eq 200) { $ready = $true; break }
         } catch {
-            # servidor aún no responde; reintenta hasta el deadline
+            # Retain only error type/status; response bodies and private values stay out of diagnostics.
+            $httpCode = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 'none' }
+            $networkStatus = if ($_.Exception -is [System.Net.WebException]) { $_.Exception.Status } else { 'none' }
+            $lastProbe = "type=$($_.Exception.GetType().Name); status=$networkStatus; HTTP=$httpCode"
         }
     }
 
     if (-not $ready) {
-        Write-Host (Get-Content $stdoutLog -Raw -ErrorAction SilentlyContinue)
-        Write-Host (Get-Content $stderrLog -Raw -ErrorAction SilentlyContinue)
-        throw "El ensamblado no respondió 200 en http://127.0.0.1:$Port/ dentro de 20s."
+        throw "El ensamblado no respondió 200 en http://127.0.0.1:$Port/ dentro de 180s; ultimo sondeo: $lastProbe."
     }
 
     Write-Host "  GET / -> $($resp.StatusCode) OK"
@@ -298,13 +302,18 @@ try {
 
     Write-Host ""
     Write-Host "PRUEBA DE HUMO: PASS" -ForegroundColor Green
+} catch {
+    Write-Host "Logs conservados fuera del payload: $stdoutLog ; $stderrLog"
+    throw
 } finally {
     if ($proc -and -not $proc.HasExited) {
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        [void]$proc.WaitForExit(5000)
     }
-    Remove-Item (Join-Path $DistDir "smoke-stdout.log") -ErrorAction SilentlyContinue
-    Remove-Item (Join-Path $DistDir "smoke-stderr.log") -ErrorAction SilentlyContinue
-    if ($prevHostname) { $env:HOSTNAME = $prevHostname }
+    if ($null -ne $prevHostname) { $env:HOSTNAME = $prevHostname }
+    else { Remove-Item Env:\HOSTNAME -ErrorAction SilentlyContinue }
+    if ($null -ne $prevPort) { $env:PORT = $prevPort }
+    else { Remove-Item Env:\PORT -ErrorAction SilentlyContinue }
 }
 
 Write-Host ""

@@ -1,0 +1,9 @@
+{
+  "exit_code": 0,
+  "elapsed_seconds": 4.578,
+  "script": "C:\\Users\\USER\\AppData\\Local\\Temp\\mia-release-20260928-cdccb788\\frontend-original-smoke.ps1",
+  "log": "C:\\Users\\USER\\AppData\\Local\\Temp\\mia-release-20260928-cdccb788\\frontend-original-smoke.log",
+  "port": 3100,
+  "deadline_seconds": 20,
+  "build_or_copy": false
+}

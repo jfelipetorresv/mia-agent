@@ -1,0 +1,68 @@
+{
+  "status": "focal_checks_passed_external_close_parent_owned",
+  "files": {
+    "packaging/build_frontend.ps1": "320529d30baf4bad536afba35b4a222f83e4b21ef0933e4ab34a5d72661e8342",
+    "execution/test_frontend_smoke.py": "b7e8f61a23ed793ae3755478140cb7c8d90ebdf475ed4151cd453d1989a23f32",
+    "execution/test_frontend_packaging.py": "16e9ac9744f84983dee49743f25f241f40aea1d81100e25a43be64db89d2ee98"
+  },
+  "runs": [
+    {
+      "name": "test_frontend_smoke_initial_fixture",
+      "exit_code": 1,
+      "result": "fixture hardlink across C/D failed; changed to portable Node copy in TEMP"
+    },
+    {
+      "name": "test_frontend_smoke_initial",
+      "exit_code": 1,
+      "passed": 2,
+      "failed": 1,
+      "seconds": 65.608,
+      "failure": "crash rejected correctly and logs persisted; diagnostic process exit code blank in PS5"
+    },
+    {
+      "name": "test_frontend_smoke_crash_fix",
+      "exit_code": 0,
+      "passed": 1,
+      "seconds": 7.315,
+      "log": "output/validation/frontend-smoke-crash-focal-20260928.log"
+    },
+    {
+      "name": "test_frontend_smoke_consolidated",
+      "exit_code": 0,
+      "passed": 3,
+      "seconds": 63.571,
+      "log": "output/validation/frontend-smoke-final-20260928.log",
+      "scope": "includes180 delayed PASS vs20 mutant FAIL, crash7 fast, wrong headers reject, logs outside payload, cleanup and env restore"
+    },
+    {
+      "name": "test_frontend_smoke_last_delta",
+      "exit_code": 0,
+      "passed": 1,
+      "seconds": 51.177,
+      "log": "output/validation/frontend-smoke-last-delta-20260928.log",
+      "scope": "Opus minor changes: HOSTNAME mutation inside try; safe ProtocolError/HTTP503 diagnostic; late readiness passes and20mutant fails"
+    },
+    {
+      "name": "test_frontend_packaging",
+      "exit_code": 0,
+      "passed": 24,
+      "log": "output/validation/frontend-packaging-focal-20260928.log"
+    },
+    {
+      "name": "test_installer_bundle",
+      "exit_code": 0,
+      "passed": 48,
+      "log": "output/validation/installer-contract-focal-20260928.log"
+    },
+    {
+      "name": "PowerShell5 parser final",
+      "exit_code": 0
+    }
+  ],
+  "limits": [
+    "Initial20second packaged timeout cause remains unknown",
+    "No payload rebuild or installer build performed after this smoke correction",
+    "Consolidated3/3 precedes final Opus minor changes; final relevant delayed test1/1 and parser pass after them",
+    "Independent Opus review and parent close own release approval"
+  ]
+}

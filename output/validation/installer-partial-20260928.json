@@ -1,0 +1,72 @@
+{
+  "status": "failed_frontend_smoke",
+  "process_exit_code": 1,
+  "source_commit": "2d08474c0fb81d440694fb8738f7ddb75520a21f",
+  "checkout_clean_after": true,
+  "profiles": {
+    "backend": "core",
+    "webview": "Compact"
+  },
+  "reused_payloads": false,
+  "log": "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\output\\validation\\installer-core-compact-20260928.log",
+  "own_build_pid": 27612,
+  "executor_session": 29497,
+  "timings": {
+    "build_started_local": "2026-09-28T18:41:33-05:00",
+    "backend_manifest_created_utc": "2026-09-29T00:23:04.0857594Z",
+    "backend_compilation_reported": "37:21",
+    "litellm_pyinstaller_start_approx_local": "2026-09-28T19:37:30-05:00",
+    "litellm_compilation_reported": "18:52",
+    "frontend_phase_observed_local": "2026-09-28T19:56:24-05:00",
+    "frontend_compile_reported": "3.0min",
+    "frontend_build_id_written_local": "2026-09-28T20:02:30.9274203-05:00",
+    "frontend_destination_recreated_local": "2026-09-28T20:07:12.2811911-05:00",
+    "build_final_log_write_local": "2026-09-28T20:17:12.4619329-05:00",
+    "total_wall_seconds_approx": 5739
+  },
+  "gates": {
+    "backend_build": "PASS",
+    "litellm_build": "PASS",
+    "litellm_smoke": "PASS health200,modelsBearer200,modelsNoBearer401,loopbackOnly,externalLANRejected",
+    "frontend_compile": "PASS",
+    "frontend_static_pages": 17,
+    "frontend_assembly": "PASS",
+    "frontend_smoke": "FAIL no200within20seconds",
+    "first_run": "NOT_REACHED",
+    "nsis": "NOT_REACHED",
+    "release_manifest": "NOT_CREATED",
+    "installation": "NOT_PERFORMED"
+  },
+  "environment": {
+    "temporary_root": "C:\\Users\\USER\\AppData\\Local\\Temp\\mia-release-20260928-cdccb788",
+    "inherited_test_or_db_variable_names": [],
+    "frontend_dotenv_local": "director verified only public API URL matching code default; no private assignments",
+    "root_dotenv_names_in_standalone_and_payload": []
+  },
+  "cleanup": {
+    "build_process_gone": true,
+    "listener3100_absent": true,
+    "payloads_preserved": true,
+    "no_restart": true,
+    "no_source_changes": true
+  },
+  "limits": [
+    "No cause for frontend timeout proven; director/Opus diagnose",
+    "Frontend smoke may not be claimed passed from compilation",
+    "No new final installer or first-run measurement exists"
+  ],
+  "payloads": {
+    "mia-backend": {
+      "files": 2923,
+      "bytes": 215601350
+    },
+    "mia-litellm": {
+      "files": 3568,
+      "bytes": 115460754
+    },
+    "mia-frontend": {
+      "files": 2269,
+      "bytes": 138782266
+    }
+  }
+}
