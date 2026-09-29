@@ -1,0 +1,96 @@
+{
+  "browser": "msedge",
+  "passed": 12,
+  "results": [
+    {
+      "name": "lost-sse-reload",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "name": "running",
+      "posts": 0,
+      "recoveryGets": 2,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "uncertain",
+      "posts": 0,
+      "recoveryGets": 2,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "two-tabs",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: net::ERR_FAILED"
+      ]
+    },
+    {
+      "name": "other-user",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "corrupt-discard",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "corrupt-replaced",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "no-web-locks",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "storage-failure",
+      "posts": 0,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "history-fallback",
+      "posts": 0,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+      ]
+    },
+    {
+      "name": "normal-typewriter",
+      "posts": 1,
+      "recoveryGets": 0,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "reload-typewriter",
+      "posts": 1,
+      "recoveryGets": 1,
+      "pageErrors": [],
+      "consoleErrors": []
+    }
+  ]
+}

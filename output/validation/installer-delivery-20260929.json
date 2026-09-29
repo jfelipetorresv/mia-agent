@@ -1,0 +1,19 @@
+{
+  "status": "verified_artifact_Opus_APTO",
+  "installer": "C:\\Users\\USER\\Downloads\\Mia_0.3.3_x64-setup.exe",
+  "sha256": "81ba44928a7bf18d2644da0dfaad88f514d04498dd1bb7dfe5dee3bf1ab76cc6",
+  "bytes": 175139638,
+  "source_commit": "46edec77c25bed1fff47ecf2d17848fd409baadb",
+  "installed": false,
+  "cargo_toml": {
+    "no_staged_changes": true,
+    "index_stat_refreshed_by_root": true,
+    "normalized_blob_at_HEAD_and_worktree": "e8f7ad24244c8488015014fc091b5daefc78d50a",
+    "semantic_diff_empty": true
+  },
+  "limits": [
+    "No native installation or WebView acceptance",
+    "No real provider or legal quality acceptance"
+  ],
+  "review": "output/validation/claude-opus55-packaging-close.md"
+}

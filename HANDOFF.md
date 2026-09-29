@@ -1,3 +1,42 @@
+# CIERRE DE DISTRIBUCIÓN — 2026-09-29 · Mia 0.3.3 Core/Compact
+
+**Instalador verificado y copiado a Downloads; no instalado.**
+Fuente binaria: `46edec77c25bed1fff47ecf2d17848fd409baadb`, rama
+`codex/mia-evidencia-continuidad-20260928`. El commit de este cierre agrega
+solo documentación y evidencia; no cambia el código del instalador.
+
+Archivo: `C:\Users\USER\Downloads\Mia_0.3.3_x64-setup.exe`.
+175.139.638 bytes. SHA-256:
+`81ba44928a7bf18d2644da0dfaad88f514d04498dd1bb7dfe5dee3bf1ab76cc6`.
+Build completo desde checkout limpio, `reused_payloads=false`, salida 0.
+Primer arranque con datos temporales propios: 308.324 ms; build: 4 h 21 min 36,6 s.
+Core excluye OCR y voz; Compact requiere WebView2 del sistema.
+
+**Revisión:** Sol ejecutó empaquetado y controles reales; el director cotejó
+integridad, cinco módulos, 64 migraciones, cuatro herramientas PG, privacidad
+recursiva incluidos ocultos, recuentos y copia. Astra aprobó 14/14 casos del
+frontend final en Edge con APIs sintéticas y cuatro capturas revisadas.
+Claude Code confirmó `claude-opus-5-5 --effort high` y dio APTO de artefacto para
+entrega; no atribuirle ejecución de pruebas. El director acepta con esos límites.
+CI del código aprobado: https://github.com/jfelipetorresv/mia-agent/actions/runs/36508711127.
+
+Plan, tiempos, advertencias y matriz: `docs/empaquetado-033-2026-09-28.md`.
+Dictamen: `output/validation/claude-opus55-packaging-close.md`.
+Manifiesto: `output/validation/installer-manifest-033-20260929.json`.
+Comprobaciones: `output/validation/installer-independent-20260929.json`.
+UI: `output/playwright/packaged-033-final/packaged-033-chat-summary.json`.
+
+La primera build roja está preservada. Se corrigió su control de arranque con
+regresión conductual y revisión Opus; no se conoce la causa del timeout original.
+Advertencias PyInstaller/linker y reserva BOM de perfiles OCR/full están documentadas.
+No se probó actualización de una base 0.3.2, app/WebView instalado ni modelos reales.
+No quedan builds, proxies o servidores de prueba propios activos. Harness intacto.
+
+**Retomar:** no reconstruir ni repetir controles verdes sin cambios relevantes.
+Para el siguiente alcance de instalación, verificar estado real y protección de
+datos antes de ejecutarlo; este cierre acredita el archivo, no la app instalada.
+
+---
 # CHECKPOINT DE EMPAQUETADO — 2026-09-28 · control de arranque
 
 Continuación autorizada con Claude Code `claude-opus-5-5 --effort high`.

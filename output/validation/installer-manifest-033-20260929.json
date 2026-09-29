@@ -1,0 +1,42 @@
+﻿{
+    "schema_version":  1,
+    "product":  "Mia",
+    "version":  "0.3.3",
+    "commit":  "46edec77c25bed1fff47ecf2d17848fd409baadb",
+    "created_at_utc":  "2026-09-29T05:59:53.4590525Z",
+    "reused_payloads":  false,
+    "backend_profile":  "core",
+    "webview_profile":  "compact",
+    "capabilities":  {
+                         "ocr":  false,
+                         "voice":  false
+                     },
+    "first_run_ms":  308324,
+    "installed_payload_bytes":  596642907,
+    "target_installer_bytes":  335000000,
+    "target_applicable":  true,
+    "target_met":  true,
+    "installer":  {
+                      "file":  "Mia_0.3.3_x64-setup.exe",
+                      "bytes":  175139638,
+                      "sha256":  "81ba44928a7bf18d2644da0dfaad88f514d04498dd1bb7dfe5dee3bf1ab76cc6"
+                  },
+    "payloads":  {
+                     "mia-backend":  {
+                                         "files":  2923,
+                                         "bytes":  215601350
+                                     },
+                     "mia-litellm":  {
+                                         "files":  3568,
+                                         "bytes":  115460754
+                                     },
+                     "mia-frontend":  {
+                                          "files":  2268,
+                                          "bytes":  138782119
+                                      },
+                     "pgsql":  {
+                                   "files":  1680,
+                                   "bytes":  126798684
+                               }
+                 }
+}

@@ -1,0 +1,71 @@
+{
+  "status": "passed",
+  "verifier": "root independent artifact checks",
+  "commit": "46edec77c25bed1fff47ecf2d17848fd409baadb",
+  "version": "0.3.3",
+  "installer": "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\desktop\\src-tauri\\target\\release\\bundle\\nsis\\Mia_0.3.3_x64-setup.exe",
+  "sha256": "81ba44928a7bf18d2644da0dfaad88f514d04498dd1bb7dfe5dee3bf1ab76cc6",
+  "bytes": 175139638,
+  "first_run_ms": 308324,
+  "private_payload_paths": [],
+  "migrations_matched": 64,
+  "required_backend_modules": [
+    "mia.agents.gate_evidence",
+    "mia.agents.gate_units",
+    "mia.assistant.chat_requests",
+    "mia.memory.legal_ledger",
+    "mia.memory.source_fingerprints"
+  ],
+  "limits": [
+    "No installed desktop validation",
+    "No real provider or legal quality validation"
+  ],
+  "payload_counts_after_ui": {
+    "mia-backend": {
+      "files": 2923,
+      "bytes": 215601350
+    },
+    "mia-litellm": {
+      "files": 3568,
+      "bytes": 115460754
+    },
+    "mia-frontend": {
+      "files": 2268,
+      "bytes": 138782119
+    },
+    "pgsql": {
+      "files": 1680,
+      "bytes": 126798684
+    }
+  },
+  "ui_evidence_hashes_matched": 16,
+  "clean_source_after_build": true,
+  "pg_tool_hashes_matched": 4,
+  "frontend_build_id": "5LcY-wC9py0kxtdXm9igs",
+  "test_server_stopped": true,
+  "privacy_scan": {
+    "includes_dotfiles_and_windows_hidden": true,
+    "roots": [
+      "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\packaging\\dist\\mia-backend",
+      "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\packaging\\dist\\mia-litellm",
+      "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\packaging\\dist\\mia-frontend",
+      "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\packaging\\dist\\pgsql"
+    ],
+    "forbidden": [
+      ".env*",
+      ".mia-backup-key*",
+      ".mia-setup-complete",
+      "pgdata",
+      "mia-data"
+    ],
+    "method": "Python pathlib.Path.rglob(*) without hidden-file exclusion",
+    "recursive": true,
+    "matches": []
+  },
+  "postgres_tool_hashes_verified": {
+    "pg_dump.exe": "c2765fc559bdc8e2f71a6d408ed024a984c5140e448f797a6f15168355b62133",
+    "pg_restore.exe": "cd865f0d32fe5da3de51fcd6012faa75f3f4a8a17c6bbbdca960f5dad8e3d4a4",
+    "pg_ctl.exe": "d6a0c1ab71c0fbeb2cdc436030f0ac2e713c47475ec5e7e5a23a3e6d93f44907",
+    "pg_isready.exe": "d33972e980ff5a84d6eb036781fd915ef2e19d50e28f1b892a0a978132bf7e5c"
+  }
+}

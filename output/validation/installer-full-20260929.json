@@ -1,0 +1,106 @@
+{
+  "build_process": {
+    "pid": 42800,
+    "started_unix": 1790645897.6368873,
+    "commit": "46edec77c25bed1fff47ecf2d17848fd409baadb",
+    "log": "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\output\\validation\\installer-core-compact-20260928-retry.log",
+    "temp": "C:\\Users\\USER\\AppData\\Local\\Temp\\mia-release-retry-20260928-9ef01bf0",
+    "backend_profile": "core",
+    "webview_profile": "Compact",
+    "skip_payloads": false,
+    "exit_code": 0,
+    "finished_unix": 1790661594.2437325,
+    "elapsed_seconds": 15696.608
+  },
+  "manifest": {
+    "schema_version": 1,
+    "product": "Mia",
+    "version": "0.3.3",
+    "commit": "46edec77c25bed1fff47ecf2d17848fd409baadb",
+    "created_at_utc": "2026-09-29T05:59:53.4590525Z",
+    "reused_payloads": false,
+    "backend_profile": "core",
+    "webview_profile": "compact",
+    "capabilities": {
+      "ocr": false,
+      "voice": false
+    },
+    "first_run_ms": 308324,
+    "installed_payload_bytes": 596642907,
+    "target_installer_bytes": 335000000,
+    "target_applicable": true,
+    "target_met": true,
+    "installer": {
+      "file": "Mia_0.3.3_x64-setup.exe",
+      "bytes": 175139638,
+      "sha256": "81ba44928a7bf18d2644da0dfaad88f514d04498dd1bb7dfe5dee3bf1ab76cc6"
+    },
+    "payloads": {
+      "mia-backend": {
+        "files": 2923,
+        "bytes": 215601350
+      },
+      "mia-litellm": {
+        "files": 3568,
+        "bytes": 115460754
+      },
+      "mia-frontend": {
+        "files": 2268,
+        "bytes": 138782119
+      },
+      "pgsql": {
+        "files": 1680,
+        "bytes": 126798684
+      }
+    }
+  },
+  "checks": {
+    "exit_zero": true,
+    "commit_matches": true,
+    "sha256_matches": true,
+    "installer_bytes_match": true,
+    "fresh_installer": true,
+    "full_payloads_rebuilt": true,
+    "core_compact": true,
+    "backend_manifest_count": true,
+    "first_run_measured": true,
+    "git_status": "",
+    "head": "46edec77c25bed1fff47ecf2d17848fd409baadb"
+  },
+  "warnings": [
+    {
+      "kind": "pyinstaller_isolated_child_exit",
+      "message": "Timed out while waiting for the child process to exit",
+      "present": true,
+      "context": "Parent independently read PyInstaller isolated/_parent.py:270-300: warning on child cleanup after work, controlled kill; no dependency failure demonstrated. Packaged first-run completed."
+    },
+    {
+      "kind": "linker_message",
+      "context": "Library creation message reported as linker warning; release build finished."
+    }
+  ],
+  "gates": {
+    "backend_build": "PASS 53:54",
+    "litellm_build": "PASS 17:29",
+    "litellm_http_smoke": "PASS health, models bearer/no-bearer",
+    "frontend_compile": "PASS 2.0 min",
+    "frontend_typescript": "PASS 74 s",
+    "frontend_static_pages": "PASS 17/17",
+    "frontend_http_smoke": "PASS",
+    "postgres_payload_copy": "PASS",
+    "first_run_ms": 308324,
+    "cargo_release": "PASS 111m21s",
+    "nsis": "PASS one bundle",
+    "installer_target": "PASS bytes <=335000000"
+  },
+  "limitations": [
+    "No installation performed.",
+    "Independent privacy scan, SQL byte/module checks, bundled UI acceptance and release approval belong to root.",
+    "Initial previous frontend 20-second timeout cause remains unknown.",
+    ".env.local source independently checked by root: only public NEXT_PUBLIC_API_URL equal code default. No private values reported."
+  ],
+  "artifact_path": "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\desktop\\src-tauri\\target\\release\\bundle\\nsis\\Mia_0.3.3_x64-setup.exe",
+  "manifest_path": "D:\\Inteligencia Artificial\\Mia-Super Agent\\mia\\desktop\\src-tauri\\target\\release\\bundle\\nsis\\mia-release-manifest.json",
+  "sha256_computed": "81ba44928a7bf18d2644da0dfaad88f514d04498dd1bb7dfe5dee3bf1ab76cc6",
+  "source_status_observation": "First final status briefly showed Cargo.toml M; semantic diff was empty. Second status was clean without executor edits/restores."
+}
