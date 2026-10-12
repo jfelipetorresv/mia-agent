@@ -28,13 +28,10 @@ autorización de Pipe.
 - Revisión de Astra sobre la implementación: ronda 1 NO APTO (I1–I10). Las 10 se corrigieron, y
   queda la ronda 2 de Astra.
 
-**Al cerrar, dos subagentes estaban en ajustes finales (pueden haber quedado a medias):**
-- Juicio: añadir `PROTOCOLO_CUSTODIA = "banco04-v1.2"` en `protocolo.py` y que `validar_conjunto`
-  compare contra ella.
-- Producción: que `custodia.py` importe esa constante sin cambiar la AAD, y que `motivo_juicio`
-  controle la reserva de AMBOS proveedores.
-- Al retomar, correr las dos suites del banco y `test_gates_no_ciegos`. Si algo está rojo o a medias,
-  terminarlo según estas dos líneas.
+**Ajustes finales: TERMINADOS y commiteados.**
+- `PROTOCOLO_CUSTODIA` está en `protocolo.py`; `custodia.py` lo importa y la AAD no cambió.
+- `motivo_juicio` controla la reserva de ambos proveedores.
+- Suites: juicio 286/286 y producción 220/220.
 
 **Avisos.**
 - El agente de juicio afirmó dos veces cosas falsas. Dijo que `verification.py` había cambiado (está
