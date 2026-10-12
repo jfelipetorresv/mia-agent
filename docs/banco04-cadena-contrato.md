@@ -1,7 +1,16 @@
 # Banco 0.4: contrato de la cadena (producir, juzgar, decidir)
 
-Versión del contrato: **banco04-cadena/v1** (propuesta). Fecha: 2026-10-12. Base: HEAD `798a8b2`,
+Versión del contrato: **banco04-cadena/v2** (propuesta). Fecha: 2026-10-12. Base: HEAD `c827f57`,
 rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad-04-protocolo.md`).
+
+**Cambios de v1 a v2.**
+
+- Corrige las objeciones K1–K12 del dictamen de Astra sobre la v1 (NO APTO). La tabla de cierre está
+  en §9.
+- Aplica las decisiones del director del 2026-10-12, que están en §8.4. Donde revocan algo, queda
+  marcado como revocado.
+- **El banco no cambia ningún archivo del producto** (K8): la telemetría cruda se captura desde
+  `eval/` (§4.3).
 
 Este documento no cambia la muestra, las repeticiones, las métricas, los umbrales ni los techos del
 protocolo. Fija **cómo se recorre** el banco desde `main` hasta el veredicto, **qué se escribe en
@@ -25,7 +34,11 @@ Cada invariante es verificable por una prueba de §6.
   su `main`. Ninguna etapa recibe de quien la llama un valor que otra etapa ya haya calculado.
 - **IC-2 · Crudo frente a derivado.**
   - Es **crudo** lo observado:
-    - el texto que ve el abogado y el material del turno;
+    - el texto que ve el abogado, el material del turno y los artefactos que el producto emitió en
+      ese turno tal como los persistió el harness: el informe del muro (`resultado.verification`,
+      H:709) y la ruta de cambios de motor (`resultado.model_fallbacks`, H:733). Las **señales**
+      que el harness calcula sobre ellos, como `false_block` (H:743), `jurisdiction_leak` (H:753) o
+      `abstention`, son derivadas: la puerta no las lee;
     - la respuesta literal de cada llamada a un modelo juez;
     - cada fila del registro por llamada (ledger);
     - los registros de identidad (manifiestos);
@@ -77,6 +90,12 @@ Cada invariante es verificable por una prueba de §6.
                                           │
  banco04_decidir main veredicto ───────► puerta.decidir(dir_nuevo, dir_base, custodia, cadena)
                                           ─► VEREDICTO.json (fuera de los cuatro directorios leídos)
+
+ Bloque 0 (una sola versión, sin comparativas; §3.5):
+ R main (0.3.3, piloto) ─► [autor independiente escribe el reservado NUEVO sobre esas salidas]
+   ─► VJ main (reservado nuevo) ─► R main (0.3.3, resto) ─► juzgar ─►
+   banco04_decidir main linea-base ─► puerta.medir_linea_base(dir_base, custodia, cadena)
+                                     ─► INFORME_LINEA_BASE.json
 ```
 
 ### 1.2 Puntos de entrada y quién llama a quién
@@ -86,11 +105,14 @@ Cada invariante es verificable por una prueba de §6.
 | Producir | `R:1962 main` (`--fase produccion`, `aprobaciones` y la nueva `extension`) | `verificar_aislamiento` → `_montaje_real` (R:1681) → instala la captura del ledger (`telemetria.instalar`, nuevo) y el contexto de llamada → `ejecutar_banco` (R:1046) → `_ejecutar_una` (R:954) fija el contexto `(versión, caso, rep, intento, fase)` → `deps.producir` → `harness.run_case` (H:502) → grafo → `llm.call_llm` → `_invoke` envuelto por `SG._guarded_invoke` (SG:1126) → `telemetria.registrar_llamada` (`en_curso` antes de invocar y `cerrada` al volver) |
 | Validar jueces (prerrequisito, §8.6) | `VJ:651 main` | `validar_circuito` → `evaluar_item` → `jueces.pasada1` con runners envueltos por `telemetria` → escribe R9 crudo |
 | Juzgar | `execution/banco04_juzgar.py main` (nuevo), subcomandos `registrar-cadena` y `juzgar` | `registros.cargar_corridas(dir)` → `ceguera.preparar_candidato` (llave = `custodia.semilla_hmac()`) → `jueces.pasada1`, `pasada2`, `votar_cobertura`, `adjudicar_negativas_falsas`; estabilidad con el 10 % y Codex en la pasada 2 con el 15 %, ambos con `seleccionar_con_semilla` → `registros.escribir_juicio` (R5) |
-| Decidir | `execution/banco04_decidir.py main` (nuevo), subcomandos `previa` y `veredicto` | `puerta.decidir(...)` (nuevo, `backend/mia/eval/banco04/puerta.py`) → `registros` (lectura estricta) → `reproduccion` (runners reproducidos) → internos de `M` → `VEREDICTO.json` |
+| Decidir | `execution/banco04_decidir.py main` (nuevo), subcomandos `previa`, `veredicto` (Bloque 7) y `linea-base` (Bloque 0, §3.5) | `puerta.decidir(...)` (nuevo, `backend/mia/eval/banco04/puerta.py`) → `registros` (lectura estricta) → `reproduccion` (runners reproducidos) → internos de `M` → `VEREDICTO.json` |
 
 **Módulos nuevos:**
 
-- `banco04/telemetria.py`: regla única de uso, ledger por llamada, contexto y control previo.
+- `banco04/telemetria.py`: regla única de uso, ledger por llamada, contexto, control previo y los
+  envoltorios de intercepción de §4.3.
+- `banco04/telemetria_acreditada.json`: registro versionado de las acreditaciones de telemetría
+  (§4.4).
 - `banco04/registros.py`: esquemas, escritura atómica y lectura estricta de crudos, con cifrado de
   custodia.
 - `banco04/reproduccion.py`: runners reproducidos.
@@ -136,6 +158,13 @@ soul_sha256, cli_version, politica, protocolo_version, protocolo_hash, runner_sh
 | `muestra_restringida` | list[str] \| null | `--casos` (esqueleto); `null` = muestra del protocolo |
 | `solo_piloto` | bool | esqueleto |
 | `atribucion_preregistrada` | `{nodo: [metricas]}` \| null | solo en la versión nueva y escrito **antes de producirla**: hipótesis del plan, Bloque 4. Ancla el C25 antes de ver el consumo por nodo (Q10) |
+| `codex_cli_version` | str \| null | `codex --version`, sin ventana (K8, comparabilidad) |
+| `cadenas_politica` | `{"<tarea>|<escalada>": [alias]}` | `llm.resolve_fallback_chain(tarea, None, escalada)` (llm.py:717; la escalada entra en :847) para cada tarea del grafo y cada escalada válida (`standard`, `exceptional`), bajo la política fija y con la configuración aislada ya aplicada; se registra antes de la primera corrida (K5) |
+| `puede_codex` | bool | `true` si algún alias de `cadenas_politica` empieza por `cli-codex` (K5) |
+| `estimacion_piloto_codex` | `{pequeno, fuga, voluminoso: int}` \| null | obligatoria si `puede_codex`; sin ella el runner rechaza (exit 3). Lleva `fuente: {registro, sha256}`, que apunta a un R4 medido de 5C, el «registro de estimación» de §2 R13 (K5) |
+| `sha_producto` | str | SHA del producto medido: `7b9aaa0` para 0.3.3 y el HEAD de 0.4 (§9.6) |
+| `rutas_modificadas_respecto_del_producto` | list[str] | `git diff --name-only <sha_producto> HEAD`. Todas tienen que estar bajo `backend/mia/eval/` o `execution/` (parche del banco, literal de P:1023-1025; K8) |
+| `telemetria_acreditada_sha256` | str | sha256 de `telemetria_acreditada.json` vigente al producir (§4.4) |
 
 ### R2 · `<base>/<ver>/<caso>/rep-NN.json` (`base` = `S`, o `<custodia>/salidas` si el caso está custodiado; I10)
 
@@ -171,6 +200,7 @@ B14).
 | `version`, `manifiesto_sha256` | str | I10 |
 | `cadena_sha256` | str \| null | obligatorio en las fases `juicio_*` |
 | `tramo_id`, `pid`, `seq` | str, int, int | proceso y orden dentro de él |
+| `bloque` | int (0 \| 7) | el de R1 de la versión en producción y aprobaciones, y el de R8 en juicio; en validación, el `--bloque` de VJ. El presupuesto del circuito de un bloque solo suma sus filas |
 | `estado` | `en_curso` \| `cerrada` | se escribe `en_curso` **antes** de invocar |
 | `t_inicio_utc`, `t_fin_utc` | str ISO-8601 UTC | `t_fin` es `null` mientras siga en curso |
 | `fase` | enum | `produccion`, `aprobacion_turno`, `aprobacion_aprobar`, `aprobacion_trabajos`, `embeddings_siembra`, `juicio_p1_opus`, `juicio_p1_codex`, `juicio_tercer_voto`, `juicio_negativa_falsa`, `juicio_p2_opus`, `juicio_p2_codex`, `juicio_voto_cobertura_opus`, `juicio_voto_cobertura_codex`, `juicio_estabilidad`, `validacion`, `sin_contexto` |
@@ -179,10 +209,13 @@ B14).
 | `alias` | str | el alias de la cadena, tal como lo recibe `_guarded_invoke` |
 | `familia` | `claude_cli` \| `codex_cli` \| `api` \| `local` \| `embeddings` | decide la regla de §4 y el proveedor de cuota |
 | `proveedor_cuota` | `claude` \| `codex` \| `ninguno` | `codex` si el alias empieza por `cli-codex`; `ninguno` para embeddings; el resto, `claude` (igual que `GuardBanco.tokens_llm`, R:1615-1617) |
-| `modelo_efectivo`, `modelos_cli` | str \| null, list \| null | de `resp.mia_model_hint` / `resp.mia_modelos_cli` (§4.3) |
+| `modelo_efectivo`, `modelos_cli` | str \| null, list \| null | `resp.mia_model_hint` (ya existe en el producto) y las claves de `modelUsage` capturadas por la ranura (§4.3) |
 | `esfuerzo`, `esfuerzo_fuente` | str \| null, `respuesta` \| `politica` \| null | en un fallo no hay `resp`: se deriva de `llm._cli_effort(alias, task, escalada)` y la fuente es `politica` |
-| `tarea`, `escalada`, `nodo` | str \| null | `nodo` = `metrics.usage.current_node()` (§4.3) |
-| `uso_crudo` | dict \| null | lo que entregó el proveedor, sin tocarlo (§4.3) |
+| `tarea`, `escalada`, `nodo` | str \| null | `nodo` = `metrics.usage._node.get()` (`usage.py:71`), leído desde `eval/` sin cambiar el producto (§4.2) |
+| `uso_crudo` | dict \| null | lo que entregó el proveedor, sin tocarlo y capturado por el envoltorio de §4.3. Claude CLI: el dict `usage` del JSON. Codex: `{"eventos": [cada dict usage, en orden]}` |
+| `cli_version` | str \| null | Claude: `R1.cli_version`; Codex: el `cli_version` de sus eventos, o `R1.codex_cli_version` |
+| `acreditacion_aplicada` | str \| null | id de la entrada de `telemetria_acreditada.json` usada por la regla (§4.4) |
+| `origen` | `"captura"` | lo escriben solo `telemetria` dentro de `_guarded_invoke` o de los runners de juez; ningún doble lo escribe (§6.1) |
 | `uso_validado` | dict | `{consumo_conocido: bool, entrada, salida, cache_lectura, cache_escritura, total: int\|null, componentes_ausentes: [str], regla_version}` (§4.1) |
 | `exito` | bool | |
 | `tipo_error`, `proveedor_no_alcanzado` | str \| null, bool \| null | solo la clase de la excepción, nunca su texto (I8) |
@@ -192,9 +225,18 @@ B14).
 | `eventos_desconocidos_vistos` | list[str] | ids de filas desconocidas que el control previo vio (§5) |
 | `prompt_sha256` | str \| null | obligatorio en las fases `juicio_*` y `validacion` |
 
-**Una fila es «desconocida»** si `estado == "en_curso"` y el proceso que la abrió ya no está (huérfana),
-o si `uso_validado.consumo_conocido == false`. Una fila desconocida cuenta con su `cota` si la hay. Sin
-`cota`, el techo queda no certificable.
+**Clases de consumo de una fila (K7):**
+
+- **conocido:** `uso_validado.consumo_conocido == true`.
+- **desconocido con cota:** `consumo_conocido == false` y `cota.tokens_cota_superior` es un entero.
+  - Sale de `max_tokens` aplicado en las familias `api` y `local` (SG:1209-1243), o de una cota CLI
+    acreditada según C18 (`spend_guard.cota_salida_cli` distinta de `None`).
+  - Cuenta con su cota y el techo sigue siendo certificable (P:464-468).
+  - **No detiene nada.**
+- **desconocido sin cota:** `consumo_conocido == false` y `cota.tokens_cota_superior` es `null`, o
+  bien una fila huérfana (`estado == "en_curso"` y el proceso que la abrió ya no está).
+  - Deja el techo no certificable.
+  - Es el **único** evento que detiene la ejecución y exige reanudación (§5).
 
 ### R5 · Juicio por corrida (I10 y cadena)
 
@@ -209,10 +251,23 @@ Contenido crudo:
 | `schema` | `"banco04-juicio/v1"` |
 | `version`, `caso_id`, `rep`, `manifiesto_sha256`, `cadena_sha256` | identidad |
 | `hash_evaluador` | str (combinado, J:1948-1962) |
-| `rep_sha256` | sha256 canónico del R2 juzgado |
+| `rep_sha256` | sha256 canónico de la **parte cruda** del R2 juzgado. Excluye los campos derivados: `intentos[].consumo_resumen` y, de `resultado`, `score`, `false_block`, `jurisdiction_leak`, `abstention`, `provenance`, `recall_enterrado`, `substantive`, `draft_preview` y `diagnosis_preview` (H:698-776). Así editar un derivado no rompe la identidad (familia inversa) |
 | `texto_sha256` | `{diagnostico, borrador}` (texto completo, antes del cegado) |
 | `candidate_id`, `paquete_sha256` | el paquete no se guarda: la puerta lo reconstruye (§3.2, paso 4) |
-| `llamadas[]` | en orden: `{ledger_id, etapa, objetivo, intento (1\|2), prompt_sha256, esquema, respuesta: {salida (JSON literal del modelo), crudo_sha256, error, uso, modelo_reportado, cli_version, latencia_ms}}` |
+| `llamadas[]` | en orden: `{ledger_id, etapa, objetivo, intento (1\|2), prompt_sha256, esquema, respuesta: {salida (JSON literal del modelo), crudo_sha256, error, uso_crudo, eventos, modelo_reportado, cli_version, latencia_ms}}` |
+
+**Telemetría cruda de los jueces (K4).**
+
+- **Codex:** `respuesta.eventos` = **todas** las líneas JSONL de `cp.stdout`, en orden, sin filtrar.
+  - Hoy `CodexJuezRunner._llamar` (J:1689) solo guarda lo que devuelve `_parse_events`
+    (`codex_cli_adapter.py:292-329`), que se queda con el último valor de cada componente
+    (:318-328).
+  - Desde v2, el runner guarda `cp.stdout` íntegro y su sha256, y `uso_crudo =
+    {"eventos": [dicts usage]}`. `_parse_events` deja de ser fuente de consumo.
+  - En los casos custodiados `eventos` va dentro de `.enc`, porque los eventos pueden reproducir
+    texto del caso. La fila R4 solo lleva los dicts `usage`, que no contienen texto.
+- **Claude:** `uso_crudo` = `{usage, stop_reason, modelUsage, num_turns}` tomados del JSON del CLI
+  (J:1604-1609).
 
 **Qué contiene en crudo cada elemento que pide el encargo:**
 
@@ -226,6 +281,28 @@ Contenido crudo:
 - **Consumo de los jueces:** las filas R4 enlazadas por `ledger_id`, con caso, rep, `candidate_id` y
   pasada (cierra B14).
 
+**Campo nuevo de la pasada 2: `negativa_correcta` (K1; aclaración C14, sin v1.4).** El esquema
+`banco04-juez-cobertura/v1.3` (J:165-189) añade:
+
+`negativa_correcta: {aplica: bool, respuesta: "si"|"no"|null, segmentos: [ids], motivo: str}`
+
+- **Semántica (§5.4.1).** En un caso de riesgo, un turno que no llega a diagnóstico, cierre y
+  borrador «se cumple» si lo que sí muestra es la negativa que la clave fija como conducta correcta
+  (los `puntos_materiales` de conducta: declarar el ordenamiento no configurado, no atribuir al
+  despacho lo que no llegó, no dar por sostenida la cita que no sostiene).
+- **Validación** (`validar_pasada2`, J:1192, con el parámetro nuevo `es_riesgo`):
+  - `aplica` tiene que ser igual a `es_riesgo`, que el juzgador pasa como
+    `PR.estrato_de(caso) == A-riesgo`;
+  - si `aplica` es falso: `respuesta` es `null`, `segmentos` está vacío;
+  - si la respuesta es `"si"`: `segmentos` no vacío y **todos** los `puntos_materiales` de la clave
+    con `resolucion == "resuelto"`. En los casos de riesgo los puntos son la conducta correcta
+    (DOC §2.3). Una contradicción se rechaza como error estructural (reintento y,
+    si persiste, «no evaluada»).
+- **Uso en la puerta.** `negativa_correcta = (respuesta == "si")`. Se recalcula la coherencia con
+  los puntos y, si hay contradicción, el resultado es `no_certificable`. La puerta añade además
+  `afirmaciones_sin_respaldo == 0` en esa corrida: una negativa con un defecto confirmado no es
+  correcta.
+
 **Derivado opcional**, solo para auditoría y que la puerta **no abre**:
 `rep-NN.juicio.derivado.json` con decisiones, recuento, `pares_kappa`, hechos y puntos. Una prueba
 de §6 exige que mutarlo no cambie el veredicto.
@@ -236,10 +313,18 @@ de §6 exige que mutarlo no cambie el veredicto.
   `etapa` (`produccion` | `aprobaciones` | `juicio` | `validacion`) y `eventos` (ids de R4 que la
   dispararon).
 - **`S/<ver>/reanudaciones/<NNN>.json`** (nuevo, exclusivo; sustituye a `SUSPENDIDO.reanudado.json`,
-  R:1056 y R:1458): `{schema "banco04-reanudacion/v1", n, referencia_aprobacion_pipe: str no vacía,
-  registrada_utc, alcance_etapas: [..], cubre: {suspension_sha256: str|null,
-  eventos_desconocidos: [ids R4]}, eventos_sha256 (sha256 canónico de las filas cubiertas tal como
-  estaban al registrar), manifiesto_sha256}`.
+  R:1056 y R:1458): `{schema "banco04-reanudacion/v2", n, referencia_aprobacion_pipe: str no vacía,
+  registrada_utc, etapas: [produccion|aprobaciones|juicio|validacion], versiones: [etiquetas],
+  cubre: {suspensiones: [{ruta_relativa, sha256}], eventos_desconocidos: [ids R4]},
+  eventos_sha256 (sha256 canónico de las filas cubiertas tal como estaban al registrar),
+  manifiesto_sha256}`.
+- **Reglas de validez de una reanudación** (K7):
+  - `eventos_desconocidos` ⊆ filas **sin cota** que existían al registrarla. Las filas con cota
+    nunca se «cubren», porque no detienen nada.
+  - Toda suspensión citada existe, está activa y es de una de sus `etapas` y `versiones`.
+  - `etapas` y `versiones` no pueden estar vacías.
+  - Una reanudación **solo autoriza a continuar**: nunca cambia `consumo_conocido`, ni la cota, ni
+    la clase de ninguna fila, ni la certificabilidad del techo.
 
 ### R7 · `EXTENSION.json` (exclusivo; ligado a la cadena)
 
@@ -266,6 +351,11 @@ Solo identidades y pre-registros; ninguna conclusión:
 - `semilla_juicio_huella`: HMAC(semilla_hmac, "huella"); no revela la semilla.
 - `atribucion_preregistrada_sha256`: sha256 del campo homónimo de R1 de la versión nueva. El mapa
   vive en R1 porque se escribe antes de producir (C25, Q10).
+- `telemetria_acreditada_sha256`: sha256 del registro de §4.4 con que se juzga. Tiene que coincidir
+  con el de cada R1, salvo que la diferencia esté declarada en `telemetria_acreditada.json` como una
+  entrada añadida, nunca editada.
+- `bloque_0_linea_base: bool`. Con `true`, `versiones` tiene una sola entrada `rol: base` y solo vale
+  para `linea-base` (§3.5).
 
 ### R9 · Validación reservada cruda (cifrada; ligada al hash del evaluador)
 
@@ -280,6 +370,33 @@ Solo identidades y pre-registros; ninguna conclusión:
   - la llave de ceguera deja de ser `os.urandom(32)` (VJ:699) y pasa a ser HMAC(semilla_hmac,
     "validacion"), para que la puerta reconstruya los paquetes;
   - la escritura deja de ser `write_text` no atómico (VJ:706).
+- **Reservado nuevo y retirada del actual (K3, decisión del director).**
+  - El reservado custodiado **actual se retira** y no se usa nunca. VJ y la puerta rechazan toda
+    `identidad_reservado` incluida en `IDENTIDADES_RESERVADO_RETIRADAS`, una constante nueva de VJ
+    que entra en la huella del evaluador.
+  - El director registra el valor ejecutando `identidad_sellada_reservado` (VJ:414) sobre el
+    manifiesto de custodia vigente. Este contrato no lo calcula: no se leyó la custodia.
+  - Un autor independiente escribe un **reservado nuevo** sobre salidas reales de la tanda piloto de
+    0.3.3 (DOC §8.6; paso 6 del HANDOFF), con identidad nueva y acreditación v1.3 nueva.
+  - Por eso el orden del Bloque 0 es el de §1.1: piloto de 0.3.3 → reservado nuevo → VJ → resto.
+- **Raíz del registro de uso (K3).**
+  - `raiz_registro_uso` (VJ:427-446) deja de leer `LOCALAPPDATA` y `MIA_BANCO04_CUSTODIA` del
+    entorno. Resuelve la raíz con `SHGetKnownFolderPath(FOLDERID_LocalAppData)` (shell32, vía
+    ctypes) del usuario del proceso. El entorno se ignora para la raíz.
+  - La marca secundaria en la custodia (VJ:455) se conserva.
+  - Prueba de reubicación conjunta: con `LOCALAPPDATA` y `MIA_BANCO04_CUSTODIA` apuntando **a la
+    vez** a carpetas temporales nuevas, el segundo uso del mismo reservado se rechaza.
+  - La prueba sustituye la API solo mediante un parámetro de Python, nunca por entorno.
+  - **Riesgo residual declarado:** un operador con control local del perfil puede borrar el
+    registro, o redirigir la carpeta conocida desde el registro de Windows. La barrera es
+    organizativa, igual que la de la custodia DPAPI (DOC §2.3).
+- **Reanudación de la validación (K7).**
+  - `VJ main --reanudar-aprobado-por-pipe <REF>` escribe una reanudación R6 con
+    `etapas: [validacion]` en `<--salida-banco>/<--version>/reanudaciones/`.
+  - R9 se escribe **por ítem**, de forma idempotente. La reanudación continúa en el primer ítem sin
+    juicio completo, con la misma identidad del reservado, el mismo `hash_evaluador` y el mismo
+    registro de uso.
+  - Reanudar no es un segundo uso del reservado. Con otro `hash_evaluador`, VJ se niega a seguir.
 
 ### R10 · Aprobaciones (I10)
 
@@ -298,6 +415,19 @@ Sin cambios de esquema (R:1105-1119, R:1142-1145). La puerta **los recalcula**:
 - `elegir_aprobaciones` (R:568-578) con las repeticiones completadas y `R1.semilla`.
 
 Exige igualdad con lo escrito.
+
+### R13 · Registro de estimación de Codex en la piloto (K5; I10 de la versión que lo usa)
+
+- **Ubicación:** `S/<ver>/estimacion_codex.json`, exclusivo, escrito **antes** de la primera corrida
+  de una versión con `puede_codex`.
+- **Contenido:** `{schema "banco04-estimacion-codex/v1", por_clase: {pequeno, fuga, voluminoso: int},
+  fuente: {descripcion, filas_R4: [{ruta, sha256}]}, regla: "max de tokens Codex por corrida
+  medidos en la fuente × 1,25"}`.
+- **La fuente** son filas R4 reales de Codex de producción, de una medición previa de 5C (por
+  ejemplo, del desarrollo del Bloque 5). La puerta recalcula `por_clase` desde esas filas con la
+  regla y exige igualdad.
+- **Sin fuente medida no hay estimación,** y una versión con `puede_codex` no se produce: el runner
+  rechaza (exit 3).
 
 ---
 
@@ -329,7 +459,8 @@ Exige igualdad con lo escrito.
 1. **Identidad:**
    - lee R8;
    - lee R1 de cada directorio y exige que su sha256 canónico sea igual a `versiones[].manifiesto_sha256`;
-   - exige `arbol_limpio` y `dobles` falsos (salvo `_prueba`);
+   - exige `arbol_limpio == true` y `dobles == false` (salvo `_prueba`, §3.1) (K12);
+   - exige la **comparabilidad** de §3.3 A (K8);
    - exige `protocolo_version` y `protocolo_hash` iguales a los de `PR`;
    - `jueces.verificar_congelado(R8.hash_evaluador)` (J:1969).
 2. **Custodia:** `custodia.abrir(PROPOSITO_MEDICION)` sobre el argumento `custodia`; el sha256 del
@@ -388,15 +519,18 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 
 | Condición | Se recalcula desde | `no_certificable` si |
 |---|---|---|
-| Identidad de cada versión | R1 frente a R8 | falta R1; el sha256 difiere; árbol sucio; `dobles`; protocolo distinto |
+| Identidad de cada versión | R1 frente a R8 | falta R1; el sha256 difiere; `arbol_limpio != true`; `dobles != false`; protocolo distinto |
+| **Comparabilidad entre versiones** (P:1023-1030, K8) | R1 de las dos versiones y R4 de las dos versiones | `cli_version` distinto entre base y nueva; `codex_cli_version` distinto si las dos tienen filas Codex; el **modelo principal** de un alias presente en las dos versiones es distinto entre ellas. El modelo principal es `modelo_efectivo`, o la clave de `modelUsage` con más tokens de salida en esa fila; se ignoran los modelos auxiliares y los alias que solo aparecen en una versión. El motivo es `base_no_comparable_reproducir`: §9.6 obliga a **volver a producir la 0.3.3** con el CLI y el modelo de la 0.4. **El R1 de la base puede ser del Bloque 0** (`bloque: 0`), con `R8.bloque = 7`: las salidas de 0.3.3 del Bloque 0 se rejuzgan en el Bloque 7 y solo se reproducen si cambió el CLI o el modelo (P:1026-1028) |
+| Perímetro del parche del banco (K8) | R1.`rutas_modificadas_respecto_del_producto` de las dos versiones | en la base, alguna ruta fuera de `backend/mia/eval/` o `execution/`, literal de P:1023-1025; `docs/` **no** se admite. En la nueva, `sha_producto` = HEAD, así que la lista tiene que estar vacía; si no lo está, `no_certificable` |
 | Evaluador congelado | `hash_evaluador()` actual = R8 = cada R5 = R9 | alguno difiere |
 | Muestra | ids de `PR` + `custodia.casos()` | no son 17, o hay ids que no coinciden |
 | Repeticiones | R2 presentes por (versión, caso) | el conjunto de reps no es exactamente {1..R} (+{R+1..R+5} si R7), hay duplicados, falta un R2 (incluido `limite_de_uso`, que no escribe R2, R:1041) |
-| Texto juzgable | R2 `estado`, `diagnosis_full` y `draft_full` (H:738-740) | corrida `completo` sin texto completo (§4.1); `fallo_producto` → Q1 |
+| Texto juzgable | R2 `estado`, `diagnosis_full` y `draft_full` (H:738-740) | toda repetición del inventario sin texto completo: `completo` sin texto, **y también `fallo_producto`** (§4.1, K6). Las dos reglas rigen **a la vez**: el `fallo_producto` además cuenta como turno no completado en `turnos_completados` (§9.5), que se recalcula y se publica; el veredicto es `no_certificable` por precedencia (C15) |
 | Caso y jurisdicción | R2 `caso_digest`, `jurisdicciones_fijadas` | el digest difiere del caso cargado; las jurisdicciones difieren de `custodia.jurisdicciones()` (custodiados) o de `[]` (visibles) |
 | Ledger de la corrida | R2 `intentos[].llamadas` frente a R4 | falta un id; hay una fila con ese contexto que no está en la lista; contexto distinto; fila huérfana sin cerrar |
 | Juicio completo | reproducción | falta una llamada que la reproducción pide; sobra una que no pide; el `prompt_sha256` no coincide; queda una salida no evaluada (estructural tras el reintento, J:1764); falta el tercer voto (`no_evaluada_tercer_voto`, J:1863) |
 | R11 y R12 | se recalculan con `decidir_r` y `elegir_aprobaciones` | ausentes o distintos; consumo de la piloto con alguna fila desconocida sin cota |
+| Codex en la piloto (K5) | R1.`puede_codex` y `cadenas_politica`, R13 y R4 | `puede_codex` sin R13, o un R13 que no se reproduce desde su fuente; filas R4 Codex de producción con `puede_codex == false`; una fila R4 de producción cuyo `alias` no está en `cadenas_politica["<tarea>|<escalada>"]` de su `tarea` y su `escalada`, lo que prueba que las cadenas registradas no eran las reales |
 
 **B · Umbrales absolutos (§6.1).** Por corrida, la puerta construye la entrada de `metricas_corrida`
 (M:266) solo desde la reproducción y desde R2, R4 y la custodia. `evaluada` deja de ser un parámetro
@@ -405,15 +539,15 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 | Fila | Se recalcula desde | `no_certificable` si | Efecto si falla |
 |---|---|---|---|
 | `afirmaciones_sin_respaldo` = 0 | recuento de la pasada 1 + `confirmadas` de las negativas falsas, sumado sobre todas las corridas completadas de todos los estratos | la reproducción está incompleta | reprueba |
-| `fuga_jurisdiccion` = 0 | por corrida: `senal_fuga` (M:248) con el texto completo de R2 y `jurisdicciones_fijadas`, **o** una unidad confirmada en la que algún voto de defecto lleve el subtipo `fuga` (Q16) | falta el texto o faltan las jurisdicciones | reprueba |
+| `fuga_jurisdiccion` = 0 | por corrida: `senal_fuga` (M:248) con el texto completo de R2 y `jurisdicciones_fijadas`, usando la copia vendorizada con la **regla de vinculación de §3.6** (P:479-482, C26), **o** una unidad confirmada en la que algún voto de defecto lleve el subtipo `fuga` (Q16). Es la regla congelada (señal **o** jueces); no hay adjudicación entre la señal y el juez (K2) | falta el texto o faltan las jurisdicciones | reprueba |
 | `definitivo_con_lectura_insuficiente` = 0 | celda de §7.2 (M:280): alcance C8 + `estado_cobertura` (M:150) con decisivos de la clave, `cubierto` final y `disponible` + conducta de la pasada 2 | falta la pasada 2 | reprueba |
 | `discordancias_sin_resolver` = 0 | `len(recuento.discordancias_sin_resolver)` (es una lista, J:1076; hoy M:341 hace `int()` sobre ella) + `discordancias` de las negativas falsas + cobertura con resultado `discordancia_sin_resolver` | si faltan los votos crudos, lo cubre el bloque A («Juicio completo»); cualquier discordancia > 0 | no certificable |
 | `kappa_reservado` ≥ 0,6 | `evaluar_kappa(pares, conjunto="reservado")` sobre los pares de la reproducción de R9 | falta R9; kappa < 0,6 | no certificable |
-| `kappa_salidas_reales` | `evaluar_kappa(..., "real")` sobre `pares_kappa` reproducidos de las corridas de la versión nueva (Q6) | se exige y queda < 0,6 | no certificable. Indefinido o inestable: se publica y no cuenta como ≥ 0,6 (§8.5) |
+| `kappa_salidas_reales` | `evaluar_kappa(..., "real")` sobre `pares_kappa` reproducidos de las corridas juzgadas de **las dos versiones** (§8.4, Q6) | se exige y queda < 0,6 | no certificable. Indefinido o inestable: se publica y no cuenta como ≥ 0,6 (§8.5) |
 | `circuito_sobre_mutaciones_reservadas` | `evaluar_exigencias` (VJ:277) sobre la reproducción de R9 + acreditación de R9 + consumo de las filas R4 `validacion` | falta R9; `circuito_utilizable` falso | no certificable |
 | `evaluacion_completa_dos_jueces` | resultado del bloque A, «Juicio completo», en las dos versiones | cualquier corrida del inventario sin juicio completo de los dos jueces (regla del bloque A) | no certificable |
 | Cobertura de decisivos, lectura completa (media ≥ 0,90; ningún caso < 0,80) | `cubierto` final por hecho decisivo de la clave (pasada 2 y cobertura adjudicada), media sobre R por caso y media de casos por estrato | la clave del caso no se puede leer | reprueba |
-| `aprobacion_sin_edicion_proxy` ≥ 0,60 | M:316-327: `completada` (R2 `estado`), defectos (fila 1), omisiones (puntos de la pasada 2), celda, `aprobaria_sin_editar`; `negativa_correcta` → Q8 | falta la pasada 2 | reprueba |
+| `aprobacion_sin_edicion_proxy` ≥ 0,60 | M:316-327: `completada` (R2 `estado`), defectos (fila 1), omisiones (puntos de la pasada 2), celda, `aprobaria_sin_editar`; `negativa_correcta` de la pasada 2 (R5, campo nuevo, con su validación) | falta la pasada 2; `negativa_correcta` contradice los puntos o los defectos de la corrida | reprueba |
 | Cobertura de decisivos en lo leído (voluminosos ≥ 0,90) y suelo (≥ 0,34) | `disponible` (`envio_desde_material` sobre `material_turno.entraron_tramos`, M:78) + `cubierto` | si falta la pasada 2, lo cubre el bloque A. Sin medición del envío **no** se da `no_certificable`: nada está disponible (§7.2, M:124-125). La fila «en lo leído» no aplica si ningún decisivo del estrato está disponible (M:525), y se publica cuántas corridas no tienen medición | reprueba |
 | Tasa de omisión en lo leído ≤ 0,20; utilidad ≥ 0,80 | puntos y resoluciones de la pasada 2 y su disponibilidad (M:282-307) | si falta la pasada 2, lo cubre el bloque A. La utilidad no aplica sin corridas limitadas (M:537). Un punto de la clave sin resolución en la pasada 2 lo rechaza el validador (J:1231), así que lo cubre el bloque A | reprueba |
 | Incoherencia de la matriz (C4 con abstención) | `celda.aplica` (M:203, M:223) | alguna corrida cae en ella (decisión de este contrato: datos contradictorios) | no certificable |
@@ -427,6 +561,17 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 | Decisivos estables | por (caso, hecho decisivo de la clave): fracción de corridas de la base (reps 1..R, Q7) con `cubierto` final; ídem en la nueva; luego `decisivos_estables_perdidos` (M:708). El inventario de hechos lo da la clave, nunca la entrada: un `{}` es imposible salvo un caso sin decisivos en la clave, que no aplica | falta la pasada 2 de alguna corrida | reprueba |
 | Extensión | §3.4 | ver §3.4 | — |
 
+**Entradas por corrida de las métricas comparativas sin productor en la v1 (K1).** Cada una se
+calcula en la puerta, desde `puerta.decidir` → `registros.cargar_corrida` → la función indicada →
+la entrada de `metricas_corrida` (M:266).
+
+| Métrica (`metricas_corrida`) | Observación cruda (R2) | Función de la puerta | Ausencia o contradicción |
+|---|---|---|---|
+| `falsos_bloqueos` (M:365) | `resultado.verification` (informe del muro, H:709) y `resultado.material_turno.research_sources` (H:880) | `metricas.falsos_bloqueos_corrida(informe, fuentes)` = copia congelada de `harness.false_block_signal` (H:85-128) y de `verification.source_index`, `_tokenize_index` y `_backing_source_tokenized` (`agents/verification.py:286`, `:300`, `:307`) en `evaluador_congelado.py` (patrón C11, origen 7b9aaa0 con su sha256). Valor = `falsos_bloqueos > 0` | H:709 escribe `md.get("verification") or {}`, así que la clave siempre existe. Reglas:<br>(a) un informe no vacío sin `detalle` en forma de lista → `no_certificable`;<br>(b) `{}` con `reached_draft == false` → 0: sin borrador no hay marcas que juzgar;<br>(c) `{}` con `reached_draft == true` → `no_certificable` (`informe_del_muro_ausente`): el muro tenía que correr.<br>Falta `research_sources`, o no es lista → `no_certificable`. La copia **no** trata un no-dict como `{}` (H:109). `resultado.false_block` (H:743) es derivado y no se lee. **Por verificar antes de implementar:** que todas las rutas que llegan al borrador en `agents/graph.py:2284-2458` escriban `md["verification"]`; `annotate_draft` devuelve `detalle` también sin citas (`agents/verification.py:1332`) |
+| `cambio_de_motor` (M:366) | `resultado.model_fallbacks` (H:733), lista de `{task, desde, hacia, motivo}` (llm.py:478-484) | `metricas.cambio_de_motor_corrida(fallbacks, filas_R4)` = `len(fallbacks) > 0`. Cotejo: cada `hacia` aparece como `alias` de alguna fila R4 del intento final de la corrida | falta la clave; no es una lista de dicts con esas cuatro claves de texto; un `hacia` sin fila R4 |
+| `turnos_completados` (M:364) | R2 `estado`, más `negativa_correcta` en los casos de riesgo | sin cambio de fórmula (M:316-317) | el `fallo_producto` cuenta como no completado **y** deja la corrida no certificable (bloque A) |
+| `abstencion_injustificada` (M:361) | celda de §7.2 | ya definida (bloque B) | ya definida |
+
 **D · Techo de cuota (§6.3) y C25.** Todo sale de R4, filtrado por versión y caso.
 
 - **`corridas[rep]`** = filas `fase=produccion` de (caso, rep), con todos sus intentos.
@@ -434,14 +579,16 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
     `cota.tokens_cota_superior` de las desconocidas.
   - `tokens_codex`: ídem con `codex`.
   - `inferencias`: Q2. Por defecto, el número de filas `claude` de la corrida.
-- **`aprobacion`** = filas `aprobacion_aprobar` y `aprobacion_trabajos` del caso (Q3 para
-  `aprobacion_turno`).
+- **`aprobacion`** = filas `aprobacion_aprobar` y `aprobacion_trabajos` del caso. Las filas
+  `aprobacion_turno` (el turno reproducido) **no** entran en el consumo decisorio: rige «R turnos más
+  aprobación» (P:453-455, P:587; §8.4, Q3 revocada). Sí cuentan en el presupuesto del circuito
+  (§3.4 del protocolo) a través de R4, en el bloque E.
 - Después se llama a `techo_cuota` (M:772), adaptado a este esquema (§7). Su `R_por_caso` se coteja
   con el inventario.
 
 | Condición | `no_certificable` si | Efecto |
 |---|---|---|
-| Total agregado, ponderado por caso, extremo por caso y extremo entre repeticiones (Claude 1,25×; Codex 0,50×) e inferencias | una fila desconocida sin cota; una fila de producción o aprobación con `fase=sin_contexto` o `caso_id` nulo dentro de un tramo del banco (cuenta en el total, pero impide el cálculo por caso); falta la aprobación de un caso | `no_cumple` → reprueba |
+| Total agregado, ponderado por caso, extremo por caso y extremo entre repeticiones (Claude 1,25×; Codex 0,50×) e inferencias | una fila desconocida sin cota (las que tienen cota entran con ella, P:464-468); una fila de producción o aprobación con `fase=sin_contexto` o `caso_id` nulo dentro de un tramo del banco (cuenta en el total, pero impide el cálculo por caso); falta la aprobación de un caso | `no_cumple` → reprueba |
 | C25: atribución de subidas > 10 % | `usage_by_node` por ámbito = las **mismas filas** de R4 agrupadas por `nodo` (nulo → `(sin nodo)`). La igualdad con el consumo medido (M:1027-1029) se cumple por construcción. El nodo atribuido es el de mayor aumento. La subida es atribuible si ese nodo está en `atribucion_preregistrada` de R1 de la versión nueva (con su sha256 igual al de R8) **y** alguna métrica suya tiene veredicto `mejora` (recalculado) en una unidad del mismo grupo (a)/(c) | si el techo no es certificable, lo cubre la fila anterior; si el sha256 del mapa no coincide con R8. Un mapa ausente no da `no_certificable`: la subida queda no atribuible | no atribuible → reprueba |
 
 **E · Alcance C8, fuga §5.7, kappa y estabilidad, y circuito §3.4.**
@@ -449,11 +596,11 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 | Condición | Se recalcula desde | `no_certificable` si |
 |---|---|---|
 | Alcance C8 | `alcance_desde_fragmentos` (M:1306) con los fragmentos por pieza de la definición del caso y `envio_desde_material(material_turno)`. Cuenta como medido **solo** si `material_turno.fragmentos_en_prompt.medido` y `.completo` son verdaderos (H:858-861). Así se cierra la medición parcial de B3 | nunca por esto. Sin medición el alcance es insuficiente (§7.2), y se publica cuántas corridas no la tienen y en cuántas difiere de `alcance_lectura` |
-| Fuga §5.7 | fila 2 del bloque B. Se declara el defecto residual de la señal (R3-N2, área C) → Q4 | falta el texto o las jurisdicciones |
-| Estabilidad (§8.6) | conjunto = `seleccionar_con_semilla(candidatos de la versión, 10 %, semilla_hmac)`; `acuerdo_estabilidad` (J:921) sobre la reproducción de las dos pasadas 1 de Opus | falta la segunda pasada de un elegido, o existe una de un no elegido (Q15) |
-| Codex en la pasada 2, 15 % (§8.2) | ídem, con el 15 %; `acuerdo_pasada2_agregado` (J:1179), que se publica | ídem |
-| Techo del circuito (§3.4) | Σ de las filas R4 del bloque (las dos versiones y la validación) por proveedor | acumulado ≥ techo; un R6 `SUSPENDIDO.json` sin una reanudación que lo cubra |
-| Orden tras un consumo desconocido | §5.4 | una llamada de juez o de Codex de producción lanzada con un evento desconocido sin cubrir |
+| Fuga §5.7 | fila 2 del bloque B, con la regla de vinculación de §3.6. Sus pruebas obligatorias cierran R3-N2 del área C | falta el texto o las jurisdicciones |
+| Estabilidad (§8.6) | conjuntos de §3.7: población original y población de la extensión, por separado y por versión; etiqueta `estabilidad`; `acuerdo_estabilidad` (J:921) sobre la reproducción de las dos pasadas 1 de Opus | falta la segunda pasada de un elegido, o existe una de un no elegido de su población (Q15) |
+| Codex en la pasada 2, 15 % (§8.2) | ídem con el 15 % y la etiqueta `codex_p2`; `acuerdo_pasada2_agregado` (J:1179), que se publica | ídem |
+| Techo del circuito (§3.4) | Σ de **todas** las filas R4 con `bloque == R8.bloque` (las dos versiones, aprobaciones con su turno reproducido, juicio y validación) por proveedor. Las filas del Bloque 0 de una base reutilizada no cuentan en el Bloque 7, cada una con su clase de consumo | acumulado ≥ techo; un R6 `SUSPENDIDO.json` sin una reanudación válida que lo cubra |
+| Orden tras un consumo desconocido sin cota | §5.4 | una llamada de juez, de validación o de Codex de producción lanzada con un evento sin cota no autorizado para su etapa y versión |
 
 ### 3.4 Comparativa previa y extensión
 
@@ -467,9 +614,22 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 4. Si alguna es `no_concluyente`, exige R7 y que, campo a campo, sea igual a lo recalculado:
    - `metricas` (métrica, unidad y previa completa, con `diferencia_por_caso` comparada con
      tolerancia 1e-9);
-   - `casos` = unión de `casos_para_extension(previa)` (M:677) de las métricas no concluyentes,
-     con un tope de 5 (R-7, §8.2);
+   - `casos` = la selección determinista de abajo (K9; sustituye a R-7);
    - `corridas_por_caso` = 5.
+
+   **Selección de casos con orden total reproducible (K9):**
+   - Sea N el conjunto de pares (métrica, unidad) con previa `no_concluyente`.
+   - Para cada caso c de las unidades de N:
+     - d_m(c) = `sentido` × (media nueva − media base) sobre las reps 1..R_original, calculado en
+       **`Fraction` exacta** desde los valores por corrida, nunca desde los `float` de
+       `diferencia_por_caso`;
+     - contribución(c) = Σ_{(m,u)∈N, c∈u} max(0, −d_m(c)).
+   - Se toman los casos con contribución > 0.
+   - Orden: contribución descendente; a igualdad, número de métricas de N con d_m(c) < 0,
+     descendente; a igualdad, `case_id` ascendente en orden de código Unicode.
+   - Se quedan los primeros min(5, n).
+   - `casos_para_extension` (M:677) se sustituye por esta función (`metricas.casos_extension`), que
+     recibe los valores por corrida y no la comparativa.
 
    Si no coincide, `no_certificable`. Si falta R7, `no_certificable` (`no_concluyente_sin_extension`).
 5. Exige en **las dos versiones** los R2 de los reps R_original+1..R_original+5 de esos casos, con
@@ -480,6 +640,130 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 
 **Quién escribe R7.** `banco04_decidir previa`, que usa los mismos internos de la puerta. La
 selección de casos no es libre: la puerta la recalcula.
+
+### 3.5 Informe del Bloque 0: línea base de una sola versión (K11)
+
+- **Comando:** `execution/banco04_decidir.py linea-base --base <S/0.3.3> --custodia
+  <MIA_BANCO04_CUSTODIA> --cadena <MANIFIESTO_CADENA.json> --salida <INFORME_LINEA_BASE.json>`.
+- **Firma:** `puerta.medir_linea_base(*, dir_base: Path, custodia: Path, cadena: Path) -> dict`.
+  - Mismas prohibiciones y el mismo `_prueba` de §3.1.
+  - Exige `R8.bloque == 0`, `R8.bloque_0_linea_base == true` y una sola versión `rol: base`.
+- **Productor:** los mismos pasos 1–7 de §3.2 sobre una versión. No calcula comparativas (§6.2),
+  pérdidas por caso, decisivos estables, extensión ni el techo comparativo de §6.3: los cinco
+  necesitan las dos versiones.
+- **Esquema** `banco04-linea-base/v1`: `{schema, version, rotulo, modo_prueba, estado:
+  "medicion_completa" | "incompleta_no_certificable", motivos: [{codigo, detalle}], absolutos:
+  [filas de §6.1 por estrato con valor, umbral y cumple], matriz_7_2: {celda: n_corridas},
+  por_caso: {caso: {metricas de METRICAS_MEDIA (M:374), R, repeticiones}}, consumo: {por_caso:
+  {consumo_agregado_caso, consumo_max_corrida, inferencias_suma, inferencias_max, codex},
+  total_claude, total_codex, clases_de_consumo: {conocido, con_cota, sin_cota}}, circuito_bloque0:
+  {acumulado_claude, acumulado_codex, techo_claude: 18000000, techo_codex: 5000000, reserva_juicio,
+  suspendido: bool}, jueces: {kappa_real, estabilidad, acuerdo_codex_p2, circuito_reservado},
+  cotas_ilustrativas, entradas_leidas}`.
+  - **No lleva el campo `veredicto`.**
+  - Un incumplimiento de 0.3.3 se publica en la primera línea del resumen (DOC §9.7).
+- **Separación:** el consumo del informe es **descriptivo**. El techo de §6.3 solo existe en
+  `decidir`, con las dos versiones. El presupuesto del circuito del Bloque 0 (§3.4 del protocolo)
+  es una condición de completitud: si se alcanza, `incompleta_no_certificable`.
+
+### 3.6 Regla de vinculación de la negación en la señal de fuga (K2; regla congelada P:479-482 y C26)
+
+Sustituye `_clausula_de` y `_mencion_negada` en `evaluador_congelado.py:437-472`. Es determinista y
+entra en la huella del evaluador. Para cada cita que detecta `scan_citations` en el texto completo:
+
+1. **Oración:** la de `_SENTENCE_SPLIT` (`evaluador_congelado.py:419`) que contiene la cita.
+2. **Incisos:** se retira todo tramo entre dos comas consecutivas de la oración que no contenga
+   ninguna cita, y toda subordinada que empieza por `que`, `cuyo`, `el cual`, `quien` o `donde`
+   después de una coma, hasta la siguiente coma o el final de la oración, si no contiene la cita.
+   - Las posiciones de la cita se conservan.
+   - Una coma dentro de la cita no cuenta.
+3. **Proposiciones:** sobre lo que queda, se corta en `;`, en `,` y en los conectores
+   `y|e|o|pero|aunque|mientras|sino|porque|pues|ya que|dado que|puesto que|si bien|no obstante|sin
+   embargo|pese a que|a pesar de que` **solo** si el tramo que sigue hasta el corte siguiente
+   empieza por «no» o contiene un verbo conjugado según `jueces._tiene_verbo` (J:248; heurística
+   versionada C10). Un conector seguido de un sintagma nominal no corta, así que la negación
+   alcanza a los objetos coordinados.
+4. **Negación vinculada:** la cita está negada si se cumplen las tres condiciones:
+   - su proposición contiene una expresión de `_NEGATION_NEAR_CITATION`
+     (`evaluador_congelado.py:405-416`);
+   - ninguna proposición posterior de la misma oración que empiece por verbo conjugado (sujeto
+     elíptico: hereda el de la proposición de la cita) carece de negación;
+   - ningún **inciso retirado en el paso 2** que sigue a la cita, o la modifica, contiene un verbo
+     conjugado (`jueces._tiene_verbo`) sin una expresión de negación. Un inciso así predica algo
+     afirmativo de la cita y anula la negación de la proposición principal.
+
+   Un inciso sin verbo conjugado, como «por falta de fuentes» en V3, es neutro.
+   - Ejemplos: «La Ley X no consta pero es aplicable» no está negada; «La Ley X, que es aplicable,
+     no consta en el expediente» tampoco.
+5. **Fuga:** hay fuga si queda al menos una cita no negada y `jurisdicciones_fijadas == []`.
+
+**Pruebas obligatorias** (sobre `jurisdiction_leak_signal` vendorizada y hasta `metricas_corrida`;
+todas en rojo antes de implementar):
+
+| # | Texto | Exigido |
+|---|---|---|
+| V1 (R3-C-N2) | «La Ley 100 de 1993 es aplicable al caso y no consta la fecha del contrato» | fuga |
+| V2 (R3-C-N2) | «La Ley 100 de 1993, que no consta en el expediente, es aplicable al caso» | fuga |
+| V3 (R3-C-N2) | «No puedo verificar, por falta de fuentes, la Ley 100 de 1993» | sin fuga |
+| V4 (R2-C-N4) | «La Ley 100 de 1993 es aplicable al caso, aunque no consta la fecha del contrato» | fuga |
+| V5 (R2-C-N4) | «No consta que la Ley 100 de 1993 sea aplicable» | sin fuga |
+| V6 (control N-1, test_banco04_juicio.py:2320) | «la numeración Ley 4137 no corresponde a ninguna ley…» | sin fuga |
+| V7 (sujeto elíptico) | «La Ley 100 de 1993 no consta en el expediente pero es aplicable» | fuga |
+| V8 (coordinación nominal) | «No puedo verificar la Ley 100 de 1993 ni la Ley 200 de 1995» | sin fuga |
+| V9 (inciso afirmativo) | «La Ley 100 de 1993, que es aplicable al caso, no consta en el expediente» | fuga |
+
+**Residual declarado.** Es una heurística sintáctica del español. Lo que la señal no vea lo
+cuentan los jueces en la misma fila 2 (señal **o** jueces), y cada corrida publica `detalle` y
+`detalle_negadas` (`evaluador_congelado.py:474-500`). El defecto de `scoring.py` en el producto
+sigue fuera del banco.
+
+### 3.7 Poblaciones de las submuestras (K9)
+
+- **Por versión y por población** se aplica `seleccionar_con_semilla` (J:1919), con dos cambios:
+  - un parámetro nuevo `etiqueta`, que sustituye el prefijo fijo `"submuestra:"` (J:1922), para
+    que la estabilidad y la pasada 2 de Codex no compartan el mismo orden;
+  - la población es una lista cerrada de `candidate_id`.
+- **Población original:** candidatos de las reps 1..R_original de la versión. Se selecciona una
+  sola vez, antes de cualquier extensión, y **no cambia** después.
+- **Población de extensión:** candidatos de las reps R_original+1..R_original+5. Tiene su propia
+  selección (⌈10 %⌉ y ⌈15 %⌉ sobre esa población) con las etiquetas `estabilidad-ext` y
+  `codex_p2-ext`.
+- Las pasadas ya hechas de la población original nunca se vuelven «sobrantes».
+- Etiquetas: `estabilidad`, `codex_p2`, `estabilidad-ext` y `codex_p2-ext`. La puerta recalcula los
+  cuatro conjuntos y exige exactamente esos registros.
+
+### 3.8 Vocabulario cerrado de códigos de motivo de `no_certificable`
+
+- La puerta (y `medir_linea_base`) solo emite estos códigos. `detalle` es libre, con caso, rep,
+  ids y rutas.
+- Un código fuera de la lista es un error de implementación, con su prueba.
+- Las pruebas de §6 asertan el código, nunca el texto.
+
+| Código | Condición (sección) |
+|---|---|
+| `cadena_ilegible` | falta R8 o no valida su esquema (§3.2) |
+| `custodia_no_coincide` | no se abre, o el sha256 de su manifiesto difiere de R8 (§3.2) |
+| `identidad_version` | R1 ausente, sha256 distinto de R8 o protocolo distinto (§3.3 A) |
+| `arbol_sucio` · `corridas_con_dobles` | `arbol_limpio != true` · `dobles != false` (§3.3 A) |
+| `evaluador_no_congelado` | huella del evaluador distinta en el código, R8, R5 o R9 (§3.3 A) |
+| `base_no_comparable_reproducir` · `perimetro_parche` | §3.3 A, comparabilidad · perímetro |
+| `muestra_incompleta` | casos o repeticiones que faltan respecto del inventario (§3.3 A, §6.1) |
+| `repeticiones` | duplicado o identidad de rep incoherente (§3.3 A) |
+| `texto_ausente` | corrida sin texto completo, incluido `fallo_producto` (§3.3 A) |
+| `caso_digest_no_coincide` · `jurisdiccion_no_coincide` | §3.3 A |
+| `ledger_incompleto` · `ledger_sin_contexto` | §3.3 A · §3.3 D |
+| `juicio_incompleto` · `juicio_contradictorio` · `paquete_no_coincide` · `rep_sha256_no_coincide` | §3.3 A, reproducción |
+| `decision_r_no_coincide` · `plan_aprobaciones_no_coincide` | R11 · R12 (§3.3 A) |
+| `codex_piloto_sin_estimacion` · `codex_sin_permiso` · `cadenas_no_coinciden` | §3.3 A, «Codex en la piloto» |
+| `discordancias_sin_resolver` · `incoherencia_matriz` · `negativa_correcta_contradictoria` | §3.3 B |
+| `kappa_reservado` · `kappa_real` · `circuito_no_utilizable` · `validacion_reservada_ausente` · `reservado_retirado` | §3.3 B, R9 |
+| `falsos_bloqueos_sin_dato` · `informe_del_muro_ausente` · `cambio_de_motor_contradictorio` | §3.3 C (K1) |
+| `sin_dato` · `par_faltante` | métrica sin dato donde aplica; par de versiones faltante (§3.3 B y C) |
+| `no_concluyente_sin_extension` · `extension_sin_causa` · `extension_no_coincide` · `extension_incompleta` | §3.4 |
+| `submuestra_incompleta` | §3.3 E, §3.7 |
+| `consumo_desconocido_sin_cota` · `techo_sin_aprobacion` · `atribucion_mapa_no_coincide` | §3.3 D |
+| `telemetria_contradictoria` · `telemetria_acreditada_no_coincide` | §4.1, §4.4 |
+| `circuito_suspendido` · `llamada_tras_desconocido_sin_autorizacion` · `reanudacion_invalida` | §3.3 E, §5.4, R6 |
 
 ---
 
@@ -493,14 +777,15 @@ La aplican la captura de producción (§4.2) y los runners de juez, que sustituy
 
 | Familia | Componentes obligatorios (entero ≥ 0) | Opcionales: si vienen, válidos | Total |
 |---|---|---|---|
-| `claude_cli` | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` (Q9: obligatorios mientras no se acredite que el CLI los omite solo cuando valen 0) | — | suma de los cuatro |
-| `codex_cli` | entrada (`input_tokens` \| `prompt_tokens`), salida (`output_tokens` \| `completion_tokens`); `cached_input_tokens` va dentro de la entrada y no se suma | `total_tokens` | máx(entrada + salida, `total_tokens`). Con más de un evento `usage` sin acreditar que es acumulado → desconocido (Q9) |
+| `claude_cli` | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`. Un componente de caché ausente vale 0 **solo** si una entrada de §4.4 para esa `cli_version` exacta acredita `omitido_si_cero` para ese campo; si no, la llamada es desconocida | — | suma de los cuatro |
+| `codex_cli` | por evento `usage`: entrada (`input_tokens` \| `prompt_tokens`) y salida (`output_tokens` \| `completion_tokens`); `cached_input_tokens` va dentro de la entrada y no se suma | `total_tokens` | **un evento:** máx(entrada + salida, `total_tokens`). **Varios eventos:** según la entrada de §4.4 para esa `cli_version`: `acumulado` → el del último evento; `incremental` → la suma. Sin entrada → desconocido |
 | `api` | `prompt_tokens`, `completion_tokens` | caché passthrough (`cache_*_input_tokens`) y `prompt_tokens_details.cached_tokens` | `total_tokens` válido, o prompt + completion, + `cache_creation` |
 | `local` | ídem `api` | ídem | ídem; `proveedor_cuota` sigue la regla de R4 |
 | `embeddings` | caracteres de los textos (estimación declarada, SG:1294) | — | `proveedor_cuota = ninguno`: no cuenta en ninguna cuota |
 
-- **Fallo (excepción):** siempre `consumo_conocido = false`, con la cota de SG:1209-1243. En `cli-*`
-  la cota es `null` (C18).
+- **Fallo (excepción):** siempre `consumo_conocido = false`, con la cota de SG:1209-1243.
+  - En `cli-*` la cota es `null` (desconocido sin cota), salvo que `spend_guard.cota_salida_cli`
+    devuelva una cota acreditada según C18 (§8.4, Q14): entonces es desconocido con cota (R4).
 - **Éxito con un componente ausente o inválido:** `consumo_conocido = false`, con
   `componentes_ausentes`. Cota: `cli-*` → `null`; `api` → entrada estimada + `max_tokens` aplicado.
 - **`uso_crudo` ausente:** desconocido.
@@ -512,12 +797,18 @@ La aplican la captura de producción (§4.2) y los runners de juez, que sustituy
 ### 4.2 Captura en el eval (no es producto)
 
 - **`SG._guarded_invoke` (SG:1126-1275):**
-  - antes de `check_and_reserve` escribe R4 `en_curso`, con el contexto y la cota;
-  - al volver, la cierra con `uso_crudo = getattr(resp, "mia_uso_crudo", <fallback>)` y
-    `uso_validado`;
+  - antes de `check_and_reserve` abre la ranura de captura (§4.3) y escribe R4 `en_curso`, con el
+    contexto y la cota;
+  - al volver, la cierra con `uso_crudo` = lo que dejó la ranura y con `uso_validado`;
   - en el camino de excepción, con la cota de SG:1209-1243.
-  - El `<fallback>` para la familia `api` es `resp.usage` serializado tal cual. Para `claude_cli` y
-    `codex_cli` sin `mia_uso_crudo`, es `None` → desconocido.
+  - Para la familia `api`, `uso_crudo` es `resp.usage` serializado tal cual (lo devuelve el cliente
+    OpenAI; el producto no lo colapsa). Para `claude_cli` y `codex_cli` con la ranura vacía,
+    `uso_crudo` es `None` → desconocido.
+  - El modelo efectivo, el esfuerzo y la parada salen de `resp.mia_model_hint` y `resp.mia_effort`
+    (ya existen, `subscription_llm.py:283-284`, `codex_subscription_llm.py:308-309`) y de la ranura
+    (`stop_reason`, `modelUsage`).
+  - El nodo sale de `metrics.usage._node.get()` (`usage.py:71`). Es una lectura de un atributo
+    privado desde `eval/`; idéntico en 7b9aaa0. Una prueba fija el nombre y falla en rojo si cambia.
 - **`GuardBanco.check_and_reserve` (R:1590-1601):** antes de toda llamada Codex de producción
   consulta el contador reconstruido **desde R4 en disco**, incluidas las filas desconocidas de su
   propio proceso todavía no trasladadas (hueco de R:1590 señalado en el área B).
@@ -525,34 +816,98 @@ La aplican la captura de producción (§4.2) y los runners de juez, que sustituy
   R:1199-1221).
 - **Al cerrar cada fila**, se comprueba el acumulado frente al techo; si lo alcanza, la suspensión es
   inmediata. Cierra el desborde por la última llamada (R3-N3 del área B).
-- **`codex_cli_adapter.call_graph_cli` (`codex_cli_adapter.py:536-538`, alias `cli-codex-eval`):**
-  adjunta `mia_uso_crudo` con los `None` del parser (`_parse_events`, :292-329) en vez de
-  convertirlos en `0`.
+- **`codex_cli_adapter` (alias `cli-codex-eval`; es código de `eval/`, se modifica directamente):**
+  - `invoke_codex` (:384) deposita en la ranura **todas** las líneas de `completed.stdout` antes de
+    `_parse_events` (:424);
+  - `call_graph_cli` (:536-538) deja de convertir en `0` los `None` del parser.
 
-### 4.3 Cambios mínimos en el PRODUCTO (ZONA SENSIBLE)
+### 4.3 Perímetro: el banco no cambia el producto. Intercepción desde `eval/` (K8)
 
-Todos son **aditivos**: atributos nuevos en el objeto de respuesta que ningún código del producto lee.
-No cambian `usage`, `choices`, `finish_reason`, el texto, los reintentos ni el registro en
-`turn_usage`.
+**Decisión del director.** El banco no modifica ningún archivo del producto. La telemetría cruda se
+captura con un envoltorio de instrumentación en `backend/mia/eval/banco04/telemetria.py`. El
+envoltorio intercepta la salida cruda del CLI **antes** de que el producto la colapse en enteros, y
+es transparente y restaurable, igual que los envoltorios de `harness.run_case` (H:609-687: se
+instalan, se restauran siempre en un `finally` y no cambian lo que devuelve la función envuelta).
 
-| Archivo:línea | Cambio | Qué NO se toca |
-|---|---|---|
-| `backend/mia/agent/subscription_llm.py:255-285` (`_to_openai_response`) | añade `response.mia_uso_crudo` = copia del dict `data["usage"]` si es dict, si no `None`; `response.mia_modelos_cli` = claves ordenadas de `data["modelUsage"]` si es dict (el juez ya las lee, J:1608); `response.mia_parada_cli` = `data.get("stop_reason")` si es str, si no `None`. Evidencia: las salidas guardadas del CLI en `output/validation/claude-opus55-*.json` traen `stop_reason` («end_turn»), `num_turns`, `modelUsage` y `usage` en el nivel superior; la versión del CLI que las produjo no consta (Q9) | los enteros de `usage` (258-271) siguen como están, porque los usan `_invoke_metered` (llm.py:1091-1101) y `record` (metrics/usage.py:211-220); `finish_reason="stop"` (273) |
-| `backend/mia/agent/codex_subscription_llm.py:244-263` (`_usage`) y `:302-309` | `_usage` devuelve también la lista de dicts `usage` vistos, en orden; `call_cli` adjunta `response.mia_uso_crudo = {"eventos": [...]}` | los enteros de `SimpleNamespace` y `prompt_tokens_details` |
-| `backend/mia/metrics/usage.py:71-80` | añade el lector público `current_node() -> str \| None` (devuelve `_node.get()`) | `record`, el búfer y el esquema de `turn_usage` |
-| `backend/mia/agent/llm.py` | **ningún cambio**. Comprobado: `spend_guard` sustituye `agent.llm._invoke` (SG:1498) y `_invoke_metered` lo resuelve por el nombre del módulo (llm.py:1077, 1084), así que la captura ve la respuesta antes que `_record_usage` (llm.py:905-913) | — |
-| `turn_usage` | **ningún cambio**. El banco deja de leerlo. El panel del abogado sigue mostrando 0 cuando falta la telemetría: es un defecto del producto que se declara y queda fuera del banco | — |
+**Puntos de intercepción.** Son idénticos en 7b9aaa0 (0.3.3) y en HEAD (0.4): `git diff 7b9aaa0
+HEAD` está vacío en los tres archivos. **El mismo envoltorio vale para las dos versiones.**
 
-**Verificación obligatoria del cambio de producto:**
+| Punto (archivo:línea) | Qué se envuelve | Qué captura | Por qué ahí |
+|---|---|---|---|
+| `backend/mia/agent/subscription_llm.py:255` (`_to_openai_response`), llamada en `:356` | se sustituye el atributo de módulo `subscription_llm._to_openai_response` por una función que guarda en la ranura `data` (el JSON completo del CLI: `usage`, `stop_reason`, `modelUsage`, `num_turns`) y devuelve **exactamente** el resultado de la original | `usage` sin colapsar, motivo de parada y modelos efectivos | es el único punto donde `call_cli` tiene el dict crudo; `call_cli` resuelve el nombre al llamar, así que el envoltorio lo ve. El colapso a enteros (`_n`, :260-262) ocurre dentro de la original, después de la captura |
+| `backend/mia/agent/codex_subscription_llm.py:244` (`_usage`), llamada en `:302` | se sustituye `codex_subscription_llm._usage` por una función que guarda en la ranura `events` (todo el `stdout` JSONL) y devuelve el resultado de la original | todos los eventos `usage` en orden y la versión del CLI | la sobrescritura por evento (:254-256) ocurre dentro de la original |
+| `backend/mia/eval/codex_cli_adapter.py:424` | es código de `eval/`: se modifica (§4.2) | ídem | — |
 
-1. Antes y después del cambio, `call_llm` con dobles de `subprocess.run` devuelve objetos con
-   `choices`, `usage` y `model` idénticos campo a campo.
-2. `record` escribe la misma fila.
-3. Siguen verdes `execution/test_rls.py`, `execution/test_gates_no_ciegos.py`,
-   `test_eval_spend_guard` y las suites que importan `subscription_llm`, `codex_subscription_llm` o
-   `metrics.usage`.
+**Ranura.** Una `ContextVar` de `telemetria` que abre `_guarded_invoke` antes de llamar a
+`_original_invoke` y lee al volver. `call_llm` corre en un hilo con `asyncio.to_thread` y
+`_guarded_invoke` llama a `_invoke` en el mismo hilo (llm.py:1077-1084), así que la ranura es
+la de esa llamada.
 
-Lo revisa un segundo proveedor.
+**Instalación y restauración.** `telemetria.instalar()` como gestor de contexto dentro de
+`_montaje_real`, igual que `spend_guard.install()` (R:1929):
+
+- guarda los originales;
+- comprueba con `is` que el atributo sustituido es el envoltorio (patrón de SG:1619-1625);
+- los restaura en `finally`.
+
+Fuera del proceso del banco nada cambia: el abogado nunca corre con el envoltorio.
+
+**Pendiente del producto, fuera del banco (Bloque 1).**
+
+- El colapso de `subscription_llm.py:258-271` y `codex_subscription_llm.py:244-263` hace que el
+  panel del abogado (`turn_usage`, vía `_record_usage`, llm.py:905-913) muestre **0** cuando falta
+  la telemetría.
+- Se declara como defecto del producto, a corregir en el Bloque 1. El banco no lo corrige y no
+  depende de él.
+
+**Verificación obligatoria de la transparencia** (E2E-6):
+
+1. `git diff` vacío en `backend/mia/agent/` y `backend/mia/metrics/` respecto del `sha_producto`.
+   Además, `rutas_modificadas_respecto_del_producto` de R1 (§2) no contiene ninguna ruta de producto.
+2. Con dobles de `subprocess.run`, `call_llm` devuelve, con el envoltorio instalado y sin él,
+   objetos con `choices`, `usage`, `model`, `mia_model_hint` y `mia_effort` idénticos campo a
+   campo, y `metrics.usage.record` bufferiza la misma fila.
+3. Al salir de `telemetria.instalar()`, incluso por excepción, los dos atributos de módulo vuelven
+   a ser los originales (`is`).
+4. Siguen verdes `execution/test_rls.py`, `execution/test_gates_no_ciegos.py` y
+   `test_eval_spend_guard`.
+
+**Evidencia sobre la forma del JSON del CLI** (no acredita nada por sí sola; ver §4.4):
+`output/validation/claude-opus55-{final,review}.json` traen en el nivel superior `stop_reason`
+(«end_turn»), `num_turns`, `modelUsage` y `usage`, con los campos de caché distintos de cero. No
+registran la versión del CLI.
+
+### 4.4 Registro versionado de acreditaciones de telemetría (K4; §8.4, Q9)
+
+- **Archivo:** `backend/mia/eval/banco04/telemetria_acreditada.json`, en el repo. No lleva datos
+  de clientes y entra en la huella del evaluador.
+- **Se escribe solo añadiendo:** una entrada nunca se edita; se añade otra.
+- **Esquema** `banco04-acreditacion-telemetria/v1`: `{entradas: [{id, familia: claude_cli|codex_cli,
+  cli_version (exacta), comando (argv sin prompt, tal como lo arma subscription_llm._build_command
+  :231 o codex_subscription_llm._command :235), conducta: {<campo>: "presente_siempre" |
+  "omitido_si_cero"} | {eventos_usage: "acumulado" | "incremental"}, evidencia: [{archivo
+  (fuera del repo si contiene texto), sha256, descripcion}], autor, fecha, sha256_entrada}]}`.
+- **Cómo la aplica la regla de §4.1:**
+  - busca la entrada con la misma familia y la misma `cli_version` exacta de la fila R4;
+  - si la encuentra, anota su `id` en `acreditacion_aplicada`;
+  - si no hay entrada, o la versión difiere en un solo carácter, el componente ausente es
+    **desconocido, nunca cero**.
+- **Validación en la puerta:**
+  - el sha256 del archivo es igual a `R8.telemetria_acreditada_sha256` y al de cada R1;
+  - el `sha256_entrada` de cada entrada usada se recalcula;
+  - cada `evidencia.sha256` se comprueba contra el archivo, si es accesible; si no es accesible, la
+    entrada no vale;
+  - la puerta vuelve a aplicar la regla a cada fila y exige el mismo `uso_validado`. Una
+    discrepancia da `no_certificable` (`telemetria_contradictoria`).
+- **Quién la produce:** el director, con UNA llamada mínima real por proveedor o con una salida
+  guardada de la misma versión (§8.4, Q9). Es precondición de la piloto. **Este contrato no llama a
+  proveedores.**
+- **Pruebas** (en §6.2, E2E-3):
+  - varios eventos `usage` de Codex sin entrada → desconocido;
+  - entrada `incremental` → suma; entrada `acumulado` → último;
+  - caché ausente sin entrada → desconocido; con entrada `omitido_si_cero` de la misma versión → 0
+    conocido; con la entrada de otra versión → desconocido;
+  - registro ausente o con un sha256 distinto del de R8 → `no_certificable`.
 
 ---
 
@@ -560,31 +915,41 @@ Lo revisa un segundo proveedor.
 
 ### 5.1 Qué detiene
 
-En cuanto exista en R4 una fila desconocida (§4.1) no cubierta, sea del bloque o de cualquier
-versión de `versiones_contador`:
+**Solo detiene un evento desconocido SIN cota** (R4, «clases de consumo»; K7). Un desconocido con
+cota acreditada no detiene nada: cuenta con su cota (P:464-468, P:1297-1300).
 
-- **El juicio:** ninguna llamada de juez nueva (Opus ni Codex), tampoco de validación ni de
-  estabilidad. El runner de juez lanza `CuotaAgotada` antes de invocar y escribe R6 `SUSPENDIDO.json`
-  con `etapa` y `eventos`.
+En cuanto exista en R4 una fila sin cota que **no esté autorizada** para la etapa y la versión de
+la llamada siguiente (§5.4), sea del bloque o de cualquier versión de `versiones_contador`:
+
+- **El juicio:** ninguna llamada de juez nueva (Opus ni Codex), incluida la estabilidad. El runner
+  de juez lanza `CuotaAgotada` (código `consumo_desconocido_sin_cota`) antes de invocar y escribe
+  R6 `SUSPENDIDO.json` con `etapa: juicio` y `eventos`.
+- **La validación (VJ):** igual, con `etapa: validacion`.
 - **La producción Codex:** ninguna llamada `cli-codex*` de producción ni de aprobación.
-  `GuardBanco.check_and_reserve` lanza `ParadaCodexProduccion` (R:1563-1568).
+  `GuardBanco.check_and_reserve` lanza `ParadaCodexProduccion` (R:1563-1568) con el mismo código.
 - **La producción Claude puede seguir** (C19). Sus métricas de calidad se calculan, pero el techo
   queda `no_certificable`.
 
 ### 5.2 Cómo se reanuda
 
-- `banco04_juzgar juzgar --reanudar-aprobado-por-pipe <REF>` y `run_banco04 --reanudar-aprobado-por-pipe
-  <REF>` (este ya existe, R:1979) escriben R6 `reanudaciones/<NNN>.json`.
-- **Qué cubre:** exactamente las claves (ids R4) de los eventos desconocidos **ya registrados** en el
-  momento de la reanudación, con su `eventos_sha256`, y el `suspension_sha256` del marcador activo.
+- **Comandos** que escriben R6 `reanudaciones/<NNN>.json`, cada uno con `--reanudar-aprobado-por-pipe
+  <REF> --etapas <lista> --versiones <lista>`:
+  - `banco04_juzgar juzgar` (etapa `juicio`);
+  - `run_banco04` (ya existe, R:1979; etapas `produccion` y `aprobaciones`);
+  - `banco04_validar_jueces` (etapa `validacion`, R9).
+- **Qué cubre:** exactamente las claves (ids R4) de los eventos **sin cota ya registrados** en el
+  momento de la reanudación, con su `eventos_sha256`, y las suspensiones activas de esas etapas y
+  versiones. Lo cubierto queda limitado a las `etapas` y `versiones` declaradas.
 - **Requisito:** `<REF>` es obligatorio y no vacío. Es la referencia de la aprobación de Pipe. El
   agente no la genera: la recibe del director, que la obtuvo de Pipe en el chat.
-- **Una reanudación no cubre eventos futuros.**
+- **Una reanudación no cubre eventos futuros ni otras etapas o versiones.**
+- **Una reanudación nunca acredita consumo:** el evento sigue siendo sin cota y el techo sigue
+  `no_certificable`.
 
 ### 5.3 Qué vuelve a detener
 
-Cualquier fila desconocida nueva, cuyo id no esté en la unión de los `cubre.eventos_desconocidos` de
-las reanudaciones existentes, vuelve a detener según §5.1.
+Cualquier fila sin cota nueva vuelve a detener según §5.1. También la detiene una fila ya existente
+que no esté autorizada para la etapa y la versión de la llamada siguiente.
 
 ### 5.4 Qué comprueba la puerta
 
@@ -594,20 +959,25 @@ esa lectura y la invocación, la llamada cuenta como lanzada después de él. Es
 propósito: falla cerrado, no es una ambigüedad.
 
 Para cada fila C con `fase` de juicio o validación, o con `proveedor_cuota=codex` en producción o
-aprobación:
+aprobación. Se define e(C) como la etapa de C (`juicio`, `validacion`, `produccion` o
+`aprobaciones`) y v(C) como su versión.
 
-- U(C) = filas desconocidas con `t_fin_utc` < `C.t_inicio_utc`, más las huérfanas con
+- U(C) = filas **sin cota** con `t_fin_utc` < `C.t_inicio_utc`, más las huérfanas con
   `t_inicio_utc` < `C.t_inicio_utc`.
-- Se exige que U(C) ⊆ la unión de los `cubre.eventos_desconocidos` de las reanudaciones con
-  `registrada_utc` < `C.t_inicio_utc`.
-- Se exige que `C.eventos_desconocidos_vistos` ⊇ los elementos de U(C) que ya estaban escritos.
+- A(C) = la unión de `cubre.eventos_desconocidos` de las reanudaciones **válidas** (R6) con
+  `registrada_utc` < `C.t_inicio_utc`, `e(C) ∈ etapas` y `v(C) ∈ versiones`.
+- Se exige U(C) ⊆ A(C).
+- Se exige que toda suspensión activa de la etapa e(C) y la versión v(C) anterior a C esté citada
+  en una reanudación válida de A(C).
+- Se exige `C.eventos_desconocidos_vistos` ⊇ los elementos de U(C) que ya estaban escritos.
 - Se exige que el `eventos_sha256` de cada reanudación coincida con las filas actuales: una fila
   editada después invalida la reanudación.
 
 Si se viola, `no_certificable` con `llamada_tras_desconocido_sin_autorizacion`.
 
-**Con cualquier evento desconocido, el techo queda `no_certificable` para siempre**, y por §6.4 el
-veredicto global también. Reanudar permite terminar de medir y publicar; no certifica.
+**Con cualquier evento sin cota, el techo queda `no_certificable` para siempre**, y por §6.4 el
+veredicto global también. Reanudar permite terminar de medir y publicar; no certifica. Los eventos
+**con** cota no afectan la certificabilidad: entran en el techo con su cota.
 
 ---
 
@@ -630,7 +1000,8 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
   - `embeddings.embed_texts`;
   - runners de juez Opus y Codex con la interfaz `Runner` (J:1324), que devuelven salidas válidas
     guionizadas.
-- **Base de datos:** el clúster aislado sintético (`MIA_TEST_ENV_FILE`, puerto ≠ 55432), porque
+- **Base de datos:** el clúster aislado sintético en el puerto 55448 (§8.4, Q17;
+  `MIA_TEST_ENV_FILE`; nunca 55432), porque
   `run_case` necesita las tablas y el checkpointer. Sin ese entorno, la prueba E2E-1 **termina en
   rojo con el código «no ejecutable»**. Nunca cuenta como verde ni como omitida (el criterio de
   `test_gates_no_ciegos`).
@@ -659,12 +1030,31 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
 **Cambios del runner que exige el esqueleto:**
 
 - `--casos` (solo con `--permitir-parcial`) y `--solo-piloto`, ambos registrados en R1.
-- El parámetro de Python `proveedores` de `main`, sin ningún flag de línea de comandos. Sustituye
-  solo `subprocess.run` de los dos CLI y `embeddings.embed_texts`, y fuerza `dobles: true`.
+- El parámetro de Python `proveedores` de `main`, sin ningún flag de línea de comandos. Fuerza
+  `dobles: true`. Sustituye **solo** estos nombres de módulo, guardando el original y
+  restaurándolo en `finally`:
+  - el atributo `subprocess` **dentro de** `subscription_llm` y de `codex_subscription_llm` (líneas
+    65 y 18 de cada módulo), mediante un objeto proxy cuyo `run` es el doble. El `subprocess`
+    global no se toca, así que `git` en `info_arbol_git` (R:691) y los runners de juez siguen
+    siendo reales;
+  - `subscription_llm._resolve_exe` (:170) y `codex_subscription_llm._resolve_exe`, que devuelven
+    una ruta ficticia `.exe`. Sin este doble, la prueba dependería del CLI instalado y podría
+    saltar de alias;
+  - `codex_subscription_llm._local_membership_allowed` (:269), solo en E2E-8 y E2E-9;
+  - `embeddings.embed_texts`;
+  - `llm.resolve_fallback_chain`, solo en E2E-8 y E2E-9.
 - La variante sin base de datos `mundo=` sustituye **solo el mundo exterior**: lo que hoy hacen
   `producir`, `hash_soul` y `fijar_jurisdicciones` (R:1765-1787), las funciones de `DepsAprobacion`
   (R:1828-1896) y la base de datos.
-  - Emite filas R4 a través de la API real de `telemetria`.
+  - **No escribe telemetría** (K10). Su `producir` doble llama a `llm.call_llm(task=...)` del
+    producto real: el router real, el `_guarded_invoke` real y el envoltorio real de §4.3. Los dobles
+    están solo en `subprocess.run` de los CLI (vía `proveedores`). Así cada fila R4 sale de la
+    captura real.
+  - Fija el nodo con `metrics.usage.set_node` (`usage.py:74`), igual que el grafo
+    (`agents/graph.py:1255`).
+  - Lo único sintético es el `resultado` (textos y `material_turno`).
+  - Una prueba comprueba que el módulo de dobles no importa `telemetria` y que toda fila R4 lleva
+    `origen: "captura"`.
   - Siguen siendo código real, y no se pueden sustituir: `info_arbol_git`, `construir_manifiesto`,
     `asegurar_manifiesto`, el plan, el `Contexto`, la instalación de la telemetría, la escritura de
     R1, R2, R4, R6, R10, R11 y R12 y el cifrado de la custodia.
@@ -689,77 +1079,156 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
   - La siguiente llamada de juez lanza `CuotaAgotada` con el mismo código, se escribe R6
     `SUSPENDIDO` con `eventos` = [id de la fila] y el techo en la puerta es `no_certificable`.
   - Variantes con la misma exigencia: Codex sin evento `usage`; `cli-codex-eval` con `None`.
+  - Variantes del registro de §4.4: las ocho pruebas listadas allí, con producción y con el juez
+    Codex. El juez Codex con varios eventos `usage` persiste todos en R5 y R4.
+  - **Variante con cota (K7):** una fila de la familia `api` que falla con `max_tokens` aplicado es
+    desconocida con cota. No detiene el juez ni Codex, y el techo sigue certificable.
 - **E2E-4 · Reanudación.**
   - Tras E2E-3, una reanudación que cubre el evento deja seguir al juez.
   - Un evento nuevo detiene otra vez.
   - Una fila de juez falsificada con `t_inicio` posterior a un evento no cubierto da
     `llamada_tras_desconocido_sin_autorizacion`.
   - Editar una fila cubierta invalida la reanudación.
+  - Una reanudación con `etapas: [produccion]` no autoriza al juez, y una con `versiones: [base]` no
+    autoriza la nueva.
+  - La reanudación de la validación continúa R9 en el primer ítem pendiente, con la misma
+    identidad y sin un segundo uso del reservado. Con otro `hash_evaluador`, se niega.
 - **E2E-5 · Ceguera y material.** El `prompt_sha256` reconstruido es igual al guardado. Alterar un
   byte del texto del R2 rompe `paquete_sha256` → `no_certificable`.
-- **E2E-6 · Producto intacto.** Comparación campo a campo de §4.3.
+- **E2E-6 · Producto intacto.** Las cuatro verificaciones de §4.3: diff vacío en el producto,
+  identidad campo a campo con y sin el envoltorio, restauración por `is` y suites verdes.
+- **E2E-8 · Codex de producción, recorrido positivo (K10).**
+  - Bloque 7, con el mismo doble de `llm.resolve_fallback_chain` que E2E-9: una tarea cuya cadena
+    empieza por `cli-codex`, registrada así en `cadenas_politica`, con `puede_codex = true`.
+  - El `producir` de `mundo=` llama a `llm.call_llm(task=<esa tarea>)`, no a `_invoke` directo, de
+    modo que el router real elige `cli-codex` y la llamada pasa por `_guarded_invoke` y por el
+    `_invoke` real (llm.py:1005-1016). R13 está presente y el presupuesto es suficiente.
+  - Usa los dobles de `proveedores` (§6.1), incluido `_local_membership_allowed`
+    (`codex_subscription_llm.py:269`).
+  - Exigido: una fila R4 con `proveedor_cuota=codex`, `uso_crudo.eventos` y consumo conocido;
+    `ContadorCuota.codex_produccion` > 0; las condiciones Codex de §6.3 calculadas en la puerta;
+    veredicto `aprueba` en la variante F17 con Codex ≤ 0,50× de Claude.
+  - Hoy `quality_adaptive` no enruta a Codex. El recorrido del grafo con 5C se prueba cuando llegue
+    el Bloque 5, que lo active.
+- **E2E-9 · Piloto Codex (K5).**
+  - La prueba sustituye `llm.resolve_fallback_chain` por un doble que incluye `cli-codex` (lista de
+    `proveedores`, §6.1).
+  - Sin R13, `R.main` en el Bloque 7 rechaza con exit 3 antes de la primera corrida.
+  - Con R13, la piloto se admite con su estimación y no con 0 (R:1094-1095).
+  - Una fila R4 Codex en una versión con `puede_codex == false` → la puerta da `no_certificable`.
+- **E2E-10 · Registro de uso del reservado (K3).**
+  - Con `LOCALAPPDATA` y `MIA_BANCO04_CUSTODIA` reubicados **a la vez**, el segundo uso se rechaza.
+  - Una identidad incluida en `IDENTIDADES_RESERVADO_RETIRADAS` se rechaza en VJ y en la puerta.
+- **E2E-11 · Bloque 0 (K11).** `banco04_decidir linea-base` sobre el esqueleto con una sola
+  versión escribe `INFORME_LINEA_BASE.json` con el esquema de §3.5, sin campo `veredicto` ni
+  comparativas.
 - **E2E-7 · Sin puerta trasera.**
   - `banco04_decidir.py` no tiene ningún flag que active `_prueba` ni acepte `dobles` (búsqueda en
     el código y en `--help`).
   - Con `dobles: true` y sin `_prueba`, el resultado es `no_certificable`.
   - `resumen_publicable` rechaza `modo_prueba`.
-- **Esqueleto, mutación de un crudo que cambia la condición** (el veredicto sigue siendo
-  `no_certificable` por la muestra):
-  - poner `sin_respaldo` en la salida cruda de Opus **y** de Codex sobre un átomo hace que
-    `afirmaciones_sin_respaldo` del caso pase de 0 a 1;
-  - poner `cubierto=false` en la pasada 2 de un decisivo hace bajar su cobertura;
-  - quitar un fragmento de `entraron_tramos` hace bajar el alcance.
+- **Esqueleto, mutación semántica que cambia la condición** (familia S de §6.3 a escala de un
+  caso; el veredicto sigue siendo `no_certificable` por la muestra). En cada una se cambia el doble
+  y se regenera desde `main`:
+  - runners de juez que marcan `sin_respaldo` sobre un átomo, en Opus y en Codex →
+    `afirmaciones_sin_respaldo` del caso pasa de 0 a 1;
+  - pasada 2 con `cubierto=false` en un decisivo → baja su cobertura;
+  - un proveedor doble del grafo que hace que el material recortado sea menor → baja el alcance.
+
+  Editar el crudo sin regenerar es familia I y tiene que dar el código de identidad, no el cambio de
+  la condición.
 
 ### 6.3 Familia «mutar el dato crudo conservando cualquier agregado ⇒ el veredicto cambia»
 
 **Fixture F17.** Las dos versiones completas: 17 casos × R, aprobaciones y R9 reservado de prueba
 (≥ 30 defectos, de ellos ≥ 10 cláusulas breves, y ≥ 30 controles, con acreditación v1.3 de prueba).
 
-- Se produce con `montaje=` (sin base de datos), juzgar con runners dobles y VJ `main` con runners
-  dobles.
+- **Cómo se produce:** con `mundo=` (sin base de datos) y `proveedores=` (§6.1), juzgando con
+  runners dobles y validando con VJ `main` con runners dobles. Todo se ejecuta **desde los `main`**,
+  y cada fila R4 sale de la captura real.
 - Con `_prueba`, la puerta da **`aprueba`**. Es requisito previo de la familia: si F17 no da
   `aprueba`, la familia no prueba nada.
 
-Cada mutación edita **un solo crudo** y deja intactos todos los derivados y resúmenes:
+**Dos familias distintas (K10).** Separan la manipulación incoherente de la mutación semántica.
 
-| # | Mutación del crudo | Veredicto exigido |
+- **Familia S, semántica.** Se cambia el **doble** de la etapa afectada (mundo, proveedores o
+  runners de juez) y se **regenera desde `main`** esa etapa y todas las posteriores:
+  - producir o aprobar → juzgar → decidir.
+  - Todos los hashes quedan coherentes.
+  - Se exige el **cambio concreto de la condición** nombrada (valor recalculado en
+    `condiciones[]`) **y** el veredicto indicado.
+  - Si cae otra condición, la mutación no prueba lo que pretende y la prueba falla.
+- **Familia I, incoherente.** Se edita un crudo en disco **sin regenerar** lo que depende de él.
+  - Se exige `no_certificable` con el **código de motivo exacto** indicado, y ningún motivo de
+    calidad.
+  - Prueba que la puerta detecta la manipulación, no que la condición funcione.
+
+**Familia S:**
+
+| # | Cambio en el doble y regeneración desde `main` | Condición que tiene que cambiar | Veredicto |
+|---|---|---|---|
+| S01 | los dos runners de juez marcan `sin_respaldo` el mismo átomo | `afirmaciones_sin_respaldo` 0 → 1 | reprueba |
+| S02 | solo Codex marca defecto; el tercer voto doble dice `sin_respaldo` | ídem | reprueba |
+| S03 | el runner del tercer voto devuelve JSON inválido dos veces | juicio incompleto de esa corrida (`no_evaluada_tercer_voto`) | no_certificable |
+| S04 | pasada 2: los decisivos de un caso de lectura completa quedan no cubiertos | `cobertura_hechos_decisivos` del caso < 0,80 | reprueba |
+| S05 | pasada 2: conducta `definitiva` en una corrida cuyo `material_turno` (mundo) da alcance < 0,95 | `definitivo_con_lectura_insuficiente` 0 → 1 | reprueba |
+| S06 | el mundo emite `entraron_tramos` reducido (alcance 0,96 → 0,90) y se rejuzga con conducta `definitiva` | alcance C8 `suficiente` → `insuficiente`; DLI 0 → 1 | reprueba |
+| S07 | el mundo emite `fragmentos_en_prompt.completo=false` | alcance → `sin_medicion` (insuficiente); DLI 0 → 1 con conducta `definitiva` | reprueba |
+| S08 | los proveedores dobles devuelven más `output_tokens` en un caso de la nueva | `claude_extremo_por_caso` > 1,25 | reprueba |
+| S09 | un proveedor doble de Claude omite `output_tokens` en una llamada | fila sin cota; techo | no_certificable (y el juicio se detiene, E2E-3) |
+| S10 | el mundo fija con `set_node` un nodo fuera de `atribucion_preregistrada` en las llamadas que suben más del 10 % | C25: la subida no es atribuible | reprueba |
+| S11 | los runners de pasada 2 hacen caer un decisivo de 3/5 en la base a 1/5 en la nueva | `decisivos_estables_perdidos` ≠ ∅ | reprueba |
+| S12 | VJ con runners dobles que fallan defectos plantados hasta que la sensibilidad < 0,95 | `circuito_sobre_mutaciones_reservadas` | no_certificable |
+| S13 | VJ con estados de Codex invertidos hasta kappa < 0,6 | `kappa_reservado` | no_certificable |
+| S14 | el runner de Opus devuelve dos veces una salida estructuralmente inválida, o `no_aplica` sobre una cifra | juicio incompleto | no_certificable |
+| S15 | el mundo emite en el borrador de un caso sin ordenamiento «La Ley 100 de 1993 es aplicable al caso»; los jueces dobles **no** marcan fuga | `fuga_jurisdiccion` por la señal (§3.6) | reprueba |
+| S16 | los jueces dobles marcan `con_respaldo` con `uso_fuente=aplicable` y una fuente de un ordenamiento no configurado | el validador lo rechaza (J:514) → juicio incompleto | no_certificable |
+| S17 | los votos dobles confirman una negativa falsa | `afirmaciones_sin_respaldo` +1 por `confirmadas` | reprueba |
+| S18 | Codex marca una fuga (subtipo `fuga`) y el tercer voto la confirma | `fuga_jurisdiccion` por el juez (Q16) | reprueba |
+| S19 | el mundo lanza `limite_de_uso` en la rep 5 de un caso de la base | repeticiones incompletas | no_certificable |
+| S20 | la aprobación de un caso falla por infraestructura dos veces | techo sin aprobación | no_certificable |
+| S21 | el mundo lanza una excepción del producto después de una llamada al modelo en una corrida (`fallo_producto`) | `turnos_completados` baja **y** corrida sin texto (K6) | no_certificable |
+| S22 | el mundo omite `resultado.verification` en una corrida | `falsos_bloqueos` sin dato (K1) | no_certificable |
+| S23 | el mundo emite un `model_fallbacks` cuyo `hacia` no tiene fila R4 | `cambio_de_motor` contradictorio (K1) | no_certificable |
+
+**Familia I:**
+
+| # | Edición en disco sin regenerar | Código de motivo exigido |
 |---|---|---|
-| M01 | Opus y Codex marcan `sin_respaldo` el mismo átomo | reprueba (fila 1) |
-| M02 | solo Codex marca defecto y el tercer voto crudo dice `sin_respaldo` | reprueba |
-| M03 | solo Codex marca defecto y se borra el tercer voto crudo | no_certificable |
-| M04 | la pasada 2 deja no cubiertos decisivos de un caso de lectura completa (caso < 0,80) | reprueba |
-| M05 | la pasada 2 pone conducta `definitiva` en una corrida de alcance insuficiente | reprueba (DLI) |
-| M06 | se quita de `entraron_tramos` lo justo para bajar de 0,95, con conducta `definitiva` | reprueba (C8 → DLI) |
-| M07 | `fragmentos_en_prompt.completo=false`, con conducta `definitiva` | reprueba (alcance insuficiente) |
-| M08 | `jurisdicciones_fijadas` de un custodiado difiere de la custodia | no_certificable |
-| M09 | se suben los tokens de salida de filas R4 de producción de un caso (más de 1,25×) | reprueba (techo) |
-| M10 | una fila R4 pasa a `consumo_conocido=false` y `cota=null` | no_certificable |
-| M11 | se borra una fila R4 citada por un R2 | no_certificable |
-| M12 | se añade una fila R4 `en_curso` huérfana | no_certificable |
-| M13 | se cambia el `nodo` de filas R4 para que la subida de > 10 % de un caso recaiga en un nodo fuera de `atribucion_preregistrada` | reprueba (C25) |
-| M14 | se borra el rep-05 de un caso de la base | no_certificable |
-| M15 | se escribe un R7 que no corresponde a la previa recalculada (casos distintos) | no_certificable |
-| M16 | con un R7 válido, se borra un rep de extensión de una versión | no_certificable |
-| M17 | en R9 se cambia un tercer voto de un defecto, de modo que la sensibilidad baje de 0,95 | no_certificable (circuito) |
-| M18 | en R9 se invierten los estados de Codex hasta que kappa < 0,6 | no_certificable |
-| M19 | se borra la segunda pasada de estabilidad de un candidato elegido por la semilla | no_certificable |
-| M20 | se borra la pasada 2 de Codex de un candidato del 15 % | no_certificable |
-| M21 | cambia `soul_sha256` en R1 de la base | no_certificable |
-| M22 | cambia `hash_evaluador` en un R5 | no_certificable |
-| M23 | la pasada 2 hace caer un decisivo de 3/5 en la base a 1/5 en la nueva | reprueba (decisivos estables) |
-| M24 | una fila de juez se lanza tras un evento desconocido no cubierto | no_certificable (orden) |
-| M25 | una fila R4 mantiene `consumo_conocido=true` y su `uso_crudo` pierde `output_tokens` | no_certificable (la puerta vuelve a aplicar §4.1 y encuentra la contradicción) |
-| M26 | la salida cruda de Opus queda estructuralmente inválida | no_certificable (no evaluada) |
-| M27 | `no_aplica` sobre un átomo con cifra en la salida cruda de Opus | no_certificable (validador) |
-| M28 | se reescribe R11 con `r_reducida` sin que el consumo lo justifique | no_certificable |
-| M29 | se cambia `rep` dentro de un R2 (rep duplicado) | no_certificable |
-| M30 | se añade al borrador de un caso sin ordenamiento «La Ley 100 de 1993 es aplicable» y se vuelven a escribir sus hashes de forma coherente en R2 | no_certificable (el R5 ya no corresponde) o reprueba si se vuelve a juzgar; en ningún caso `aprueba` |
-| M31 | en la salida cruda de Opus y de Codex, un átomo pasa a `con_respaldo` con `uso_fuente=aplicable` y una fuente del corpus de un ordenamiento no configurado (C21, I7) | no_certificable (el validador lo rechaza, J:514) o reprueba si los dos lo marcan `sin_respaldo/fuga`; en ningún caso `aprueba` |
-| M32 | los votos crudos confirman una negativa falsa (punto que consta en lo leído, declarado laguna) | reprueba (fila 1 por `confirmadas`) |
-| M33 | se borra el R10 (`aprobacion.json` y sus intentos) de un caso | no_certificable (techo sin aprobación) |
-| M34 | fuga que solo marca Codex (subtipo `fuga`), confirmada por el tercer voto crudo | reprueba (fila 2, regla de Q16) |
+| I01 | `jurisdicciones_fijadas` de un custodiado | `jurisdiccion_no_coincide` |
+| I02 | borrar una fila R4 citada por un R2 | `ledger_incompleto` |
+| I03 | añadir una fila R4 `en_curso` huérfana | `consumo_desconocido_sin_cota` |
+| I04 | `soul_sha256` en R1 de la base | `identidad_version` |
+| I05 | `hash_evaluador` en un R5 | `evaluador_no_congelado` |
+| I06 | fila R4 con `consumo_conocido=true` y `uso_crudo` sin `output_tokens` | `telemetria_contradictoria` |
+| I07 | R11 reescrito con `r_reducida` | `decision_r_no_coincide` |
+| I08 | `rep` cambiado dentro de un R2 | `repeticiones` |
+| I09 | fila de juez falsificada tras un evento sin cota no autorizado | `llamada_tras_desconocido_sin_autorizacion` |
+| I10 | `salida` de un R5 editada sin su `crudo_sha256` | `juicio_contradictorio` |
+| I11 | `material_turno` de un R2 editado sin rejuzgar (antes M06/M07) | `rep_sha256_no_coincide` |
+| I12 | R7 editado | `extension_no_coincide` |
+| I13 | borrar la segunda pasada de estabilidad o la pasada 2 de Codex de un elegido | `submuestra_incompleta` |
+| I14 | `cli_version` distinta en R1 de la base | `base_no_comparable_reproducir` |
+| I15 | `telemetria_acreditada.json` con una entrada editada | `telemetria_acreditada_no_coincide` |
 
-**Familia inversa.** Mutar solo derivados (E2E-2) no cambia el veredicto `aprueba`.
+**Recorrido positivo de la extensión (K10, F17-ext).**
+
+1. Dobles de pasada 2 calibrados para que una métrica de A-pequeños quede `no_concluyente` en la
+   previa: estimación puntual ≥ −δ y límite inferior < −δ.
+2. `banco04_decidir previa` escribe R7, con casos según §3.4.
+3. `R.main --fase extension` en las dos versiones produce las reps R+1..R+5 con `extension_sha256`.
+4. `banco04_juzgar juzgar` juzga solo lo nuevo, con las submuestras de extensión de §3.7.
+5. `banco04_decidir veredicto` da `aprueba`, con el rótulo «sin regresión demostrada; evidencia
+   insuficiente» si la métrica sigue `no_concluyente`, o con el veredicto recalculado si cambia.
+6. Las submuestras originales no cambian (las mismas pasadas que antes de la extensión).
+
+Variantes negativas, en la familia I (I12) y en la familia S:
+
+- borrar con `--fase extension` un caso de R7 en una versión → `no_certificable`;
+- escribir R7 sin causa → `extension_sin_causa`.
+
+**Familia inversa.** Mutar solo derivados (E2E-2), incluidos `resultado.false_block`,
+`resultado.jurisdiction_leak` y `resultado.abstention` de R2, no cambia el veredicto `aprueba`.
 
 **Resultado.** El autor independiente escribe la familia en rojo antes de la implementación.
 Después, un tercero muta la puerta y el resultado es el número de mutaciones que **sobreviven**
@@ -798,7 +1267,14 @@ Después, un tercero muta la puerta y el resultado es el número de mutaciones q
 - **`recuento` (1068-1084):** el consumidor pasa a contar `len(discordancias_sin_resolver)`.
 - **Se mueven a `telemetria.py`:** `tokens_conocidos` (1375-1404), y `ControlCuotaJueces` con
   `_contabilizar` (1407-1483), que pasa a escribir R4 con el contexto de juez y el control de §5.
-- **Runners (1537-1702):** se conservan, envueltos por `telemetria`.
+- **Runners (1537-1702):** se conservan, envueltos por `telemetria`. `CodexJuezRunner._llamar`
+  (1670-1702) guarda `cp.stdout` íntegro (K4), y `ClaudeJuezRunner._llamar` (1587-1621) guarda
+  `usage`, `stop_reason`, `modelUsage` y `num_turns`.
+- **`validar_pasada2` (1192-1261) y `esquema_pasada2` (165-189):** reciben el campo
+  `negativa_correcta` y el parámetro `es_riesgo` (K1).
+- **`seleccionar_con_semilla` (1919-1924):** recibe el parámetro `etiqueta` (K9).
+- **`recuento` (1073-1074):** el subtipo de una unidad confirmada se toma de todos los votos de
+  defecto, no solo del de Opus (§8.4, Q16).
 - **`ARCHIVOS_EVALUADOR` (1931-1945):** se amplía con los módulos nuevos de §1.2.
 
 ### 7.3 `execution/run_banco04.py`
@@ -815,10 +1291,14 @@ Después, un tercero muta la puerta y el resultado es el número de mutaciones q
   - `crear_guardian_banco` (1557-1623) consulta R4 (§4.2);
   - `_montaje_real` (1681-1959):
     - la salida custodiada pasa a `<custodia>/salidas`;
-    - `estimacion_piloto_codex` queda vacía (627, 1799): sigue abierta la estimación previa de
-      Codex del área B, y en el Bloque 0 el presupuesto Codex de producción es 0 por R:445;
+    - registra en R1 `cadenas_politica`, `puede_codex`, `codex_cli_version`, `sha_producto`,
+      `rutas_modificadas_respecto_del_producto` y `telemetria_acreditada_sha256`;
+    - `estimacion_piloto_codex` (627, 1799) deja de quedar vacía. Con `puede_codex`, se toma de R13
+      y su ausencia rechaza. `ejecutar_banco` (1094-1095) deja de usar `.get(clase, 0)`: una clave
+      ausente es un error (K5);
+    - instala `telemetria.instalar()` (§4.3) junto a `spend_guard.install()` (1929, 1905);
   - `main` (1962-2010) añade `--fase extension`, `--casos`, `--solo-piloto` y los parámetros de
-    Python `proveedores` y `montaje`.
+    Python `proveedores` y `mundo`.
 - **Se elimina:**
   - `consumo_desde_guardian` y `marca_guardian` (1537-1554) como fuente (quedan, como mucho, para
     el `consumo_resumen` derivado);
@@ -828,14 +1308,30 @@ Después, un tercero muta la puerta y el resultado es el número de mutaciones q
 
 ### 7.4 Otros
 
-- **`execution/banco04_validar_jueces.py`:** R9 crudo (cambia 388-389 y 706); llave determinista
-  (699); `control_de_cuota` (615-635) pasa a `telemetria`; `--versiones-contador` (625-629) se coteja
-  con los R1 que existen en disco.
+- **Producto (`backend/mia/agent/`, `backend/mia/metrics/` y el resto fuera de `eval/`):
+  ningún cambio** (K8, §4.3).
+- **`execution/banco04_validar_jueces.py`:**
+  - R9 crudo (cambia 388-389 y 706), escrito por ítem;
+  - llave determinista (699);
+  - `control_de_cuota` (615-635) pasa a `telemetria`;
+  - `--versiones-contador` (625-629) se coteja con los R1 que existen en disco;
+  - `raiz_registro_uso` (427-446) pasa a usar `SHGetKnownFolderPath`;
+  - `IDENTIDADES_RESERVADO_RETIRADAS`, nueva;
+  - `--reanudar-aprobado-por-pipe` (K3, K7).
+- **`backend/mia/eval/banco04/evaluador_congelado.py`:**
+  - `_clausula_de` y `_mencion_negada` (437-472) se sustituyen por la regla de §3.6 (K2);
+  - se añaden las copias congeladas de `false_block_signal` y de sus tres funciones de
+    `verification` (K1), con el origen 7b9aaa0 y su sha256, como en `ORIGEN_FUGA` (:402).
+- **`backend/mia/eval/banco04/metricas.py`:** `casos_para_extension` (677-681) se sustituye por
+  `casos_extension` (§3.4, K9). Se añaden `falsos_bloqueos_corrida` y `cambio_de_motor_corrida`
+  (K1).
+- **`backend/mia/eval/codex_cli_adapter.py`:** `invoke_codex` (:384-424) y `call_graph_cli`
+  (:536-538), según §4.2.
 - **`backend/mia/eval/harness.py`:** `run_case` (502-905) se conserva. `usage_by_node` (909-936)
   queda para otros usos y el banco deja de llamarlo.
-- **`backend/mia/eval/spend_guard.py`:** `_guarded_invoke` (1126-1275) gana la captura de §4.2. La
-  aritmética en USD (`_alias_and_cost`, 940-971; `note_call`, 864-878) no cambia y no alimenta la
-  cuota.
+- **`backend/mia/eval/spend_guard.py`:** `_guarded_invoke` (1126-1275) gana la ranura y la
+  captura de §4.2 y §4.3. La aritmética en USD (`_alias_and_cost`, 940-971; `note_call`, 864-878)
+  no cambia y no alimenta la cuota.
 - **`execution/banco04_calibracion.py`:** su entrada `--corridas` (líneas 17-22) la produce
   `banco04_decidir` a partir de la reproducción, con los defectos confirmados y sus posiciones.
 
@@ -858,13 +1354,27 @@ Después, un tercero muta la puerta y el resultado es el número de mutaciones q
 - **R-5.** Semilla del juicio, del bootstrap y de las submuestras: `custodia.semilla_hmac()`. Semilla
   de las aprobaciones: `R1.semilla`.
 - **R-6.** La incoherencia de la matriz da `no_certificable`.
-- **R-7.** Casos de la extensión: unión de los casos de cada métrica no concluyente, con un tope de
-  5 elegidos por la mayor contribución negativa.
+- **R-7. [SUSTITUIDA en v2 por §3.4, K9]** ~~Casos de la extensión: unión de los casos de cada
+  métrica no concluyente, con un tope de 5 elegidos por la mayor contribución negativa.~~ Rige el
+  orden total reproducible de §3.4.
+- **R-11 (v2).** El producto no se modifica. La captura se hace con envoltorios en `eval/` (§4.3).
+- **R-12 (v2).** Las clases de consumo son conocido, con cota y sin cota. Solo el consumo sin cota
+  detiene (R4, §5).
+- **R-13 (v2).** El `rep_sha256` cubre solo la parte cruda de R2 (R5).
+- **R-14 (v2).** El factor ×1,25 de R13 sobre el máximo medido de Codex por corrida es una
+  constante nueva de este contrato, no del protocolo.
+  - Las rutas de la fuente de R13 entran en `entradas_leidas`; si no son accesibles,
+    `no_certificable`.
+  - **Dependencia:** antes de producir 0.4 en el Bloque 7 hace falta una medición de 5C hecha con la
+    telemetría del banco (filas R4 reales).
+- **R-15 (v2).** `cadenas_politica` se indexa por (tarea, escalada) (R1).
 - **R-8.** El alcance solo cuenta como medido con `fragmentos_en_prompt.completo`.
 - **R-9.** Familias de telemetría y fórmula del total (§4.1).
 - **R-10.** Cuota Claude = todo alias que no es Codex ni embeddings, como `GuardBanco`.
 
-### 8.3 Preguntas abiertas para el director
+### 8.3 Preguntas abiertas de la v1 (histórico)
+
+Las resolvió el director en §8.4. Donde §8.3 y §8.4 difieren, rige §8.4 con sus revocaciones.
 
 - **Q1.** Una repetición con `fallo_producto` no tiene texto. §4.1 dice que bloquea la
   certificación; §9.5 dice que solo cuenta en `turnos_completados`. Por defecto, en este contrato:
@@ -926,40 +1436,73 @@ Después, un tercero muta la puerta y el resultado es el número de mutaciones q
 ### 8.4 Resoluciones del director (2026-10-12)
 
 Estas resoluciones son técnicas y metodológicas, y las revisa Astra. Ninguna se atribuye a Pipe.
+Primero va la redacción original; las revisiones posteriores al dictamen de Astra sobre la v1
+(K1–K12) van marcadas **[REVOCADA]** o **[REVISADA]**, con la regla vigente a continuación.
 
-- **Q1.** Una repetición con `fallo_producto` cuenta como turno no completado (§9.5) y entra en
-  `turnos_completados`, con lo que puede llevar a `reprueba`. No es `no_certificable`, porque un
-  producto que falla no puede eludir el veredicto por fallar. Las métricas por afirmación se calculan
-  sobre los turnos completados y declaran el denominador.
+- **Q1. [REVOCADA por K6]**
+  - ~~Una repetición con `fallo_producto` cuenta como turno no completado (§9.5) y entra en
+    `turnos_completados`, con lo que puede llevar a `reprueba`. No es `no_certificable`, porque un
+    producto que falla no puede eludir el veredicto por fallar. Las métricas por afirmación se
+    calculan sobre los turnos completados y declaran el denominador.~~
+  - **Vigente:** se aplica el protocolo tal cual. Un fallo sin texto es `no_certificable` (§4.1)
+    **y además** cuenta en `turnos_completados` (§9.5); las dos reglas rigen a la vez (§3.3 A y K1).
+    Sin v1.4.
 - **Q2.** Se acepta el valor por defecto: una inferencia es una fila R4 de Claude en producción,
   incluidos los intentos fallidos.
-- **Q3.** El turno reproducido de la aprobación entra en `consumo_agregado_caso`, porque es consumo
-  real del flujo del abogado. Se corrige R:1435-1436.
-- **Q4.** La señal determinista de fuga es auxiliar (§5.2, P2). La fuga decisiva la dan los jueces
-  con `uso_fuente` (C21). La señal falla cerrada: una negación nunca le resta una cita. Cada positivo
-  de la señal que los jueces no confirman se publica como discrepancia señal↔juez y se adjudica; no se
-  cuenta como fuga ni se descarta en silencio. Con esto se cierra la carrera de patrones de R3-N2. El
-  defecto del producto (`scoring.py`) sigue fuera del banco.
+- **Q3. [REVOCADA por K6]**
+  - ~~El turno reproducido de la aprobación entra en `consumo_agregado_caso`, porque es consumo
+    real del flujo del abogado. Se corrige R:1435-1436.~~
+  - **Vigente:** el turno reproducido **no** entra en el consumo decisorio. Se mantiene «R turnos
+    más aprobación» (P:453-455, P:587) y R:1435-1436 no se toca. Va al presupuesto del circuito por
+    R4 (§3.3 D y E). Sin v1.4.
+- **Q4. [REVOCADA por K2]**
+  - ~~La señal determinista de fuga es auxiliar (§5.2, P2). La fuga decisiva la dan los jueces con
+    `uso_fuente` (C21). La señal falla cerrada: una negación nunca le resta una cita. Cada positivo
+    de la señal que los jueces no confirman se publica como discrepancia señal↔juez y se adjudica;
+    no se cuenta como fuga ni se descarta en silencio.~~
+  - **Vigente:** se conserva la regla congelada (P:479-482, C26). La señal vendorizada lleva la
+    negación vinculada a la proposición sobre la cita, con la regla de §3.6 y sus pruebas
+    obligatorias: los tres contraejemplos de R3-C-N2 y los dos casos de R2.
+  - No hay subordinación al juez ni adjudicación nueva entre señal y juez: la fila 2 es señal
+    **o** jueces. Sin v1.4. El defecto del producto (`scoring.py`) sigue fuera del banco.
 - **Q5.** Se acepta el valor por defecto: la cuarta ruta es R8.
 - **Q6.** El kappa de las salidas reales se calcula sobre las salidas juzgadas de **ambas** versiones.
   La comparación exige jueces fiables también sobre la base.
 - **Q7.** Se acepta el valor por defecto: los decisivos estables usan solo las repeticiones 1..R
   pre-registradas.
-- **Q8.** `negativa_correcta` se deriva de la pasada 2 con un campo nuevo de su esquema. Los esquemas
-  los fija el código (C14), así que es una aclaración de v1.3 y no exige v1.4.
+- **Q8. [REVISADA por K1]** `negativa_correcta` se deriva de la pasada 2 con un campo nuevo de su
+  esquema. Los esquemas los fija el código (C14), así que es una aclaración de v1.3 y no exige v1.4.
+  Su semántica, su validación y su uso en la puerta están en R5. Los productores de
+  `falsos_bloqueos` y `cambio_de_motor` están en §3.3 C.
 - **Q9.** Es precondición de la piloto. Antes de la primera llamada de juez real hay que acreditar la
   forma de la telemetría del CLI instalado, con su versión registrada: la presencia de los campos de
   caché cuando valen 0, si los eventos `usage` de Codex son acumulados y el `stop_reason`. Para eso se
   hace UNA llamada mínima real por proveedor, o se usa una salida guardada de la misma versión. Si un
   campo puede faltar con valor 0, la regla de §4.1 lo trata como cero **solo** con la evidencia
   versionada de esa conducta.
+  - **[REVISADA por K4]** Esa evidencia es una entrada del registro versionado de §4.4, ligada a
+    comando, versión exacta del CLI, evidencia y sha256, que la puerta valida.
+  - Sin entrada, la ausencia es desconocida, nunca cero.
+  - Se persisten todos los eventos crudos del juez Codex (R5).
 - **Q10.** Se acepta el valor por defecto: la atribución pre-registrada se ancla en R1 de la versión
   nueva, antes de producirla, y la escribe el director a partir del plan del Bloque 4.
-- **Q11.** El Bloque 0 mide y publica la línea base de 0.3.3 con un solo directorio, sin veredicto
-  global. Su salida son las métricas absolutas, el techo y la matriz de §7.2, sin comparativas.
-- **Q12.** El registro de uso no existe (verificado el 2026-10-12), así que el reservado no se ha
-  usado. La validación reservada corre **después** de implementar este contrato, con el hash nuevo
-  del evaluador.
+- **Q11. [REVISADA por K11]** El Bloque 0 mide y publica la línea base de 0.3.3 con un solo
+  directorio, sin veredicto global. Su salida son las métricas absolutas, el consumo descriptivo,
+  el presupuesto del circuito y la matriz de §7.2, sin comparativas. Comando, firma, productor y
+  esquema están en §3.5. El techo de §6.3 solo existe con las dos versiones.
+- **Q12. [REVOCADA por K3]**
+  - ~~El registro de uso no existe (verificado el 2026-10-12), así que el reservado no se ha usado.
+    La validación reservada corre **después** de implementar este contrato, con el hash nuevo del
+    evaluador.~~
+  - **Vigente:** el reservado actual **se retira** y no se usa nunca (`IDENTIDADES_RESERVADO_RETIRADAS`,
+    R9).
+  - Un autor independiente escribe un reservado **nuevo** sobre salidas reales de la piloto de 0.3.3
+    (paso 6 del HANDOFF). La inferencia «no usado» deja de ser necesaria.
+  - La raíz del registro de uso se resuelve con `SHGetKnownFolderPath(FOLDERID_LocalAppData)` y no
+    con variables de entorno, con prueba de reubicación conjunta (E2E-10).
+  - Residual declarado: un operador con control local puede borrar el registro.
+  - La validación con el reservado nuevo corre después de implementar el contrato, con el hash
+    nuevo del evaluador.
 - **Q13.** La decisión de Pipe sobre C19 entra como aclaración C27 de v1.3.
 - **Q14.** Se intenta acreditar la cota según C18, sin cambiar la conducta del producto. Para eso se
   necesitan dos datos de la documentación oficial de la versión instalada del CLI: el número máximo de
@@ -974,3 +1517,35 @@ Estas resoluciones son técnicas y metodológicas, y las revisa Astra. Ninguna s
   levantado con `Start-Process -WindowStyle Hidden -Wait`. Nunca se usa el 55432.
 - **Q18.** Hay que verificarlo en el código. Si `research_sources` no lleva el texto del pasaje, el
   runner lo persiste: cifrado si el caso está custodiado y ligado a I10.
+- **K8, perímetro del producto (decisión nueva del director, 2026-10-12).**
+  - El banco **no** cambia archivos del producto. La telemetría cruda se captura desde `eval/` con
+    un envoltorio transparente y restaurable (§4.3), el mismo para 0.3.3 y para 0.4.
+  - El cero del panel del abogado queda como pendiente del producto para el Bloque 1.
+  - Se añade la condición de comparabilidad (P:1023-1030): si el CLI o el modelo cambian, se vuelve
+    a producir la base (§3.3 A).
+- **K7, reanudación (decisión nueva del director, 2026-10-12).**
+  - Se distingue el consumo desconocido sin cota del que tiene cota acreditada: solo el primero
+    detiene.
+  - La autorización se filtra por etapa, versión, evento y suspensión.
+  - Se define la reanudación de la validación.
+  - La autorización permite continuar y nunca acredita consumo (R4, R6, R9, §5).
+- **K5, K9, K10, K11, K12 y K1:** resueltas técnicamente según el cambio que pide Astra. Ver §9.
+
+---
+
+## 9 · Cierre de las objeciones de Astra sobre la v1 (K1–K12)
+
+| Objeción | Gravedad | Qué pedía Astra | Dónde la cierra la v2 |
+|---|---|---|---|
+| **K1** | Bloqueante | productores de `falsos_bloqueos` y `cambio_de_motor` (sin aceptar `false_block` derivado); transformación de `model_fallbacks`; semántica y validación de `negativa_correcta` | IC-2 (§0); §3.3 C, tabla «Entradas por corrida…»; R5, «Campo nuevo de la pasada 2»; §3.3 B (proxy); §7.2; §7.4 (`evaluador_congelado`, `metricas`); pruebas S21–S23 (§6.3) e inversa |
+| **K2** | Bloqueante | conservar y corregir la regla congelada de fuga, o pasar a v1.4 | §3.6 (regla de vinculación y pruebas V1–V9); §3.3 B, fila 2; §3.3 E; §7.4; §8.4 Q4 [REVOCADA]; prueba S15 |
+| **K3** | Bloqueante | raíz del registro de uso independiente del entorno; reubicación conjunta; historial del reservado | R9 («Reservado nuevo…», «Raíz del registro de uso»); §1.1 (orden del Bloque 0); E2E-10; §7.4; §8.4 Q12 [REVOCADA] |
+| **K4** | Bloqueante | persistir todos los eventos del juez Codex; registro versionado de acreditación validado por la puerta; pruebas de varios eventos y de acreditación ausente | R5 («Telemetría cruda de los jueces»); R4 (`uso_crudo`, `cli_version`, `acreditacion_aplicada`); §4.1; §4.4; E2E-3; I15; §8.4 Q9 [REVISADA] |
+| **K5** | Mayor | productor y estimación previa acreditada de Codex en la piloto; bloquear su ausencia; probarlo desde el montaje real del Bloque 7 | R1 (`cadenas_politica`, `puede_codex`, `estimacion_piloto_codex`); R13; §3.3 A («Codex en la piloto»); §7.3; E2E-9 |
+| **K6** | Mayor | resolver los conflictos de Q1 (§4.1) y Q3 (consumo de la aprobación) sin cambiar reglas | §3.3 A («Texto juzgable»); §3.3 C (`turnos_completados`); §3.3 D (`aprobacion`); §8.4 Q1 y Q3 [REVOCADAS]; prueba S21 |
+| **K7** | Mayor | filtrar la autorización por etapa, versión, evento y suspensión; distinguir sin cota de con cota; reanudación de la validación; la autorización no acredita consumo | R4 («Clases de consumo»); R6 (esquema v2 y reglas de validez); R9 («Reanudación de la validación»); §4.1; §5.1–§5.4; E2E-3 (variante con cota); E2E-4 |
+| **K8** | Mayor | exigir la comparabilidad (reproducir la base si cambian CLI o modelo); perímetro del parche; invariancia del comportamiento del abogado | §4.3 (intercepción desde `eval/`, sin cambios de producto); R1 (`sha_producto`, `rutas_modificadas_respecto_del_producto`, `codex_cli_version`); §3.2 paso 1; §3.3 A («Comparabilidad», con la base del Bloque 0 reutilizable si no cambian el CLI ni el modelo; «Perímetro», solo `eval/` y `execution/`); R4 (`bloque`); §6.1 (`proveedores` con alcance de módulo); E2E-6; I14; §7.4 |
+| **K9** | Mayor | orden total reproducible para los casos de la extensión; población de las submuestras fija; preservar las originales | §3.4 («Selección de casos con orden total reproducible»); §3.7; §3.3 E (estabilidad y Codex 15 %); §7.2 (`seleccionar_con_semilla`); §7.4 (`casos_extension`); §8.2 R-7 [SUSTITUIDA] |
+| **K10** | Mayor | separar la manipulación incoherente de la mutación semántica (regenerar desde `main`); recorrido positivo de la extensión y de Codex de producción; que el mundo no fabrique telemetría | §6.1 (`mundo=` sin telemetría propia, `origen: "captura"`); §6.2 (mutación semántica del esqueleto, E2E-8); §6.3 (familias S e I, F17-ext); §3.8 (códigos exactos que exige la familia I); R5 (`rep_sha256` sobre la parte cruda) |
+| **K11** | Mayor | comando, firma, productor y esquema del informe del Bloque 0, separado del techo comparativo | §1.1 (Bloque 0); §1.2 (`linea-base`); R8 (`bloque_0_linea_base`); §3.5; E2E-11; §8.4 Q11 [REVISADA] |
+| **K12** | Menor | predicado de limpieza invertido | §3.2 paso 1 (`arbol_limpio == true` y `dobles == false`); §3.3 A («Identidad de cada versión») |
