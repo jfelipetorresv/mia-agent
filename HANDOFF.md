@@ -28,10 +28,22 @@ autorización de Pipe.
 - Revisión de Astra sobre la implementación: ronda 1 NO APTO (I1–I10). Las 10 se corrigieron, y
   queda la ronda 2 de Astra.
 
-**Ajustes finales: TERMINADOS y commiteados.**
-- `PROTOCOLO_CUSTODIA` está en `protocolo.py`; `custodia.py` lo importa y la AAD no cambió.
-- `motivo_juicio` controla la reserva de ambos proveedores.
-- Suites: juicio 286/286 y producción 220/220.
+**Ronda 2 de Astra (2026-10-12): NO APTO en los tres frentes; corregida.**
+- Dictámenes, encargos e informes de los implementadores: scratchpad de la sesión 2876318c…, carpeta
+  `r2/` (`veredicto_A/B/C.md`, `banco04-r2-juicio-informe.md`, `banco04-r2-produccion-informe.md`).
+- I6 resuelta; I1–I5, I7–I10, las siete nuevas (A-N1..N3, B-N1..N2, C-N1..N4) y los dos pendientes
+  laterales, corregidos por dos agentes Opus en frentes disjuntos, con checks R2-* en ambos sentidos.
+  Mutaciones de los propios implementadores: juicio 49/49 rojas; producción 31/32 (I5c equivalente).
+- El director recontó: juicio 387/387, producción 238/238, `test_eval_spend_guard` 83/83 (a-25
+  alineado con el contrato), `test_gates_no_ciegos` 9/9. Sondas propias: `cota_salida_cli` da `None`
+  para Claude y Codex; la señal de fuga vendorizada distingue la negación por cláusula.
+- Protocolo: §12.6 con las aclaraciones C18–C26. `custodia_manifest.json`: invariante C08 ampliada
+  (C22).
+- **Consecuencia operativa (C18/C19):** ningún CLI tiene cota, así que un solo timeout de juez detiene
+  el juicio y deja el techo no certificable. **Pendiente de Pipe:** si el juicio puede reanudarse con
+  su aprobación expresa tras un consumo desconocido.
+- **N4 persiste en el producto** (`scoring.py`): la negación de la oración oculta la cita. Las cifras
+  históricas de «fuga real 0» pudieron medirse con ese punto ciego. Tarea aparte propuesta.
 
 **Avisos.**
 - El agente de juicio afirmó dos veces cosas falsas. Dijo que `verification.py` había cambiado (está
@@ -45,14 +57,16 @@ autorización de Pipe.
 - `test_api_launcher` dio rojo una vez bajo carga y pasó 2/2 aislado. Causa no demostrada.
 
 **Retomar, en este orden.**
-1. Estado de los ajustes finales y las tres suites en verde.
-2. Ronda 2 de Astra sobre la implementación, hasta APTO.
+1. Recontar las suites (juicio, producción, spend_guard, gates no ciegos).
+2. Ronda 3 de Astra sobre las correcciones de la ronda 2, hasta APTO.
 3. Mutación por un TERCERO (agente nuevo, no el implementador). El número de mutaciones que
    sobreviven es el resultado.
 4. Commit limpio.
 5. Tanda piloto 0.3.3: mide C12, la reserva del juicio.
 6. El autor independiente rehace el conjunto RESERVADO sobre salidas reales y escribe las claves de
-   los 13 casos existentes.
+   los 13 casos existentes. Incluye la mutación que pidió Astra en I7: una norma con respaldo
+   documental pero de un ordenamiento NO configurado, con una negación ajena a su aplicabilidad. La
+   escribe el autor independiente, nunca el implementador: si no, la reserva queda contaminada.
 7. Validación de jueces.
 8. Línea base 0.3.3 completa, en segundo plano.
 9. Bloque 1.

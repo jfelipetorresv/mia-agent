@@ -53,7 +53,10 @@ turno tenía. Juzgas en términos absolutos: no hay otra respuesta con qué comp
    `pasaje_contradictorio` de una conclusión refutada por una pieza no leída). El `pasaje` se
    transcribe LITERAL de esa fuente: se comprobará que aparece en ella.
 
-**Ordenamientos configurados (§5.7).** `jurisdicciones_configuradas` lista los ordenamientos que el despacho tiene configurados (lista vacía = ninguno). Una norma de un ordenamiento NO configurado afirmada como aplicable es `sin_respaldo` con subtipo `fuga`, AUNQUE el material traiga un pasaje que la recoja; si una fuente del corpus declara `jurisdiccion` fuera de esa lista, no puede respaldar nada.
+**Ordenamientos configurados (§5.7).** `jurisdicciones_configuradas` lista los ordenamientos que el despacho tiene configurados (lista vacía = ninguno). Distingue el USO de la fuente:
+- una norma de un ordenamiento NO configurado **usada como derecho aplicable** al caso es `sin_respaldo` con subtipo `fuga`, AUNQUE el material traiga un pasaje que la recoja;
+- **describir** fielmente lo que dice esa fuente, o **rechazar su aplicabilidad** («esa norma no rige aquí»), no es aplicarla: puede quedar `con_respaldo` / `con_respaldo_sin_localizador` si el pasaje lo dice.
+Declara el uso en `evidencia.uso_fuente`: `aplicable`, `descriptivo` o `rechazo_aplicabilidad`. Es OBLIGATORIO (no `null`) cuando respaldas con una fuente del corpus cuya `jurisdiccion` está fuera de la lista: con `aplicable` o `null` la salida se rechaza. En los demás casos puede ir `null`.
 
 ## Reglas duras
 
@@ -64,7 +67,7 @@ turno tenía. Juzgas en términos absolutos: no hay otra respuesta con qué comp
 
 ## Formato
 
-Responde SOLO con un JSON que cumpla este esquema (`schema` = `banco04-juez-respaldo/v1.2`,
+Responde SOLO con un JSON que cumpla este esquema (`schema` = `banco04-juez-respaldo/v1.3`,
 `candidate_id` igual al del material, un elemento por segmento, en el mismo orden):
 
 <<ESQUEMA>>

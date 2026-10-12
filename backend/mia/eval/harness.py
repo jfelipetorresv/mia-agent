@@ -468,6 +468,37 @@ async def _seed_case_matter(tenant_id: str, case: GoldenCase) -> str:
 
 
 # ── correr UN caso por el grafo completo ──────────────────────────────────────
+def fragmentos_de_bloques_enviados(texto: str, renders: dict) -> list[dict]:
+    """BANCO 0.4 · C8 · R2-A-N3 — fragmentos del expediente que un prompt ENVIÓ, a partir de los
+    renders observados (`render_documents` → filas). Pura: solo lee.
+
+    Un render histórico puede ser subcadena de otro (`render([A])` es prefijo de `render([A, B])`).
+    Antes se sumaban TODAS las coincidencias y la llamada que enviaba `[A, B]` quedaba registrada
+    como `[A, A, B]`, con numeración corrida. Ahora se identifican los BLOQUES efectivamente
+    enviados: se buscan todas las apariciones de cada render, se eligen primero las más largas y se
+    descarta toda aparición que se solape con una ya elegida; los bloques que quedan (que no se
+    solapan) se ordenan por posición en el prompt y se numeran en ese orden. Dos bloques distintos
+    y separados en el mismo prompt siguen contando los dos; el MISMO render repetido, una vez."""
+    apariciones: list[tuple[int, int, str]] = []
+    for salida_render in list(renders):
+        if not salida_render:
+            continue
+        i = texto.find(salida_render)
+        while i >= 0:
+            apariciones.append((i, i + len(salida_render), salida_render))
+            i = texto.find(salida_render, i + 1)
+    elegidos: list[tuple[int, int, str]] = []
+    for ini, fin, r in sorted(apariciones, key=lambda x: (-(x[1] - x[0]), x[0])):
+        # el mismo render repetido en el prompt cuenta una vez (como antes); uno contenido en
+        # otro ya elegido no cuenta (es el render histórico, no un bloque enviado)
+        if all(r != r2 and (fin <= a or ini >= b) for a, b, r2 in elegidos):
+            elegidos.append((ini, fin, r))
+    filas: list[dict] = []
+    for _ini, _fin, r in sorted(elegidos):
+        filas.extend(renders[r])
+    return [dict(f, n=i + 1) for i, f in enumerate(filas)]
+
+
 async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optional[bool] = None,
                    substantive_judge: Optional[callable] = None,
                    allow_unguarded: bool = False) -> dict:
@@ -614,8 +645,7 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
                     else:
                         partes.append(str(cuerpo or ""))
                 texto = "\n".join(partes)
-                filas = [f for salida_render, fs in list(_capt["renders"].items())
-                         if salida_render in texto for f in fs]
+                filas = fragmentos_de_bloques_enviados(texto, _capt["renders"])
                 if filas:
                     _capt["llamadas"].append({"task": task, "ok": ok, "fragmentos": [
                         dict(f, n=i + 1) for i, f in enumerate(filas)]})

@@ -1281,3 +1281,81 @@ Versión de la custodia: el formato y los artefactos custodiados siguen en `banc
 (`protocolo.PROTOCOLO_CUSTODIA`), con su AAD ligada a esa versión. La v1.3 no cambia ningún artefacto
 custodiado, así que la versión del protocolo (`VERSION_PROTOCOLO`) y la de la custodia se versionan por
 separado.
+
+### 12.6 Ronda 2 de Astra sobre la implementación: aclaraciones C18–C26 (2026-10-12)
+
+Astra emitió NO APTO en los tres frentes de la ronda 2 (I6 resuelta; I1–I5 e I7–I10 parciales; siete
+objeciones nuevas y dos pendientes laterales). Las correcciones exigieron precisar el protocolo en los
+puntos siguientes. Ninguna aclaración cambia la muestra, las repeticiones, los umbrales ni los techos;
+todas endurecen o declaran conducta. Siguen bajo banco04-v1.3.
+
+- **C18 (cota de los intentos por CLI; P10).** El máximo de salida que la API documenta para un modelo
+  no acredita la cota de una ejecución del CLI de suscripción: una invocación del CLI puede emitir
+  varias peticiones a la API (reintentos internos, reenvíos, peticiones de fondo) que el banco no puede
+  fijar sin cambiar el producto. Todo intento fallido bajo un alias `cli-*` (Claude o Codex) se
+  registra con consumo desconocido y **sin cota**, y el techo de §3.4 y §6.3 queda no certificable.
+  Declarar una cota para un CLI exige acreditar, desde el comando y el entorno reales con que el banco
+  lo invoca y desde la documentación oficial de la versión instalada, el número máximo de peticiones
+  por invocación y la salida máxima por petición; la cota es entonces peticiones × (entrada estimada +
+  salida máxima). Sin esa acreditación no hay cota. Vale igual para los jueces: Claude toma la cota de
+  `spend_guard.cota_salida_cli` y Codex no tiene ninguna. Una telemetría parcial (sin los componentes
+  de entrada y salida) es consumo desconocido, nunca cero conocido.
+- **C19 (consumo desconocido durante el circuito).** Con un intento de consumo desconocido y sin cota,
+  el acumulado es solo una cota inferior: no se lanza ningún intento más de juez ni ninguna llamada
+  Codex de producción. La producción Claude puede seguir, pero el techo queda no certificable y las
+  métricas de calidad que se obtengan se publican con esa fila en «no certificable». **Pendiente de
+  Pipe:** si continuar el juicio tras un consumo desconocido puede hacerse con su aprobación expresa,
+  registrada como la reanudación de §3.4. Mientras no lo decida, la conducta es detenerse.
+- **C20 (piloto y Codex en el Bloque 0).** Cada corrida de la tanda piloto se controla antes de
+  lanzarse con la base de §3.2 de su clase (48 000 tokens si es pequeña, 177 000 si es voluminosa). En
+  el Bloque 0 el presupuesto Codex de producción es cero: el banco impide antes de enviarla cualquier
+  llamada Codex de producción y suspende con ese motivo. En el Bloque 7 ese presupuesto es el techo
+  Codex menos la reserva del juicio (8 M − 6 M = 2 M), y la decisión de R, la piloto y las
+  aprobaciones lo proyectan.
+- **C21 (uso de la fuente en el esquema del juez).** La `evidencia` de la pasada 1 y del tercer voto
+  incluye `uso_fuente` (`aplicable` | `descriptivo` | `rechazo_aplicabilidad` | null). Para respaldar
+  (`con_respaldo` o `con_respaldo_sin_localizador`) con una fuente de un ordenamiento no configurado es
+  obligatorio y distinto de `aplicable`: describir fielmente esa fuente, o rechazar su aplicabilidad,
+  puede quedar respaldado; usarla como derecho aplicable es `fuga`. Esquemas
+  `banco04-juez-respaldo/v1.3` y `banco04-tercer-voto/v1.3`. La frase de §12.5 «la norma respaldada
+  pero no habilitada cuenta como `fuga`» se lee «la norma respaldada pero no habilitada, **usada como
+  aplicable**, cuenta como `fuga`».
+- **C22 (acreditación de compatibilidad v1.3 del reservado).** El material reservado se escribió bajo
+  la custodia v1.2, cuando el juez no recibía las jurisdicciones configuradas. Solo habilita el
+  circuito con una acreditación `banco04-acreditacion-compatibilidad/v1` de un **autor independiente**,
+  ligada al hash combinado del evaluador v1.3, a la identidad del reservado y al sha256 en claro de
+  todos sus casos, claves y mutaciones. La acreditación cubre de forma comprobable cuatro clases: fuga
+  sin ordenamiento configurado; fuga en un despacho configurado para **otro** ordenamiento con la
+  fuente no habilitada en el material; negación ajena a la aplicabilidad; y control descriptivo. El
+  código exige al menos un ítem por clase (`protocolo.ACREDITACION_V13_MINIMOS`); ese piso es mecánico
+  y no sustituye el criterio del autor independiente sobre la cobertura suficiente. La invariante C08
+  pasa a ser: C08 solo en ítems sin ordenamiento configurado o con una fuente de un ordenamiento no
+  configurado.
+- **C23 (registro de uso único del reservado; §8.6).** El registro vive en una raíz permanente
+  (`%LOCALAPPDATA%\MIA-banco04-registro-uso`), independiente de `MIA_BANCO04_CUSTODIA`, con marca
+  secundaria en la custodia. La identidad es el sha256 en claro del reservado, y se registran también
+  las huellas del material de cada ítem: reutilizar material ya usado, aunque se reubique o se
+  reempaquete, se rechaza. `execution/banco04_validar_jueces.py` forma parte de la huella del
+  evaluador congelado (§9.6).
+- **C24 (veredicto global recalculado y recibo de extensión; §6.2).** La puerta global no confía en el
+  inventario del llamador: lo reconstruye desde el protocolo, exige las repeticiones exactas 1..R por
+  versión y caso, consumo de los 17 casos en las dos versiones y pares completos, y recalcula las
+  comparativas desde los casos agregados de 0.3.3 y 0.4 con su semilla. Toda ausencia es
+  `no_certificable`. El recibo de extensión `{casos, corridas_por_caso: 5, veredicto_final,
+  comparativa_previa}` exige que la comparativa previa sea `no_concluyente`, que los casos sean los de
+  la regla y que las corridas adicionales existan, estén juzgadas y entren al recálculo.
+- **C25 (atribución de subidas de cuota; §6.3).** Una subida de consumo de un caso solo se atribuye a
+  una `mejora` de una unidad de su mismo grupo, (a) o (c), con `usage_by_node` de las dos versiones que
+  sume el consumo medido de su ámbito y con el nodo atribuido como el que más subió. La causalidad
+  nodo → métrica no se acredita mecánicamente: el control exige la evidencia, no la prueba causal.
+- **C26 (señal determinista de fuga; §5.7).** §5.7 usa la copia vendorizada de
+  `jurisdiction_leak_signal` en `evaluador_congelado.py`, con la negación asociada a su cita (por
+  cláusula), no a la oración entera. La función de `scoring.py` del producto conserva el defecto
+  (objeción N4 de Astra): una negación sobre otro hecho de la misma oración oculta la cita. Su
+  corrección y el recálculo de las cifras históricas de fuga quedan fuera del banco.
+
+Límites declarados por los implementadores y no resueltos en esta ronda: el veredicto global todavía
+consume tal cual las filas absolutas de §6.1, la de decisivos estables y la de atribución (comprueba
+su presencia y cobertura, no las recalcula); `metricas_corrida` exige `texto_salida` y
+`jurisdicciones`, pero el runner aún no la llama; la entrada de un intento se estima (caracteres / 3),
+no se acota.

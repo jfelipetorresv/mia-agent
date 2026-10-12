@@ -26,7 +26,10 @@ UNIDAD DE MEDIDA: cada entrada de `verdad[]` (un ítem puede llevar varias). Reg
 Uso:
   .venv\\Scripts\\python.exe execution\\banco04_validar_jueces.py --conjunto-custodia ajuste --salida RUTA
   .venv\\Scripts\\python.exe execution\\banco04_validar_jueces.py --conjunto-custodia reservado \\
-      --salida RUTA_FUERA_DEL_REPO --registro-uso DIR_FUERA_DEL_REPO --hash-congelado HEX
+      --salida RUTA_FUERA_DEL_REPO --hash-congelado HEX --acreditacion-v13 RUTA \\
+      --salida-banco RUTA --salida-custodia RUTA --version 0.4 --versiones-contador 0.4,0.3.3 \\
+      --bloque 7
+  (el registro de uso único vive en %LOCALAPPDATA%\\MIA-banco04-registro-uso: no se elige)
   (`--conjunto RUTA` lee un JSON descifrado; solo para pruebas fuera del repositorio.)
 """
 from __future__ import annotations
@@ -40,13 +43,15 @@ import sys
 import time
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from mia.eval.banco04 import ceguera, jueces  # noqa: E402
+from mia.eval.banco04 import evaluador_congelado as EV  # noqa: E402
 from mia.eval.banco04 import protocolo as P  # noqa: E402
+from mia.eval.banco04.custodia import c08_admisible, fuentes_de_otro_ordenamiento  # noqa: E402
 from mia.eval.banco04.segmentos import normalizar_saltos  # noqa: E402
 
 FORMATO = "banco04-mutaciones/v1"
@@ -74,14 +79,16 @@ def huella_material(item: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canon(item["material"])).hexdigest()
 
 
-CATEGORIA_FUGA = "C08"   # invariante del manifiesto: solo en ítems con jurisdicciones == []
+CATEGORIA_FUGA = "C08"   # invariante: sin ordenamiento configurado, o con fuente de OTRO (R2-C-N1)
 
 
 def validar_conjunto(conjunto: Any, *, tipo_esperado: str | None = None,
                      otro: Mapping[str, Any] | None = None) -> list[dict]:
     """Comprobación estricta y local del formato (además de la del cargador de custodia), con
-    dos invariantes del manifiesto: C08 solo en ítems sin jurisdicción, y materiales de ajuste
-    y reservado disjuntos (`huella_material`) cuando se pasa `otro`. Falla cerrado."""
+    dos invariantes: C08 solo en ítems sin ordenamiento configurado o configurados para OTRO
+    ordenamiento con la fuente no habilitada en el material (R2-C-N1, `custodia.c08_admisible`),
+    y materiales de ajuste y reservado disjuntos (`huella_material`) cuando se pasa `otro`.
+    Falla cerrado."""
     if not isinstance(conjunto, dict) or set(conjunto) != _CLAVES_TOP:
         raise ConjuntoInvalido("claves de primer nivel")
     # Formato de CUSTODIA (§12.5): el conjunto se coteja contra PROTOCOLO_CUSTODIA, nunca
@@ -111,8 +118,9 @@ def validar_conjunto(conjunto: Any, *, tipo_esperado: str | None = None,
         if not isinstance(it["jurisdicciones"], list):
             raise ConjuntoInvalido(f"{it['id']}: jurisdicciones")
         if (any(v.get("categoria") == CATEGORIA_FUGA for v in it["verdad"] if isinstance(v, dict))
-                and it["jurisdicciones"] != []):
-            raise ConjuntoInvalido(f"{it['id']}: C08 (fuga) solo en ítems con jurisdicciones == []")
+                and not c08_admisible(it)):
+            raise ConjuntoInvalido(f"{it['id']}: C08 (fuga) solo sin ordenamiento configurado o con "
+                                   "una fuente de OTRO ordenamiento en el material (R2-C-N1)")
         tramos: dict[str, list[tuple[int, int]]] = {}
         for v in it["verdad"]:
             if not isinstance(v, dict) or not (_CLAVES_VERDAD <= set(v) <= _CLAVES_VERDAD | _CLAVES_VERDAD_OPC):
@@ -267,10 +275,17 @@ def _es_breve(r: Mapping[str, Any]) -> bool:
 
 
 def evaluar_exigencias(resultados: list[dict], *, tipo: str, discordancias: int,
-                       pares_kappa: list | None = None) -> dict:
+                       pares_kappa: list | None = None, acreditacion: Mapping[str, Any] | None = None,
+                       consumo: Mapping[str, Any] | None = None) -> dict:
     """Exigencias de §8.6 sobre los resultados POR ENTRADA DE VERDAD. Determinista (gate N5).
     Un defecto no evaluado cuenta como NO detectado y un control no evaluado como falso positivo
-    (lo que no se pudo juzgar no ayuda al circuito)."""
+    (lo que no se pudo juzgar no ayuda al circuito).
+
+    Además (ronda 2 de Astra), para habilitar el circuito:
+      · R2-C-N1: la acreditación de compatibilidad v1.3 del material reservado, VERIFICADA
+        (`verificar_acreditacion`: `{"ok": True, ...}`). Sin ella, o inválida, no se habilita;
+      · R2-B-I5: el consumo de TODO el circuito, leído del contador COMPARTIDO, es certificable
+        (`consumo["cota_calculable"] is True`). Sin contador o con consumo sin cota, no se habilita."""
     defectos = [r for r in resultados if r["es_defecto"]]
     controles = [r for r in resultados if not r["es_defecto"]]
     no_eval = [r["id"] for r in resultados if r.get("estado") != "evaluada"]
@@ -306,6 +321,15 @@ def evaluar_exigencias(resultados: list[dict], *, tipo: str, discordancias: int,
         "salidas_sin_evaluar": (len(no_eval), not no_eval),
         # I6: una discordancia material sin resolver impide usar el circuito (§8.5, §8.6).
         "discordancias_sin_resolver": (int(discordancias), int(discordancias) == 0),
+        # R2-C-N1: material reservado acreditado compatible con v1.3 (casos, claves, mutaciones y
+        # evaluador ligados por hash; cobertura de fugas, incluida la de OTRO ordenamiento).
+        "acreditacion_compatibilidad_v13": (
+            (acreditacion or {}).get("motivos") if acreditacion is not None else "ausente",
+            isinstance(acreditacion, Mapping) and acreditacion.get("ok") is True),
+        # R2-B-I5: el consumo del circuito (contador compartido) es certificable.
+        "consumo_certificable": (
+            (consumo or {}).get("resumen") if consumo is not None else "sin_contador",
+            isinstance(consumo, Mapping) and consumo.get("cota_calculable") is True),
     }
     utilizable = all(ok for _, ok in exig.values())
     return {
@@ -323,15 +347,35 @@ def evaluar_exigencias(resultados: list[dict], *, tipo: str, discordancias: int,
     }
 
 
+def consumo_del_circuito(control: jueces.ControlCuotaJueces | None) -> dict | None:
+    """R2-B-I5: el consumo del circuito leído del CONTADOR COMPARTIDO (relee del disco todo lo que
+    gastaron producción, aprobaciones y juicio de las versiones del bloque), no de memoria."""
+    if control is None:
+        return None
+    c = control.ledger.contador()
+    desconocidos = [i["id"] for i in control.intentos if i.get("estado") == "desconocido"]
+    return {"cota_calculable": bool(c.cota_calculable) and not desconocidos,
+            "intentos_desconocidos": desconocidos, "resumen": c.resumen()}
+
+
 def validar_circuito(items: list[dict], *, opus: jueces.Runner, codex: jueces.Runner,
-                     llave: bytes, tipo: str, votante_factory: Callable | None = None) -> dict:
+                     llave: bytes, tipo: str, votante_factory: Callable | None = None,
+                     control: jueces.ControlCuotaJueces | None = None,
+                     acreditacion: Mapping[str, Any] | None = None) -> dict:
+    if tipo == "reservado":
+        # R2-B-I5: el reservado solo se juzga con los runners ATADOS al contador compartido.
+        if (control is None or getattr(opus, "control", None) is not control
+                or getattr(codex, "control", None) is not control):
+            raise ValueError("R2-B-I5: el reservado exige que Opus y Codex usen el MISMO control "
+                             "de cuota del contador compartido")
     cegado = comprobar_cegado(items)
     por_item = [evaluar_item(it, opus=opus, codex=codex, llave=llave,
                              votante_factory=votante_factory) for it in items]
     resultados = [v for x in por_item for v in x["verdades"]]
     pares = [p for x in por_item if x["estado"] == "evaluada" for p in x["pares_kappa"]]
     discord = sum(int(x.get("discordancias") or 0) for x in por_item)
-    out = evaluar_exigencias(resultados, tipo=tipo, discordancias=discord, pares_kappa=pares)
+    out = evaluar_exigencias(resultados, tipo=tipo, discordancias=discord, pares_kappa=pares,
+                             acreditacion=acreditacion, consumo=consumo_del_circuito(control))
     out["cegado"] = cegado
     out["resultados"] = resultados
     conteo: dict[str, int] = {}
@@ -356,6 +400,11 @@ def _bajo_repo(ruta: Path) -> bool:
 
 ENV_CUSTODIA = "MIA_BANCO04_CUSTODIA"
 SUBDIR_REGISTRO_USO = "registro-uso"
+# R2-C-I9: raíz PERMANENTE del registro de uso, independiente de dónde esté el material: no sale de
+# MIA_BANCO04_CUSTODIA (que cambia si la custodia se reubica) sino del perfil local del usuario de
+# Windows (%LOCALAPPDATA%), con un nombre fijo que ninguna opción ni variable del banco elige.
+ENV_RAIZ_PERMANENTE = "LOCALAPPDATA"
+DIR_REGISTRO_PERMANENTE = "MIA-banco04-registro-uso"
 
 
 class ReservadoYaUsado(RuntimeError):
@@ -363,63 +412,231 @@ class ReservadoYaUsado(RuntimeError):
 
 
 def identidad_sellada_reservado(manifiesto: Mapping[str, Any]) -> str:
-    """Identidad SELLADA del reservado: la del artefacto `mutaciones_reservadas` del manifiesto
-    (id + sha256 cifrado + sha256 en claro). No depende de nada que el operador elija."""
+    """Identidad SELLADA del reservado: el sha256 EN CLARO del artefacto `mutaciones_reservadas`
+    del manifiesto del repositorio (R2-C-I9: el CONTENIDO, no su ubicación, ni su cifrado — un
+    re-cifrado con otro nonce no fabrica un reservado nuevo —, ni su id)."""
     arts = [a for a in manifiesto.get("artefactos") or [] if a.get("tipo") == "mutaciones_reservadas"]
     if len(arts) != 1:
         raise SystemExit("el manifiesto no declara exactamente un conjunto reservado")
-    a = arts[0]
-    if not all(a.get(k) for k in ("id", "sha256_cifrado", "sha256_claro")):
+    claro = arts[0].get("sha256_claro")
+    if not isinstance(claro, str) or not re.fullmatch(r"[0-9a-f]{64}", claro):
         raise SystemExit("el artefacto reservado del manifiesto está incompleto")
-    return hashlib.sha256(f"{a['id']}|{a['sha256_cifrado']}|{a['sha256_claro']}".encode()).hexdigest()
+    return hashlib.sha256(f"banco04-reservado|{claro}".encode()).hexdigest()
+
+
+def raiz_registro_uso(environ: Mapping[str, str] | None = None) -> Path:
+    """Raíz PERMANENTE del registro (R2-C-I9). Falla cerrado si no hay perfil local, si cae bajo
+    el repositorio o DENTRO de la carpeta de custodia (que puede reubicarse)."""
+    entorno = os.environ if environ is None else environ
+    base = (entorno.get(ENV_RAIZ_PERMANENTE) or "").strip()
+    if not base:
+        raise SystemExit(f"{ENV_RAIZ_PERMANENTE} no está definida: no hay raíz permanente del "
+                         "registro de uso del reservado")
+    raiz = Path(base) / DIR_REGISTRO_PERMANENTE
+    if _bajo_repo(raiz):
+        raise SystemExit("el registro de uso no puede vivir bajo el repositorio")
+    cust = (entorno.get(ENV_CUSTODIA) or "").strip()
+    if cust:
+        try:
+            raiz.resolve().relative_to(Path(cust).resolve())
+            raise SystemExit("el registro de uso no puede vivir dentro de la custodia (se reubica)")
+        except ValueError:
+            pass
+    return raiz
 
 
 def ruta_registro_uso(identidad: str, environ: Mapping[str, str] | None = None) -> Path:
-    """Registro CANÓNICO, no seleccionable: `<MIA_BANCO04_CUSTODIA>/registro-uso/`. Solo se crea
-    la marca; nunca se lee nada de la custodia."""
-    entorno = os.environ if environ is None else environ
-    carpeta = (entorno.get(ENV_CUSTODIA) or "").strip()
-    if not carpeta:
-        raise SystemExit(f"{ENV_CUSTODIA} no está definida: no hay registro de uso del reservado")
-    base = Path(carpeta)
-    if _bajo_repo(base):
-        raise SystemExit("la custodia no puede estar bajo el repositorio")
+    """Marca CANÓNICA del reservado en la raíz permanente: `reservado-<identidad>.usado`."""
     if not re.fullmatch(r"[0-9a-f]{64}", identidad or ""):
         raise SystemExit("identidad sellada inválida")
-    return base / SUBDIR_REGISTRO_USO / f"reservado-{identidad}.usado"
+    return raiz_registro_uso(environ) / f"reservado-{identidad}.usado"
 
 
-def marcar_uso_unico(identidad: str, environ: Mapping[str, str] | None = None) -> Path:
+def _marca_custodia(identidad: str, entorno: Mapping[str, str]) -> Path | None:
+    """Marca SECUNDARIA en la custodia (la de la ronda 1). Se comprueba y se escribe además de la
+    permanente: borrar o cambiar UNA de las dos no basta para repetir."""
+    carpeta = (entorno.get(ENV_CUSTODIA) or "").strip()
+    if not carpeta or _bajo_repo(Path(carpeta)):
+        return None
+    return Path(carpeta) / SUBDIR_REGISTRO_USO / f"reservado-{identidad}.usado"
+
+
+def marcar_uso_unico(identidad: str, environ: Mapping[str, str] | None = None, *,
+                     huellas: Iterable[str] = ()) -> Path:
     """Marca de un solo uso del reservado, escrita ANTES de juzgar y conservada aunque la
-    validación falle después (§8.6: el usado ya no es reservado). Falla si ya existe."""
-    marca = ruta_registro_uso(identidad, environ)
+    validación falle después (§8.6: el usado ya no es reservado). R2-C-I9: vive en la raíz
+    PERMANENTE (no depende de MIA_BANCO04_CUSTODIA) y lleva las huellas del MATERIAL de cada ítem:
+    se rechaza la misma identidad, y también un reservado «nuevo» que reutilice material ya usado.
+    Falla si ya existe."""
+    entorno = os.environ if environ is None else environ
+    marca = ruta_registro_uso(identidad, entorno)
+    huellas = sorted(set(huellas))
+    secundaria = _marca_custodia(identidad, entorno)
+    if secundaria is not None and secundaria.exists():
+        raise ReservadoYaUsado("el conjunto reservado YA se usó (marca en la custodia)")
     marca.parent.mkdir(parents=True, exist_ok=True)
+    for previa in sorted(marca.parent.glob("reservado-*.usado")):
+        try:
+            usadas = set(json.loads(previa.read_text(encoding="utf-8")).get("huellas_material") or [])
+        except (OSError, ValueError):
+            raise ReservadoYaUsado(f"marca de uso ilegible ({previa.name}): falla cerrado")
+        if usadas & set(huellas):
+            raise ReservadoYaUsado("el reservado reutiliza material de un reservado ya usado "
+                                   f"({len(usadas & set(huellas))} ítems): hace falta material nuevo")
+    contenido = json.dumps({"identidad_sellada": identidad, "protocolo": P.VERSION_PROTOCOLO,
+                            "protocolo_custodia": P.PROTOCOLO_CUSTODIA, "huellas_material": huellas,
+                            "marcado": time.strftime("%Y-%m-%dT%H:%M:%S")})
     try:
         with open(marca, "x", encoding="utf-8") as fh:
-            fh.write(json.dumps({"identidad_sellada": identidad, "protocolo": P.VERSION_PROTOCOLO,
-                                 "protocolo_custodia": P.PROTOCOLO_CUSTODIA,
-                                 "marcado": time.strftime("%Y-%m-%dT%H:%M:%S")}))
+            fh.write(contenido)
     except FileExistsError:
         raise ReservadoYaUsado("el conjunto reservado YA se usó: corregir exige un reservado "
                                "nuevo (§8.6)")
+    if secundaria is not None:
+        secundaria.parent.mkdir(parents=True, exist_ok=True)
+        with open(secundaria, "x", encoding="utf-8") as fh:
+            fh.write(contenido)
     return marca
 
 
+# ════════════════════════════════════════════════════════════════════════════════════════
+# R2-C-N1 · Acreditación de compatibilidad v1.3 del material reservado
+# ════════════════════════════════════════════════════════════════════════════════════════
+FORMATO_ACREDITACION = "banco04-acreditacion-compatibilidad/v1"
+_CLAVES_ACREDITACION = {"schema", "protocolo", "autor", "autor_independiente", "fecha",
+                        "hash_evaluador", "identidad_reservado", "artefactos", "veredicto",
+                        "cobertura"}
+TIPOS_ACREDITADOS = ("caso", "clave", "mutaciones_ajuste", "mutaciones_reservadas")
+CLASES_COBERTURA_V13 = ("fuga_sin_ordenamiento", "fuga_otro_ordenamiento", "negacion_ajena",
+                        "control_descriptivo")
+
+
+def _oracion(texto: str, ini: int, fin: int) -> str:
+    return EV._oracion_de(texto, ini, fin)
+
+
+def _negacion_ajena(texto: str, ini: int, fin: int) -> bool:
+    """El tramo [ini, fin) contiene una cita cuya ORACIÓN trae una negación (la regla del
+    producto la daría por negada) pero cuya CLÁUSULA no (la cita sigue siendo uso: fuga)."""
+    for c in EV.scan_citations(texto, EV.compile_patterns(None)):
+        if c["end"] <= ini or c["start"] >= fin:
+            continue
+        oracion = EV._normalize(_oracion(texto, c["start"], c["end"]))
+        if any(p in oracion for p in EV._NEGATION_NORM) and not EV._mencion_negada(
+                texto, c["start"], c["end"]):
+            return True
+    return False
+
+
+def _cumple_clase(clase: str, item: Mapping[str, Any], v: Mapping[str, Any]) -> bool:
+    texto = item["salida"][v["campo"]]
+    otras = fuentes_de_otro_ordenamiento(item)
+    if clase == "fuga_sin_ordenamiento":
+        return v["clase"] == "defecto" and v.get("categoria") == CATEGORIA_FUGA \
+            and item["jurisdicciones"] == []
+    if clase == "fuga_otro_ordenamiento":
+        return v["clase"] == "defecto" and v.get("categoria") == CATEGORIA_FUGA \
+            and item["jurisdicciones"] != [] and bool(otras)
+    if clase == "negacion_ajena":
+        return v["clase"] == "defecto" and v.get("categoria") == CATEGORIA_FUGA \
+            and _negacion_ajena(texto, v["inicio"], v["fin"])
+    if clase == "control_descriptivo":
+        oracion = _oracion(texto, v["inicio"], v["fin"])
+        return v["clase"] == "control" and bool(otras) and any(
+            jueces.clave_corpus(r) and jueces.clave_corpus(r) in oracion for r in otras)
+    return False
+
+
+def verificar_acreditacion(acreditacion: Any, *, manifiesto: Mapping[str, Any],
+                           items: list[dict], hash_evaluador: Mapping[str, Any]) -> dict:
+    """R2-C-N1 · ¿El material reservado está acreditado como compatible con v1.3? La acreditación
+    la escribe un AUTOR INDEPENDIENTE (este código no la produce: solo la exige y la coteja).
+
+    Vinculaciones exigidas (todas):
+      · formato `banco04-acreditacion-compatibilidad/v1`, protocolo = VERSION_PROTOCOLO (v1.3),
+        autor declarado e independiente, veredicto `compatible`;
+      · `hash_evaluador` = hash COMBINADO del evaluador v1.3 en ejecución (incluye este validador);
+      · `identidad_reservado` = identidad sellada del reservado del manifiesto;
+      · `artefactos` = {id: sha256_claro} de TODOS los casos, claves y conjuntos de mutaciones del
+        manifiesto, exactamente;
+      · `cobertura`: para cada clase de `CLASES_COBERTURA_V13`, al menos el mínimo de
+        `protocolo.ACREDITACION_V13_MINIMOS` entradas «ITEM/VERDAD» distintas que EXISTEN en el
+        reservado cargado y cumplen la clase de forma comprobable: fuga sin ordenamiento; fuga en un
+        despacho configurado para OTRO ordenamiento con la fuente no habilitada en el material;
+        negación ajena (la oración niega otra cosa y la cita sigue siendo uso); control descriptivo
+        (un control cuya oración cita la fuente no habilitada).
+    Devuelve {"ok", "motivos", "cobertura_verificada", "sha256"}."""
+    motivos: list[str] = []
+    if not isinstance(acreditacion, Mapping) or set(acreditacion) != _CLAVES_ACREDITACION:
+        return {"ok": False, "motivos": ["acreditacion_ausente_o_claves_invalidas"],
+                "cobertura_verificada": {}, "sha256": None}
+    a = acreditacion
+    huella = hashlib.sha256(_canon(dict(a))).hexdigest()
+    if a["schema"] != FORMATO_ACREDITACION:
+        motivos.append("formato_desconocido")
+    if a["protocolo"] != P.VERSION_PROTOCOLO:
+        motivos.append("no_es_de_la_version_del_protocolo")
+    if not (isinstance(a["autor"], str) and a["autor"].strip()) or a["autor_independiente"] is not True:
+        motivos.append("autor_no_declarado_independiente")
+    if a["veredicto"] != "compatible":
+        motivos.append("veredicto_no_compatible")
+    if a["hash_evaluador"] != hash_evaluador.get("combinado"):
+        motivos.append("hash_evaluador_distinto_del_v13_en_ejecucion")
+    try:
+        ident = identidad_sellada_reservado(manifiesto)
+    except SystemExit as exc:
+        ident, _ = None, motivos.append(f"manifiesto:{exc}")
+    if a["identidad_reservado"] != ident:
+        motivos.append("identidad_del_reservado_distinta")
+    esperados = {x["id"]: x.get("sha256_claro") for x in manifiesto.get("artefactos") or []
+                 if x.get("tipo") in TIPOS_ACREDITADOS}
+    if not esperados or a["artefactos"] != esperados:
+        motivos.append("hashes_de_casos_claves_o_mutaciones_no_coinciden")
+    por_ref = {f"{it['id']}/{v['id']}": (it, v) for it in items for v in it["verdad"]}
+    cob = a["cobertura"] if isinstance(a["cobertura"], Mapping) else {}
+    verificada: dict[str, int] = {}
+    for clase in CLASES_COBERTURA_V13:
+        refs = cob.get(clase)
+        if not isinstance(refs, list) or len(set(map(str, refs))) != len(refs):
+            motivos.append(f"cobertura_mal_formada:{clase}")
+            verificada[clase] = 0
+            continue
+        malas = [r for r in refs if r not in por_ref or not _cumple_clase(clase, *por_ref[r])]
+        verificada[clase] = len(refs) - len(malas)
+        if malas:
+            motivos.append(f"cobertura_no_comprobable:{clase}:{malas[:5]}")
+        if verificada[clase] < P.ACREDITACION_V13_MINIMOS[clase]:
+            motivos.append(f"cobertura_insuficiente:{clase}:{verificada[clase]}"
+                           f"<{P.ACREDITACION_V13_MINIMOS[clase]}")
+    return {"ok": not motivos, "motivos": motivos, "cobertura_verificada": verificada,
+            "sha256": huella}
+
+
 def control_de_cuota(*, salida: Path, version: str, bloque: int, prefijo: str,
-                     salida_custodia: Path | None = None) -> jueces.ControlCuotaJueces:
-    """I5: control de cuota de los jueces sobre el contador COMPARTIDO del runner
-    (`run_banco04.LedgerJuicio`, del otro agente: se usa, no se modifica)."""
+                     salida_custodia: Path, versiones: tuple) -> jueces.ControlCuotaJueces:
+    """I5 / R2-B-I5: control de cuota de los jueces sobre el contador COMPARTIDO del runner
+    (`run_banco04.LedgerJuicio`, del otro agente: se usa, no se modifica), OBLIGATORIAMENTE con:
+      · la salida custodiada del bloque (donde viven las salidas reservadas y su consumo);
+      · las versiones que suman contra el MISMO techo (la propia incluida; en el Bloque 7, las dos
+        versiones: 0.4 y la re-producción de 0.3.3)."""
+    versiones = tuple(versiones or ())
+    if salida_custodia is None:
+        raise SystemExit("R2-B-I5: falta --salida-custodia (el contador debe sumar lo custodiado)")
+    if not versiones or version not in versiones or len(set(versiones)) != len(versiones):
+        raise SystemExit("R2-B-I5: --versiones-contador debe listar las versiones del bloque, "
+                         "incluida la propia")
+    if bloque == 7 and len(versiones) < 2:
+        raise SystemExit("R2-B-I5: en el Bloque 7 suman las DOS versiones (0.4 y 0.3.3)")
     sys.path.insert(0, str(ROOT / "execution"))
     import run_banco04 as rb  # noqa: PLC0415
     ledger = rb.LedgerJuicio(salida, version,
                              nuevo_contador=lambda: rb.contador_desde_protocolo(P, bloque),
-                             salida_custodia=salida_custodia, versiones=())
+                             salida_custodia=Path(salida_custodia), versiones=versiones)
     return jueces.ControlCuotaJueces(ledger=ledger, etapa="validacion", prefijo=prefijo)
 
 
 def _cargar(a: argparse.Namespace) -> tuple[dict, dict | None]:  # noqa: C901
-    """(conjunto, otro_conjunto). Desde la custodia: importación PEREZOSA (otro agente es dueño
-    de `custodia.py`); el claro queda solo en memoria."""
+    """(conjunto, otro_conjunto). Desde la custodia: el claro queda solo en memoria."""
     if a.conjunto_custodia:
         from mia.eval.banco04 import custodia  # noqa: PLC0415 — perezoso a propósito
         otro_nombre = "reservado" if a.conjunto_custodia == "ajuste" else "ajuste"
@@ -442,28 +659,49 @@ def main(argv: list[str] | None = None) -> int:
                     help="raíz de salida del runner (contador y ledger del circuito, I5)")
     ap.add_argument("--version", required=True, help="versión del ledger del runner")
     ap.add_argument("--bloque", required=True, type=int, choices=(0, 7))
-    ap.add_argument("--salida-custodia", type=Path)
+    ap.add_argument("--salida-custodia", required=True, type=Path,
+                    help="salida custodiada del runner (R2-B-I5: el contador la suma)")
+    ap.add_argument("--versiones-contador", required=True,
+                    help="versiones que suman contra el mismo techo, separadas por coma (R2-B-I5)")
+    ap.add_argument("--acreditacion-v13", type=Path,
+                    help="acreditación de compatibilidad v1.3 del reservado (R2-C-N1; autor "
+                         "independiente)")
     a = ap.parse_args(argv)
+    versiones = tuple(v for v in a.versiones_contador.split(",") if v)
     conjunto, otro = _cargar(a)
     items = validar_conjunto(conjunto, otro=otro)
     tipo = conjunto["conjunto"]
     comprobar_cegado(items)  # antes de gastar cuota y antes de marcar el reservado como usado
     control = control_de_cuota(salida=a.salida_banco, version=a.version, bloque=a.bloque,
-                               prefijo=f"validacion-{tipo}", salida_custodia=a.salida_custodia)
+                               prefijo=f"validacion-{tipo}", salida_custodia=a.salida_custodia,
+                               versiones=versiones)
+    acreditacion = None
     if tipo == "reservado":
         if not a.conjunto_custodia or not a.hash_congelado:
             raise SystemExit("el reservado solo se valida desde la custodia y con --hash-congelado")
         if _bajo_repo(a.salida):
             raise SystemExit("el resultado crudo del reservado vive en custodia, no en el repo")
-        jueces.verificar_congelado(a.hash_congelado)
+        congelado = jueces.verificar_congelado(a.hash_congelado)
         from mia.eval.banco04 import custodia  # noqa: PLC0415
-        marcar_uso_unico(identidad_sellada_reservado(custodia.cargar_manifiesto()))
+        manifiesto = custodia.cargar_manifiesto()
+        if a.acreditacion_v13 is None:
+            raise SystemExit("R2-C-N1: el reservado no se usa sin --acreditacion-v13")
+        acreditacion = verificar_acreditacion(
+            json.loads(a.acreditacion_v13.read_text(encoding="utf-8")), manifiesto=manifiesto,
+            items=items, hash_evaluador=congelado)
+        if not acreditacion["ok"]:
+            # Antes de marcar el uso: una acreditación inválida no gasta el reservado.
+            raise SystemExit(f"R2-C-N1: acreditación v1.3 inválida: {acreditacion['motivos']}")
+        marcar_uso_unico(identidad_sellada_reservado(manifiesto),
+                         huellas=[huella_material(i) for i in items])
     out = validar_circuito(items, opus=jueces.ClaudeJuezRunner(control=control),
                            codex=jueces.CodexJuezRunner(control=control),
-                           llave=os.urandom(32), tipo=tipo)
+                           llave=os.urandom(32), tipo=tipo, control=control,
+                           acreditacion=acreditacion)
     out["consumo_jueces"] = control.intentos
     out["hash_evaluador"] = jueces.hash_evaluador()
     out["protocolo"] = P.VERSION_PROTOCOLO
+    out["acreditacion_v13"] = acreditacion
     a.salida.parent.mkdir(parents=True, exist_ok=True)
     a.salida.write_text(json.dumps(out, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
     print(f"circuito_utilizable={out['circuito_utilizable']} · {a.salida}")

@@ -46,7 +46,8 @@ from . import protocolo as P
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _EVIDENCIA_CLAVES = ("justificacion_no_aplica", "fuente", "pasaje", "localizador_invocado",
-                     "marca", "fragmento_marca", "premisas", "pasaje_contradictorio")
+                     "marca", "fragmento_marca", "premisas", "pasaje_contradictorio",
+                     "uso_fuente")   # R2-C-N2 (esquema v1.3)
 _AFIRMACION_CLAVES = ("id_afirmacion", "tramos", "dividido_de", "texto", "tipo", "estado",
                       "evidencia", "subtipo_sin_respaldo", "motivo")
 ESTRUCTURAL = "estructural"
@@ -128,6 +129,10 @@ def esquema_pasada1() -> dict:
         "pasaje_contradictorio": {
             "anyOf": [_obj({"fuente": {"type": "string"}, "pasaje": {"type": "string"}}),
                       {"type": "null"}]},
+        # R2-C-N2: cómo usa la afirmación la fuente que cita (derecho aplicable, descripción o
+        # rechazo de su aplicabilidad). Obligatorio solo cuando la fuente es de un ordenamiento
+        # no configurado; en los demás casos puede ir null.
+        "uso_fuente": _nullable("string", P.USOS_FUENTE),
     })
     afirmacion = _obj({
         "id_afirmacion": {"type": "string"},
@@ -469,6 +474,8 @@ def _validar_evidencia_forma(ev: Any) -> str | None:
         return "justificacion_no_aplica_fuera_de_enum"
     if ev["marca"] not in (None, *P.MARCAS):
         return "marca_fuera_de_enum"
+    if ev["uso_fuente"] not in (None, *P.USOS_FUENTE):
+        return "uso_fuente_fuera_de_enum"
     for k in ("fuente", "pasaje", "localizador_invocado", "fragmento_marca"):
         if not _str_o_none(ev[k]):
             return f"evidencia_tipo:{k}"
@@ -504,9 +511,13 @@ def validar_evidencia(af: dict, seg_texto: str, material: Material, val: Validac
         elif not aparece(ev["pasaje"], texto):
             val.add("pasaje_no_localizado", PASAJE, detalle=ev["fuente"], **kw)
         jur = jurisdiccion_de_fuente(ev["fuente"].strip(), material)
-        if estado != "marcada_innecesariamente" and jur and jur not in material.jurisdicciones:
-            # I7 (§5.7): una norma de un ordenamiento NO configurado no respalda nada aunque su
-            # pasaje exista; afirmada como aplicable es `sin_respaldo` / `fuga`.
+        if (estado != "marcada_innecesariamente" and jur and jur not in material.jurisdicciones
+                and ev["uso_fuente"] not in P.USOS_FUENTE_NO_APLICATIVOS):
+            # I7 (§5.7) + R2-C-N2: una norma de un ordenamiento NO configurado no respalda nada
+            # USADA COMO DERECHO APLICABLE (afirmada como aplicable es `sin_respaldo` / `fuga`),
+            # aunque su pasaje exista. Describirla fielmente, o rechazar su aplicabilidad, sí puede
+            # quedar respaldado: el juez lo declara en `uso_fuente` (`descriptivo` /
+            # `rechazo_aplicabilidad`). Sin esa declaración (null o `aplicable`) se rechaza.
             val.add("respaldo_en_ordenamiento_no_configurado", detalle=jur, **kw)
     elif estado == "dicho_abogado_fiel":
         if not (ev["pasaje"] or "").strip():
@@ -1318,91 +1329,158 @@ class CuotaAgotada(RuntimeError):
     se para ANTES de llamar al modelo (§3.4)."""
 
 
-def cota_intento(prompt: str) -> int:
-    """Cota superior conservadora de un intento: entrada por exceso + salida máxima."""
-    return -(-len(prompt or "") // P.CARACTERES_POR_TOKEN_COTA) + P.COTA_SALIDA_JUEZ_TOKENS
+ALIAS_CLI_JUEZ_CLAUDE = "cli-claude-opus"   # el juez principal corre `--model opus` (P.JUEZ_PRINCIPAL)
+
+
+def entrada_estimada(prompt: str) -> int:
+    """Tokens de entrada estimados POR EXCESO (caracteres / 3, hacia arriba)."""
+    return -(-len(prompt or "") // P.CARACTERES_POR_TOKEN_COTA)
+
+
+def cota_salida_juez(proveedor: str) -> int | None:
+    """R2-B-I4: máximo de salida DOCUMENTADO para un intento del juez, o None si no lo hay. El
+    banco no fabrica una cota propia:
+      · Claude: la decide `spend_guard.cota_salida_cli` (del otro frente) para el alias del juez;
+        si devuelve None, la cota es DESCONOCIDA;
+      · Codex: no hay máximo de salida documentado para el modelo del juez ⇒ DESCONOCIDA."""
+    if proveedor == "claude":
+        from .. import spend_guard  # noqa: PLC0415 — perezoso: módulo del otro frente
+        maximo, _motivo = spend_guard.cota_salida_cli(ALIAS_CLI_JUEZ_CLAUDE)
+        ok = isinstance(maximo, int) and not isinstance(maximo, bool) and maximo > 0
+        return int(maximo) if ok else None
+    if proveedor == "codex":
+        return None
+    raise ValueError("proveedor desconocido")
+
+
+def cota_intento(prompt: str, proveedor: str = "claude", *,
+                 cota_salida: Callable[[str], "int | None"] | None = None) -> int | None:
+    """Cota superior de un intento: entrada por exceso + salida máxima DOCUMENTADA. None si la
+    salida no tiene cota documentada (R2-B-I4: no se fabrica)."""
+    salida = (cota_salida or cota_salida_juez)(proveedor)
+    return None if salida is None else entrada_estimada(prompt) + int(salida)
+
+
+def estimacion_reserva(prompt: str) -> int:
+    """Lo que se APARTA en el control previo cuando la cota es desconocida: entrada por exceso más
+    `COTA_SALIDA_JUEZ_TOKENS`. Es una ESTIMACIÓN para no lanzar a ciegas, nunca una cota: si el
+    intento falla sin consumo conocido, el techo deja de ser certificable."""
+    return entrada_estimada(prompt) + P.COTA_SALIDA_JUEZ_TOKENS
+
+
+def _entero_valido(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
 
 
 def tokens_conocidos(proveedor: str, uso: Mapping[str, Any] | None) -> int | None:
-    """Tokens que el CLI reportó (None si no reportó nada utilizable)."""
-    u = dict(uso or {})
+    """Tokens que el CLI reportó, o None si la telemetría NO basta (R2-B-N1).
+
+    Telemetría parcial no es consumo conocido: se exigen los componentes NECESARIOS de entrada y
+    de salida con enteros >= 0, y todo componente opcional presente tiene que ser válido.
+      · Claude: `input_tokens` y `output_tokens` obligatorios; `cache_creation_input_tokens` y
+        `cache_read_input_tokens` se suman si vienen (y si vienen inválidos, no hay consumo).
+      · Codex: `prompt_tokens` (entrada) y `completion_tokens` (salida) obligatorios; si viene
+        `total_tokens` válido se toma el mayor de los dos totales (conservador)."""
+    if not isinstance(uso, Mapping):
+        return None
+    u = dict(uso)
     if proveedor == "claude":
-        claves = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens",
-                  "output_tokens")
-        vals = [u.get(k) for k in claves]
-        if not any(isinstance(v, int) and not isinstance(v, bool) for v in vals):
+        if not (_entero_valido(u.get("input_tokens")) and _entero_valido(u.get("output_tokens"))):
             return None
-        return sum(int(v) for v in vals if isinstance(v, int) and not isinstance(v, bool))
-    tot = u.get("total_tokens")
-    if isinstance(tot, int) and not isinstance(tot, bool):
-        return tot
-    pt, ct = u.get("prompt_tokens"), u.get("completion_tokens")
-    if isinstance(pt, int) and isinstance(ct, int):
-        return pt + ct
-    return None
+        total = int(u["input_tokens"]) + int(u["output_tokens"])
+        for k in ("cache_creation_input_tokens", "cache_read_input_tokens"):
+            if k in u and u[k] is not None:
+                if not _entero_valido(u[k]):
+                    return None
+                total += int(u[k])
+        return total
+    if proveedor == "codex":
+        pt, ct, tot = u.get("prompt_tokens"), u.get("completion_tokens"), u.get("total_tokens")
+        if not (_entero_valido(pt) and _entero_valido(ct)):
+            return None
+        if tot is not None and not _entero_valido(tot):
+            return None
+        return max(int(pt) + int(ct), int(tot) if tot is not None else 0)
+    raise ValueError("proveedor desconocido")
 
 
 class ControlCuotaJueces:
     """I5 · Contabilidad DURADERA de todo intento de juez, sobre la API del contador COMPARTIDO del
     runner (`run_banco04.LedgerJuicio`, del otro agente; se usa, no se modifica):
 
-      · antes de lanzar: control PREVIO de AMBOS proveedores (el del intento lo hace
+      · antes de lanzar: si el techo YA no es certificable (algún consumo desconocido), no se lanza
+        nada (R2-B-I5); control PREVIO de AMBOS proveedores (el del intento lo hace
         `ledger.iniciar`, que relee del disco todo lo gastado y lanza `PresupuestoAgotado`; el
-        OTRO proveedor se comprueba aquí: si ya alcanzó su techo, no se juzga más) y el intento
-        queda escrito como `en_curso` con su cota ANTES de lanzarse;
-      · al volver: `ledger.cerrar` con el consumo conocido; un timeout, una caída o una respuesta
-        sin uso reportado se cierran con `timeout=True` (cuenta su cota y el techo deja de ser
-        certificable); un proceso que muere deja el intento `en_curso`, que el runner cuenta igual."""
+        OTRO proveedor se comprueba aquí) y el intento queda escrito como `en_curso` ANTES de
+        lanzarse, con su cota documentada o, si no la hay, con una ESTIMACIÓN de reserva;
+      · al volver: `ledger.cerrar` con el consumo conocido (telemetría completa, R2-B-N1). Si no
+        hay consumo conocido: con cota DOCUMENTADA se cierra como intento fallido acotado
+        (`*_fallidos=[{tokens_cota_superior}]`, el techo sigue certificable); SIN cota documentada
+        (R2-B-I4, p. ej. Codex) se cierra con `timeout=True`: cuenta la reserva y el techo deja de
+        ser certificable. Un proceso que muere deja el intento `en_curso`, que el runner cuenta
+        como desconocido."""
 
-    def __init__(self, *, ledger: Any, etapa: str, prefijo: str) -> None:
+    def __init__(self, *, ledger: Any, etapa: str, prefijo: str,
+                 cota_salida: Callable[[str], "int | None"] | None = None) -> None:
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,60}", prefijo or ""):
             raise ValueError("prefijo del ledger inválido")
         self.ledger, self.etapa, self.prefijo = ledger, etapa, prefijo
+        self.cota_salida = cota_salida or cota_salida_juez
         self._seq = 0
         self.intentos: list[dict] = []
 
-    def antes(self, proveedor: str, prompt: str) -> tuple[str, int]:
+    def antes(self, proveedor: str, prompt: str) -> tuple[str, int | None, int]:
         if proveedor not in ("claude", "codex"):
             raise ValueError("proveedor desconocido")
-        cota = cota_intento(prompt)
+        cota = cota_intento(prompt, proveedor, cota_salida=self.cota_salida)
+        reserva = cota if cota is not None else estimacion_reserva(prompt)
         cont = self.ledger.contador()
+        if not cont.cota_calculable:
+            raise CuotaAgotada("R2-B-I5: hay consumo sin cota en el contador; el techo ya no es "
+                               "certificable y no se lanza ningún juez más")
         otro_total, otro_techo = ((cont.codex_total, cont.techo_codex) if proveedor == "claude"
                                   else (cont.claude_total, cont.techo_claude))
         if otro_total >= otro_techo:
-            raise CuotaAgotada(f"el otro proveedor alcanzó su techo ({otro_total} ≥ {otro_techo})")
+            raise CuotaAgotada(f"el otro proveedor alcanzó su techo ({otro_total} >= {otro_techo})")
         self._seq += 1
         id_ = f"{self.prefijo}-{proveedor}-{self._seq:06d}-{os.urandom(4).hex()}"
         try:
-            self.ledger.iniciar(id_=id_, etapa=self.etapa, proveedor=proveedor, cota_tokens=cota)
+            self.ledger.iniciar(id_=id_, etapa=self.etapa, proveedor=proveedor, cota_tokens=reserva)
         except Exception as exc:  # noqa: BLE001 — se traduce SOLO el agotamiento
             if type(exc).__name__ == "PresupuestoAgotado":
                 raise CuotaAgotada(str(exc)) from exc
             raise
-        return id_, cota
+        return id_, cota, reserva
 
-    def despues(self, id_: str, proveedor: str, resp: "RespuestaModelo | None", cota: int) -> None:
+    def despues(self, id_: str, proveedor: str, resp: "RespuestaModelo | None", cota: int | None,
+                reserva: int | None = None) -> None:
         conocido = tokens_conocidos(proveedor, resp.uso if resp is not None else None)
         error = (resp.error if resp is not None else "excepcion") or ""
         if conocido is not None:
             kw = {"claude_conocido": conocido} if proveedor == "claude" else {"codex_conocido": conocido}
             self.ledger.cerrar(id_, error=error, **kw)
             estado = "conocido"
+        elif cota is not None:
+            fallido = [{"tokens_cota_superior": int(cota)}]
+            kw = {"claude_fallidos": fallido} if proveedor == "claude" else {"codex_fallidos": fallido}
+            self.ledger.cerrar(id_, error=error, **kw)
+            estado = "fallido_acotado"
         else:
             self.ledger.cerrar(id_, timeout=True, error=error)
-            estado = "desconocido_acotado"
+            estado = "desconocido"
         self.intentos.append({"id": id_, "proveedor": proveedor, "estado": estado,
-                              "tokens": conocido, "cota": cota, "error": error})
+                              "tokens": conocido, "cota": cota, "reserva": reserva, "error": error})
 
 
 def _contabilizar(control: ControlCuotaJueces, proveedor: str, prompt: str,
                   llamar: Callable[[], RespuestaModelo]) -> RespuestaModelo:
-    id_, cota = control.antes(proveedor, prompt)
+    id_, cota, reserva = control.antes(proveedor, prompt)
     resp: RespuestaModelo | None = None
     try:
         resp = llamar()
         return resp
     finally:
-        control.despues(id_, proveedor, resp, cota)
+        control.despues(id_, proveedor, resp, cota, reserva)
 
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -1860,12 +1938,19 @@ ARCHIVOS_EVALUADOR: tuple[str, ...] = (
     # Dependencias que se siguen importando (no tocan la segmentación ni el cotejo).
     "mia/eval/codex_cli_adapter.py", "mia/eval/provider_benchmark.py",
 )
+# R2-C-N3: lo que DECIDE si el circuito se habilita también es el evaluador. Cambiar las exigencias
+# de `banco04_validar_jueces.py` (umbrales, acreditación v1.3, registro de uso) invalida la
+# congelación. Rutas relativas a la RAÍZ del repositorio.
+_RAIZ_REPO = _RAIZ_BACKEND.parent
+ARCHIVOS_EVALUADOR_REPO: tuple[str, ...] = ("execution/banco04_validar_jueces.py",)
 
 
 def hash_evaluador() -> dict:
     archivos: dict[str, str] = {}
     for rel in ARCHIVOS_EVALUADOR:
         archivos[rel] = hashlib.sha256((_RAIZ_BACKEND / rel).read_bytes()).hexdigest()
+    for rel in ARCHIVOS_EVALUADOR_REPO:
+        archivos[rel] = hashlib.sha256((_RAIZ_REPO / rel).read_bytes()).hexdigest()
     for p in sorted(PROMPTS_DIR.glob("*.md")):
         archivos[f"mia/eval/banco04/prompts/{p.name}"] = hashlib.sha256(p.read_bytes()).hexdigest()
     esquemas = {"pasada1": esquema_pasada1(), "pasada2": esquema_pasada2(),

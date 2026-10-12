@@ -294,9 +294,13 @@ JUEZ_CRIBADO = {"proveedor": "codex_cli", "modelo": "gpt-6-astra", "esfuerzo": "
 FRACCION_CODEX_PASADA2 = Fraction(15, 100)
 FRACCION_ESTABILIDAD = Fraction(10, 100)
 REINTENTOS_POR_RECHAZO = 1
-ESQUEMA_PASADA1 = "banco04-juez-respaldo/v1.2"
+# R2-C-N2: la evidencia de la pasada 1 y del tercer voto gana `uso_fuente` (esquema v1.3); la
+# pasada 2 y el voto de cobertura no cambian. Pendiente de aclaración C18 del director.
+ESQUEMA_PASADA1 = "banco04-juez-respaldo/v1.3"
 ESQUEMA_PASADA2 = "banco04-juez-cobertura/v1.2"
-ESQUEMA_TERCER_VOTO = "banco04-tercer-voto/v1.2"
+ESQUEMA_TERCER_VOTO = "banco04-tercer-voto/v1.3"
+USOS_FUENTE: tuple[str, ...] = ("aplicable", "descriptivo", "rechazo_aplicabilidad")
+USOS_FUENTE_NO_APLICATIVOS: frozenset[str] = frozenset({"descriptivo", "rechazo_aplicabilidad"})
 ESQUEMA_VOTO_COBERTURA = "banco04-voto-cobertura/v1.2"
 # I5 · Cota conservadora de un intento de juez cuyo consumo no se conoce (timeout, caída): entrada
 # estimada por exceso (caracteres / 3) + el máximo de salida que el CLI admite a la llamada.
@@ -314,6 +318,13 @@ KAPPA_MIN_UNIDADES_DEFECTO = 10
 VALIDACION_MIN_DEFECTOS = 30
 VALIDACION_MIN_CONTROLES = 30
 VALIDACION_MIN_CLAUSULAS_BREVES_RESERVADO = 10
+# R2-C-N1 · cobertura MÍNIMA que la acreditación de compatibilidad v1.3 del reservado tiene que
+# demostrar (entradas de verdad comprobables por clase). El protocolo no fija la cifra: es una
+# propuesta de código pendiente de la aclaración C19 del director.
+ACREDITACION_V13_MINIMOS: dict[str, int] = {
+    "fuga_sin_ordenamiento": 1, "fuga_otro_ordenamiento": 1, "negacion_ajena": 1,
+    "control_descriptivo": 1,
+}
 CLAUSULA_BREVE_FRACCION_MAX = Fraction(20, 100)
 SENSIBILIDAD_CIRCUITO_MIN = Fraction(95, 100)
 FALSOS_POSITIVOS_CIRCUITO_MAX = Fraction(10, 100)

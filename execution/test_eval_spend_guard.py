@@ -386,18 +386,30 @@ def main() -> None:
     # reserva nada; el pagado sí, con su alias EXACTO. (Sustituye —y supera— al viejo check
     # de "estimar el alias más caro de la cadena": ya no hace falta adivinar el peor caso
     # por adelantado, porque cada intento se reserva con el precio que de verdad se factura.)
-    # `main` en quality_adaptive degrada entre dos aliases de Claude Code, ambos gratuitos.
-    # Para probar la reserva de un salto GRATIS→PAGADO usamos `curator`, cuyo respaldo API
-    # explícito sí contiene `claude-sonnet`.
-    cadena = llm_mod.resolve_fallback_chain("curator", None)
-    g = guard_for(tmp, "fallback", run_limit_usd=100.0)
-    fake = FakeProvider(fail_aliases=(cadena[0],), fail_times=99, cache_mode="creation")
-    with g.case("c-fallback"):
-        run_calls(g, fake, 1, task="curator", model=None)
+    # Contrato VIGENTE del producto (agent/llm.py:189-211, desde 7b9aaa0): ninguna política tiene
+    # hoy un salto GRATIS→PAGADO en una tarea estándar — `quality_adaptive` y `suscripcion` no caen
+    # a una API facturada («Mis suscripciones»: `curator` = [cli-claude-sonnet, mia-local]) y `nube`
+    # empieza ya en un alias pagado. El gate esperaba `claude-sonnet` en la cadena de `curator` y
+    # estaba ROJO desde 7b9aaa0. Se conserva lo que protege (la reserva por INTENTO con el alias que
+    # cobra) con una tarea NO estándar inyectada en el mapa base `_TASK_FALLBACK_CHAINS`, el gancho
+    # que `_active_chains` documenta para eso, y se fija aparte el contrato de `curator`.
+    contrato_curator = (llm_mod.resolve_fallback_chain("curator", None)
+                        == [llm_mod.CLI_SONNET_ALIAS, "mia-local"])   # agent/llm.py:201
+    tarea_gate = "banco_gate_gratis_a_pagado"
+    llm_mod._TASK_FALLBACK_CHAINS[tarea_gate] = [llm_mod.CLI_SONNET_ALIAS, "claude-sonnet"]
+    try:
+        cadena = llm_mod.resolve_fallback_chain(tarea_gate, None)
+        g = guard_for(tmp, "fallback", run_limit_usd=100.0)
+        fake = FakeProvider(fail_aliases=(cadena[0],), fail_times=99, cache_mode="creation")
+        with g.case("c-fallback"):
+            run_calls(g, fake, 1, task=tarea_gate, model=None)
+    finally:
+        llm_mod._TASK_FALLBACK_CHAINS.pop(tarea_gate, None)
     servidos = fake.attempts
     check("a-25 · un salto del alias GRATIS al PAGADO dentro de una sola llamada queda "
           "reservado y contado con el alias que de verdad cobra",
-          cadena[0] in servidos and "claude-sonnet" in servidos
+          contrato_curator and cadena == [llm_mod.CLI_SONNET_ALIAS, "claude-sonnet"]
+          and cadena[0] in servidos and "claude-sonnet" in servidos
           and abs(g.run_spent_usd - est) < 1e-6
           and g.cases[0].as_dict()["models"].get("claude-sonnet") == 1)
 

@@ -391,7 +391,15 @@ class ContadorCuota:
     def motivo_juicio(self, proveedor: str, cota_tokens: int) -> Optional[str]:
         """Control PREVIO de un intento de juez (Claude o Codex): verifica el techo de AMBOS
         proveedores (si cualquiera ya lo alcanzó, el circuito está suspendido: no se lanza nada) y
-        que la cota del intento quepa en el techo del proveedor que llama."""
+        que la cota del intento quepa en el techo del proveedor que llama.
+
+        R2-B-I5 (Astra ronda 2, I5): si el contador ya NO es calculable (hubo consumo desconocido sin
+        cota: un timeout, un proceso muerto, un fallo de CLI), el acumulado es solo una cota INFERIOR
+        y no se puede afirmar que el siguiente intento quepa en el techo: NO se lanza otro intento."""
+        if not self.cota_calculable:
+            return ("hay consumo desconocido sin cota en el circuito (P10: "
+                    f"{', '.join(self.claves_sin_cota()[:5])}): el acumulado es solo una cota inferior "
+                    "y no se lanza otro intento (R2-B-I5)")
         for nombre, tot, tec in (("Claude", self.claude_total, self.techo_claude),
                                  ("Codex", self.codex_total, self.techo_codex)):
             if tot >= tec:
@@ -423,6 +431,24 @@ class ContadorCuota:
                     f"siguiente corrida) por encima de lo que deja la reserva del juicio "
                     f"(tope de producción Codex {self.tope_produccion_codex} = techo "
                     f"{self.techo_codex} − reserva {self.reserva_codex})")
+        return None
+
+    def motivo_llamada_codex(self, en_vuelo: int = 0, *, usado: Optional[int] = None) -> Optional[str]:
+        """R2-B-I5 · control POR LLAMADA de Codex en producción (lo consulta el guardián del banco
+        ANTES de invocar, ver `crear_guardian_banco`). El control por corrida no puede dar cero
+        llamadas: con presupuesto 0 dejaba pasar la primera (Astra reprodujo una llamada y un token
+        Codex en el Bloque 0). Presupuesto de producción Codex = techo − reserva: 0 en el Bloque 0
+        (toda la cuota Codex es del juicio), 2 M en el Bloque 7 (C17). `en_vuelo` = Codex ya
+        consumido y aún no registrado; `usado` (si se da) = el total de producción ya calculado."""
+        tope = self.tope_produccion_codex
+        usado = (self.codex_produccion + max(0, int(en_vuelo))) if usado is None else int(usado)
+        if tope <= 0:
+            return (f"presupuesto de producción Codex = {tope} (techo {self.techo_codex} − reserva "
+                    f"{self.reserva_codex}): toda la cuota Codex es del juicio y no se lanza ninguna "
+                    "llamada Codex de producción (R2-B-I5)")
+        if usado >= tope:
+            return (f"la producción ya consumió {usado} de Codex: alcanza su presupuesto ({tope} = techo "
+                    f"{self.techo_codex} − reserva {self.reserva_codex}); no se lanza otra llamada (R2-B-I5)")
         return None
 
     def resumen(self) -> dict:
@@ -487,27 +513,55 @@ def proyectar_consumo(consumo_piloto: Mapping[str, int], r_por_caso: Mapping[str
 
 
 def decidir_r(plan: list[CasoPlan], consumo_piloto: Mapping[str, int], *,
-              tope_produccion: int, r_reducido: int, consumo_aprobaciones: int = 0) -> dict:
+              tope_produccion: int, r_reducido: int, consumo_aprobaciones: int = 0,
+              consumo_piloto_codex: Optional[Mapping[str, int]] = None,
+              tope_produccion_codex: Optional[int] = None,
+              consumo_aprobaciones_codex: int = 0) -> dict:
     """Decisión de R tras la piloto (§3.4), tomada SOLO con el dato de consumo.
 
     1) proyección con R plena; 2) si supera el tope, R baja al valor reducido SOLO en los
     pequeños sin fuga; 3) si aun así supera, el banco se suspende antes de seguir produciendo.
-    Devuelve la decisión con la cifra que la disparó (se escribe tal cual en disco)."""
+    Devuelve la decisión con la cifra que la disparó (se escribe tal cual en disco).
+
+    R2-B-I5 (Astra ronda 2, I5): la proyección se hace para AMBOS proveedores. Codex se proyecta
+    contra SU presupuesto de producción (techo − reserva del juicio: 0 en el Bloque 0, 2 M en el
+    Bloque 7); superar cualquiera de los dos dispara la reducción, y si con R reducida alguno sigue
+    por encima, se suspende. Sin `consumo_piloto_codex` se proyecta Codex = 0 (compatibilidad)."""
+    cx_piloto = dict(consumo_piloto_codex or {})
+    cx_tope = None if tope_produccion_codex is None else int(tope_produccion_codex)
+
+    def _cx(r_por_caso: Mapping[str, int]) -> int:
+        return proyectar_consumo({k: int(cx_piloto.get(k, 0)) for k in r_por_caso}, r_por_caso,
+                                 consumo_aprobaciones=consumo_aprobaciones_codex)
+
+    def _excede(p_claude: int, p_codex: int) -> bool:
+        return p_claude > tope_produccion or (cx_tope is not None and p_codex > cx_tope)
+
     plena = {c.id: c.r for c in plan}
     p_plena = proyectar_consumo(consumo_piloto, plena, consumo_aprobaciones=consumo_aprobaciones)
+    cx_plena = _cx(plena)
     out = {"tope_produccion": int(tope_produccion), "proyeccion_r_plena": p_plena,
            "consumo_piloto_por_caso": dict(consumo_piloto), "r_por_caso": plena,
-           "proyeccion_r_reducida": None, "decision": "r_plena", "cifra_disparadora": None}
-    if p_plena <= tope_produccion:
+           "proyeccion_r_reducida": None, "decision": "r_plena", "cifra_disparadora": None,
+           "tope_produccion_codex": cx_tope, "proyeccion_codex_r_plena": cx_plena,
+           "consumo_piloto_codex_por_caso": cx_piloto, "proyeccion_codex_r_reducida": None,
+           "proveedor_disparador": None}
+    if not _excede(p_plena, cx_plena):
         return out
     reducido = {c.id: (min(c.r, int(r_reducido)) if c.clase == "pequeno" else c.r) for c in plan}
     p_red = proyectar_consumo(consumo_piloto, reducido, consumo_aprobaciones=consumo_aprobaciones)
+    cx_red = _cx(reducido)
     out["proyeccion_r_reducida"] = p_red
-    out["cifra_disparadora"] = p_plena
-    if p_red <= tope_produccion:
+    out["proyeccion_codex_r_reducida"] = cx_red
+    claude_dispara = p_plena > tope_produccion
+    out["cifra_disparadora"] = p_plena if claude_dispara else cx_plena
+    out["proveedor_disparador"] = "claude" if claude_dispara else "codex"
+    if not _excede(p_red, cx_red):
         out.update(decision="r_reducida", r_por_caso=reducido)
     else:
-        out.update(decision="suspender", cifra_disparadora=p_red)
+        claude_sigue = p_red > tope_produccion
+        out.update(decision="suspender", cifra_disparadora=p_red if claude_sigue else cx_red,
+                   proveedor_disparador="claude" if claude_sigue else "codex")
     return out
 
 
@@ -567,6 +621,10 @@ class Contexto:
     cifrar: Optional[Callable[[str, bytes], bytes]] = None
     # I10: manifiesto inmutable de la ejecución (SHA real del árbol, SOUL, CLI, política, protocolo).
     manifiesto: Optional[dict] = None
+    # R2-B-I5: estimación A PRIORI de una corrida de la piloto por clase (antes no había ninguna: la
+    # piloto entraba con estimación cero). `_montaje_real` pone las bases de §3.2.
+    estimacion_piloto: Mapping[str, int] = field(default_factory=dict)
+    estimacion_piloto_codex: Mapping[str, int] = field(default_factory=dict)
 
     @property
     def manifiesto_sha256(self) -> Optional[str]:
@@ -613,14 +671,26 @@ def manifiesto_sha256(m: Mapping) -> str:
                                      separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def _bytes_de(salida: Any) -> bytes:
+    if isinstance(salida, bytes):
+        return salida
+    return str(salida or "").encode("utf-8", "surrogateescape")
+
+
 def info_arbol_git(repo_root: Path) -> dict:
     """SHA REAL del árbol que se mide (`git rev-parse HEAD`) y si tiene cambios sin commitear.
-    Solo lectura. `--sha` deja de ser una etiqueta libre: debe ser este."""
+    Solo lectura. `--sha` deja de ser una etiqueta libre: debe ser este.
+
+    R2-B-N2 (Astra ronda 2, N2): un árbol sucio ya no comparte identidad con el limpio ni con otro
+    sucio del mismo HEAD: `modificaciones_sha256` = sha256 de `git diff HEAD --binary` más, por cada
+    archivo NO rastreado y no ignorado (`git ls-files --others --exclude-standard`), su ruta y su
+    `git hash-object` (sin `-w`: no escribe nada). Los ignorados (.env, mia-data) no se leen."""
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    git = ["git", "-C", str(repo_root)]
     try:
-        head = subprocess.run(["git", "-C", str(repo_root), "rev-parse", "HEAD"], capture_output=True,
+        head = subprocess.run(git + ["rev-parse", "HEAD"], capture_output=True,
                               text=True, timeout=30, creationflags=flags, check=False)
-        estado = subprocess.run(["git", "-C", str(repo_root), "status", "--porcelain"],
+        estado = subprocess.run(git + ["status", "--porcelain"],
                                 capture_output=True, text=True, timeout=60, creationflags=flags,
                                 check=False)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -628,7 +698,26 @@ def info_arbol_git(repo_root: Path) -> dict:
     sha = (head.stdout or "").strip()
     if head.returncode != 0 or len(sha) < 40:
         raise BancoAbortado("No se pudo leer el SHA real del árbol (git rev-parse HEAD).")
-    return {"sha": sha, "arbol_limpio": estado.returncode == 0 and not (estado.stdout or "").strip()}
+    limpio = estado.returncode == 0 and not (estado.stdout or "").strip()
+    if limpio:
+        return {"sha": sha, "arbol_limpio": True, "modificaciones_sha256": None}
+    try:
+        diff = subprocess.run(git + ["diff", "HEAD", "--binary"], capture_output=True, timeout=120,
+                              creationflags=flags, check=False)
+        otros = subprocess.run(git + ["ls-files", "--others", "--exclude-standard", "-z"],
+                               capture_output=True, timeout=60, creationflags=flags, check=False)
+        if diff.returncode != 0 or otros.returncode != 0:
+            raise BancoAbortado("No se pudo leer la huella de las modificaciones locales (git diff/ls-files).")
+        h = hashlib.sha256(b"diff\0" + _bytes_de(diff.stdout))
+        for ruta in sorted(p for p in _bytes_de(otros.stdout).split(b"\0") if p):
+            obj = subprocess.run(git + ["hash-object", "--", ruta.decode("utf-8", "surrogateescape")],
+                                 capture_output=True, timeout=60, creationflags=flags, check=False)
+            if obj.returncode != 0:
+                raise BancoAbortado("No se pudo leer la huella de un archivo no rastreado (git hash-object).")
+            h.update(b"otro\0" + ruta + b"\0" + _bytes_de(obj.stdout).strip())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise BancoAbortado(f"No se pudo leer la huella de las modificaciones locales (git): {exc}") from exc
+    return {"sha": sha, "arbol_limpio": False, "modificaciones_sha256": h.hexdigest()}
 
 
 def verificar_sha_declarado(declarado: str, real: str) -> None:
@@ -640,11 +729,29 @@ def verificar_sha_declarado(declarado: str, real: str) -> None:
 
 def construir_manifiesto(*, version: str, sha_arbol: str, arbol_limpio: bool, soul_sha256: str,
                          cli_version: Optional[str], politica: str, protocolo_version: str,
-                         protocolo_hash: str, runner_sha256: str) -> dict:
+                         protocolo_hash: str, runner_sha256: str,
+                         modificaciones_sha256: Optional[str] = None) -> dict:
+    """R2-B-N2: un árbol sucio exige la huella de sus modificaciones (si no, dos árboles sucios
+    distintos del mismo HEAD tendrían la misma identidad)."""
+    if not arbol_limpio and not modificaciones_sha256:
+        raise BancoAbortado("Árbol con cambios sin commitear y sin huella de las modificaciones: la "
+                            "identidad de lo medido no se puede fijar (R2-B-N2).")
     return {"version": version, "sha_arbol": sha_arbol, "arbol_limpio": bool(arbol_limpio),
+            "modificaciones_sha256": None if arbol_limpio else str(modificaciones_sha256),
             "soul_sha256": soul_sha256, "cli_version": cli_version, "politica": politica,
             "protocolo_version": protocolo_version, "protocolo_hash": protocolo_hash,
             "runner_sha256": runner_sha256}
+
+
+def motivos_identidad(ctx: Contexto) -> list[str]:
+    """R2-B-N2 / I10: motivos por los que la IDENTIDAD de lo medido impide certificar."""
+    m = ctx.manifiesto
+    if m is None:
+        return ["sin manifiesto de ejecución: la identidad de lo medido no está acreditada (I10)"]
+    if m.get("arbol_limpio") is not True:
+        return ["árbol con modificaciones locales sin commitear (--permitir-arbol-sucio): lo medido no "
+                f"es el SHA declarado; huella {str(m.get('modificaciones_sha256'))[:12]}… (R2-B-N2)"]
+    return []
 
 
 def _exigir_mismo_manifiesto(ctx: Contexto, registro: Mapping, ruta: Path) -> None:
@@ -653,6 +760,15 @@ def _exigir_mismo_manifiesto(ctx: Contexto, registro: Mapping, ruta: Path) -> No
             f"El registro previo {ruta} se hizo con otro manifiesto de ejecución "
             f"({registro.get('manifiesto_sha256')!r} ≠ {ctx.manifiesto_sha256!r}): no se reutiliza "
             "(SHA del árbol, SOUL, CLI, política o protocolo cambiaron).")
+
+
+# R2-B-I10 (Astra ronda 2, I10): TODO registro reutilizable de la versión lleva el hash del manifiesto
+# y se coteja antes de reutilizarlo, no solo `rep-??.json`: intentos parciales y sus marcadores, la
+# aprobación y sus intentos, y las decisiones de planificación. El LEDGER del juicio no está aquí: es
+# consumo (cuenta para el techo con cualquier manifiesto), no un resultado que se reutilice.
+PATRONES_REUTILIZABLES = ("*/rep-??.json", "*/rep-*.intento-*.json", "*/rep-*.en_curso.json",
+                          "*/aprobacion.json", "*/aprob.intento-*.json", "*/aprob.en_curso.json",
+                          "decision_r.json", "aprobaciones_plan.json")
 
 
 def asegurar_manifiesto(ctx: Contexto) -> None:
@@ -673,10 +789,11 @@ def asegurar_manifiesto(ctx: Contexto) -> None:
         with open(ruta, "x", encoding="utf-8") as f:            # exclusivo: nunca se reescribe
             f.write(json.dumps(ctx.manifiesto, ensure_ascii=False, indent=2, sort_keys=True))
     for base in _bases(ctx):
-        for r in sorted((base / ctx.version).glob("*/rep-??.json")):
-            fila = leer_json(r) or {}
-            if fila.get("manifiesto_sha256") != ctx.manifiesto_sha256:
-                _exigir_mismo_manifiesto(ctx, fila, r)
+        for patron in PATRONES_REUTILIZABLES:                    # R2-B-I10: todos, no solo rep-??
+            for r in sorted((base / ctx.version).glob(patron)):
+                fila = leer_json(r) or {}
+                if fila.get("manifiesto_sha256") != ctx.manifiesto_sha256:
+                    _exigir_mismo_manifiesto(ctx, fila, r)
 
 
 def escribir_bytes_atomico(ruta: Path, datos: bytes) -> None:
@@ -704,6 +821,33 @@ def cifrar_resultado_custodiado(ctx: Contexto, caso_id: str, rep: int, resultado
             "sha256_cifrado": hashlib.sha256(cif).hexdigest()}
 
 
+def error_persistible(ctx: Contexto, caso_id: str, rep: int, n: int, error: BaseException, *,
+                      etapa: str, base: Path) -> dict:
+    """R2-B-I8 (Astra ronda 2, I8): el TEXTO de una excepción puede reproducir hechos del caso (un
+    mensaje de error que cita el expediente). En un caso CUSTODIADO ese texto va CIFRADO con la llave
+    de la custodia, bajo un id PROPIO (distinto del del resultado: los blobs no son intercambiables);
+    en claro quedan solo códigos y metadatos permitidos: tipo de excepción y `status_code`. En un caso
+    visible el texto sigue en claro (no es material reservado)."""
+    tipo = type(error).__name__
+    estado = getattr(error, "status_code", None)
+    meta = {"error_tipo": tipo,
+            "error_status": estado if isinstance(estado, int) and not isinstance(estado, bool) else None}
+    texto = f"{tipo}: {error}"
+    if caso_id not in ctx.ids_custodiados:
+        return dict(meta, error=texto)
+    if ctx.cifrar is None:
+        raise BancoAbortado(f"El caso custodiado {caso_id} no puede persistir el texto de su error en "
+                            "claro (§2.3, R2-B-I8): falta el cifrador de la custodia.")
+    id_reg = f"{ctx.version}/{caso_id}/{rep}/{etapa}-intento-{n}/error"
+    cif = ctx.cifrar(id_reg, texto.encode("utf-8"))
+    archivo = f"rep-{rep:02d}.{etapa}-intento-{n}.error.enc"
+    escribir_bytes_atomico(base / ctx.version / caso_id / archivo, cif)
+    return dict(meta, error=f"[cifrado: {archivo}]",
+                error_cifrado={"cifrado": True, "archivo": archivo, "id_registro": id_reg,
+                               "algoritmo": "AES-256-GCM (llave de la custodia)",
+                               "sha256_cifrado": hashlib.sha256(cif).hexdigest()})
+
+
 def _recuperar_huerfanas(ctx: Contexto) -> None:
     """Convierte cada `.en_curso` que dejó un proceso muerto en un INTENTO duradero: consumo
     DESCONOCIDO, sin cota (§5.5) y clase infraestructura (cuenta para el único reintento).
@@ -720,6 +864,8 @@ def _recuperar_huerfanas(ctx: Contexto) -> None:
                         "n": n, "caso_id": caso_id, "rep": rep, "estado": "fallo_infraestructura",
                         "clase": "infraestructura", "huerfano": True,
                         "error": "el proceso murió con la corrida a medias (consumo desconocido)",
+                        # R2-B-I10: el intento hereda el manifiesto del marcador (ya cotejado)
+                        "manifiesto_sha256": marca.get("manifiesto_sha256"),
                         "consumo": {"desconocido": True, "claude_conocido": 0, "fallidos": [],
                                     "sin_registro": 0, "llamadas": 0}})
             try:
@@ -776,6 +922,20 @@ def _resumen_consumo(consumo: Mapping) -> int:
     return int(consumo.get("claude_conocido") or 0) + cota
 
 
+def _codex_aprobaciones_estimado(ctx: Contexto, codex_piloto: Mapping[str, int]) -> int:
+    """R2-B-I5: cada aprobación REPRODUCE el turno del caso (que puede usar Codex, 5C) antes de
+    aprobar: su Codex se estima con el de la corrida piloto de ese caso (una aprobación por caso)."""
+    return sum(max(0, int(v)) for v in codex_piloto.values())
+
+
+def _consumo_corrida(ctx: Contexto, caso_id: str, rep: int) -> tuple[int, int]:
+    """(Claude, Codex) de una corrida de producción persistida (con la cota de sus fallidos)."""
+    reg = leer_json(ruta_corrida(_base_de(ctx, caso_id), ctx.version, caso_id, rep)) or {}
+    its = reg.get("intentos") or []
+    return (sum(_resumen_consumo(i.get("consumo") or {}) for i in its),
+            sum(_resumen_consumo_codex(i.get("consumo") or {}) for i in its))
+
+
 def _escribir_suspension(ctx: Contexto, motivo: str, extra: Mapping | None = None) -> dict:
     ruta = _marcador_suspension(ctx)
     previo = leer_json(ruta) or {}
@@ -815,6 +975,9 @@ async def _ejecutar_una(ctx: Contexto, deps: Deps, caso_plan: CasoPlan, rep: int
         raise BancoAbortado(f"El SOUL del despacho cambió (esperado {ctx.soul_esperado}, "
                             f"ahora {hash_previo}): se detiene antes de la corrida (§9.3).")
     intentos = _intentos_en_disco(base, ctx.version, caso_plan.id, rep)
+    for previo_it in intentos:            # R2-B-I10: un intento parcial también se coteja
+        _exigir_mismo_manifiesto(ctx, previo_it,
+                                 ruta_intento(base, ctx.version, caso_plan.id, rep, previo_it["n"]))
     n_infra = sum(1 for i in intentos if i.get("clase") == "infraestructura")
     n = max([i["n"] for i in intentos], default=0)
     final: Optional[str] = "fallo_infraestructura" if n_infra >= MAX_INTENTOS_INFRA else None
@@ -822,7 +985,8 @@ async def _ejecutar_una(ctx: Contexto, deps: Deps, caso_plan: CasoPlan, rep: int
     while final is None:
         n += 1
         escribir_atomico(ruta_en_curso(base, ctx.version, caso_plan.id, rep),
-                         {"caso_id": caso_plan.id, "rep": rep, "intento": n})
+                         {"caso_id": caso_plan.id, "rep": rep, "intento": n,
+                          "manifiesto_sha256": ctx.manifiesto_sha256})
         marca = deps.marca()
         t0 = deps.reloj()
         error: Optional[BaseException] = None
@@ -835,7 +999,8 @@ async def _ejecutar_una(ctx: Contexto, deps: Deps, caso_plan: CasoPlan, rep: int
             error = exc
         consumo = deps.consumo_desde(marca)
         intento = {"n": n, "caso_id": caso_plan.id, "rep": rep,
-                   "segundos": round(deps.reloj() - t0, 3), "consumo": consumo}
+                   "segundos": round(deps.reloj() - t0, 3), "consumo": consumo,
+                   "manifiesto_sha256": ctx.manifiesto_sha256}
         registrar_consumo(ctx.contador, f"{caso_plan.id}/{rep}/{n}", "produccion", consumo)
         if error is None:
             intento["estado"] = "completo"
@@ -845,7 +1010,11 @@ async def _ejecutar_una(ctx: Contexto, deps: Deps, caso_plan: CasoPlan, rep: int
                 error, llamadas_modelo=int(consumo.get("llamadas") or 0),
                 intentos_fallidos=len(consumo.get("fallidos") or ())))
             intento.update(estado=f"fallo_{tipo}", clase=tipo,
-                           error=f"{type(error).__name__}: {error}")
+                           **error_persistible(ctx, caso_plan.id, rep, n, error, etapa="produccion",
+                                               base=base))
+            motivo_parada = getattr(parada, "motivo_banco", None)
+            if isinstance(motivo_parada, str):     # R2-B-I5: parada propia del banco (texto fijo)
+                intento["motivo_parada"] = motivo_parada
             resultado = None
             if tipo == "limite_de_uso":
                 final = "limite_de_uso"
@@ -911,15 +1080,19 @@ async def ejecutar_banco(ctx: Contexto, deps: Deps) -> dict:
             return {"estado": "tramo_agotado", "salida": EXIT_TRAMO}
         reg = await _ejecutar_una(ctx, deps, caso_plan, rep)
         if reg["estado"] == "limite_de_uso":
-            return suspender("el plan devolvió límites de uso que impiden terminar")
+            ultimo = (reg.get("intentos") or [{}])[-1]
+            return suspender(ultimo.get("motivo_parada")      # R2-B-I5: parada propia, no «límite»
+                             or "el plan devolvió límites de uso que impiden terminar")
         motivo = ctx.contador.motivo_suspension()
         if motivo:
             return suspender(motivo)
         return None
 
-    # 1 · tanda piloto: repetición 1 de cada caso (cuenta como repetición 1)
+    # 1 · tanda piloto: repetición 1 de cada caso (cuenta como repetición 1). R2-B-I5: con la
+    # estimación A PRIORI de su clase (§3.2) y la de Codex, ya no con cero.
     for c in ctx.plan:
-        salida = await paso(c, 1, 0)
+        salida = await paso(c, 1, int(ctx.estimacion_piloto.get(c.clase, 0)),
+                            int(ctx.estimacion_piloto_codex.get(c.clase, 0)))
         if salida:
             return salida
     for c in ctx.plan:
@@ -931,15 +1104,25 @@ async def ejecutar_banco(ctx: Contexto, deps: Deps) -> dict:
     # 2 · decisión de R, solo con consumo (se escribe una vez, con la cifra que la disparó)
     ruta_dec = _dir_version(ctx) / "decision_r.json"
     decision = leer_json(ruta_dec)
+    if decision is not None:
+        _exigir_mismo_manifiesto(ctx, decision, ruta_dec)       # R2-B-I10
     if decision is None:
+        # R2-B-I5: también Codex se proyecta (piloto × R + aprobaciones) contra SU presupuesto.
         decision = decidir_r(ctx.plan, consumos_piloto,
                              tope_produccion=ctx.contador.tope_produccion_claude,
                              r_reducido=ctx.r_reducido,
-                             consumo_aprobaciones=ctx.consumo_aprobaciones)
+                             consumo_aprobaciones=ctx.consumo_aprobaciones,
+                             consumo_piloto_codex=codex_piloto,
+                             tope_produccion_codex=ctx.contador.tope_produccion_codex,
+                             consumo_aprobaciones_codex=_codex_aprobaciones_estimado(ctx, codex_piloto))
+        decision["manifiesto_sha256"] = ctx.manifiesto_sha256
         escribir_atomico(ruta_dec, decision)
     if decision["decision"] == "suspender":
+        tope_disp = (decision.get("tope_produccion_codex")
+                     if decision.get("proveedor_disparador") == "codex" else decision["tope_produccion"])
         return suspender("la proyección del circuito supera el tope aun con R reducida: "
-                         f"{decision['cifra_disparadora']} > {decision['tope_produccion']}")
+                         f"{decision['cifra_disparadora']} > {tope_disp}"
+                         + (" (Codex)" if decision.get("proveedor_disparador") == "codex" else ""))
     r_por_caso = decision["r_por_caso"]
     # 3 · resto de repeticiones, en orden de repetición (reparte el riesgo de cortar a mitad)
     for rep in range(2, max(r_por_caso.values()) + 1):
@@ -958,12 +1141,15 @@ async def ejecutar_banco(ctx: Contexto, deps: Deps) -> dict:
                 completadas.setdefault(c.id, []).append(rep)
     escribir_atomico(_dir_version(ctx) / "aprobaciones_plan.json",
                      {"semilla": ctx.semilla, "elegidas": elegir_aprobaciones(completadas, ctx.semilla),
-                      "nota": "cada aprobación corre APARTE en su propio despacho y MIA_HOME (§5.5)"})
+                      "nota": "cada aprobación corre APARTE en su propio despacho y MIA_HOME (§5.5)",
+                      "manifiesto_sha256": ctx.manifiesto_sha256})            # R2-B-I10
     motivos = ([] if ctx.contador.cota_calculable else ["techo sin cota calculable (P10)"]) + (
-        [] if ctx.muestra_completa else ["muestra incompleta: faltan casos del protocolo"])
+        [] if ctx.muestra_completa else ["muestra incompleta: faltan casos del protocolo"]) + (
+        motivos_identidad(ctx))                                               # R2-B-N2
     estado = {"estado": "terminado" if not motivos else "no certificable", "motivos": motivos,
               "consumo": ctx.contador.resumen(), "decision_r": decision["decision"],
-              "version": ctx.version, "sha": ctx.sha}
+              "version": ctx.version, "sha": ctx.sha, "manifiesto_sha256": ctx.manifiesto_sha256,
+              "arbol_limpio": (ctx.manifiesto or {}).get("arbol_limpio")}
     escribir_atomico(_dir_version(ctx) / "estado_banco.json", estado)
     return {"estado": estado["estado"], "salida": EXIT_OK, "detalle": estado}
 
@@ -1148,14 +1334,19 @@ async def _ejecutar_una_aprobacion(ctx: Contexto, d: DepsAprobacion, caso_id: st
     ruta = ruta_aprobacion(base, ctx.version, caso_id)
     previo = leer_json(ruta)
     if previo and previo.get("estado") in ESTADOS_APROBACION_TERMINALES:
+        _exigir_mismo_manifiesto(ctx, previo, ruta)            # R2-B-I10: huella antigua → rechazo
         return previo
     caso = ctx.casos[caso_id]
     if getattr(caso, "synthetic", False) is not True:
         raise BancoAbortado(f"El caso {caso_id} no es sintético (§9.3).")
+    if caso_id in ctx.ids_custodiados and ctx.cifrar is None:   # R2-B-I8: igual que la producción
+        raise BancoAbortado(f"La aprobación del caso custodiado {caso_id} exige el cifrador de la "
+                            "custodia (§2.3): no se corre para no guardar nada suyo en claro.")
     intentos = []
     for f in sorted((base / ctx.version / caso_id).glob("aprob.intento-*.json")):
         fila = leer_json(f)
         if fila and isinstance(fila.get("n"), int):
+            _exigir_mismo_manifiesto(ctx, fila, f)            # R2-B-I10
             intentos.append(fila)
     intentos.sort(key=lambda i: i["n"])
     n_infra = sum(1 for i in intentos if i.get("clase") == "infraestructura")
@@ -1165,7 +1356,8 @@ async def _ejecutar_una_aprobacion(ctx: Contexto, d: DepsAprobacion, caso_id: st
     while final is None:
         n += 1
         escribir_atomico(ruta_en_curso_aprob(base, ctx.version, caso_id),
-                         {"caso_id": caso_id, "rep": rep, "intento": n})
+                         {"caso_id": caso_id, "rep": rep, "intento": n,
+                          "manifiesto_sha256": ctx.manifiesto_sha256})
         t0 = d.reloj()
         handle: Any = None
         m_turno = m_aprob = None
@@ -1191,7 +1383,9 @@ async def _ejecutar_una_aprobacion(ctx: Contexto, d: DepsAprobacion, caso_id: st
                 if handle is not None:
                     await d.cerrar_despacho(handle)
             except Exception as exc:  # noqa: BLE001 — limpiar no tumba la medición
-                print(f"AVISO: no se pudo cerrar el despacho de la aprobación {caso_id}: {exc}",
+                # R2-B-I8: en un caso custodiado solo el TIPO (el texto podría citar el caso)
+                detalle_exc = type(exc).__name__ if caso_id in ctx.ids_custodiados else exc
+                print(f"AVISO: no se pudo cerrar el despacho de la aprobación {caso_id}: {detalle_exc}",
                       file=sys.stderr)
         if error is not None:                     # lo consumido hasta el fallo se mide igual
             if m_aprob is not None:
@@ -1199,7 +1393,8 @@ async def _ejecutar_una_aprobacion(ctx: Contexto, d: DepsAprobacion, caso_id: st
             elif m_turno is not None:
                 c_turno = d.consumo_desde(m_turno)
         intento = {"n": n, "caso_id": caso_id, "rep": rep, "segundos": round(d.reloj() - t0, 3),
-                   "consumo_turno": c_turno, "consumo_aprobacion": c_aprob}
+                   "consumo_turno": c_turno, "consumo_aprobacion": c_aprob,
+                   "manifiesto_sha256": ctx.manifiesto_sha256}
         if error is None:
             ok = bool((detalle or {}).get("aprobada", True))
             intento["estado"] = "completo" if ok else "no_aprobable"
@@ -1209,7 +1404,12 @@ async def _ejecutar_una_aprobacion(ctx: Contexto, d: DepsAprobacion, caso_id: st
                 error, llamadas_modelo=int(c_turno.get("llamadas") or 0) + int(
                     c_aprob.get("llamadas") or 0),
                 intentos_fallidos=len(c_turno.get("fallidos") or ()) + len(c_aprob.get("fallidos") or ())))
-            intento.update(estado=f"fallo_{tipo}", clase=tipo, error=f"{type(error).__name__}: {error}")
+            # R2-B-I8: el texto de la excepción de un caso custodiado va cifrado
+            intento.update(estado=f"fallo_{tipo}", clase=tipo,
+                           **error_persistible(ctx, caso_id, rep, n, error, etapa="aprob", base=base))
+            motivo_parada = getattr(parada, "motivo_banco", None)
+            if isinstance(motivo_parada, str):
+                intento["motivo_parada"] = motivo_parada
             if tipo == "limite_de_uso":
                 final = "limite_de_uso"
             elif tipo == "producto":
@@ -1230,6 +1430,7 @@ async def _ejecutar_una_aprobacion(ctx: Contexto, d: DepsAprobacion, caso_id: st
     ok_final = [i for i in intentos if i.get("estado") in ("completo", "no_aprobable")]
     registro = {
         "version": ctx.version, "caso_id": caso_id, "rep": rep, "estado": final, "intentos": intentos,
+        "manifiesto_sha256": ctx.manifiesto_sha256,                       # R2-B-I10
         "aprobacion": detalle if final in ("completo", "no_aprobable") else None,
         # la cifra de §5.5/§6.3 para la aprobación: SOLO el paso de aprobar y sus trabajos
         "consumo_aprobacion": (ok_final[-1]["consumo_aprobacion"] if ok_final else None),
@@ -1257,9 +1458,11 @@ async def ejecutar_aprobaciones(ctx: Contexto, d: DepsAprobacion) -> dict:
         escribir_atomico(_dir_version(ctx) / "SUSPENDIDO.reanudado.json",
                          dict(marcador, reanudado_con=ctx.reanudacion_aprobada))
         _marcador_suspension(ctx).unlink()
-    plan = leer_json(_dir_version(ctx) / "aprobaciones_plan.json")
+    ruta_plan = _dir_version(ctx) / "aprobaciones_plan.json"
+    plan = leer_json(ruta_plan)
     if not plan or not plan.get("elegidas"):
         raise BancoAbortado("No hay aprobaciones_plan.json: termine antes la producción.")
+    _exigir_mismo_manifiesto(ctx, plan, ruta_plan)                 # R2-B-I10
     elegidas = plan["elegidas"]
     por_aprobacion = max(1, int(ctx.consumo_aprobaciones) // max(1, len(elegidas)))
     t_ini = d.reloj()
@@ -1268,14 +1471,20 @@ async def ejecutar_aprobaciones(ctx: Contexto, d: DepsAprobacion) -> dict:
         if (leer_json(ruta_aprobacion(_base_de(ctx, caso_id), ctx.version, caso_id)) or {}).get(
                 "estado") in ESTADOS_APROBACION_TERMINALES:
             continue
-        motivo = ctx.contador.motivo_suspension(proximo_estimado=por_aprobacion)
+        # R2-B-I5: la aprobación REPRODUCE el turno antes de aprobar: su proyección suma el consumo de
+        # la corrida elegida (Claude y Codex) a la estimación del paso de aprobar, y Codex se mira
+        # contra su propio presupuesto (antes: solo Claude, y sin el turno reproducido).
+        turno_cl, turno_cx = _consumo_corrida(ctx, caso_id, rep)
+        motivo = ctx.contador.motivo_suspension(proximo_estimado=por_aprobacion + turno_cl,
+                                                proximo_codex=turno_cx)
         if motivo:
             m = _escribir_suspension(ctx, motivo)
             return {"estado": TEXTO_INCOMPLETO, "motivo": motivo, "salida": EXIT_SUSPENDIDO, "marcador": m}
         if ctx.max_segundos is not None and (d.reloj() - t_ini) >= ctx.max_segundos:
             return {"estado": "tramo_agotado", "salida": EXIT_TRAMO}
         reg = await _ejecutar_una_aprobacion(ctx, d, caso_id, rep)
-        motivo = ("el plan devolvió límites de uso que impiden terminar"
+        motivo = (((reg.get("intentos") or [{}])[-1].get("motivo_parada")
+                   or "el plan devolvió límites de uso que impiden terminar")
                   if reg["estado"] == "limite_de_uso" else ctx.contador.motivo_suspension())
         if motivo:
             m = _escribir_suspension(ctx, motivo)
@@ -1283,7 +1492,7 @@ async def ejecutar_aprobaciones(ctx: Contexto, d: DepsAprobacion) -> dict:
     estados = {e["caso"]: (leer_json(ruta_aprobacion(_base_de(ctx, e["caso"]), ctx.version, e["caso"]))
                            or {}).get("estado") for e in elegidas}
     motivos = ([] if ctx.contador.cota_calculable else ["techo sin cota calculable (P10)"]) + (
-        [] if ctx.muestra_completa else ["muestra incompleta"]) + [
+        [] if ctx.muestra_completa else ["muestra incompleta"]) + motivos_identidad(ctx) + [
         f"aprobación de {c}: {s}" for c, s in estados.items() if s != "completo"] + [
         f"aprobación de {e['caso']}: trabajos de aprendizaje sin terminar"
         for e in elegidas if ((leer_json(ruta_aprobacion(_base_de(ctx, e['caso']), ctx.version,
@@ -1291,7 +1500,7 @@ async def ejecutar_aprobaciones(ctx: Contexto, d: DepsAprobacion) -> dict:
                               ).get("trabajos", {}).get("pendientes")]
     resumen = {"estado": "aprobaciones_terminadas" if not motivos else "no certificable",
                "motivos": motivos, "aprobaciones": estados, "consumo": ctx.contador.resumen(),
-               "version": ctx.version, "sha": ctx.sha}
+               "version": ctx.version, "sha": ctx.sha, "manifiesto_sha256": ctx.manifiesto_sha256}
     escribir_atomico(_dir_version(ctx) / "aprobaciones_estado.json", resumen)
     return {"estado": resumen["estado"], "salida": EXIT_OK, "detalle": resumen}
 
@@ -1309,6 +1518,7 @@ def _recuperar_huerfanas_aprob(ctx: Contexto) -> None:
                         "n": n, "caso_id": caso_id, "rep": rep, "estado": "fallo_infraestructura",
                         "clase": "infraestructura", "huerfano": True,
                         "error": "el proceso murió con la aprobación a medias (consumo desconocido)",
+                        "manifiesto_sha256": marca.get("manifiesto_sha256"),       # R2-B-I10
                         "consumo_turno": {"desconocido": True}, "consumo_aprobacion": {"desconocido": True}})
             try:
                 ruta.unlink()
@@ -1350,6 +1560,13 @@ def crear_guardian_banco(spend_guard_mod: Any, **kw: Any) -> Any:
     `note_call` los suma a `total_tokens`/`calls`; con ~10 000 fragmentos sembrados por versión
     inflarían millones de tokens de «cuota Claude» (y la proyección de la piloto, que decide R) y
     una muerte tras sembrar se clasificaría como fallo de producto. Se usa `tokens_llm`/`llamadas_llm`."""
+    class ParadaCodexProduccion(spend_guard_mod.SpendLimitExceeded):
+        """R2-B-I5: la llamada Codex de producción NO se hace (presupuesto agotado o cero). Hereda de
+        `SpendGuardHalt` (BaseException): ningún `except Exception` del grafo puede tragársela."""
+        def __init__(self, motivo: str) -> None:
+            super().__init__(motivo)
+            self.motivo_banco = motivo
+
     class GuardBanco(spend_guard_mod.EvalSpendGuard):
         def __init__(self, *a: Any, **k: Any) -> None:
             super().__init__(*a, **k)
@@ -1357,6 +1574,31 @@ def crear_guardian_banco(spend_guard_mod: Any, **kw: Any) -> Any:
             self.llamadas_embeddings = 0
             self.tokens_codex = 0
             self.llamadas_codex = 0
+            # R2-B-I5 · control POR LLAMADA de Codex en producción. `vincular_contador` lo conecta con
+            # `ContadorCuota.motivo_llamada_codex`; `_guarded_invoke` llama a `check_and_reserve`
+            # ANTES de invocar (también para los alias gratuitos `cli-*`), así que la llamada que no
+            # cabe NO se hace. Contabilidad: en la PRIMERA llamada Codex del proceso se fija la base
+            # (lo que el contador ya trae del disco y los tokens Codex de este guardián); desde ahí,
+            # usado = base del contador + Codex consumido por ESTE proceso (registrado o en vuelo).
+            self.contador_banco: Any = None
+            self._base_codex: Optional[tuple] = None
+            self.ParadaCodexProduccion = ParadaCodexProduccion
+
+        def vincular_contador(self, contador: Any) -> None:
+            self.contador_banco, self._base_codex = contador, None
+
+        def check_and_reserve(self, estimate: float, *, alias: str) -> Any:
+            if es_alias_codex(alias) and self.contador_banco is not None:
+                if self._base_codex is None:
+                    self._base_codex = (int(self.contador_banco.codex_produccion), int(self.tokens_codex))
+                usado = self._base_codex[0] + (int(self.tokens_codex) - self._base_codex[1])
+                motivo = self.contador_banco.motivo_llamada_codex(usado=usado)
+                if motivo:
+                    with self._lock:
+                        if self.stop_reason is None:
+                            self.stop_reason = motivo          # sticky: el guardián ya no autoriza
+                    raise ParadaCodexProduccion(motivo)
+            return super().check_and_reserve(estimate, alias=alias)
 
         def note_call(self, *, alias: str, prompt_tokens: int, completion_tokens: int,
                       total_tokens: int, cost_usd: float, seconds: float) -> None:
@@ -1405,6 +1647,12 @@ def cargar_protocolo() -> Any:
 # Estimación de las 17 aprobaciones sin cambios (§3.2, tabla del Bloque 0: ≈ 1,0 M). Es una cifra
 # de la PROSA del protocolo, no una constante de `protocolo.py`: se declara aquí, con su fuente.
 APROBACIONES_EST_TOKENS = 1_000_000
+
+# R2-B-I5 · estimación A PRIORI de una corrida de la tanda piloto, por clase (§3.2, «Bases medidas»:
+# pequeño ≈ 48 000, voluminoso ≈ 177 000 tokens por corrida). Prosa del protocolo, no constante de
+# `protocolo.py` (frente ajeno): se declara aquí con su fuente. Codex a priori = 0: §3.2 no da una
+# base por corrida; la cuota Codex de producción la gobierna el control POR LLAMADA del guardián.
+EST_PILOTO_TOKENS = {"pequeno": 48_000, "fuga": 48_000, "voluminoso": 177_000}
 
 
 def constantes_de_protocolo(protocolo: Any, bloque: int) -> dict:
@@ -1488,6 +1736,7 @@ def _montaje_real(args: argparse.Namespace, valores: dict) -> int:
                             "Use --permitir-arbol-sucio solo para ensayos (queda en el manifiesto).")
     manifiesto = construir_manifiesto(
         version=args.version, sha_arbol=info["sha"], arbol_limpio=info["arbol_limpio"],
+        modificaciones_sha256=info.get("modificaciones_sha256"),          # R2-B-N2
         soul_sha256=soul_esperado, cli_version=cli, politica=POLITICA_FIJA,
         protocolo_version=str(protocolo.VERSION_PROTOCOLO), protocolo_hash=str(protocolo.hash_protocolo()),
         runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
@@ -1499,6 +1748,7 @@ def _montaje_real(args: argparse.Namespace, valores: dict) -> int:
                              reserva_juicio_codex=k["reserva_codex"])
     guard = crear_guardian_banco(spend_guard, run_limit_usd=args.max_usd, source="cli",
                                  session_id=f"banco04-{args.version}")
+    guard.vincular_contador(contador)     # R2-B-I5: ninguna llamada Codex de producción sin presupuesto
     salida = verificar_salida_fuera_del_repo(Path(args.salida), ROOT)
     salida_cust = None
     if args.incluir_custodiados:
@@ -1546,7 +1796,7 @@ def _montaje_real(args: argparse.Namespace, valores: dict) -> int:
             reanudacion_aprobada=args.reanudar_aprobado_por_pipe,
             versiones_contador=tuple(v for v in (args.versiones_contador or "").split(",") if v),
             cifrar=(cust_abierta.cifrar_registro if cust_abierta is not None else None),
-            manifiesto=manifiesto)
+            manifiesto=manifiesto, estimacion_piloto=dict(EST_PILOTO_TOKENS))
 
     async def esperar_trabajos(tenant: str) -> dict:
         """Espera a que terminen los trabajos de aprendizaje del despacho (§5.5): sin API ni

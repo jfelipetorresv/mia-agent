@@ -1076,64 +1076,51 @@ def _capped_kwargs(kwargs: dict) -> dict:
     return {**kwargs, "max_tokens": EVAL_MAX_OUTPUT_TOKENS}
 
 
-# I4 · COTA REAL de un intento por CLI (banco 0.4). `max_tokens` no llega al CLI, pero en una llamada
-# de UN solo turno SIN herramientas la salida no puede pasar del máximo de tokens de salida del modelo
-# (en la API ese máximo cubre también el razonamiento). Tabla VERSIONADA, con fuente y fecha; un modelo
-# sin dato documentado NO tiene cota (queda desconocida y el techo no certificable).
-CLI_SALIDA_MAXIMA: dict = {
+# R2-B-I4 (Astra, ronda 2, veredicto_B · I4; ronda 1 · I4) — un intento fallido por CLI NO tiene cota.
+# La quinta pasada daba 131 072 (máximo de salida de la API) a los alias de Claude. Astra objetó, con
+# razón, que el máximo de la API no acredita el límite efectivo de UNA ejecución del CLI. Evidencia
+# (2026-10-12, `claude --version` = 2.1.296 y documentación oficial de Claude Code):
+#   · code.claude.com/docs/en/errors «Tune retry behavior»: el CLI reintenta hasta
+#     `CLAUDE_CODE_MAX_RETRIES` (10 por defecto); `CLAUDE_CODE_RETRY_WATCHDOG` lo sube a 300; un fallo de
+#     streaming se REENVÍA sin streaming (fallback activo por defecto) y esos reenvíos por timeout
+#     (`CLAUDE_CODE_NONSTREAMING_TIMEOUT_RETRIES`) no tienen default numérico documentado;
+#   · code.claude.com/docs/en/costs «Background token usage»: hay peticiones de fondo además del turno;
+#   · `claude --help` (2.1.296) ni siquiera lista `--max-turns`: el «un solo turno» no está documentado;
+#   · `agent/subscription_llm._sanitized_env` elimina toda variable con TOKEN en el nombre, así que
+#     `CLAUDE_CODE_MAX_OUTPUT_TOKENS` no puede llegar al CLI sin tocar `agent/*` (fuera del banco), y fijar
+#     `CLAUDE_CODE_MAX_RETRIES=0` en el banco cambiaría la conducta del producto que se mide.
+# Con un intento del banco = un número NO acreditado de peticiones a la API, (reintentos+1)×(entrada+salida)
+# no se puede calcular: la cota es DESCONOCIDA para Claude CLI igual que para Codex, y el techo queda
+# NO certificable (P10, §5.5). Para volver a declarar cota hay que ACREDITAR, leído del comando y el
+# entorno reales, el número de peticiones por invocación y la salida por petición (ver C18 propuesta).
+CLI_COTA_ACREDITADA: dict = {
     "version": "2026-10-12",
-    "fuente": ("https://platform.claude.com/docs/en/about-claude/models/overview — fila «Max output» "
-               "(API síncrona): Claude Fable 5.1, Opus 5.5, Sonnet 5.5 y Haiku 5.5 = 128K tokens; "
-               "consultada el 2026-10-12. Se toma 128×1024 para no subestimar."),
-    # clave = alias de modelo que `subscription_llm` pasa al CLI (`--model`); los alias opus/sonnet/haiku
-    # son punteros flotantes: ningún modelo vigente ni anterior documentado supera 128K en síncrono.
-    "claude": {"opus": 131_072, "sonnet": 131_072, "haiku": 131_072},
-    # `gpt-5.6-sol` (codex_subscription_llm.DEFAULT_MODEL): SIN dato documentado de salida máxima → sin cota.
-    "codex": {},
+    "claude_cli_version_revisada": "2.1.296",
+    "evidencia": ("code.claude.com/docs/en/errors (Tune retry behavior: CLAUDE_CODE_MAX_RETRIES=10, "
+                  "RETRY_WATCHDOG, fallback no-streaming, NONSTREAMING_TIMEOUT_RETRIES sin default); "
+                  "code.claude.com/docs/en/costs (Background token usage); `claude --help` 2.1.296 sin "
+                  "--max-turns; subscription_llm._sanitized_env quita *TOKEN*"),
+    # Ningún alias CLI tiene cota acreditada. Una entrada aquí exige la acreditación de C18.
+    "claude": None,
+    "codex": None,
 }
 
 
-def _flag_con_valor(flags: list, nombre: str, valor: str) -> bool:
-    return any(f == nombre and i + 1 < len(flags) and flags[i + 1] == valor for i, f in enumerate(flags))
-
-
 def cota_salida_cli(alias: str) -> tuple:
-    """(máximo de salida | None, motivo/fuente). Solo hay cota si la invocación REAL de MIA es de un
-    solo turno y sin herramientas (se lee de `subscription_llm`/`codex_subscription_llm` en vivo: si el
-    día de mañana se permiten herramientas o un bucle, la cota vuelve a ser desconocida) y el modelo
-    tiene máximo documentado en `CLI_SALIDA_MAXIMA`."""
+    """(máximo de salida | None, motivo). API estable (la consume el agente de juicio).
+
+    R2-B-I4: para TODO alias `cli-*` devuelve `(None, motivo)`: un intento fallido por CLI es consumo
+    DESCONOCIDO sin cota y deja el techo NO certificable (P10). Ver `CLI_COTA_ACREDITADA`."""
     alias = str(alias or "")
-    try:
-        if alias.startswith("cli-codex"):
-            from ..agent import codex_subscription_llm as cx
-            cmd = [str(x) for x in cx._command(Path("codex"), schema=Path("s"), output=Path("o"), effort="high")]
-            un_turno = (_flag_con_valor(cmd, "--sandbox", "read-only")
-                        and "features.shell_tool=false" in cx._overrides("high")
-                        and "agents.enabled=false" in cx._overrides("high")
-                        and "exec" in cmd and "--ephemeral" in cmd)
-            maximo = CLI_SALIDA_MAXIMA["codex"].get(cx.DEFAULT_MODEL)
-            if not un_turno:
-                return None, "la invocación de Codex no es de un solo turno sin herramientas"
-            if maximo is None:
-                return None, f"sin máximo de salida documentado para {cx.DEFAULT_MODEL}"
-            return int(maximo), f"codex {cx.DEFAULT_MODEL}: máximo documentado ({CLI_SALIDA_MAXIMA['version']})"
-        if alias.startswith("cli-"):
-            from ..agent import llm as llm_mod
-            from ..agent import subscription_llm as sub
-            fl = list(sub._BASE_FLAGS)
-            un_turno = (_flag_con_valor(fl, "--max-turns", "1") and _flag_con_valor(fl, "--tools", "")
-                        and "--strict-mcp-config" in fl and "-p" in fl)
-            if not un_turno:
-                return None, "la invocación del CLI de Claude no es de un solo turno sin herramientas"
-            from .. import config
-            hint = llm_mod._CLI_MODEL_HINTS.get(alias) or getattr(config, "MIA_CLI_MODEL", "sonnet")
-            maximo = CLI_SALIDA_MAXIMA["claude"].get(hint)
-            if maximo is None:
-                return None, f"sin máximo de salida documentado para el alias {hint!r}"
-            return int(maximo), f"claude -p un turno sin herramientas, {hint}: máximo documentado ({CLI_SALIDA_MAXIMA['version']})"
-    except Exception as exc:  # noqa: BLE001 — si no se puede comprobar, NO hay cota
-        return None, f"no se pudo comprobar la invocación: {type(exc).__name__}"
-    return None, "alias sin invocación conocida"
+    if alias.startswith("cli-codex"):
+        return None, ("R2-B-I4: Codex CLI sin máximo de salida documentado para su modelo y sin número "
+                      "acreditado de peticiones por invocación: cota desconocida")
+    if alias.startswith("cli-"):
+        return None, ("R2-B-I4: `claude -p` puede emitir varias peticiones a la API por invocación "
+                      "(reintentos internos CLAUDE_CODE_MAX_RETRIES=10, fallback no-streaming, peticiones "
+                      "de fondo) y el banco no puede fijarlas sin tocar agent/*: el máximo de salida de "
+                      "la API no acredita la cota de la invocación; cota desconocida")
+    return None, "alias sin invocación CLI conocida"
 
 
 def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None,
@@ -1235,11 +1222,11 @@ def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None,
             cota_fuente: Optional[str] = "max_tokens_aplicado"
             motivo_cota: Optional[str] = None
             if es_cli:
-                # `max_tokens` NO llega al CLI. Cota REAL solo si la invocación es de un turno sin
-                # herramientas y el modelo tiene máximo de salida documentado (`CLI_SALIDA_MAXIMA`).
+                # `max_tokens` NO llega al CLI y (R2-B-I4) el número de peticiones a la API por
+                # invocación no está acreditado: `cota_salida_cli` devuelve None → cota DESCONOCIDA.
                 maximo, motivo_cota = cota_salida_cli(alias)
                 if maximo is not None and entrada_est is not None:
-                    cota_salida, cota_fuente = maximo, "maximo_documentado_cli_un_turno"
+                    cota_salida, cota_fuente = maximo, "cota_cli_acreditada"
                 else:
                     cota_salida, cota_fuente = None, None
             cota_aplicada = cota_salida is not None

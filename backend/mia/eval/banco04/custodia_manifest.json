@@ -863,7 +863,7 @@
     "caso: n_fragmentos == suma de len(chunks); recall_markers vacio (los marcadores viven en la clave)",
     "clave: case_id coincide con un caso; cada hecho apunta a documento y fragmentos existentes del caso",
     "mutaciones: salida[campo][inicio:fin] == literal para toda entrada de verdad; spans del mismo campo sin solape",
-    "mutaciones: material de 'ajuste' y 'reservado' disjunto; la categoria C08 solo en items con jurisdicciones == []",
+    "mutaciones: material de 'ajuste' y 'reservado' disjunto; la categoria C08 solo en items sin ordenamiento configurado (jurisdicciones == []) o con una fuente de un ordenamiento no configurado (protocolo 12.6, C22)",
     "mutaciones (reservado): al menos 30 defectos, 30 controles y 10 de categoria C12 con proporcion_en_oracion < 0.20"
   ]
 }

@@ -50,6 +50,17 @@ def raises(fn, exc=Exception) -> bool:
     return False
 
 
+def lanza(fn, tipo) -> bool:
+    """True solo si `fn` lanza EXACTAMENTE la excepción de dominio `tipo` (o una subclase); cualquier
+    otra excepción (incluida SystemExit si no es la pedida) da False en vez de abortar el gate: así
+    una mutación que cambia el modo de fallo pone ROJO el check con nombre."""
+    try:
+        fn()
+    except BaseException as exc:  # noqa: BLE001
+        return isinstance(exc, tipo)
+    return False
+
+
 LLAVE = b"llave-de-prueba-no-custodiada-0123456789"
 
 # ════════════════════════════════════════════════════════════════════════════════════════
@@ -66,7 +77,8 @@ def paquete_de_prompt(prompt: str) -> dict:
 
 def _ev(**kw) -> dict:
     base = {k: None for k in ("justificacion_no_aplica", "fuente", "pasaje", "localizador_invocado",
-                              "marca", "fragmento_marca", "premisas", "pasaje_contradictorio")}
+                              "marca", "fragmento_marca", "premisas", "pasaje_contradictorio",
+                              "uso_fuente")}
     base.update(kw)
     return base
 
@@ -252,7 +264,8 @@ def gate_p1() -> None:
 def _corrida(**kw) -> dict:
     base = {"case_id": "c1", "estrato": P.ESTRATO_A_CANONICOS, "repeticion": 1, "completada": True,
             "es_riesgo": False, "negativa_correcta": False, "afirmaciones_sin_respaldo": 0,
-            "subtipos_sin_respaldo": [], "discordancias_sin_resolver": 0, "fuga_senal": False,
+            "subtipos_sin_respaldo": [], "discordancias_sin_resolver": 0,
+            "texto_salida": "Respuesta sin cita normativa.", "jurisdicciones": [],
             "fuga_juez": 0, "falsos_bloqueos": 0, "cambio_de_motor": False,
             "alcance": {"leidos": 10, "total": 10, "piezas_sin_leer": [], "medido": True},
             "hechos": [], "puntos": [], "conducta": "definitiva", "dice_lo_no_leido": False,
@@ -381,23 +394,36 @@ IDS_C = ["V1", "V2", "V3", "V4"]
 
 def banco_completo(*, kappa_real=None, discordancias=0, transformar_casos=None, tokens_nuevo=100,
                    comparativas_hook=None, atribuciones=(), decisivos_nuevo=None, quitar_caso=None,
-                   extra_hook=None) -> dict:
-    """Entradas COMPLETAS del veredicto global (17 casos, todas sus R evaluadas, todas las filas y
-    comparativas). Sin modificaciones, aprueba: es el control de las puertas I1/I2/P4."""
-    inv = metricas.inventario_esperado(IDS_C)
-    ms = []
-    for cid, esp in inv["casos"].items():
-        for r in range(esp["R"]):
-            ms.append(metricas.metricas_corrida(_corrida(
-                case_id=cid, estrato=esp["estrato"], repeticion=r + 1, evaluada=True,
-                hechos=[{"id": "h1", "decisivo": True, "cubierto": True, "disponible": True},
-                        {"id": "h2", "decisivo": False, "cubierto": True, "disponible": True}],
-                puntos=[{"id": "p1", "tipo": "conclusion", "disponible": True, "resolucion": "resuelto"}])))
+                   extra_hook=None, extension=None, corridas_hook=None, transformar_base=None,
+                   base_cubre_h2=True, techo_hook=None, inventario_hook=None) -> dict:
+    """Entradas COMPLETAS del veredicto global (17 casos, todas sus R evaluadas en las DOS
+    versiones, todas las filas y comparativas recalculables). Sin modificaciones, aprueba: es el
+    control de las puertas I1/I2/P4 y de la ronda 2 (R2-A)."""
+    inv = metricas.inventario_esperado(IDS_C, extension=extension)
+    if inventario_hook:
+        inv = inventario_hook(inv)
+
+    def _corridas(cubre_h2: bool) -> list:
+        ms = []
+        for cid, esp in inv["casos"].items():
+            for r in range(esp["R"]):
+                ms.append(metricas.metricas_corrida(_corrida(
+                    case_id=cid, estrato=esp["estrato"], repeticion=r + 1, evaluada=True,
+                    hechos=[{"id": "h1", "decisivo": True, "cubierto": True, "disponible": True},
+                            {"id": "h2", "decisivo": False, "cubierto": cubre_h2, "disponible": True}],
+                    puntos=[{"id": "p1", "tipo": "conclusion", "disponible": True, "resolucion": "resuelto"}])))
+        return ms
+    ms = _corridas(True)
+    if corridas_hook:
+        ms = corridas_hook(ms)
     casos = metricas.agregar_casos(ms)
+    casos_base = metricas.agregar_casos(_corridas(base_cubre_h2))
     if discordancias:
         casos[P.CASOS_A_CANONICOS[0]]["discordancias_sin_resolver"] = discordancias
     if transformar_casos:
         transformar_casos(casos)
+    if transformar_base:
+        transformar_base(casos_base)
     estratos = metricas.agregar_estratos(casos)
     absolutos = metricas.evaluar_absolutos(
         casos=casos, estratos=estratos, kappa_real=kappa_real or {"exigido": False, "kappa_float": None},
@@ -405,11 +431,10 @@ def banco_completo(*, kappa_real=None, discordancias=0, transformar_casos=None, 
         circuito={"circuito_utilizable": True}, evaluacion_completa=True)
     comparativas = []
     for m in P.METRICAS_COMPARATIVAS:
-        for u, conf in P.UNIDADES_INFERENCIA.items():
-            cs = [c for c in casos if casos[c]["estrato"] in conf["estratos"]]
-            comparativas.append(metricas.comparar_metrica(metrica=m, unidad=u, base=casos, nuevo=casos,
-                                                          casos=cs, semilla=LLAVE, base_corridas={},
-                                                          nuevo_corridas={}))
+        for u in P.UNIDADES_INFERENCIA:
+            comparativas.append(metricas.comparar_metrica(
+                metrica=m, unidad=u, base=casos_base, nuevo=casos, casos=metricas.casos_de_unidad(inv, u),
+                semilla=LLAVE, base_corridas={}, nuevo_corridas={}))
     if comparativas_hook:
         comparativas_hook(comparativas)
 
@@ -418,17 +443,21 @@ def banco_completo(*, kappa_real=None, discordancias=0, transformar_casos=None, 
                                     "tokens_codex": 0} for _ in range(esp["R"])],
                       "aprobacion": {"tokens": 0, "intentos_fallidos": [], "tokens_codex": 0}}
                 for cid, esp in inv["casos"].items()}
-    techo = metricas.techo_cuota(_version(100), _version(tokens_nuevo))
-    dec_b = {cid: {"h1": Fraction(1)} for cid in casos}
+    vb, vn = _version(100), _version(tokens_nuevo)
+    if techo_hook:
+        techo_hook(vb, vn)
+    techo = metricas.techo_cuota(vb, vn)
+    dec_b = {cid: {"h1": Fraction(1)} for cid in inv["casos"]}
     extra = metricas.filas_comparativas_obligatorias(
-        base=casos, nuevo=casos, decisivos_base=dec_b, decisivos_nuevo=decisivos_nuevo or dec_b,
-        techo=techo, comparativas=comparativas, atribuciones=list(atribuciones))
+        inventario=inv, base=casos_base, nuevo=casos, decisivos_base=dec_b,
+        decisivos_nuevo=decisivos_nuevo or dec_b, techo=techo, comparativas=comparativas,
+        atribuciones=list(atribuciones))
     if extra_hook:
         extra = extra_hook(extra)
     if quitar_caso:
         casos.pop(quitar_caso)
-    return dict(inventario=inv, casos=casos, absolutos=absolutos, comparativas=comparativas,
-                techo=techo, filas_extra=extra)
+    return dict(inventario=inv, casos=casos, casos_base=casos_base, semilla=LLAVE, absolutos=absolutos,
+                comparativas=comparativas, techo=techo, filas_extra=extra)
 
 
 def veredicto_de(**kw) -> dict:
@@ -1058,6 +1087,12 @@ def _res(n_def=100, n_ctrl=40, perdidos=0, solo_codex=0, solo_codex_descartados=
     return out
 
 
+# Acreditación v1.3 y consumo certificable YA VERIFICADOS (R2): los gates de N5/I6 miden las demás
+# exigencias; las dos nuevas tienen sus propios gates (R2-C-N1, R2-B-I5).
+OK_CIRCUITO = {"acreditacion": {"ok": True, "motivos": []},
+               "consumo": {"cota_calculable": True, "resumen": {}}}
+
+
 def _conjunto_sintetico(n: int) -> dict:
     items = []
     for i in range(n):
@@ -1089,28 +1124,28 @@ def _conjunto_sintetico(n: int) -> dict:
 def gate_n5() -> None:
     print("\nN5 · validación del circuito completo")
     import banco04_validar_jueces as vj
-    ok = vj.evaluar_exigencias(_res(), tipo="reservado", discordancias=0)
+    ok = vj.evaluar_exigencias(_res(), tipo="reservado", discordancias=0, **OK_CIRCUITO)
     check("N5 control: un circuito que cumple todo es utilizable", ok["circuito_utilizable"])
-    r = vj.evaluar_exigencias(_res(solo_codex=10, solo_codex_descartados=3), tipo="reservado", discordancias=0)
+    r = vj.evaluar_exigencias(_res(solo_codex=10, solo_codex_descartados=3), tipo="reservado", discordancias=0, **OK_CIRCUITO)
     check("N5 la mayoría descarta el 30 % de los defectos vistos solo por Codex → no se usa",
           not r["circuito_utilizable"] and not r["exigencias"]["descarte_mayoria_solo_codex"]["cumple"]
           and r["exigencias"]["sensibilidad_final"]["cumple"])
-    r = vj.evaluar_exigencias(_res(perdidos=6), tipo="reservado", discordancias=0)
+    r = vj.evaluar_exigencias(_res(perdidos=6), tipo="reservado", discordancias=0, **OK_CIRCUITO)
     check("N5 sensibilidad final 0,94 < 0,95 → no se usa",
           not r["circuito_utilizable"] and not r["exigencias"]["sensibilidad_final"]["cumple"])
-    r = vj.evaluar_exigencias(_res(fp=5), tipo="reservado", discordancias=0)
+    r = vj.evaluar_exigencias(_res(fp=5), tipo="reservado", discordancias=0, **OK_CIRCUITO)
     check("N5 falsos positivos finales 0,125 > 0,10 → no se usa", not r["circuito_utilizable"])
     res = _res()
     res[0] = {**res[0], "estado": "no_evaluada_codex"}
     check("N5 una salida sin evaluar impide usar el circuito",
-          not vj.evaluar_exigencias(res, tipo="reservado", discordancias=0)["circuito_utilizable"])
+          not vj.evaluar_exigencias(res, tipo="reservado", discordancias=0, **OK_CIRCUITO)["circuito_utilizable"])
     check("N5 el conjunto de ajuste nunca habilita el circuito",
           not vj.evaluar_exigencias(_res(), tipo="ajuste", discordancias=0)["circuito_utilizable"])
     res = _res()
     for x in res[:2]:
         x["detectado_final"] = False
     check("N5 cláusula falsa breve con sensibilidad 0,80 < 0,90 → no se usa",
-          not vj.evaluar_exigencias(res, tipo="reservado", discordancias=0)["exigencias"]["sensibilidad_clausula_breve"]["cumple"])
+          not vj.evaluar_exigencias(res, tipo="reservado", discordancias=0, **OK_CIRCUITO)["exigencias"]["sensibilidad_clausula_breve"]["cumple"])
     conjunto = _conjunto_sintetico(30)
     check("N5 control: el conjunto sintético bien formado valida", len(vj.validar_conjunto(conjunto)) == 30)
     malo = json.loads(json.dumps(conjunto))
@@ -1195,7 +1230,7 @@ def gate_runners() -> None:
     def _claude(cmd, kw):
         return subprocess.CompletedProcess(cmd, 0, json.dumps({
             "structured_output": estructurada, "modelUsage": {"claude-opus-5-5": {}},
-            "usage": {"output_tokens": 3}, "is_error": False}), "")
+            "usage": {"input_tokens": 5, "output_tokens": 3}, "is_error": False}), "")
     cap = _Captura(_claude)
     ctl, _sal = control_prueba()
     r = jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=cap, control=ctl)("PROMPT SECRETO",
@@ -1286,8 +1321,9 @@ def gate_protocolo() -> None:
 def gate_i1_i2() -> None:
     print("\nI1/I2 · inventario y filas obligatorias")
     inv = metricas.inventario_esperado(IDS_C)
-    vacio = metricas.veredicto_global(inventario=inv, casos={}, absolutos=[], comparativas=[],
-                                      techo={"resultado": "cumple"}, filas_extra=[])
+    vacio = metricas.veredicto_global(inventario=inv, casos={}, casos_base={}, semilla=LLAVE,
+                                      absolutos=[], comparativas=[], techo={"resultado": "cumple"},
+                                      filas_extra=[])
     check("I1 entradas vacías NO aprueban: no certificable", vacio["veredicto"] == "no_certificable")
     check("I1 falta un caso → no certificable",
           veredicto_de(quitar_caso="V2")["veredicto"] == "no_certificable")
@@ -1309,23 +1345,15 @@ def gate_i1_i2() -> None:
         cs.pop()
     check("I1 falta una métrica comparativa → no certificable",
           veredicto_de(comparativas_hook=_quitar_comparativa)["veredicto"] == "no_certificable")
-
-    def _no_concluyente(cs):
-        cs[0]["veredicto"] = "no_concluyente"
-    check("I1 «no_concluyente» sin recibo de extensión → no certificable",
-          veredicto_de(comparativas_hook=_no_concluyente)["veredicto"] == "no_certificable")
-
-    def _con_recibo(final):
-        def _h(cs):
-            cs[0]["veredicto"] = "no_concluyente"
-            cs[0]["diferencia_por_caso"] = {P.CASOS_A_CANONICOS[0]: -0.01}
-            cs[0]["extension"] = {"casos": [P.CASOS_A_CANONICOS[0]], "corridas_por_caso": 5,
-                                  "veredicto_final": final}
-        return _h
-    check("I1 «no_concluyente» con recibo válido y final no concluyente → aprueba la fila",
-          veredicto_de(comparativas_hook=_con_recibo("no_concluyente"))["veredicto"] == "aprueba")
-    check("I1 recibo con regresión tras la extensión → reprueba",
-          veredicto_de(comparativas_hook=_con_recibo("regresion"))["veredicto"] == "reprueba")
+    v = _banco_no_concluyente()
+    check("I1 «no_concluyente» (RECALCULADO desde los datos) sin recibo de extensión → no certificable",
+          v["veredicto"] == "no_certificable"
+          and any("no_concluyente_sin_recibo" in m for m in v["motivos_no_certificable"]))
+    check("I1 «no_concluyente» con recibo VINCULADO (extensión en el inventario, corridas juzgadas, "
+          "recálculo) → aprueba la fila", _banco_no_concluyente(recibo=True)["veredicto"] == "aprueba")
+    v = _banco_no_concluyente(recibo=True, final="regresion", y_sube=False)
+    check("I1 recibo con regresión tras la extensión (recalculada) → reprueba",
+          v["veredicto"] == "reprueba" and any("tras_extension" in r for r in v["filas_rojas"]))
 
     def _quitar_extra(extra):
         return [f for f in extra if f["fila"] != "decisivos_estables_perdidos"]
@@ -1333,30 +1361,293 @@ def gate_i1_i2() -> None:
           veredicto_de(extra_hook=_quitar_extra)["veredicto"] == "no_certificable")
     check("I2 cuota 100 → 120 sin mejora atribuida → reprueba (no aprueba)",
           veredicto_de(tokens_nuevo=120)["veredicto"] == "reprueba")
-
-    def _mejora(cs):
-        cs[0]["veredicto"] = "mejora"
-    b = banco_completo(tokens_nuevo=120, comparativas_hook=_mejora)
-    subidas = b["techo"]["subidas_que_exigen_mejora_atribuible"]
-    atr = [{"subida": s_, "metrica": b["comparativas"][0]["metrica"], "unidad": b["comparativas"][0]["unidad"],
-            "nodo": "legal_analysis"} for s_ in subidas]
-    check("I2 control: la misma subida con mejora atribuida por nodo aprueba",
-          veredicto_de(tokens_nuevo=120, comparativas_hook=_mejora, atribuciones=atr)["veredicto"] == "aprueba")
+    check("I2 control: la misma subida con mejora REAL atribuida por nodo, ámbito y usage_by_node aprueba",
+          veredicto_de(tokens_nuevo=120, base_cubre_h2=False,
+                       atribuciones=_atribuciones_validas())["veredicto"] == "aprueba")
     check("I2 una atribución a una métrica sin «mejora» no cuenta",
-          veredicto_de(tokens_nuevo=120, atribuciones=atr)["veredicto"] == "reprueba")
+          veredicto_de(tokens_nuevo=120, atribuciones=_atribuciones_validas())["veredicto"] == "reprueba")
+    caer = {**{cid: {"h1": Fraction(1)} for cid in inv["casos"]}, "V3": {"h1": Fraction(0)}}
 
-    base = banco_completo()
-    nuevo = {k: dict(v) for k, v in base["casos"].items()}
-    nuevo["V3"]["cobertura_hechos_materiales"] = Fraction(1, 2)
-    extra = metricas.filas_comparativas_obligatorias(
-        base=base["casos"], nuevo=nuevo, decisivos_base={"V3": {"h1": Fraction(1)}},
-        decisivos_nuevo={"V3": {"h1": Fraction(0)}}, techo=base["techo"],
-        comparativas=base["comparativas"], atribuciones=[])
-    rojas = {f["fila"] for f in extra if f["cumple"] is False}
+    def _pierde(casos):
+        casos["V3"]["cobertura_hechos_materiales"] = Fraction(1, 2)
+    b = banco_completo(transformar_casos=_pierde, decisivos_nuevo=caer)
+    rojas = {f["fila"] for f in b["filas_extra"] if f["cumple"] is False}
     check("I2 un caso que pierde 0,5 de cobertura y un decisivo estable que cae son filas rojas",
           rojas == {"perdida_por_caso:cobertura_hechos_materiales", "decisivos_estables_perdidos"})
-    v = metricas.veredicto_global(**{**base, "filas_extra": extra})
-    check("I2 … y el veredicto global las incorpora (reprueba)", v["veredicto"] == "reprueba")
+    v = metricas.veredicto_global(**b)
+    check("I2 … y el veredicto global las incorpora (reprueba)",
+          v["veredicto"] == "reprueba" and {"perdida_por_caso:cobertura_hechos_materiales",
+                                            "decisivos_estables_perdidos"} <= set(v["filas_rojas"]))
+
+
+_X_NC, _Y_NC = P.CASOS_A_CANONICOS[0], P.CASOS_A_CANONICOS[1]
+_M_NC, _U_NC = "aprobacion_sin_edicion_proxy", P.UNIDAD_A_PEQUENOS
+
+
+def _banco_no_concluyente(*, recibo=False, final="no_concluyente", caida=Fraction(6, 10),
+                          inventario_ext=True, casos_ext=None, corridas_hook=None, y_sube=True,
+                          ext_inv=None) -> dict:
+    """Datos REALES que dan `no_concluyente` en (aprobación proxy, A-pequeños): X cae `caida` en 0.4
+    e Y sube 0,6 frente a 0.3.3. Con `recibo`, el inventario extiende X y la comparativa lleva el
+    recibo de la extensión (con la comparativa previa)."""
+    previa = {"metrica": _M_NC, "unidad": _U_NC, "veredicto": "no_concluyente",
+              "diferencia_por_caso": {_X_NC: -0.6, _Y_NC: 0.6}}
+
+    def _t(c):
+        c[_X_NC][_M_NC] = Fraction(1) - caida
+
+    def _tb(c):
+        if y_sube:
+            c[_Y_NC][_M_NC] = Fraction(4, 10)
+
+    def _h(cs):
+        if not recibo:
+            return
+        for c in cs:
+            if (c["metrica"], c["unidad"]) == (_M_NC, _U_NC):
+                c["extension"] = {"casos": casos_ext or [_X_NC], "corridas_por_caso": 5,
+                                  "veredicto_final": final, "comparativa_previa": previa}
+    return metricas.veredicto_global(**banco_completo(
+        transformar_casos=_t, transformar_base=_tb, comparativas_hook=_h,
+        extension=(ext_inv or {_X_NC: 5}) if (recibo and inventario_ext) else None,
+        corridas_hook=corridas_hook))
+
+
+def _atribuciones_validas(*, nodo="legal_analysis", metrica="cobertura_hechos_materiales",
+                          unidad_por_grupo=None, sin_uso=False, desajuste=0) -> list:
+    """Atribución de TODAS las subidas del banco con tokens 100 → 120: el consumo de cada ámbito
+    (lo que el techo midió) se reparte por nodo y la subida entera la explica `nodo`."""
+    unidad_por_grupo = unidad_por_grupo or {"a": P.UNIDAD_A_PEQUENOS, "c": P.UNIDAD_C_VOLUMINOSOS}
+    b = banco_completo(tokens_nuevo=120)
+    inv = b["inventario"]
+    out = []
+    for s_ in b["techo"]["subidas_que_exigen_mejora_atribuible"]:
+        med = b["techo"]["consumo_por_ambito"][s_]
+        cid = None if s_ in ("total", "ponderado") else s_.rpartition(":")[0]
+        grupo = "a" if cid is None else P.GRUPO_DE_ESTRATO[inv["casos"][cid]["estrato"]]
+        mitad = med["base"] // 2
+        uso = {"base": {"intake": mitad, nodo: med["base"] - mitad},
+               "nuevo": {"intake": mitad, nodo: med["nuevo"] - mitad + desajuste}}
+        a = {"subida": s_, "metrica": metrica, "unidad": unidad_por_grupo[grupo], "nodo": nodo}
+        if not sin_uso:
+            a["usage_by_node"] = uso
+        out.append(a)
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════
+# Ronda 2 de Astra · área A (veredicto_A.md)
+# ════════════════════════════════════════════════════════════════════════════════════════
+def gate_r2_a() -> None:
+    print("\nR2-A · inventario, techo, pares, recibo, pérdidas, atribución, repeticiones, rangos, captura")
+    inv = metricas.inventario_esperado(IDS_C)
+    base_ok = banco_completo()
+    check("R2-A control: el banco completo y coherente APRUEBA",
+          metricas.veredicto_global(**base_ok)["veredicto"] == "aprueba")
+    # ── I1 · manifiesto validado contra el protocolo ──
+    hueco = {**inv, "casos": {}, "filas_absolutas": set(), "comparativas": set(), "filas_extra": set()}
+    v = metricas.veredicto_global(inventario=hueco, casos={}, casos_base={}, semilla=LLAVE, absolutos=[],
+                                  comparativas=[], filas_extra=[],
+                                  techo={"resultado": "cumple", "R_por_caso": {"base": {}, "nuevo": {}},
+                                         "subidas_que_exigen_mejora_atribuible": []})
+    check("R2-A-I1 · un manifiesto con TODAS sus colecciones vacías (y nada más: escenario de Astra) no "
+          "aprueba (no certificable)", v["veredicto"] == "no_certificable"
+          and any("inventario_no_coincide_con_el_protocolo" in m for m in v["motivos_no_certificable"]))
+    sin_par = {k: x for k, x in inv.items() if k != "parametros"}
+    check("R2-A-I1 · un manifiesto sin sus parámetros (no reconstruible) no aprueba",
+          metricas.veredicto_global(**{**base_ok, "inventario": sin_par})["veredicto"] == "no_certificable")
+    def _r_menos_1(i):
+        return {**i, "casos": {cid: {**e, "R": e["R"] - 1} for cid, e in i["casos"].items()}}
+    v = metricas.veredicto_global(**banco_completo(inventario_hook=_r_menos_1))
+    check("R2-A-I1 · un manifiesto con R rebajadas y un banco COHERENTE con ellas (todo lo demás cuadra) "
+          "no aprueba", v["veredicto"] == "no_certificable"
+          and any("inventario_no_coincide_con_el_protocolo" in m for m in v["motivos_no_certificable"]))
+    check("R2-A-I1 · la extensión fuera del pre-registro (6 casos, o 3 corridas) no construye inventario",
+          raises(lambda: metricas.inventario_esperado(IDS_C, extension={c: 5 for c in list(inv["casos"])[:6]}),
+                 ValueError)
+          and raises(lambda: metricas.inventario_esperado(IDS_C, extension={"V1": 3}), ValueError))
+    # ── I1 · consumo ausente ──
+    t0 = metricas.techo_cuota({}, {})
+    check("R2-A-I1 · techo_cuota({}, {}) NO cumple: no certificable",
+          t0["resultado"] == "no_certificable" and "sin_consumo" in t0["motivos"])
+    check("R2-A-I1 · … y con ese techo el veredicto no aprueba",
+          metricas.veredicto_global(**{**base_ok, "techo": t0})["veredicto"] == "no_certificable")
+
+    def _sin_tokens(vb, vn):
+        del vn["V1"]["corridas"][0]["tokens"]
+    check("R2-A-I1 · una corrida sin `tokens` no es «0»: techo no certificable",
+          banco_completo(techo_hook=_sin_tokens)["techo"]["resultado"] == "no_certificable")
+
+    def _sin_aprob(vb, vn):
+        del vn["V1"]["aprobacion"]
+    check("R2-A-I1 · un caso sin el consumo de su aprobación: techo no certificable",
+          banco_completo(techo_hook=_sin_aprob)["techo"]["resultado"] == "no_certificable")
+
+    def _aprob_sin_tokens(vb, vn):
+        vn["V1"]["aprobacion"] = {"intentos_fallidos": [], "tokens_codex": 0}
+    check("R2-A-I1 · una aprobación registrada SIN `tokens` no es «0»: techo no certificable",
+          banco_completo(techo_hook=_aprob_sin_tokens)["techo"]["resultado"] == "no_certificable")
+
+    def _techo_parcial(vb, vn):
+        for d in (vb, vn):
+            d.pop("V4")
+    v = metricas.veredicto_global(**banco_completo(techo_hook=_techo_parcial))
+    check("R2-A-I1 · un techo que «cumple» sin cubrir los 17 casos no aprueba",
+          v["veredicto"] == "no_certificable" and "techo_no_cubre_el_inventario" in v["motivos_no_certificable"])
+    # ── I1 · pares faltantes en A-pequeños ──
+    c0 = P.CASOS_A_CANONICOS[0]
+    c1 = metricas.comparar_metrica(metrica="turnos_completados", unidad=P.UNIDAD_A_PEQUENOS,
+                                   base={c0: base_ok["casos_base"][c0]}, nuevo=base_ok["casos"],
+                                   casos=metricas.casos_de_unidad(inv, P.UNIDAD_A_PEQUENOS), semilla=LLAVE)
+    check("R2-A-I1 · A-pequeños con 1 de 9 pares → sin dato (8 faltantes), nunca descriptivo «válido»",
+          c1.get("sin_dato") is True and len(c1.get("pares_faltantes") or []) == 8)
+    def _sin_pares(cb):
+        for cid in P.CASOS_A_CANONICOS[1:]:
+            cb[cid]["turnos_completados"] = None
+    v = metricas.veredicto_global(**banco_completo(transformar_base=_sin_pares))
+    check("R2-A-I1 · … y el veredicto global no aprueba con pares faltantes (comparativas coherentes con "
+          "el dato: solo los pares faltantes lo frenan)", v["veredicto"] == "no_certificable"
+          and any("sin_dato:comparativa:turnos_completados" in m for m in v["motivos_no_certificable"]))
+    # ── I1 · recibo vinculado ──
+    v = _banco_no_concluyente(recibo=True, inventario_ext=False)
+    check("R2-A-I1 · recibo que declara 5 corridas más con R sin extender (Astra) → no certificable",
+          v["veredicto"] == "no_certificable"
+          and any("recibo_sin_corridas_adicionales" in m for m in v["motivos_no_certificable"]))
+    check("R2-A-I1 · recibo cuyo veredicto final no es el del RECÁLCULO → no certificable",
+          _banco_no_concluyente(recibo=True, final="sin_regresion_observada")["veredicto"] == "no_certificable")
+    check("R2-A-I1 · recibo con casos fuera de la regla de selección → no certificable",
+          _banco_no_concluyente(recibo=True, casos_ext=[_Y_NC], ext_inv={_Y_NC: 5})["veredicto"]
+          == "no_certificable")
+
+    def _extension_sin_juzgar(ms):
+        return [{**m, "evaluada": False} if m["case_id"] == _X_NC and m["repeticion"] > P.repeticiones(_X_NC, IDS_C)
+                else m for m in ms]
+    check("R2-A-I1 · recibo válido pero las corridas extendidas NO las juzgaron los dos jueces → no certificable",
+          _banco_no_concluyente(recibo=True, corridas_hook=_extension_sin_juzgar)["veredicto"] == "no_certificable")
+    check("R2-A-I1 · control: el mismo recibo vinculado y juzgado aprueba",
+          _banco_no_concluyente(recibo=True)["veredicto"] == "aprueba")
+    v = metricas.veredicto_global(**banco_completo(extension={_X_NC: 5}))
+    check("R2-A-I1 · una extensión en el inventario sin recibo que la justifique → no certificable",
+          v["veredicto"] == "no_certificable"
+          and any("extension_sin_recibo_valido" in m for m in v["motivos_no_certificable"]))
+
+    def _mentir(cs):
+        cs[0]["veredicto"] = "mejora"
+    check("R2-A-I1 · una comparativa suministrada que no coincide con el recálculo → no certificable",
+          veredicto_de(comparativas_hook=_mentir)["veredicto"] == "no_certificable")
+    # ── I2 · completitud antes de las pérdidas ──
+    extra = metricas.filas_comparativas_obligatorias(
+        inventario=inv, base={}, nuevo={}, decisivos_base={}, decisivos_nuevo={},
+        techo=base_ok["techo"], comparativas=base_ok["comparativas"], atribuciones=[])
+    check("R2-A-I2 · cuatro diccionarios vacíos NO son «sin pérdidas»: las tres filas quedan sin dato",
+          [f["cumple"] for f in extra[:3]] == [None, None, None])
+    v = metricas.veredicto_global(**{**base_ok, "filas_extra": extra})
+    check("R2-A-I2 · … y el veredicto no aprueba", v["veredicto"] == "no_certificable")
+    perd, falt = metricas.decisivos_estables_perdidos({"V1": {"h1": Fraction(1)}}, {"V1": {}}, ["V1"])
+    check("R2-A-I2 · un decisivo estable presente en la base y AUSENTE en la nueva no desaparece del control",
+          perd == [] and falt == ["V1/h1"])
+    perd, falt = metricas.decisivos_estables_perdidos({"V1": {"h1": Fraction(1)}},
+                                                      {"V1": {"h1": Fraction(1)}}, ["V1"])
+    check("R2-A-I2 · control: con el decisivo en las dos versiones no hay faltantes", perd == [] and falt == [])
+    sin_dec = {cid: {"h1": Fraction(1)} for cid in inv["casos"]}
+    sin_dec["V2"] = {}
+    check("R2-A-I2 · banco con un decisivo ausente en 0.4 → no certificable",
+          veredicto_de(decisivos_nuevo=sin_dec)["veredicto"] == "no_certificable")
+    # ── I2 · atribución con evidencia ──
+    ok = dict(tokens_nuevo=120, base_cubre_h2=False)
+    check("R2-A-I2 · control: atribución con usage_by_node que suma lo medido, nodo que sube y mejora del grupo",
+          veredicto_de(**ok, atribuciones=_atribuciones_validas())["veredicto"] == "aprueba")
+    v = veredicto_de(**ok, atribuciones=_atribuciones_validas(nodo="NODO_INEXISTENTE", sin_uso=True))
+    check("R2-A-I2 · 36 subidas atribuidas a NODO_INEXISTENTE sin usage_by_node (Astra) → reprueba",
+          v["veredicto"] == "reprueba" and "atribucion_de_subidas_de_cuota" in v["filas_rojas"])
+    check("R2-A-I2 · usage_by_node que no suma el consumo medido → reprueba",
+          veredicto_de(**ok, atribuciones=_atribuciones_validas(desajuste=1))["veredicto"] == "reprueba")
+    check("R2-A-I2 · mejora fuera del grupo de la subida (todo a C-voluminosos) → reprueba",
+          veredicto_de(**ok, atribuciones=_atribuciones_validas(
+              unidad_por_grupo={"a": P.UNIDAD_C_VOLUMINOSOS, "c": P.UNIDAD_C_VOLUMINOSOS}))["veredicto"] == "reprueba")
+    malas = _atribuciones_validas()
+    for a in malas:
+        a["nodo"] = "NODO_FANTASMA"
+    check("R2-A-I2 · un nodo que no está en el consumo de 0.4 (aunque haya usage_by_node) → reprueba",
+          veredicto_de(**ok, atribuciones=malas)["veredicto"] == "reprueba")
+    # ── N1 · repeticiones duplicadas ──
+
+    def _todas_rep1(ms):
+        return [{**m, "repeticion": 1} for m in ms]
+    v = veredicto_de(corridas_hook=_todas_rep1)
+    check("R2-A-N1 · repetir SOLO `repeticion=1` hasta completar cada R → no certificable",
+          v["veredicto"] == "no_certificable"
+          and any("repeticiones_no_coinciden" in m for m in v["motivos_no_certificable"]))
+
+    def _dup_una(ms):
+        i = next(k for k, m in enumerate(ms) if m["case_id"] == "V1" and m["repeticion"] == 2)
+        ms[i] = {**ms[i], "repeticion": 1}
+        return ms
+    check("R2-A-N1 · una sola repetición duplicada (y su hueco) → no certificable",
+          veredicto_de(corridas_hook=_dup_una)["veredicto"] == "no_certificable")
+    b = banco_completo()
+    b["casos_base"]["V2"] = {**b["casos_base"]["V2"], "repeticiones": [1, 1, 2, 3, 4]}
+    check("R2-A-N1 · el conjunto exacto se exige también en la versión BASE",
+          metricas.veredicto_global(**b)["veredicto"] == "no_certificable")
+    check("R2-A-N1 · control: repeticiones 1..R únicas en las dos versiones aprueban",
+          veredicto_de()["veredicto"] == "aprueba")
+    # ── N2 · rangos ──
+    env = metricas.envio_desde_material({"entraron_tramos": [
+        {"documento": "a", "indice": 0, "id": "a#0", "chars_original": 100, "tramos": [[0, 40]], "completo": False}]})
+    check("R2-A-N2 · rango invertido [90,30) con solo [0,40) enviado → NO disponible",
+          not metricas.ref_disponible(("a", 0, 90, 30), env))
+    check("R2-A-N2 · rango vacío [30,30) → NO disponible", not metricas.ref_disponible(("a", 0, 30, 30), env))
+    check("R2-A-N2 · rango negativo o más allá del fragmento → NO disponible",
+          not metricas.ref_disponible(("a", 0, -5, 10), env) and not metricas.ref_disponible(("a", 0, 30, 101), env))
+    check("R2-A-N2 · control: rango válido dentro del tramo enviado → disponible",
+          metricas.ref_disponible(("a", 0, 5, 30), env))
+    env2 = metricas.envio_desde_material({"entraron_tramos": [
+        {"documento": "a", "indice": 0, "id": "a#0", "chars_original": 100, "tramos": [[60, 0], [0, 200]],
+         "completo": True}]})
+    check("R2-A-N2 · tramos ENVIADOS invertidos o fuera del fragmento no cuentan (ni completo)",
+          env2[("a", 0)]["tramos"] == [] and not env2[("a", 0)]["completo"])
+    hecho = {"id": "h1", "documento": "a", "fragmentos": [0], "decisivo": True}
+
+    def _rango(f, a, b):
+        return lambda: metricas._refs_hecho({**hecho, "rangos": [{"fragmento": f, "inicio": a, "fin": b}]})
+    check("R2-A-N2 · la clave con un rango invertido, vacío o de otro fragmento falla cerrado",
+          raises(_rango(0, 90, 30), ValueError) and raises(_rango(0, 30, 30), ValueError)
+          and raises(_rango(1, 0, 5), ValueError))
+    check("R2-A-N2 · control: la clave con un rango válido de su fragmento da la referencia",
+          _rango(0, 0, 5)() == [("a", 0, 0, 5)])
+    from mia.eval.banco04 import custodia as cus
+    chunks = ["x" * 50]
+
+    def _cus(a, b):
+        return lambda: cus.invariantes_rangos_hecho(
+            "k", {**hecho, "rangos": [{"fragmento": 0, "inicio": a, "fin": b}]}, chunks)
+    check("R2-A-N2 · custodia: la clave con rango invertido/vacío/fuera del fragmento no se entrega",
+          raises(_cus(40, 10), cus.CustodiaError) and raises(_cus(10, 10), cus.CustodiaError)
+          and raises(_cus(10, 51), cus.CustodiaError))
+    check("R2-A-N2 · custodia control: un rango válido del fragmento declarado se entrega",
+          not raises(_cus(10, 50), cus.CustodiaError))
+    # ── N3 · captura sin duplicar renders históricos ──
+    from mia.eval import harness
+    from mia.agents import untrusted
+    A, B = {"id": "a", "content": "texto A"}, {"id": "b", "content": "texto B"}
+    rA, rAB = untrusted.render_documents([A]), untrusted.render_documents([A, B])
+    renders = {rA: [{"id": "a"}], rAB: [{"id": "a"}, {"id": "b"}]}
+    filas = harness.fragmentos_de_bloques_enviados("Expediente:\n" + rAB + "\nPregunta", renders)
+    check("R2-A-N3 · renders [A] y [A,B]: la llamada con [A,B] se registra [A,B] (no [A,A,B]) y n = 1,2",
+          [f["id"] for f in filas] == ["a", "b"] and [f["n"] for f in filas] == [1, 2])
+    check("R2-A-N3 · control: la llamada que solo lleva [A] se registra [A]",
+          [f["id"] for f in harness.fragmentos_de_bloques_enviados(rA + "\nPregunta", renders)] == ["a"])
+    C = {"id": "c", "content": "texto C distinto"}
+    rC = untrusted.render_documents([C])
+    filas = harness.fragmentos_de_bloques_enviados(rA + "\n\nOtro bloque:\n" + rC, {**renders, rC: [{"id": "c"}]})
+    check("R2-A-N3 · control: dos bloques DISTINTOS y separados en el mismo prompt cuentan los dos",
+          [f["id"] for f in filas] == ["a", "c"])
+    import inspect
+    fuente = inspect.getsource(harness.run_case)
+    check("R2-A-N3 · la captura del turno usa la identificación por bloques y restaura los originales",
+          "fragmentos_de_bloques_enviados(texto" in fuente
+          and "_untrusted_mod.render_documents = _orig_render" in fuente
+          and "llm_mod.call_llm = _orig_call" in fuente)
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════
@@ -1367,14 +1658,25 @@ def _rb():
     return rb
 
 
-def control_prueba(techo_claude=10_000_000, techo_codex=10_000_000, salida=None):
+def control_prueba(techo_claude=10_000_000, techo_codex=10_000_000, salida=None, cota_salida=None):
+    """Control de cuota sobre un ledger temporal. `cota_salida` (proveedor → máximo de salida o
+    None) se inyecta para que los gates no dependan de lo que decida `spend_guard` (otro frente)."""
     import tempfile as _tf
     rb = _rb()
     salida = Path(salida or _tf.mkdtemp(prefix="banco04-ledger-"))
     ledger = rb.LedgerJuicio(salida, "v-prueba", nuevo_contador=lambda: rb.ContadorCuota(
         techo_claude=techo_claude, techo_codex=techo_codex, reserva_juicio_claude=0,
         reserva_juicio_codex=0))
-    return jueces.ControlCuotaJueces(ledger=ledger, etapa="validacion", prefijo="prueba"), salida
+    return jueces.ControlCuotaJueces(ledger=ledger, etapa="validacion", prefijo="prueba",
+                                     cota_salida=cota_salida), salida
+
+
+def _cota_documentada(maximo=1000):
+    return lambda proveedor: maximo
+
+
+def _sin_cota(proveedor):
+    return None
 
 
 def _ledger(salida: Path) -> list[dict]:
@@ -1396,7 +1698,7 @@ def gate_i5() -> None:
           len(led) == 1 and led[0]["estado"] == "cerrado" and led[0]["consumo"]["claude_conocido"] == 22
           and ctl.ledger.contador().claude_total == 22 and ctl.ledger.contador().cota_calculable)
 
-    ctl, sal = control_prueba()
+    ctl, sal = control_prueba(cota_salida=_cota_documentada())
     visto: list = []
 
     def _mira_ledger(cmd, kw):
@@ -1404,20 +1706,22 @@ def gate_i5() -> None:
         visto.append(ctl.ledger.contador().claude_total)
         return _ok(cmd, kw)
     jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=_Captura(_mira_ledger), control=ctl)("p" * 30, {})
-    cota = jueces.cota_intento("p" * 30)
+    cota = jueces.cota_intento("p" * 30, "claude", cota_salida=_cota_documentada())
     check("I5 el intento queda escrito `en_curso` con su cota ANTES de lanzar y el contador ya lo cuenta",
           len(visto) == 2 and visto[0]["estado"] == "en_curso" and visto[0]["cota_reservada"] == cota
           and visto[1] == cota)
 
     def _timeout(cmd, kw):
         raise subprocess.TimeoutExpired(cmd, 1)
-    ctl, sal = control_prueba()
+    ctl, sal = control_prueba(cota_salida=_sin_cota)
     resp = jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=_Captura(_timeout), control=ctl)("p" * 30, {})
     led = _ledger(sal)
     c = ctl.ledger.contador()
-    check("I5 un timeout NO devuelve consumo vacío: cuenta su cota y el techo deja de ser certificable",
-          resp.error == "timeout" and led[0]["timeout"] is True and led[0]["consumo"]["claude_conocido"] == cota
-          and c.claude_total == cota and not c.cota_calculable)
+    reserva = jueces.estimacion_reserva("p" * 30)
+    check("I5/R2-B-I4 un timeout SIN cota documentada no devuelve consumo vacío: cuenta la reserva y el "
+          "techo deja de ser certificable",
+          resp.error == "timeout" and led[0]["timeout"] is True and led[0]["consumo"]["claude_conocido"] == reserva
+          and c.claude_total == reserva and not c.cota_calculable)
 
     def _revienta(cmd, kw):
         raise RuntimeError("caída")
@@ -1425,12 +1729,14 @@ def gate_i5() -> None:
     lanzo = raises(lambda: jueces.CodexJuezRunner(launcher=(Path("codex.exe"),), ejecutar=_Captura(_revienta),
                                                   control=ctl)("q" * 30, {}), RuntimeError)
     led = _ledger(sal)
-    check("I5 una excepción a mitad de llamada también deja el intento registrado (Codex, con cota)",
-          lanzo and len(led) == 1 and led[0]["consumo"]["codex_conocido"] == jueces.cota_intento("q" * 30)
-          and ctl.ledger.contador().codex_total == jueces.cota_intento("q" * 30))
+    reserva = jueces.estimacion_reserva("q" * 30)
+    check("I5 una excepción a mitad de llamada también deja el intento registrado (Codex: reserva contada, "
+          "consumo desconocido)",
+          lanzo and len(led) == 1 and led[0]["consumo"]["codex_conocido"] == reserva
+          and ctl.ledger.contador().codex_total == reserva and not ctl.ledger.contador().cota_calculable)
     check("I5 … y el intento se CIERRA (estado final y lista publicada `consumo_jueces`)",
           led[0]["estado"] == "cerrado" and len(ctl.intentos) == 1
-          and ctl.intentos[0]["estado"] == "desconocido_acotado")
+          and ctl.intentos[0]["estado"] == "desconocido")
     cap = _Captura(_ok)
     ctl, sal = control_prueba(techo_claude=1000)
     check("I5 control PREVIO: si el intento superaría el techo, no se llama al modelo ni se reserva",
@@ -1515,11 +1821,11 @@ def gate_i3() -> None:
 def gate_i6() -> None:
     print("\nI6 · discordancias en la validación del circuito")
     import banco04_validar_jueces as vj
-    r = vj.evaluar_exigencias(_res(n_def=30, perdidos=0), tipo="reservado", discordancias=1)
+    r = vj.evaluar_exigencias(_res(n_def=30, perdidos=0), tipo="reservado", discordancias=1, **OK_CIRCUITO)
     check("I6 30 defectos, todo lo demás en verde y 1 discordancia → el circuito NO se usa",
           not r["circuito_utilizable"] and not r["exigencias"]["discordancias_sin_resolver"]["cumple"])
     check("I6 control: sin discordancias el mismo circuito sí se usa",
-          vj.evaluar_exigencias(_res(n_def=30), tipo="reservado", discordancias=0)["circuito_utilizable"])
+          vj.evaluar_exigencias(_res(n_def=30), tipo="reservado", discordancias=0, **OK_CIRCUITO)["circuito_utilizable"])
     check("I6 las discordancias son obligatorias en la firma (no hay valor por defecto)",
           raises(lambda: vj.evaluar_exigencias(_res(), tipo="reservado"), TypeError))
     conjunto = _conjunto_sintetico(30)
@@ -1601,7 +1907,7 @@ def gate_cus() -> None:
 # I9 · uso único del reservado: registro canónico, ligado a la identidad sellada
 # ════════════════════════════════════════════════════════════════════════════════════════
 def gate_i9() -> None:
-    print("\nI9 · registro canónico de uso del reservado")
+    print("\nI9 · registro canónico de uso del reservado (raíz permanente, R2-C-I9)")
     import inspect
     import tempfile as _tf
     import banco04_validar_jueces as vj
@@ -1610,27 +1916,422 @@ def gate_i9() -> None:
                           {"id": "mut-ajuste", "tipo": "mutaciones_ajuste",
                            "sha256_cifrado": "c" * 64, "sha256_claro": "d" * 64}]}
     ident = vj.identidad_sellada_reservado(man)
+    huellas = ["h-item-1", "h-item-2"]
     with _tf.TemporaryDirectory() as d:
-        env = {vj.ENV_CUSTODIA: d}
-        marca = vj.marcar_uso_unico(ident, env)
-        check("I9 la marca vive bajo MIA_BANCO04_CUSTODIA/registro-uso y lleva la identidad sellada",
-              marca.parent == Path(d) / vj.SUBDIR_REGISTRO_USO and ident in marca.name and marca.is_file())
+        d = Path(d)
+        perm, cus1, cus2, perm2 = d / "perfil", d / "custodia-1", d / "custodia-2", d / "perfil-2"
+        env1 = {vj.ENV_RAIZ_PERMANENTE: str(perm), vj.ENV_CUSTODIA: str(cus1)}
+        env2 = {vj.ENV_RAIZ_PERMANENTE: str(perm), vj.ENV_CUSTODIA: str(cus2)}
+        env3 = {vj.ENV_RAIZ_PERMANENTE: str(perm2), vj.ENV_CUSTODIA: str(cus1)}
+        try:
+            marca = vj.marcar_uso_unico(ident, env1, huellas=huellas)
+        except Exception:  # noqa: BLE001 — la primera marca tiene que poder escribirse
+            marca = None
+        check("I9 la marca vive en la raíz PERMANENTE (%LOCALAPPDATA%/MIA-banco04-registro-uso) con la "
+              "identidad sellada", marca is not None and marca.parent == perm / vj.DIR_REGISTRO_PERMANENTE
+              and ident in marca.name and marca.is_file())
         check("I9 un segundo uso del mismo reservado se rechaza",
-              raises(lambda: vj.marcar_uso_unico(ident, env), vj.ReservadoYaUsado))
-        check("I9 la identidad no depende del operador: mismo manifiesto, misma marca",
-              vj.ruta_registro_uso(vj.identidad_sellada_reservado(json.loads(json.dumps(man))), env) == marca)
-    check("I9 sin MIA_BANCO04_CUSTODIA no hay registro (falla cerrado)",
-          raises(lambda: vj.ruta_registro_uso(ident, {}), SystemExit))
+              lanza(lambda: vj.marcar_uso_unico(ident, env1, huellas=huellas), vj.ReservadoYaUsado))
+        check("R2-C-I9 · REUBICACIÓN: la misma identidad con OTRA MIA_BANCO04_CUSTODIA se rechaza",
+              lanza(lambda: vj.marcar_uso_unico(ident, env2, huellas=huellas), vj.ReservadoYaUsado))
+        check("R2-C-I9 · la ruta del registro no cambia con MIA_BANCO04_CUSTODIA",
+              marca is not None and vj.ruta_registro_uso(ident, env1) == vj.ruta_registro_uso(ident, env2) == marca)
+        check("R2-C-I9 · cambiar SOLO la raíz permanente tampoco basta (la marca secundaria de la custodia)",
+              lanza(lambda: vj.marcar_uso_unico(ident, env3, huellas=huellas), vj.ReservadoYaUsado))
+        otro = json.loads(json.dumps(man))
+        otro["artefactos"][0]["sha256_claro"] = "e" * 64
+        ident2 = vj.identidad_sellada_reservado(otro)
+        check("R2-C-I9 · un reservado «nuevo» que reutiliza material ya usado se rechaza (huellas)",
+              lanza(lambda: vj.marcar_uso_unico(ident2, env1, huellas=["h-item-2", "h-item-9"]),
+                    vj.ReservadoYaUsado))
+        check("R2-C-I9 · control: otra identidad con material nuevo sí se marca",
+              not lanza(lambda: vj.marcar_uso_unico(ident2, env1, huellas=["h-item-7"]), BaseException))
+        dentro = {vj.ENV_RAIZ_PERMANENTE: str(cus1 / "x"), vj.ENV_CUSTODIA: str(cus1)}
+        check("R2-C-I9 · la raíz permanente no puede quedar DENTRO de la custodia (que se reubica)",
+              lanza(lambda: vj.ruta_registro_uso(ident, dentro), SystemExit))
+    check("I9 sin raíz permanente (LOCALAPPDATA) no hay registro (falla cerrado)",
+          raises(lambda: vj.ruta_registro_uso(ident, {vj.ENV_CUSTODIA: "C:/x"}), SystemExit))
     check("I9 ni la función ni la línea de órdenes permiten elegir el directorio del registro",
           "registro_dir" not in inspect.signature(vj.marcar_uso_unico).parameters
           and "--registro-uso" not in inspect.getsource(vj.main))
-    otro = json.loads(json.dumps(man))
-    otro["artefactos"][0]["sha256_claro"] = "e" * 64
-    check("I9 otro contenido sellado = otra identidad", vj.identidad_sellada_reservado(otro) != ident)
+    recifrado = json.loads(json.dumps(man))
+    recifrado["artefactos"][0]["sha256_cifrado"] = "f" * 64
+    recifrado["artefactos"][0]["id"] = "mut-reservado-bis"
+    check("R2-C-I9 · la identidad es la del CONTENIDO: re-cifrar o renombrar no fabrica otro reservado",
+          vj.identidad_sellada_reservado(recifrado) == ident)
+    check("I9 otro contenido sellado = otra identidad", ident2 != ident)
     fuente = inspect.getsource(vj.main)
     check("I9 la marca se escribe ANTES de juzgar y no se borra si falla",
           fuente.index("marcar_uso_unico(") < fuente.index("validar_circuito(")
           and "unlink" not in inspect.getsource(vj))
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════
+# Ronda 2 de Astra · área B, parte de este frente (veredicto_B.md: I4, N1, I5)
+# ════════════════════════════════════════════════════════════════════════════════════════
+def gate_r2_b() -> None:
+    print("\nR2-B · cota sin fabricar, telemetría completa y contador compartido")
+    import inspect
+    import tempfile as _tf
+    import banco04_validar_jueces as vj
+    from mia.eval import spend_guard
+    # ── I4 ──
+    check("R2-B-I4 · Codex sin cota documentada ⇒ cota DESCONOCIDA (None), nunca una genérica",
+          jueces.cota_salida_juez("codex") is None and jueces.cota_intento("x" * 30, "codex") is None)
+    original = spend_guard.cota_salida_cli
+    try:
+        spend_guard.cota_salida_cli = lambda alias: (5000, "doble") if alias == jueces.ALIAS_CLI_JUEZ_CLAUDE else (None, "")
+        con = jueces.cota_intento("x" * 30, "claude")
+        spend_guard.cota_salida_cli = lambda alias: (None, "sin dato")
+        sin = jueces.cota_intento("x" * 30, "claude")
+    finally:
+        spend_guard.cota_salida_cli = original
+    check("R2-B-I4 · Claude: la cota es la de spend_guard.cota_salida_cli (entrada + 5000) y, si esta "
+          "devuelve None, la cota es desconocida",
+          con == 10 + 5000 and sin is None)
+    check("R2-B-I4 · cota_intento no usa ninguna cota propia (COTA_SALIDA_JUEZ_TOKENS solo en la reserva)",
+          "COTA_SALIDA_JUEZ_TOKENS" not in inspect.getsource(jueces.cota_intento)
+          and "COTA_SALIDA_JUEZ_TOKENS" not in inspect.getsource(jueces.cota_salida_juez))
+
+    def _timeout(cmd, kw):
+        raise subprocess.TimeoutExpired(cmd, 1)
+    ctl, sal = control_prueba(cota_salida=_cota_documentada(1000))
+    jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=_Captura(_timeout), control=ctl)("p" * 30, {})
+    c = ctl.ledger.contador()
+    check("R2-B-I4 · con cota DOCUMENTADA, el intento fallido cuenta su cota y el techo sigue certificable",
+          c.claude_total == 10 + 1000 and c.cota_calculable and ctl.intentos[0]["estado"] == "fallido_acotado")
+    ctl, sal = control_prueba(cota_salida=_sin_cota)
+    jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=_Captura(_timeout), control=ctl)("p" * 30, {})
+    check("R2-B-I4 · SIN cota documentada, el mismo fallo deja el techo NO certificable",
+          not ctl.ledger.contador().cota_calculable and ctl.intentos[0]["estado"] == "desconocido")
+    # ── N1 ──
+    tc = jueces.tokens_conocidos
+    check("R2-B-N1 · `{cache_read_input_tokens: 0}` NO es consumo conocido (Astra)",
+          tc("claude", {"cache_read_input_tokens": 0}) is None)
+    check("R2-B-N1 · faltando la entrada o la salida, o con valores inválidos, no hay consumo conocido",
+          tc("claude", {"input_tokens": 10}) is None and tc("claude", {"output_tokens": 10}) is None
+          and tc("claude", {"input_tokens": 10, "output_tokens": -1}) is None
+          and tc("claude", {"input_tokens": True, "output_tokens": 1}) is None
+          and tc("claude", {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": "5"}) is None)
+    check("R2-B-N1 · control: entrada + salida válidas (y caché válida) suman",
+          tc("claude", {"input_tokens": 10, "output_tokens": 7, "cache_read_input_tokens": 5}) == 22
+          and tc("claude", {"input_tokens": 10, "output_tokens": 7}) == 17)
+    check("R2-B-N1 · Codex: sin prompt_tokens y completion_tokens válidos no hay consumo (total solo no basta)",
+          tc("codex", {"prompt_tokens": None, "completion_tokens": None, "total_tokens": 50}) is None
+          and tc("codex", {"prompt_tokens": 3, "completion_tokens": None}) is None
+          and tc("codex", {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 9}) == 9
+          and tc("codex", {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": None}) == 5)
+
+    def _parcial(cmd, kw):
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({
+            "structured_output": {"x": 1}, "usage": {"cache_read_input_tokens": 0}}), "")
+    ctl, sal = control_prueba(cota_salida=_sin_cota)
+    jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=_Captura(_parcial), control=ctl)("p" * 30, {})
+    led = _ledger(sal)
+    check("R2-B-N1 · extremo a extremo: una respuesta con telemetría parcial se cierra como consumo "
+          "DESCONOCIDO (no como 0 conocido) y el techo deja de ser certificable",
+          led[0]["timeout"] is True and ctl.intentos[0]["estado"] == "desconocido"
+          and not ctl.ledger.contador().cota_calculable)
+    # ── I5 ──
+    cap = _Captura(lambda cmd, kw: subprocess.CompletedProcess(cmd, 0, json.dumps({
+        "structured_output": {"x": 1}, "usage": {"input_tokens": 1, "output_tokens": 1}}), ""))
+    check("R2-B-I5 · tras un consumo sin cota no se lanza NINGÚN juez más (ni Opus ni Codex)",
+          raises(lambda: jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=cap, control=ctl)("p", {}),
+                 jueces.CuotaAgotada)
+          and raises(lambda: jueces.CodexJuezRunner(launcher=(Path("codex.exe"),), ejecutar=cap,
+                                                    control=ctl)("p", {}), jueces.CuotaAgotada)
+          and cap.llamadas == [])
+    from types import SimpleNamespace as _NS
+
+    class _LedgerFalso:
+        """Ledger cuyo `iniciar` NO controla nada: aísla la defensa propia de ControlCuotaJueces
+        (independiente de que `motivo_juicio`, del otro frente, también se niegue)."""
+        def __init__(self, calculable):
+            self.calculable, self.iniciados = calculable, []
+
+        def contador(self):
+            return _NS(cota_calculable=self.calculable, claude_total=0, codex_total=0,
+                       techo_claude=10 ** 9, techo_codex=10 ** 9)
+
+        def iniciar(self, **kw):
+            self.iniciados.append(kw)
+
+        def cerrar(self, *a, **kw):
+            pass
+    falso = _LedgerFalso(False)
+    ctl_f = jueces.ControlCuotaJueces(ledger=falso, etapa="validacion", prefijo="f", cota_salida=_sin_cota)
+    falso_ok = _LedgerFalso(True)
+    ctl_fok = jueces.ControlCuotaJueces(ledger=falso_ok, etapa="validacion", prefijo="f", cota_salida=_sin_cota)
+    check("R2-B-I5 · defensa PROPIA del control: con el contador no calculable no se reserva ni se lanza "
+          "(aunque el ledger no lo impida); con contador calculable sí",
+          raises(lambda: ctl_f.antes("claude", "p"), jueces.CuotaAgotada) and falso.iniciados == []
+          and not raises(lambda: ctl_fok.antes("codex", "p"), Exception) and len(falso_ok.iniciados) == 1)
+    ctl_ok, _ = control_prueba(cota_salida=_sin_cota)
+    jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=cap, control=ctl_ok)("p", {})
+    jueces.ClaudeJuezRunner(exe=r"C:\x\claude.exe", ejecutar=cap, control=ctl_ok)("p", {})
+    check("R2-B-I5 · control: con consumo conocido el circuito sigue (dos llamadas)", len(cap.llamadas) == 2)
+    with _tf.TemporaryDirectory() as d:
+        d = Path(d)
+        def _cc(**kw):
+            base = dict(salida=d, version="0.4", bloque=0, prefijo="v", salida_custodia=d / "c",
+                        versiones=("0.4",))
+            return lambda: vj.control_de_cuota(**{**base, **kw})
+        check("R2-B-I5 · control_de_cuota EXIGE la salida custodiada",
+              lanza(_cc(salida_custodia=None), SystemExit))
+        check("R2-B-I5 · control_de_cuota EXIGE las versiones del bloque, incluida la propia",
+              lanza(_cc(versiones=()), SystemExit) and lanza(_cc(versiones=("0.3.3",)), SystemExit))
+        check("R2-B-I5 · en el Bloque 7 suman las DOS versiones (una sola no basta)",
+              lanza(_cc(bloque=7, versiones=("0.4",)), SystemExit))
+        check("R2-B-I5 · control: Bloque 0 con su versión y la salida custodiada se construye",
+              not lanza(_cc(), BaseException))
+        ctl7 = vj.control_de_cuota(salida=d, version="0.4", bloque=7, prefijo="v",
+                                   salida_custodia=d / "c", versiones=("0.4", "0.3.3"))
+        check("R2-B-I5 · control: Bloque 7 con las DOS versiones y la salida custodiada usa el LedgerJuicio "
+              "compartido", ctl7.ledger.versiones == ("0.4", "0.3.3")
+              and ctl7.ledger.salida_custodia == d / "c" and type(ctl7.ledger).__name__ == "LedgerJuicio")
+        # consumo de la versión hermana (0.3.3) en el MISMO techo: lo ve el control de la 0.4
+        rb = _rb()
+        rb.registrar_consumo_externo(d, "0.3.3", id_="otro-0001", etapa="juicio", claude_conocido=777)
+        check("R2-B-I5 · el contador del circuito suma lo gastado por la OTRA versión del bloque",
+              ctl7.ledger.contador().claude_total >= 777)
+    fuente = inspect.getsource(vj.main)
+    check("R2-B-I5 · la línea de órdenes exige --salida-custodia y --versiones-contador",
+          '"--salida-custodia", required=True' in fuente and '"--versiones-contador", required=True' in fuente)
+    res = _res(n_def=30)
+    sin_consumo = vj.evaluar_exigencias(res, tipo="reservado", discordancias=0,
+                                        acreditacion={"ok": True, "motivos": []}, consumo=None)
+    no_cert = vj.evaluar_exigencias(res, tipo="reservado", discordancias=0,
+                                    acreditacion={"ok": True, "motivos": []},
+                                    consumo={"cota_calculable": False, "resumen": {}})
+    check("R2-B-I5 · circuito_utilizable EXIGE consumo certificable (sin contador o con consumo sin cota → no)",
+          not sin_consumo["circuito_utilizable"] and not no_cert["circuito_utilizable"]
+          and not no_cert["exigencias"]["consumo_certificable"]["cumple"])
+    check("R2-B-I5 · control: con consumo certificable el mismo circuito se usa",
+          vj.evaluar_exigencias(res, tipo="reservado", discordancias=0, **OK_CIRCUITO)["circuito_utilizable"])
+    conjunto = _conjunto_sintetico(30)
+    check("R2-B-I5 · el reservado no se juzga con runners SIN el contador compartido",
+          raises(lambda: vj.validar_circuito(conjunto["items"], opus=OpusDoble(), codex=CodexDoble(),
+                                             llave=LLAVE, tipo="reservado"), ValueError))
+    ctl_d, _ = control_prueba(cota_salida=_sin_cota)
+    opus, codex = OpusDoble(), CodexDoble()
+    opus.control = codex.control = ctl_d
+    ctl_d.ledger.iniciar(id_="previo-0001", etapa="validacion", proveedor="codex", cota_tokens=10)
+    ctl_d.ledger.cerrar("previo-0001", timeout=True)
+    r = vj.validar_circuito(conjunto["items"], opus=opus, codex=codex, llave=LLAVE, tipo="reservado",
+                            control=ctl_d, acreditacion={"ok": True, "motivos": []},
+                            votante_factory=lambda paq, mat: votante_fijo("sin_respaldo"))
+    check("R2-B-I5 · extremo a extremo: con un intento de consumo desconocido en el contador, el circuito NO "
+          "es utilizable", not r["circuito_utilizable"] and not r["exigencias"]["consumo_certificable"]["cumple"])
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════
+# Ronda 2 de Astra · área C (veredicto_C.md: N1, N2, N3, N4)
+# ════════════════════════════════════════════════════════════════════════════════════════
+def _con_frase(item: dict, frase: str, vid: str, clase: str, categoria, *, estado="sin_respaldo") -> dict:
+    """Añade `frase` al diagnóstico del ítem y su entrada de verdad (offsets exactos)."""
+    diag = item["salida"]["diagnostico"] + " " + frase
+    ini = diag.index(frase)
+    item["salida"]["diagnostico"] = diag
+    item["verdad"].append({"id": vid, "clase": clase, "categoria": categoria, "campo": "diagnostico",
+                           "inicio": ini, "fin": ini + len(frase), "literal": frase,
+                           "estado_esperado": estado, "estados_aceptables": [estado],
+                           "subtipo_esperado": "fuga" if clase == "defecto" else None, "nota": None})
+    return item
+
+
+_FUENTE_CO = {"ref": "corpus:ley-co-100", "texto": "La Ley 100 de 1993 fija un plazo de 40 días.",
+              "jurisdiccion": "co", "ficticia": True}
+
+
+def _reservado_v13() -> dict:
+    c = _conjunto_sintetico(30)
+    c["conjunto"] = "reservado"
+    it = c["items"]
+    _con_frase(it[0], "La Ley 100 de 1993 rige el contrato.", "c08", "defecto", "C08")
+    it[1]["jurisdicciones"] = ["es"]
+    it[1]["material"]["fuentes_corpus"] = [dict(_FUENTE_CO)]
+    _con_frase(it[1], "La Ley 100 de 1993 [corpus:ley-co-100] rige el contrato.", "c08", "defecto", "C08")
+    _con_frase(it[2], "La Ley 100 de 1993 es aplicable al caso, aunque no consta la fecha del contrato.",
+               "c08", "defecto", "C08")
+    it[3]["jurisdicciones"] = ["es"]
+    it[3]["material"]["fuentes_corpus"] = [dict(_FUENTE_CO)]
+    _con_frase(it[3], "Según [corpus:ley-co-100], esa ley fija 40 días, pero no rige en este despacho.",
+               "cd", "control", None, estado="con_respaldo_sin_localizador")
+    return c
+
+
+def _manifiesto_v13() -> dict:
+    return {"artefactos": [{"id": "V1", "tipo": "caso", "sha256_claro": "1" * 64},
+                           {"id": "clave-V1", "tipo": "clave", "sha256_claro": "2" * 64},
+                           {"id": "mut-ajuste", "tipo": "mutaciones_ajuste", "sha256_claro": "3" * 64},
+                           {"id": "mut-reservado", "tipo": "mutaciones_reservadas", "sha256_claro": "4" * 64},
+                           {"id": "semilla", "tipo": "semilla", "sha256_claro": "5" * 64}]}
+
+
+def _acreditacion_v13(man: dict, **cambios) -> dict:
+    import banco04_validar_jueces as vj
+    a = {"schema": vj.FORMATO_ACREDITACION, "protocolo": P.VERSION_PROTOCOLO, "autor": "autor-independiente",
+         "autor_independiente": True, "fecha": "2026-10-12", "hash_evaluador": "e" * 64,
+         "identidad_reservado": vj.identidad_sellada_reservado(man),
+         "artefactos": {x["id"]: x["sha256_claro"] for x in man["artefactos"] if x["tipo"] != "semilla"},
+         "veredicto": "compatible",
+         "cobertura": {"fuga_sin_ordenamiento": ["MA-00/c08"], "fuga_otro_ordenamiento": ["MA-01/c08"],
+                       "negacion_ajena": ["MA-02/c08"], "control_descriptivo": ["MA-03/cd"]}}
+    a.update(cambios)
+    return a
+
+
+def _salida_p1(paq: dict, objetivo: str, estado: str, **ev) -> tuple[dict, dict]:
+    segs = {s_["id"]: s_["texto"] for s_ in paq["segmentos"]}
+    out = []
+    for sid, tx in segs.items():
+        if tx == objetivo:
+            out.append({"id": sid, "exclusiones": [], "afirmaciones": [
+                af(sid + "a", [(0, len(tx))], tx, tipo="proposicion_juridica", estado=estado,
+                   subtipo="fuga" if estado == "sin_respaldo" else None, **ev)]})
+        else:
+            out.append(atomizar(sid, tx, regla_por_defecto("Atentamente")))
+    return {"schema": P.ESQUEMA_PASADA1, "candidate_id": paq["candidate_id"], "segmentos": out}, segs
+
+
+def gate_r2_c() -> None:
+    print("\nR2-C · acreditación v1.3, describir ≠ aplicar, congelación del validador, negación por cláusula")
+    import banco04_validar_jueces as vj
+    from mia.eval.banco04 import custodia as cus
+    from mia.eval.banco04 import evaluador_congelado as ev
+    # ── N1 · C08 en un despacho configurado para OTRO ordenamiento ──
+    aj = _reservado_v13()
+    aj["conjunto"] = "ajuste"
+    check("R2-C-N1 · C08 en un despacho configurado para OTRO ordenamiento (con la fuente no habilitada) "
+          "es un ítem válido", not raises(lambda: vj.validar_conjunto(aj), vj.ConjuntoInvalido))
+    malo = json.loads(json.dumps(aj))
+    malo["items"][1]["material"]["fuentes_corpus"] = []
+    check("R2-C-N1 · … pero C08 en un despacho configurado SIN fuente de otro ordenamiento se rechaza",
+          raises(lambda: vj.validar_conjunto(malo), vj.ConjuntoInvalido)
+          and raises(lambda: cus.invariantes_mutaciones_obj(malo, reservado=False), cus.CustodiaError))
+    check("R2-C-N1 · custodia acepta la misma C08 de otro ordenamiento (mismo criterio que el validador)",
+          not raises(lambda: cus.invariantes_mutaciones_obj(aj, reservado=False), Exception))
+    # ── N1 · acreditación de compatibilidad v1.3 ──
+    res = _reservado_v13()
+    man = _manifiesto_v13()
+    hev = {"combinado": "e" * 64}
+    ok = vj.verificar_acreditacion(_acreditacion_v13(man), manifiesto=man, items=res["items"], hash_evaluador=hev)
+    check("R2-C-N1 · control: acreditación del autor independiente, ligada a hashes y evaluador v1.3, con "
+          "las cuatro clases comprobables → válida", ok["ok"] and ok["motivos"] == []
+          and all(n == 1 for n in ok["cobertura_verificada"].values()))
+    malas = {
+        "sin acreditación": None,
+        "evaluador distinto del v1.3 en ejecución": _acreditacion_v13(man, hash_evaluador="0" * 64),
+        "hash de una clave distinto": _acreditacion_v13(man, artefactos={
+            **_acreditacion_v13(man)["artefactos"], "clave-V1": "9" * 64}),
+        "falta un artefacto (caso)": _acreditacion_v13(man, artefactos={
+            k: v_ for k, v_ in _acreditacion_v13(man)["artefactos"].items() if k != "V1"}),
+        "otra identidad de reservado": _acreditacion_v13(man, identidad_reservado="0" * 64),
+        "protocolo v1.2": _acreditacion_v13(man, protocolo="banco04-v1.2"),
+        "autor no independiente": _acreditacion_v13(man, autor_independiente=False),
+        "sin fuga de OTRO ordenamiento (solo jurisdicciones == [])": _acreditacion_v13(man, cobertura={
+            **_acreditacion_v13(man)["cobertura"], "fuga_otro_ordenamiento": ["MA-00/c08"]}),
+        "sin negación ajena": _acreditacion_v13(man, cobertura={
+            **_acreditacion_v13(man)["cobertura"], "negacion_ajena": []}),
+        "sin control descriptivo": _acreditacion_v13(man, cobertura={
+            **_acreditacion_v13(man)["cobertura"], "control_descriptivo": ["MA-00/v2"]}),
+        "referencia inexistente": _acreditacion_v13(man, cobertura={
+            **_acreditacion_v13(man)["cobertura"], "fuga_sin_ordenamiento": ["MA-99/c08"]}),
+    }
+    rechazadas = [k for k, a in malas.items()
+                  if not vj.verificar_acreditacion(a, manifiesto=man, items=res["items"], hash_evaluador=hev)["ok"]]
+    check(f"R2-C-N1 · acreditación inválida en cada vínculo → rechazada ({len(rechazadas)}/{len(malas)})",
+          rechazadas == list(malas))
+    nada = vj.evaluar_exigencias(_res(n_def=30), tipo="reservado", discordancias=0, acreditacion=None,
+                                 consumo={"cota_calculable": True, "resumen": {}})
+    mala = vj.evaluar_exigencias(_res(n_def=30), tipo="reservado", discordancias=0, consumo={
+        "cota_calculable": True, "resumen": {}}, acreditacion=vj.verificar_acreditacion(
+            malas["sin negación ajena"], manifiesto=man, items=res["items"], hash_evaluador=hev))
+    check("R2-C-N1 · sin acreditación válida el circuito NO se habilita aunque todo lo demás cumpla (Astra: "
+          "v1.2, 30/30, 10 C12, sin C08)", not nada["circuito_utilizable"] and not mala["circuito_utilizable"]
+          and not nada["exigencias"]["acreditacion_compatibilidad_v13"]["cumple"])
+    check("R2-C-N1 · control: con la acreditación verificada sí se habilita",
+          vj.evaluar_exigencias(_res(n_def=30), tipo="reservado", discordancias=0, acreditacion=ok,
+                                consumo={"cota_calculable": True, "resumen": {}})["circuito_utilizable"])
+    import inspect
+    fuente = inspect.getsource(vj.main)
+    check("R2-C-N1 · la línea de órdenes rechaza el reservado sin --acreditacion-v13 y la verifica ANTES de "
+          "marcar el uso", "acreditacion_v13 is None" in fuente
+          and fuente.index("verificar_acreditacion(") < fuente.index("marcar_uso_unico(")
+          < fuente.index("validar_circuito("))
+    # ── N2 · describir/rechazar ≠ aplicar ──
+    t = "La Ley 100 de 1993 fija un plazo de 40 días [corpus:ley-co-100]"
+    paq, _, mat = preparar(t, corpus=[_FUENTE_CO], jurisdicciones=["es"], mensaje="Atentamente")
+    kw = {"fuente": "corpus:ley-co-100", "pasaje": "La Ley 100 de 1993 fija un plazo de 40 días"}
+    resultados = {}
+    for uso in ("descriptivo", "rechazo_aplicabilidad", "aplicable", None):
+        sal, segs = _salida_p1(paq, t, "con_respaldo", uso_fuente=uso, **kw)
+        v = jueces.validar_pasada1(sal, candidate=paq["candidate_id"], segmentos=segs, material=mat)
+        resultados[uso] = (v.ok, _codigos(v))
+    check("R2-C-N2 · una transcripción DESCRIPTIVA fiel de una fuente no habilitada queda respaldada",
+          resultados["descriptivo"][0] and resultados["rechazo_aplicabilidad"][0])
+    check("R2-C-N2 · la MISMA fuente usada como derecho aplicable (o sin declarar el uso) se rechaza",
+          not resultados["aplicable"][0] and not resultados[None][0]
+          and "respaldo_en_ordenamiento_no_configurado" in resultados["aplicable"][1]
+          and "respaldo_en_ordenamiento_no_configurado" in resultados[None][1])
+    sal, segs = _salida_p1(paq, t, "sin_respaldo")
+    check("R2-C-N2 · control: la aplicación clasificada `sin_respaldo/fuga` valida",
+          jueces.validar_pasada1(sal, candidate=paq["candidate_id"], segmentos=segs, material=mat).ok)
+    paq2, _, mat2 = preparar(t, corpus=[_FUENTE_CO], jurisdicciones=["co"], mensaje="Atentamente")
+    sal, segs = _salida_p1(paq2, t, "con_respaldo", **kw)
+    check("R2-C-N2 · control: con el ordenamiento configurado, la fuente respalda sin declarar el uso",
+          jueces.validar_pasada1(sal, candidate=paq2["candidate_id"], segmentos=segs, material=mat2).ok)
+    sal, segs = _salida_p1(paq, t, "con_respaldo", uso_fuente="inventado", **kw)
+    check("R2-C-N2 · `uso_fuente` fuera de su enumeración se rechaza",
+          not jueces.validar_pasada1(sal, candidate=paq["candidate_id"], segmentos=segs, material=mat).ok)
+    check("R2-C-N2 · el esquema y los prompts declaran `uso_fuente` (esquema v1.3) y ya no dicen «no puede "
+          "respaldar nada»",
+          "uso_fuente" in json.dumps(jueces.esquema_pasada1()) and "uso_fuente" in json.dumps(jueces.esquema_tercer_voto())
+          and all("uso_fuente" in jueces.cargar_prompt(n) and "no puede respaldar nada" not in jueces.cargar_prompt(n)
+                  for n in ("pasada1_opus", "pasada1_codex", "tercer_voto"))
+          and P.ESQUEMA_PASADA1.endswith("/v1.3"))
+    # ── N3 · el validador entra en la congelación ──
+    h0 = jueces.hash_evaluador()
+    check("R2-C-N3 · execution/banco04_validar_jueces.py está en el hash del evaluador",
+          "execution/banco04_validar_jueces.py" in h0["archivos"])
+    import tempfile as _tf
+    original = jueces._RAIZ_REPO
+    with _tf.TemporaryDirectory() as d:
+        copia = Path(d) / "execution" / "banco04_validar_jueces.py"
+        copia.parent.mkdir(parents=True)
+        texto = (ROOT / "execution" / "banco04_validar_jueces.py").read_text(encoding="utf-8")
+        copia.write_text(texto.replace("int(discordancias) == 0", "int(discordancias) <= 1"), encoding="utf-8")
+        try:
+            jueces._RAIZ_REPO = Path(d)
+            alterado = raises(lambda: jueces.verificar_congelado(h0["combinado"]), jueces.EvaluadorAlterado)
+            copia.write_text(texto, encoding="utf-8")
+            igual = not raises(lambda: jueces.verificar_congelado(h0["combinado"]), Exception)
+        finally:
+            jueces._RAIZ_REPO = original
+    check("R2-C-N3 · relajar una exigencia del validador invalida la congelación (EvaluadorAlterado)", alterado)
+    check("R2-C-N3 · control: el validador intacto conserva la huella congelada", igual)
+    # ── N4 · negación asociada a la cita (copia vendorizada) ──
+    mala_frase = "La Ley 100 de 1993 es aplicable al caso, aunque no consta la fecha del contrato."
+    buena_frase = "No consta que la Ley 100 de 1993 sea aplicable."
+    check("R2-C-N4 · «… es aplicable al caso, aunque no consta la fecha…» ⇒ FUGA (la negación es de otra cosa)",
+          ev.jurisdiction_leak_signal(mala_frase)["leak"] is True)
+    check("R2-C-N4 · «No consta que la Ley 100 de 1993 sea aplicable» ⇒ sin fuga",
+          ev.jurisdiction_leak_signal(buena_frase)["leak"] is False)
+    check("R2-C-N4 · control N-1: «la numeración Ley 4137 no corresponde a ninguna ley…» sigue sin fuga, y la "
+          "cita afirmada sin negación sigue siendo fuga",
+          not ev.jurisdiction_leak_signal('La numeración "Ley 4137" no corresponde a ninguna ley verificable.')["leak"]
+          and ev.jurisdiction_leak_signal("La Ley 100 de 1993 es aplicable al caso.")["leak"])
+    m_mala = metricas.metricas_corrida(_corrida(texto_salida=mala_frase, jurisdicciones=[]))
+    m_buena = metricas.metricas_corrida(_corrida(texto_salida=buena_frase, jurisdicciones=[]))
+    check("R2-C-N4 · metricas usa la copia vendorizada: la oración con negación ajena cuenta como fuga y la "
+          "negada no", m_mala["fuga_jurisdiccion"] is True and m_buena["fuga_jurisdiccion"] is False)
+    check("R2-C-N4 · con ordenamiento configurado la señal determinista no aplica (§5.7)",
+          metricas.metricas_corrida(_corrida(texto_salida=mala_frase, jurisdicciones=["co"]))["fuga_jurisdiccion"] is False)
+    check("R2-C-N4 · metricas no acepta una señal de fuga precalculada por el producto",
+          raises(lambda: metricas.metricas_corrida({**_corrida(), "fuga_senal": False}), ValueError))
+    from mia.eval import scoring
+    check("R2-C-N4 · DECLARADO: el defecto PERSISTE en el producto (scoring.py no se toca)",
+          scoring.jurisdiction_leak_signal(mala_frase)["leak"] is False)
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════
@@ -1829,7 +2530,8 @@ def gate_cotejo() -> None:
 def main() -> int:
     for g in (gate_p1, gate_p2, gate_p3, gate_p4, gate_p5, gate_p7, gate_p8, gate_p9,
               gate_n1, gate_n2, gate_n3, gate_n4, gate_n5, gate_ceguera, gate_runners, gate_protocolo,
-              gate_c11, gate_cotejo, gate_i1_i2, gate_i5, gate_i6, gate_i7, gate_i9, gate_i3, gate_cus):
+              gate_c11, gate_cotejo, gate_i1_i2, gate_i5, gate_i6, gate_i7, gate_i9, gate_i3, gate_cus,
+              gate_r2_a, gate_r2_b, gate_r2_c):
         try:
             g()
         except Exception as exc:  # noqa: BLE001 — un gate que revienta es un gate ROJO

@@ -549,8 +549,17 @@ class Mundo:
                        hash_soul=lambda: self.soul, paradas=(), reloj=reloj)
 
 
+# R2-B-I10/N2: sin manifiesto la identidad de lo medido no está acreditada y el banco ya no puede
+# terminar «terminado»; los dobles corren por defecto con un manifiesto LIMPIO de prueba.
+MANIFIESTO_PRUEBA = rb.construir_manifiesto(
+    version="0.4", sha_arbol="f" * 40, arbol_limpio=True, soul_sha256="H", cli_version="2.1.296",
+    politica="quality_adaptive", protocolo_version="banco04-v1.3", protocolo_hash="hp",
+    runner_sha256="rp")
+
+
 def _ctx(tmp: Path, nombre: str, *, plan=None, techo=10_000_000, reserva=1_000_000,
          max_segundos=None, aprobada=None, r_reducido=3, **kw) -> rb.Contexto:
+    kw.setdefault("manifiesto", MANIFIESTO_PRUEBA)
     ids = ["fuga-1", "peq-1", "peq-2", "volu-1"]
     plan = plan or rb.construir_plan(ids, ids_fuga=["fuga-1"], ids_voluminosos=["volu-1"],
                                      r_fuga=4, r_base=3)
@@ -674,7 +683,9 @@ def bloque_c_ejecucion(tmp: Path) -> None:
     check("c-38 · la decisión de R recibe SOLO cifras de consumo: su firma no admite ningún dato "
           "de calidad",
           firma <= {"plan", "consumo_piloto", "tope_produccion", "r_reducido", "consumo_aprobaciones",
-                    "r_por_caso"})
+                    "r_por_caso",
+                    # R2-B-I5: la proyección Codex añade SOLO cifras de consumo de Codex
+                    "consumo_piloto_codex", "tope_produccion_codex", "consumo_aprobaciones_codex"})
     # De punta a punta: la piloto dispara la decisión, QUEDA ESCRITA con su cifra y se ACATA.
     m = Mundo(consumo=100)
     ctx = _ctx(tmp, "dec", plan=plan9, techo=2_000, reserva=0)
@@ -783,8 +794,10 @@ def bloque_d(tmp: Path) -> None:
     check("d-5 · P10: un intento que ni se pudo registrar también deja la cota incalculable", not ok)
     # Una corrida que murió a mitad (marcador en_curso huérfano): consumo desconocido.
     ctx = _ctx(tmp, "huerfana", plan=plan)
+    # R2-B-I10: el marcador lleva el manifiesto, como lo escribe el runner (uno ajeno se rechaza: r2-i10)
     rb.escribir_atomico(rb.ruta_en_curso(ctx.salida, "0.4", "peq-1", 1),
-                        {"caso_id": "peq-1", "rep": 1, "intento": 1})
+                        {"caso_id": "peq-1", "rep": 1, "intento": 1,
+                         "manifiesto_sha256": ctx.manifiesto_sha256})
     asyncio.run(rb.ejecutar_banco(ctx, Mundo(consumo=10).deps()))
     check("d-6 · P10: una corrida que murió a medias (consumo desconocido, sin cota) deja el banco "
           "no certificable",
@@ -1906,7 +1919,9 @@ def bloque_h(tmp: Path) -> None:
     m = MundoA(consumo=100)
     ctx = _ctx(tmp, "h-ap7", plan=plan, consumo_aprobaciones=0, techo=700, reserva=0)
     _corre(ctx, m)
-    ctxt = _ctx(tmp, "h-ap7", plan=plan, consumo_aprobaciones=300, techo=700, reserva=0)
+    # R2-B-I5: la proyección de cada aprobación suma ahora el turno REPRODUCIDO (100 de la corrida
+    # elegida) a la estimación de aprobar (100): techo 800 deja pasar exactamente UNA (600 + 200).
+    ctxt = _ctx(tmp, "h-ap7", plan=plan, consumo_aprobaciones=300, techo=800, reserva=0)
     abiertos0 = len(m.abiertos)
     r = _corre_apr(ctxt, m)
     # MUTACIÓN: no consultar `motivo_suspension` antes de cada aprobación → cae h-24.
@@ -1962,8 +1977,9 @@ def bloque_h(tmp: Path) -> None:
     ctx = _ctx(tmp, "h-ap8", plan=plan, consumo_aprobaciones=60, salida_custodia=tmp / "h-ap8-cust",
                ids_custodiados=frozenset({"volu-1"}), cifrar=_cifrador(tmp, "cifr-h").cifrar_registro)
     _corre(ctx, m)
+    # R2-B-I8: la aprobación de un custodiado exige el cifrador (sin él no corre; ver r2-i8c)
     ctxc = _ctx(tmp, "h-ap8", plan=plan, consumo_aprobaciones=60, salida_custodia=tmp / "h-ap8-cust",
-                ids_custodiados=frozenset({"volu-1"}))
+                ids_custodiados=frozenset({"volu-1"}), cifrar=_cifrador(tmp, "cifr-h2").cifrar_registro)
     _corre_apr(ctxc, m)
     check("h-25 · la aprobación de un caso custodiado también va a la carpeta de custodia",
           rb.ruta_aprobacion(tmp / "h-ap8-cust", "0.4", "volu-1").is_file()
@@ -2008,58 +2024,67 @@ def bloque_i(tmp: Path) -> None:
 
     from mia.agent import subscription_llm as sub
     from mia.agent import llm as llm_mod
+    from mia import config as mia_config
     cdx = {a: fallar(guardia(f"i4{i}"), a) for i, a in enumerate(("cli-codex", "cli-codex-eval"))}
     opus = fallar(guardia("i4opus"), "cli-claude-opus")
     api = fallar(guardia("i4api"), "claude-sonnet")
-    # MUTACIÓN: en `cota_salida_cli`, devolver siempre None (sin cota real para el CLI) → cae i-1.
-    check("i-1 · I4: un timeout de Opus por CLI de UN turno sin herramientas queda con cota REAL = entrada "
-          "estimada + máximo de salida documentado (131 072), fuente declarada, y el max_tokens pedido "
-          "(que el CLI descarta) solo como dato",
-          opus["cota_aplicada"] is True and opus["cota_fuente"] == "maximo_documentado_cli_un_turno"
-          and opus["cota_salida"] == 131_072 and opus["max_tokens_pedido"] == 500
-          and opus["tokens_cota_superior"] == opus["tokens_entrada_estimados"] + 131_072)
-    # MUTACIÓN: dar a Codex el máximo de Claude (o inventar uno) en `CLI_SALIDA_MAXIMA["codex"]` → cae i-1b.
+    un_turno = ("--max-turns" in sub._BASE_FLAGS and sub._BASE_FLAGS[sub._BASE_FLAGS.index("--max-turns") + 1] == "1"
+                and sub._BASE_FLAGS[sub._BASE_FLAGS.index("--tools") + 1] == "")
+    # R2-B-I4 (Astra ronda 2, veredicto_B I4). MUTACIÓN: en `cota_salida_cli`, devolver 131 072 para los
+    # alias `cli-claude*` (la tabla de la quinta pasada) → cae i-1 (y R2-B-I4, i-3).
+    check("i-1 · R2-B-I4: un timeout de Opus por CLI queda SIN cota aunque la invocación sea de UN turno sin "
+          "herramientas: cota_salida y cota superior None, motivo (reintentos internos) declarado, la entrada "
+          "estimada sí, y el max_tokens pedido (que el CLI descarta) solo como dato",
+          un_turno and opus["cota_aplicada"] is False and opus["cota_salida"] is None
+          and opus["tokens_cota_superior"] is None and opus["cota_fuente"] is None
+          and isinstance(opus["tokens_entrada_estimados"], int) and opus["max_tokens_pedido"] == 500
+          and "reintentos" in (opus["motivo_cota"] or "") and "R2-B-I4" in (opus["motivo_cota"] or ""))
+    # MUTACIÓN: dar a Codex una cota en `cota_salida_cli` → cae i-1b.
     check("i-1b · Codex (gpt-5.6-sol): SIN máximo de salida documentado → cota desconocida, con el motivo",
           all(v["cota_aplicada"] is False and v["cota_salida"] is None and v["tokens_cota_superior"] is None
               and "sin máximo" in (v["motivo_cota"] or "") for v in cdx.values()))
-    check("i-1c · la tabla de máximos está VERSIONADA con fuente y fecha",
-          spend_guard.CLI_SALIDA_MAXIMA["version"] == "2026-10-12"
-          and "platform.claude.com" in spend_guard.CLI_SALIDA_MAXIMA["fuente"]
-          and spend_guard.CLI_SALIDA_MAXIMA["codex"] == {})
-    # Un bucle / herramientas: la invocación REAL cambia y la cota vuelve a ser desconocida.
-    base_flags = list(sub._BASE_FLAGS)
+    check("i-1c · R2-B-I4: la (no) acreditación de cota CLI está VERSIONADA con su evidencia, ningún proveedor "
+          "CLI tiene cota y la tabla de máximos de la API ya no existe",
+          spend_guard.CLI_COTA_ACREDITADA["version"] == "2026-10-12"
+          and "code.claude.com" in spend_guard.CLI_COTA_ACREDITADA["evidencia"]
+          and spend_guard.CLI_COTA_ACREDITADA["claude"] is None and spend_guard.CLI_COTA_ACREDITADA["codex"] is None
+          and not hasattr(spend_guard, "CLI_SALIDA_MAXIMA"))
+    # R2-B-I4 · guarda contra volver a declarar cota: TODOS los alias CLI de MIA, con cada modelo por defecto
+    # posible del CLI, por el `_guarded_invoke` REAL. MUTACIÓN: `cota_salida_cli` devuelve un número para
+    # CUALQUIER alias o modelo (p. ej. solo `haiku`, o solo `cli-claude` con MIA_CLI_MODEL) → cae.
+    alias_cli = sorted(set(llm_mod._CLI_MODEL_HINTS) | {"cli-codex", "cli-codex-eval"})
+    vistos, modelo_previo = [], getattr(mia_config, "MIA_CLI_MODEL", "sonnet")
     try:
-        sub._BASE_FLAGS[:] = [f for f in base_flags if f != "--max-turns"]      # sin tope de turnos
-        sin_turnos = fallar(guardia("i4t"), "cli-claude-opus")
-        sub._BASE_FLAGS[:] = ["Bash" if f == "" else f for f in base_flags]      # herramientas habilitadas
-        con_tools = fallar(guardia("i4h"), "cli-claude-opus")
+        for modelo in ("opus", "sonnet", "haiku"):
+            mia_config.MIA_CLI_MODEL = modelo
+            for j, a in enumerate(alias_cli):
+                vistos.append(fallar(guardia(f"r2i4-{modelo}-{j}"), a))
     finally:
-        sub._BASE_FLAGS[:] = base_flags
-    # MUTACIÓN: no comprobar `--max-turns 1` / `--tools ""` en `cota_salida_cli` → cae i-1d.
-    check("i-1d · I4: si la invocación NO es de un turno sin herramientas (sin --max-turns 1, o con "
-          "herramientas) la cota sigue DESCONOCIDA",
-          all(v["cota_salida"] is None and v["tokens_cota_superior"] is None and "un solo turno" in v["motivo_cota"]
-              for v in (sin_turnos, con_tools)))
-    hints = dict(llm_mod._CLI_MODEL_HINTS)
-    try:
-        llm_mod._CLI_MODEL_HINTS["cli-claude-opus"] = "modelo-sin-dato"
-        sin_dato = fallar(guardia("i4s"), "cli-claude-opus")
-    finally:
-        llm_mod._CLI_MODEL_HINTS.clear()
-        llm_mod._CLI_MODEL_HINTS.update(hints)
-    check("i-1e · un modelo sin máximo documentado en la tabla → cota desconocida",
-          sin_dato["cota_salida"] is None and "sin máximo" in sin_dato["motivo_cota"])
+        mia_config.MIA_CLI_MODEL = modelo_previo
+    cont_cli = rb.ContadorCuota(techo_claude=10_000_000, techo_codex=5_000, reserva_juicio_claude=2_000,
+                                reserva_juicio_codex=1_000)
+    for j, v in enumerate(vistos):
+        rb.registrar_consumo(cont_cli, f"cli/{j}", "produccion", {"claude_conocido": 1, "fallidos": [v]})
+    check("R2-B-I4 · ningún alias CLI de MIA (" + ", ".join(alias_cli) + ") declara cota, con ningún modelo por "
+          "defecto (opus/sonnet/haiku): cada intento fallido queda sin cota y el techo NO certificable",
+          len(vistos) == 3 * len(alias_cli) and len(alias_cli) >= 6
+          and all(v["cota_salida"] is None and v["tokens_cota_superior"] is None and v["cota_aplicada"] is False
+                  for v in vistos)
+          and all(rb.cota_de_fallidos([v])[1] is False for v in vistos) and cont_cli.cota_calculable is False)
     check("i-2 · I4: bajo una API que SÍ aplica max_tokens la cota sigue siendo max_tokens (500 + entrada)",
           api["cota_aplicada"] is True and api["cota_salida"] == 500 and api["cota_fuente"] == "max_tokens_aplicado")
-    ok_c = rb.ContadorCuota(techo_claude=10_000_000, techo_codex=5_000, reserva_juicio_claude=2_000,
-                            reserva_juicio_codex=1_000)
-    rb.registrar_consumo(ok_c, "x/1/1", "produccion", {"claude_conocido": 10, "fallidos": [opus]})
-    check("i-3 · I4: el timeout de Opus con cota real deja el techo CERTIFICABLE; el de Codex (sin dato) o el "
-          "de un bucle de herramientas lo dejan NO certificable (P10)",
-          ok_c.cota_calculable is True
-          and rb.cota_de_fallidos([opus])[0] == opus["tokens_cota_superior"]
-          and rb.cota_de_fallidos([cdx["cli-codex"]])[1] is False
-          and rb.cota_de_fallidos([con_tools])[1] is False)
+    ok_api = rb.ContadorCuota(techo_claude=10_000_000, techo_codex=5_000, reserva_juicio_claude=2_000,
+                              reserva_juicio_codex=1_000)
+    rb.registrar_consumo(ok_api, "x/1/1", "produccion", {"claude_conocido": 10, "fallidos": [api]})
+    no_cli = rb.ContadorCuota(techo_claude=10_000_000, techo_codex=5_000, reserva_juicio_claude=2_000,
+                              reserva_juicio_codex=1_000)
+    rb.registrar_consumo(no_cli, "x/1/1", "produccion", {"claude_conocido": 10, "fallidos": [opus]})
+    check("i-3 · R2-B-I4: el timeout de Opus por CLI deja el techo NO certificable (P10); el de una API que "
+          "aplica max_tokens lo deja CERTIFICABLE con su cota (ambos sentidos)",
+          no_cli.cota_calculable is False and rb.cota_de_fallidos([opus])[1] is False
+          and ok_api.cota_calculable is True
+          and rb.cota_de_fallidos([api])[0] == api["tokens_cota_superior"] == api["tokens_entrada_estimados"] + 500
+          and rb.cota_de_fallidos([cdx["cli-codex"]])[1] is False)
 
     # ── I5 · reserva Codex efectiva y control previo del juicio ───────────────────────────────
     c = rb.ContadorCuota(techo_claude=10_000, techo_codex=8_000, reserva_juicio_claude=2_000,
@@ -2252,7 +2277,538 @@ def bloque_i(tmp: Path) -> None:
     finally:
         rb.subprocess.run = real_run
     check("i-23 · el SHA y la limpieza del árbol salen de git (solo lectura); sin SHA legible se aborta",
-          sucio == {"sha": "c" * 40, "arbol_limpio": False} and limpio["arbol_limpio"] is True and ok)
+          sucio["sha"] == "c" * 40 and sucio["arbol_limpio"] is False
+          and len(sucio.get("modificaciones_sha256") or "") == 64
+          and limpio == {"sha": "c" * 40, "arbol_limpio": True, "modificaciones_sha256": None} and ok)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# R2 · Correcciones tras la ronda 2 de Astra (veredicto_B: I5, I8, I10, N2). I4 está en `bloque_i`.
+# Cada check prueba los DOS sentidos (el caso malo reprueba / el bueno sigue aprobando).
+# ═════════════════════════════════════════════════════════════════════════════
+SECRETO = "HECHO-RESERVADO-7731 pago de 48.300.000 a Sociedad Ficticia Ltda"
+
+
+def _archivos_con(raices, texto: str) -> list[str]:
+    datos = texto.encode("utf-8")
+    out = []
+    for raiz in raices:
+        if raiz is not None and Path(raiz).exists():
+            out += [str(p) for p in Path(raiz).rglob("*") if p.is_file() and datos in p.read_bytes()]
+    return out
+
+
+def bloque_r2(tmp: Path) -> None:
+    print("\n-- R2 · ronda 2 de Astra: I5 (juicio, Codex por llamada, piloto, R, aprobaciones), I8, I10, N2 --")
+    from mia.eval import spend_guard
+    from mia.eval.banco04 import protocolo as pr
+    spend_guard.ensure_installed()
+    plan = rb.construir_plan(["peq-1", "peq-2", "volu-1"], ids_fuga=[], ids_voluminosos=["volu-1"],
+                             r_fuga=4, r_base=2)
+
+    # ── R2-B-I5a · consumo desconocido ⇒ no se lanza otro intento de juez ─────────────────────
+    c = rb.ContadorCuota(techo_claude=1_000, techo_codex=500, reserva_juicio_claude=100, reserva_juicio_codex=0)
+    c.registrar("ok", rubro="juicio", claude_conocido=10)
+    antes = c.motivo_juicio("claude", 10) is None and c.motivo_juicio("codex", 10) is None
+    c.registrar("t", rubro="juicio", claude_conocido=50, desconocido=True)
+    despues = [c.motivo_juicio(p, 1) for p in ("claude", "codex")]
+    sal_a, sal_b = tmp / "r2-i5a-led", tmp / "r2-i5a-led-ok"
+
+    def led(sal):
+        return rb.LedgerJuicio(sal, "0.4", nuevo_contador=lambda: rb.ContadorCuota(
+            techo_claude=100_000, techo_codex=100_000, reserva_juicio_claude=0, reserva_juicio_codex=0))
+    La = led(sal_a)
+    La.iniciar(id_="j1", etapa="juicio", proveedor="claude", cota_tokens=100)
+    La.cerrar("j1", timeout=True, error="timeout")
+    try:
+        La.iniciar(id_="j2", etapa="juicio", proveedor="codex", cota_tokens=10)
+        negado = False
+    except rb.PresupuestoAgotado:
+        negado = not rb.ruta_ledger(sal_a, "0.4", "j2").exists()
+    Lb = led(sal_b)
+    Lb.iniciar(id_="j1", etapa="juicio", proveedor="claude", cota_tokens=100)
+    Lb.cerrar("j1", claude_conocido=80)
+    Lb.iniciar(id_="j2", etapa="juicio", proveedor="codex", cota_tokens=10)
+    # MUTACIÓN: quitar el `if not self.cota_calculable` de `motivo_juicio` → cae.
+    check("R2-B-I5 · motivo_juicio NIEGA cualquier intento (Claude o Codex) cuando hay consumo desconocido sin "
+          "cota; con todo el consumo conocido lo permite; por el ledger: tras un timeout el siguiente "
+          "`iniciar` lanza PresupuestoAgotado sin dejar rastro, tras un cierre conocido sí lanza",
+          antes and all(m_ and "desconocido" in m_ for m_ in despues) and negado
+          and rb.leer_json(rb.ruta_ledger(sal_b, "0.4", "j2"))["estado"] == "en_curso")
+
+    # ── R2-B-I5b · CERO llamadas Codex de producción en el Bloque 0 (control POR LLAMADA) ─────────
+    llamadas: list[str] = []
+
+    def falso(client, a, kw, task=None, *x):
+        llamadas.append(a)
+        return SimpleNamespace(model=a, usage=SimpleNamespace(prompt_tokens=30, completion_tokens=20,
+                                                              total_tokens=50))
+
+    def guardia_banco(nombre, contador):
+        g = rb.crear_guardian_banco(spend_guard, run_limit_usd=10.0, session_limit_usd=30.0,
+                                    global_limit_usd=100.0, closeout_reserve_usd=0.0,
+                                    session_id=f"s-r2-{nombre}", ledger_path=tmp / f"r2-{nombre}.json")
+        g.vincular_contador(contador)
+        return g
+
+    def invocar(g, alias, n=1):
+        prev, spend_guard._original_invoke = spend_guard._original_invoke, falso
+        paradas = []
+        try:
+            with g.activate():
+                for _ in range(n):
+                    try:
+                        spend_guard._guarded_invoke(None, alias, {"messages": [{"role": "user", "content": "x"}]})
+                    except spend_guard.SpendGuardHalt as exc:
+                        paradas.append(exc)
+        finally:
+            spend_guard._original_invoke = prev
+        return paradas
+
+    b0 = rb.contador_desde_protocolo(pr, 0)
+    g0 = guardia_banco("b0", b0)
+    par0 = invocar(g0, "cli-codex")
+    cx0 = [a for a in llamadas if a.startswith("cli-codex")]
+    llamadas.clear()
+    b7 = rb.contador_desde_protocolo(pr, 7)
+    g7 = guardia_banco("b7", b7)
+    par7 = invocar(g7, "cli-codex")
+    cx7 = list(llamadas)
+    llamadas.clear()
+    chico = rb.ContadorCuota(techo_claude=10_000, techo_codex=200, reserva_juicio_claude=0, reserva_juicio_codex=100)
+    gch = guardia_banco("chico", chico)
+    parch = invocar(gch, "cli-codex", n=4)
+    cxch = list(llamadas)
+    llamadas.clear()
+    # MUTACIÓN: quitar el override `check_and_reserve` de `GuardBanco` (o no comprobar `tope <= 0` en
+    # `motivo_llamada_codex`) → cae: el Bloque 0 vuelve a hacer la primera llamada Codex.
+    check("R2-B-I5 · Bloque 0 (constantes de protocolo.py: presupuesto Codex de producción 0): la llamada "
+          "Codex NO se hace (0 invocaciones, 0 tokens), sale una parada del guardián (SpendGuardHalt) con su "
+          "motivo y el guardián queda parado; en el Bloque 7 (2 M) la misma llamada SÍ se hace",
+          b0.tope_produccion_codex == 0 and cx0 == [] and g0.tokens_codex == 0 and len(par0) == 1
+          and isinstance(par0[0], spend_guard.SpendGuardHalt) and "Codex" in str(par0[0])
+          and g0.stop_reason is not None
+          and b7.tope_produccion_codex == 2_000_000 and cx7 == ["cli-codex"] and not par7 and g7.tokens_codex == 50)
+    # MUTACIÓN: en `GuardBanco.check_and_reserve` no sumar el Codex EN VUELO (usado = solo el contador)
+    # → cae (con presupuesto 100 se harían las 4 llamadas).
+    check("R2-B-I5 · con presupuesto Codex 100 (techo 200 − reserva 100) y 50 por llamada: se hacen 2 llamadas "
+          "y la 3.ª se para ANTES (cuenta el Codex en vuelo aún no registrado en el contador)",
+          cxch == ["cli-codex", "cli-codex"] and len(parch) == 2 and gch.tokens_codex == 100)
+
+    # ── R2-B-I5c · de punta a punta: la producción del Bloque 0 que intenta Codex se SUSPENDE ─────
+    ctx = _ctx(tmp, "r2-i5c", plan=plan)
+    ctx.contador = rb.contador_desde_protocolo(pr, 0)
+    ge = guardia_banco("e2e", ctx.contador)
+
+    async def producir_cx(caso, rep):
+        spend_guard._guarded_invoke(None, "cli-claude-sonnet", {"messages": [{"role": "user", "content": "a"}]})
+        spend_guard._guarded_invoke(None, "cli-codex", {"messages": [{"role": "user", "content": "b"}]})
+        return {"case_id": caso.id}
+
+    deps = rb.Deps(producir=producir_cx, marca=lambda: rb.marca_guardian(ge),
+                   consumo_desde=lambda m_: rb.consumo_desde_guardian(ge, m_), hash_soul=lambda: "H",
+                   paradas=(spend_guard.SpendGuardHalt,))
+    prev, spend_guard._original_invoke = spend_guard._original_invoke, falso
+    try:
+        with ge.activate():
+            r = asyncio.run(rb.ejecutar_banco(ctx, deps))
+    finally:
+        spend_guard._original_invoke = prev
+    susp = rb.leer_json(ctx.salida / "0.4" / "SUSPENDIDO.json") or {}
+    cx_e2e = [a for a in llamadas if a.startswith("cli-codex")]
+    llamadas.clear()
+    # MUTACIÓN: en `paso`, ignorar `motivo_parada` (volver a «límites de uso») → cae.
+    check("R2-B-I5 · de punta a punta (Bloque 0): la corrida que intenta Codex se SUSPENDE con 0 llamadas Codex, "
+          "y SUSPENDIDO.json dice el motivo real (presupuesto Codex), no «límites de uso»",
+          r["salida"] == rb.EXIT_SUSPENDIDO and cx_e2e == [] and ctx.contador.codex_total == 0
+          and "Codex" in (susp.get("motivo") or "") and "límites de uso" not in (susp.get("motivo") or ""))
+
+    # ── R2-B-I5d · la decisión de R proyecta también Codex ─────────────────────────────────────
+    plan9 = rb.construir_plan(["fuga-1", "peq-1", "peq-2", "volu-1"], ids_fuga=["fuga-1"],
+                              ids_voluminosos=["volu-1"], r_fuga=10, r_base=5)
+    pil = {"fuga-1": 100, "peq-1": 100, "peq-2": 100, "volu-1": 1000}
+    pcx = {"fuga-1": 10, "peq-1": 10, "peq-2": 10, "volu-1": 10}     # plena 250, reducida 210
+    d_ok = rb.decidir_r(plan9, pil, tope_produccion=10**9, r_reducido=3, consumo_piloto_codex=pcx,
+                        tope_produccion_codex=250)
+    d_red = rb.decidir_r(plan9, pil, tope_produccion=10**9, r_reducido=3, consumo_piloto_codex=pcx,
+                         tope_produccion_codex=220)
+    d_sus = rb.decidir_r(plan9, pil, tope_produccion=10**9, r_reducido=3, consumo_piloto_codex=pcx,
+                         tope_produccion_codex=200)
+    d_b0 = rb.decidir_r(plan9, pil, tope_produccion=10**9, r_reducido=3, consumo_piloto_codex=pcx,
+                        tope_produccion_codex=0)
+    d_b0_cero = rb.decidir_r(plan9, pil, tope_produccion=10**9, r_reducido=3,
+                             consumo_piloto_codex={k: 0 for k in pcx}, tope_produccion_codex=0)
+    # MUTACIÓN: en `decidir_r`, ignorar Codex en `_excede` → cae.
+    check("R2-B-I5 · decidir_r proyecta Codex contra SU presupuesto: 250 ≤ 250 R plena; 250 > 220 → R reducida "
+          "(210) disparada por Codex; 210 > 200 → suspender por Codex; con presupuesto 0 (Bloque 0) cualquier "
+          "Codex suspende y Codex 0 sigue con R plena",
+          d_ok["decision"] == "r_plena" and d_ok["proyeccion_codex_r_plena"] == 250
+          and d_red["decision"] == "r_reducida" and d_red["proveedor_disparador"] == "codex"
+          and d_red["proyeccion_codex_r_reducida"] == 210
+          and d_sus["decision"] == "suspender" and d_sus["proveedor_disparador"] == "codex"
+          and d_sus["cifra_disparadora"] == 210
+          and d_b0["decision"] == "suspender" and d_b0_cero["decision"] == "r_plena")
+
+    class MundoCx(Mundo):
+        def __init__(self, cx, **kw):
+            super().__init__(**kw)
+            self.cx = cx
+
+        def deps(self):
+            d = super().deps()
+            base = d.consumo_desde
+
+            def desde(mm):
+                out = base(mm)
+                out["codex_conocido"] = self.cx * out["llamadas"]
+                return out
+            d.consumo_desde = desde
+            return d
+
+    m = MundoCx(10, consumo=100)
+    ctx = _ctx(tmp, "r2-i5d", plan=plan9)
+    ctx.contador = rb.ContadorCuota(techo_claude=10**9, techo_codex=300, reserva_juicio_claude=0,
+                                    reserva_juicio_codex=100)          # presupuesto Codex 200
+    r = asyncio.run(rb.ejecutar_banco(ctx, m.deps()))
+    dec = rb.leer_json(ctx.salida / "0.4" / "decision_r.json") or {}
+    # MUTACIÓN: en `ejecutar_banco`, no pasar `consumo_piloto_codex`/`tope_produccion_codex` → cae.
+    check("R2-B-I5 · de punta a punta: Claude cabe pero la proyección Codex (piloto × R + aprobaciones = 290/250) "
+          "supera su presupuesto (200): la decisión queda escrita con la cifra Codex y el banco se SUSPENDE "
+          "tras la piloto (4 corridas)",
+          dec.get("decision") == "suspender" and dec.get("proveedor_disparador") == "codex"
+          and dec.get("cifra_disparadora") == 250 and r["salida"] == rb.EXIT_SUSPENDIDO
+          and len(m.llamadas_a_producir) == 4 and "Codex" in r["motivo"])
+
+    # ── R2-B-I5e · la piloto ya no entra con estimación cero ──────────────────────────────────
+    resultados = {}
+    for nombre, est in (("r2-pil-0", {}), ("r2-pil-500", {"pequeno": 500, "voluminoso": 500}),
+                        ("r2-pil-2000", {"pequeno": 2000, "voluminoso": 2000})):
+        m = Mundo(consumo=10)
+        ctx = _ctx(tmp, nombre, plan=plan, techo=1_000, reserva=0, estimacion_piloto=est)
+        r = asyncio.run(rb.ejecutar_banco(ctx, m.deps()))
+        resultados[nombre] = (r["salida"], len(m.llamadas_a_producir), r.get("motivo") or "")
+    # MUTACIÓN: volver a `paso(c, 1, 0)` en la piloto → cae.
+    check("R2-B-I5 · la piloto usa la estimación A PRIORI de su clase: 2 000 > tope 1 000 → se suspende ANTES de "
+          "la primera corrida (0 llamadas); con 500 (o sin estimación) corre; el montaje real usa las bases de "
+          "§3.2 (48 000 / 177 000)",
+          resultados["r2-pil-2000"][0] == rb.EXIT_SUSPENDIDO and resultados["r2-pil-2000"][1] == 0
+          and resultados["r2-pil-500"][0] == rb.EXIT_OK and resultados["r2-pil-0"][0] == rb.EXIT_OK
+          and rb.EST_PILOTO_TOKENS == {"pequeno": 48_000, "fuga": 48_000, "voluminoso": 177_000}
+          and "estimacion_piloto=dict(EST_PILOTO_TOKENS)" in inspect.getsource(rb._montaje_real)
+          and "guard.vincular_contador(contador)" in inspect.getsource(rb._montaje_real))
+
+    # ── R2-B-I5f · aprobaciones: proyección con el turno reproducido y con Codex ────────────────
+    class MundoACx(MundoA):
+        def deps(self):
+            d = super().deps()
+            base = d.consumo_desde
+
+            def desde(mm):
+                out = base(mm)
+                out["codex_conocido"] = 10 * out["llamadas"]
+                return out
+            d.consumo_desde = desde
+            return d
+
+    m = MundoA(consumo=100)
+    _corre(_ctx(tmp, "r2-ap-cl", plan=plan, consumo_aprobaciones=30, techo=10_000, reserva=0), m)
+    ab0 = len(m.abiertos)
+    r_cl = _corre_apr(_ctx(tmp, "r2-ap-cl", plan=plan, consumo_aprobaciones=30, techo=705, reserva=0), m)
+    ab_cl = len(m.abiertos) - ab0
+    m2 = MundoA(consumo=100)
+    _corre(_ctx(tmp, "r2-ap-cl2", plan=plan, consumo_aprobaciones=30, techo=10_000, reserva=0), m2)
+    r_cl2 = _corre_apr(_ctx(tmp, "r2-ap-cl2", plan=plan, consumo_aprobaciones=30, techo=10_000, reserva=0), m2)
+    m3 = MundoACx(consumo=100)
+    ctx_p = _ctx(tmp, "r2-ap-cx", plan=plan, consumo_aprobaciones=30)
+    ctx_p.contador = rb.ContadorCuota(techo_claude=10**9, techo_codex=10_000, reserva_juicio_claude=0,
+                                      reserva_juicio_codex=0)
+    _corre(ctx_p, m3)
+    ab3 = len(m3.abiertos)
+    ctx_a = _ctx(tmp, "r2-ap-cx", plan=plan, consumo_aprobaciones=30)
+    ctx_a.contador = rb.ContadorCuota(techo_claude=10**9, techo_codex=165, reserva_juicio_claude=0,
+                                      reserva_juicio_codex=100)        # presupuesto 65; producción 60
+    r_cx = _corre_apr(ctx_a, m3)
+    # MUTACIÓN: en `ejecutar_aprobaciones`, volver a `motivo_suspension(proximo_estimado=por_aprobacion)`
+    # (sin el turno reproducido ni Codex) → cae.
+    check("R2-B-I5 · cada aprobación se proyecta con su turno REPRODUCIDO (100) + aprobar (10) y con su Codex: "
+          "600 + 110 > 705 suspende ANTES de abrir; 60 + 10 de Codex > 65 también; con holgura las 3 corren",
+          r_cl["salida"] == rb.EXIT_SUSPENDIDO and ab_cl == 0
+          and r_cx["salida"] == rb.EXIT_SUSPENDIDO and len(m3.abiertos) == ab3 and "Codex" in r_cx["motivo"]
+          and r_cl2["salida"] == rb.EXIT_OK and len(m2.abiertos) == 3)
+
+    # ── R2-B-I8 · el texto de una excepción de un caso custodiado va CIFRADO ─────────────────────
+    class MundoSecreto(MundoF):
+        def __init__(self, texto, casos_fallan, **kw):
+            super().__init__(**kw)
+            self.texto, self.casos_fallan = texto, set(casos_fallan)
+
+        async def producir(self, caso, rep):
+            if caso.id in self.casos_fallan and rep == 1:
+                self.llamadas_a_producir.append((caso.id, rep))
+                self.calls += 1
+                self.tokens += 5
+                raise RuntimeError(self.texto)
+            return await super().producir(caso, rep)
+
+    cust = _cifrador(tmp, "cifr-r2-i8")
+    sal_c = tmp / "r2-i8-custodia"
+    ctx = _ctx(tmp, "r2-i8", plan=plan, salida_custodia=sal_c, ids_custodiados=frozenset({"volu-1"}),
+               cifrar=cust.cifrar_registro)
+    _corre(ctx, MundoSecreto(f"el turno falló citando el expediente: {SECRETO}", {"volu-1", "peq-1"}, consumo=10))
+    it_c = rb.leer_json(rb.ruta_intento(sal_c, "0.4", "volu-1", 1, 1)) or {}
+    it_v = rb.leer_json(rb.ruta_intento(ctx.salida, "0.4", "peq-1", 1, 1)) or {}
+    fuga = [f for f in _archivos_con([sal_c], SECRETO)] + [
+        f for f in _archivos_con([ctx.salida], SECRETO) if "volu-1" in f]
+    enc = sal_c / "0.4" / "volu-1" / (it_c.get("error_cifrado") or {}).get("archivo", "x")
+    try:
+        dec_err = cust.descifrar_registro(it_c["error_cifrado"]["id_registro"], enc.read_bytes()).decode("utf-8")
+    except Exception:  # noqa: BLE001
+        dec_err = ""
+    # MUTACIÓN: en `error_persistible`, devolver siempre el texto en claro (sin cifrar) → cae.
+    check("R2-B-I8 · una excepción de un caso CUSTODIADO que reproduce un hecho del caso NO deja ese texto en "
+          "claro en ningún archivo (salida ni custodia); en claro quedan solo tipo, clase y status; el texto "
+          "va cifrado bajo su PROPIO id y descifra íntegro; el de un caso visible sigue en claro",
+          not fuga and it_c.get("error_tipo") == "RuntimeError" and it_c.get("clase") == "producto"
+          and SECRETO not in json.dumps(it_c, ensure_ascii=False) and SECRETO in dec_err
+          and it_c["error_cifrado"]["id_registro"] == "0.4/volu-1/1/produccion-intento-1/error"
+          and _falla(lambda: cust.descifrar_registro("0.4/volu-1/1", enc.read_bytes()))
+          and SECRETO in (it_v.get("error") or "") and it_v.get("error_tipo") == "RuntimeError")
+    cust2 = _cifrador(tmp, "cifr-r2-i8b")
+    sal_c2 = tmp / "r2-i8b-custodia"
+    ctx = _ctx(tmp, "r2-i8b", plan=plan, salida_custodia=sal_c2, ids_custodiados=frozenset({"volu-1"}),
+               cifrar=cust2.cifrar_registro)
+    r = _corre(ctx, MundoSecreto(f"usage limit reached · {SECRETO}", {"volu-1"}, consumo=10))
+    check("R2-B-I8 · un «usage limit» en el mensaje cifrado de un custodiado SIGUE suspendiendo (la clasificación "
+          "lee el texto en memoria) y el hecho tampoco queda en claro",
+          r is not None and r["salida"] == rb.EXIT_SUSPENDIDO
+          and not _archivos_con([sal_c2, ctx.salida], SECRETO))
+
+    class MundoASecreto(MundoA):
+        async def producir_apr(self, h, caso):
+            if caso.id == "volu-1":
+                self.calls += 1
+                self.tokens += 5
+                raise RuntimeError(f"la aprobación falló citando: {SECRETO}")
+            return await super().producir_apr(h, caso)
+
+    cust3 = _cifrador(tmp, "cifr-r2-i8c")
+    sal_c3 = tmp / "r2-i8c-custodia"
+    m = MundoASecreto(consumo=10)
+    kw_c = dict(plan=plan, consumo_aprobaciones=60, salida_custodia=sal_c3,
+                ids_custodiados=frozenset({"volu-1"}), cifrar=cust3.cifrar_registro)
+    _corre(_ctx(tmp, "r2-i8c", **kw_c), m)
+    _corre_apr(_ctx(tmp, "r2-i8c", **kw_c), m)
+    ap = rb.leer_json(rb.ruta_aprobacion(sal_c3, "0.4", "volu-1")) or {}
+    it_a = (ap.get("intentos") or [{}])[0]
+    m_sin = MundoA(consumo=10)
+    kw_s = dict(plan=plan, consumo_aprobaciones=60, salida_custodia=tmp / "r2-i8d-custodia",
+                ids_custodiados=frozenset({"volu-1"}))
+    _corre(_ctx(tmp, "r2-i8d", cifrar=_cifrador(tmp, "cifr-r2-i8d").cifrar_registro, **kw_s), m_sin)
+    abiertos0 = list(m_sin.abiertos)
+    try:
+        asyncio.run(rb.ejecutar_aprobaciones(_ctx(tmp, "r2-i8d", **kw_s), m_sin.deps_apr()))
+        aborta = False
+    except rb.BancoAbortado:
+        aborta = "volu-1" not in m_sin.abiertos[len(abiertos0):]
+    # MUTACIÓN: en `_ejecutar_una_aprobacion`, guardar `error=f"{type}: {exc}"` en claro → cae (1.ª parte);
+    # quitar su `if ... ctx.cifrar is None: raise` → cae (2.ª parte).
+    check("R2-B-I8 · aprobaciones: el texto del error de un custodiado va cifrado (en claro solo tipo y clase) y "
+          "una aprobación custodiada SIN cifrador no abre despacho (aborta antes de llamar al modelo)",
+          ap.get("estado") == "fallo_producto" and it_a.get("error_tipo") == "RuntimeError"
+          and (it_a.get("error_cifrado") or {}).get("id_registro") == f"0.4/volu-1/{ap.get('rep')}/aprob-intento-1/error"
+          and SECRETO in cust3.descifrar_registro(
+              f"0.4/volu-1/{ap.get('rep')}/aprob-intento-1/error",
+              (sal_c3 / "0.4" / "volu-1" / it_a["error_cifrado"]["archivo"]).read_bytes()).decode("utf-8")
+          and not _archivos_con([sal_c3, tmp / "salida-r2-i8c"], SECRETO) and aborta)
+
+    # ── R2-B-I10 · el manifiesto se coteja en TODO registro reutilizable ──────────────────────────
+    MA = MANIFIESTO_PRUEBA
+    MB = dict(MA, sha_arbol="e" * 40)
+    hA, hB = rb.manifiesto_sha256(MA), rb.manifiesto_sha256(MB)
+    m = MundoA(consumo=10)
+    kw10 = dict(plan=plan, consumo_aprobaciones=60)
+    _corre(_ctx(tmp, "r2-i10", **kw10), m)
+    _corre_apr(_ctx(tmp, "r2-i10", **kw10), m)
+    ctx_a = _ctx(tmp, "r2-i10", **kw10)
+    ctx_b = _ctx(tmp, "r2-i10", manifiesto=MB, **kw10)
+    abiertos0 = len(m.abiertos)
+    reutiliza = asyncio.run(rb._ejecutar_una_aprobacion(ctx_a, m.deps_apr(), "peq-1", 1))
+    try:
+        asyncio.run(rb._ejecutar_una_aprobacion(ctx_b, m.deps_apr(), "peq-1", 1))
+        rechaza_ap = False
+    except rb.BancoAbortado as exc:
+        rechaza_ap = "manifiesto" in str(exc)
+    # MUTACIÓN: quitar el `_exigir_mismo_manifiesto` del atajo terminal de `_ejecutar_una_aprobacion`
+    # (:1150 de Astra) → cae.
+    check("R2-B-I10 · una APROBACIÓN terminal con la huella antigua bajo un contexto NUEVO se RECHAZA (no se "
+          "devuelve); con la misma huella se reutiliza sin volver a abrir despacho",
+          rechaza_ap and reutiliza.get("estado") == "completo" and reutiliza.get("manifiesto_sha256") == hA
+          and len(m.abiertos) == abiertos0)
+    # intento parcial: un límite de uso dejó `rep-01.intento-1.json` (sin registro terminal)
+    sal_p = tmp / "r2-i10-parcial"
+    for h_, nombre in ((hA, "a"), (hB, "b")):
+        rb.escribir_atomico(rb.ruta_intento(sal_p / nombre, "0.4", "peq-1", 1, 1),
+                            {"n": 1, "caso_id": "peq-1", "rep": 1, "estado": "fallo_limite_de_uso",
+                             "clase": "limite_de_uso", "consumo": {}, "manifiesto_sha256": h_})
+    resultados = {}
+    for nombre in ("a", "b"):
+        m = Mundo(consumo=10)
+        ctx = _ctx(tmp, "x", plan=plan)
+        ctx.salida = sal_p / nombre
+        try:
+            reg = asyncio.run(rb._ejecutar_una(ctx, m.deps(), plan[0], 1))
+            resultados[nombre] = ("ok", [i["n"] for i in reg["intentos"]], len(m.llamadas_a_producir))
+        except rb.BancoAbortado:
+            resultados[nombre] = ("rechazo", None, len(m.llamadas_a_producir))
+    # MUTACIÓN: quitar el bucle de cotejo de intentos previos en `_ejecutar_una` → cae.
+    check("R2-B-I10 · un INTENTO parcial con otra huella se rechaza antes de producir (0 llamadas); con la misma "
+          "huella se continúa en el intento 2 sin pisar el 1",
+          resultados["b"] == ("rechazo", None, 0) and resultados["a"] == ("ok", [1, 2], 1))
+    # capa por registro, SIN el escaneo de arranque: intento parcial de APROBACIÓN y decision_r.json
+    sal_q = tmp / "r2-i10-aprob-parcial"
+    for h_, nombre in ((hA, "a"), (hB, "b")):
+        rb.escribir_atomico(rb.ruta_intento_aprob(sal_q / nombre, "0.4", "peq-1", 1),
+                            {"n": 1, "caso_id": "peq-1", "rep": 1, "estado": "fallo_infraestructura",
+                             "clase": "infraestructura", "consumo_turno": {}, "consumo_aprobacion": {},
+                             "manifiesto_sha256": h_})
+    res_q = {}
+    for nombre in ("a", "b"):
+        m = MundoA(consumo=10)
+        ctx = _ctx(tmp, "x", plan=plan)
+        ctx.salida = sal_q / nombre
+        try:
+            reg = asyncio.run(rb._ejecutar_una_aprobacion(ctx, m.deps_apr(), "peq-1", 1))
+            res_q[nombre] = ("ok", [i["n"] for i in reg["intentos"]], len(m.abiertos))
+        except rb.BancoAbortado:
+            res_q[nombre] = ("rechazo", None, len(m.abiertos))
+    # MUTACIÓN: quitar el `_exigir_mismo_manifiesto` del bucle de `aprob.intento-*` en
+    # `_ejecutar_una_aprobacion` → cae (antes sobrevivía: solo lo cubría el escaneo de arranque).
+    check("R2-B-I10 · un intento parcial de APROBACIÓN con otra huella se rechaza antes de abrir despacho; con "
+          "la misma se continúa en el intento 2",
+          res_q["b"] == ("rechazo", None, 0) and res_q["a"] == ("ok", [1, 2], 1))
+    res_d = {}
+    for nombre, h_ in (("a", None), ("b", hA)):
+        ctx = _ctx(tmp, f"r2-i10-dec-{nombre}", plan=plan, manifiesto=None)   # sin manifiesto: no hay escaneo
+        rb.escribir_atomico(ctx.salida / "0.4" / "decision_r.json",
+                            {"decision": "r_plena", "r_por_caso": {c.id: c.r for c in plan},
+                             "tope_produccion": 1, "cifra_disparadora": None, "manifiesto_sha256": h_})
+        try:
+            r = asyncio.run(rb.ejecutar_banco(ctx, Mundo(consumo=1).deps()))
+            res_d[nombre] = r["salida"]
+        except rb.BancoAbortado:
+            res_d[nombre] = "rechazo"
+    # MUTACIÓN: quitar el `_exigir_mismo_manifiesto(ctx, decision, ruta_dec)` de `ejecutar_banco` → cae.
+    check("R2-B-I10 · una decision_r.json de OTRA ejecución no se reutiliza aunque no haya escaneo de arranque "
+          "(contexto sin manifiesto): se rechaza; la propia se acata",
+          res_d == {"a": rb.EXIT_OK, "b": "rechazo"})
+    # escaneo al arrancar: cada patrón reutilizable, por separado
+    pat_ok = []
+    for patron, ruta_rel in (("rep", "peq-1/rep-01.json"), ("intento", "peq-1/rep-01.intento-1.json"),
+                             ("en_curso", "peq-1/rep-01.en_curso.json"), ("aprobacion", "peq-1/aprobacion.json"),
+                             ("aprob.intento", "peq-1/aprob.intento-1.json"),
+                             ("aprob.en_curso", "peq-1/aprob.en_curso.json"),
+                             ("decision_r", "decision_r.json"), ("aprobaciones_plan", "aprobaciones_plan.json")):
+        res = []
+        for h_ in (hA, hB):
+            base = tmp / f"r2-i10-scan-{patron}-{h_[:6]}"
+            rb.escribir_atomico(base / "0.4" / ruta_rel, {"n": 1, "caso_id": "peq-1", "rep": 1,
+                                                        "estado": "completo", "manifiesto_sha256": h_})
+            ctx = _ctx(tmp, "x", plan=plan)
+            ctx.salida = base
+            try:
+                rb.asegurar_manifiesto(ctx)
+                res.append("acepta")
+            except rb.BancoAbortado:
+                res.append("rechaza")
+        pat_ok.append(res == ["acepta", "rechaza"])
+    # MUTACIÓN: quitar cualquier patrón de `PATRONES_REUTILIZABLES` (p. ej. `*/aprobacion.json`) → cae.
+    check("R2-B-I10 · al arrancar, `asegurar_manifiesto` coteja los 8 tipos de registro reutilizable (corrida, "
+          "intento, marcador, aprobación, intento y marcador de aprobación, decision_r, plan de aprobaciones): "
+          "huella propia se acepta, ajena se rechaza",
+          all(pat_ok) and len(pat_ok) == 8)
+    # el marcador `.en_curso` y el intento huérfano llevan la huella
+    m = MundoF(consumo=10, fallos={("peq-1", 1, 1): "muerte"})
+    ctx = _ctx(tmp, "r2-i10-huerf", plan=plan)
+    _corre(ctx, m)
+    marca_ = rb.leer_json(rb.ruta_en_curso(ctx.salida, "0.4", "peq-1", 1)) or {}
+    _corre(_ctx(tmp, "r2-i10-huerf", plan=plan), m)
+    huerf = rb.leer_json(rb.ruta_intento(ctx.salida, "0.4", "peq-1", 1, 1)) or {}
+    check("R2-B-I10 · el marcador `.en_curso` y el intento huérfano que nace de él llevan la huella del manifiesto",
+          marca_.get("manifiesto_sha256") == hA and huerf.get("huerfano") is True
+          and huerf.get("manifiesto_sha256") == hA)
+
+    # ── R2-B-N2 · árbol sucio ⇒ no certificable; identidad distingue las modificaciones ──────────
+    sucio = rb.construir_manifiesto(version="0.4", sha_arbol="f" * 40, arbol_limpio=False,
+                                    modificaciones_sha256="ab" * 32, soul_sha256="H", cli_version="2.1.296",
+                                    politica="quality_adaptive", protocolo_version="banco04-v1.3",
+                                    protocolo_hash="hp", runner_sha256="rp")
+    est = {}
+    for nombre, man in (("r2-n2-sucio", sucio), ("r2-n2-limpio", MANIFIESTO_PRUEBA), ("r2-n2-sin", None)):
+        m = MundoA(consumo=10)
+        r = _corre(_ctx(tmp, nombre, plan=plan, manifiesto=man, consumo_aprobaciones=60), m)
+        ra = _corre_apr(_ctx(tmp, nombre, plan=plan, manifiesto=man, consumo_aprobaciones=60), m)
+        e1 = rb.leer_json(tmp / f"salida-{nombre}" / "0.4" / "estado_banco.json") or {}
+        est[nombre] = (r["estado"], ra["estado"], " ".join(e1.get("motivos") or []))
+    # MUTACIÓN: no añadir `motivos_identidad(ctx)` a los motivos de `ejecutar_banco`/`ejecutar_aprobaciones`
+    # → cae (la sonda de Astra: «terminado» con arbol_limpio=False).
+    check("R2-B-N2 · un árbol SUCIO (--permitir-arbol-sucio) termina «no certificable» en la producción y en las "
+          "aprobaciones, con el motivo; sin manifiesto, también; el árbol limpio sigue «terminado»",
+          est["r2-n2-sucio"][:2] == ("no certificable", "no certificable") and "modificaciones" in est["r2-n2-sucio"][2]
+          and est["r2-n2-sin"][:2] == ("no certificable", "no certificable")
+          and est["r2-n2-limpio"][:2] == ("terminado", "aprobaciones_terminadas"))
+
+    class R:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout = rc, out
+
+    def huella(diff: bytes, otro: bytes, contenido: bytes) -> dict:
+        def run(cmd, **k):
+            if "rev-parse" in cmd:
+                return R(0, "c" * 40 + "\n")
+            if "status" in cmd:
+                return R(0, " M x.py\n?? nuevo.txt\n")
+            if "diff" in cmd:
+                return R(0, diff)
+            if "ls-files" in cmd:
+                return R(0, otro)
+            if "hash-object" in cmd:
+                return R(0, hashlib.sha1(contenido).hexdigest().encode() + b"\n")
+            return R(1, "")
+        real_run, rb.subprocess.run = rb.subprocess.run, run
+        try:
+            return rb.info_arbol_git(ROOT)
+        finally:
+            rb.subprocess.run = real_run
+    h1 = huella(b"diff --git a/x.py\n+uno\n", b"nuevo.txt\0", b"A")
+    h1b = huella(b"diff --git a/x.py\n+uno\n", b"nuevo.txt\0", b"A")
+    h2 = huella(b"diff --git a/x.py\n+dos\n", b"nuevo.txt\0", b"A")
+    h3 = huella(b"diff --git a/x.py\n+uno\n", b"nuevo.txt\0", b"B")
+    try:
+        rb.construir_manifiesto(version="0.4", sha_arbol="f" * 40, arbol_limpio=False, soul_sha256="H",
+                                cli_version="x", politica="p", protocolo_version="v", protocolo_hash="h",
+                                runner_sha256="r")
+        sin_huella = False
+    except rb.BancoAbortado:
+        sin_huella = True
+    kwm = dict(version="0.4", sha_arbol="c" * 40, arbol_limpio=False, soul_sha256="H", cli_version="x",
+               politica="p", protocolo_version="v", protocolo_hash="h", runner_sha256="r")
+    M1s = rb.construir_manifiesto(modificaciones_sha256=h1["modificaciones_sha256"], **kwm)
+    M2s = rb.construir_manifiesto(modificaciones_sha256=h2["modificaciones_sha256"], **kwm)
+    ctx1 = _ctx(tmp, "r2-n2-id", plan=plan, manifiesto=M1s)
+    _corre(ctx1, Mundo(consumo=1))
+    try:
+        rb.asegurar_manifiesto(_ctx(tmp, "r2-n2-id", plan=plan, manifiesto=M2s))
+        rechaza_otro_sucio = False
+    except rb.BancoAbortado as exc:
+        rechaza_otro_sucio = "modificaciones_sha256" in str(exc)
+    # MUTACIÓN: en `info_arbol_git`, no hashear el diff (o el contenido de los no rastreados) → cae;
+    # en `construir_manifiesto`, aceptar árbol sucio sin huella → cae.
+    check("R2-B-N2 · la identidad distingue las modificaciones locales: mismo HEAD con otro diff u otro archivo "
+          "no rastreado → otra huella (y relanzar con otro árbol sucio se RECHAZA, diciendo qué difiere); el "
+          "mismo árbol → la misma; un sucio sin huella no arma manifiesto; el montaje pasa la huella",
+          h1["arbol_limpio"] is False and h1 == h1b and h1["modificaciones_sha256"] != h2["modificaciones_sha256"]
+          and h1["modificaciones_sha256"] != h3["modificaciones_sha256"] and sin_huella and rechaza_otro_sucio
+          and 'modificaciones_sha256=info.get("modificaciones_sha256")' in inspect.getsource(rb._montaje_real))
 
 
 def main() -> int:
@@ -2269,6 +2825,7 @@ def main() -> int:
     bloque_f(tmp)
     bloque_h(tmp)
     bloque_i(tmp)
+    bloque_r2(tmp)
     malos = [n for n, ok in results if not ok]
     print(f"\n{len(results) - len(malos)}/{len(results)} checks OK")
     for n in malos:

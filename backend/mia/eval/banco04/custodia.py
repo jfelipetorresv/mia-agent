@@ -361,11 +361,45 @@ def _inv_clave(c: Custodia, id_: str, o: Mapping) -> None:
     por_doc = {d["filename"]: len(d["chunks"]) for d in caso["documents"]}
     if list(o["orden_documentos"]) != [d["filename"] for d in caso["documents"]]:
         raise CustodiaError(f"{id_}: orden_documentos no coincide con el del caso.")
+    chunks = {d["filename"]: list(d["chunks"]) for d in caso["documents"]}
     for h in o["hechos_materiales"]:
         n = por_doc.get(h["documento"])
         if n is None or any(f >= n for f in h["fragmentos"]):
             raise CustodiaError(f"{id_}: el hecho {h['id']!r} apunta a un documento o fragmento "
                                 "que no existe en el caso.")
+        invariantes_rangos_hecho(id_, h, chunks[h["documento"]])
+
+
+def invariantes_rangos_hecho(id_: str, h: Mapping, chunks: list) -> None:
+    """R2-A-N2: cada rango de un hecho es un intervalo VÁLIDO de un fragmento que el hecho declara:
+    0 ≤ inicio < fin ≤ len(texto del fragmento). Invertido, vacío o fuera del fragmento → la clave
+    no se entrega. Pura."""
+    frs = set(h.get("fragmentos") or [])
+    for r in h.get("rangos") or []:
+        f, a, b = r.get("fragmento"), r.get("inicio"), r.get("fin")
+        if not all(isinstance(x, int) and not isinstance(x, bool) for x in (f, a, b)):
+            raise CustodiaError(f"{id_}: rango no entero en el hecho {h.get('id')!r}.")
+        if f not in frs or not 0 <= f < len(chunks):
+            raise CustodiaError(f"{id_}: rango de un fragmento que el hecho {h.get('id')!r} no declara.")
+        if not 0 <= a < b <= len(chunks[f]):
+            raise CustodiaError(f"{id_}: rango [{a}, {b}) inválido para el fragmento {f} "
+                                f"({len(chunks[f])} caracteres) del hecho {h.get('id')!r}.")
+
+
+def fuentes_de_otro_ordenamiento(item: Mapping) -> list[str]:
+    """Refs de las fuentes del corpus del ítem que DECLARAN un ordenamiento fuera de los
+    configurados del ítem (la «norma respaldada pero no habilitada» de §12.5). Pura."""
+    jur = list(item.get("jurisdicciones") or [])
+    return [str(f.get("ref")) for f in (item.get("material") or {}).get("fuentes_corpus") or []
+            if isinstance(f, Mapping) and f.get("jurisdiccion") and f["jurisdiccion"] not in jur]
+
+
+def c08_admisible(item: Mapping) -> bool:
+    """R2-C-N1: una fuga (C08) cabe en un ítem SIN ordenamiento configurado (`jurisdicciones ==
+    []`) o en un despacho configurado para OTRO ordenamiento, siempre que el material traiga la
+    fuente no habilitada (ordenamiento declarado ∉ jurisdicciones): sin ella no hay forma de
+    comprobar que la mutación es una fuga y no un respaldo legítimo. Pura."""
+    return item.get("jurisdicciones") == [] or bool(fuentes_de_otro_ordenamiento(item))
 
 
 def invariantes_mutaciones_obj(o: Mapping, *, reservado: bool) -> None:
@@ -377,8 +411,9 @@ def invariantes_mutaciones_obj(o: Mapping, *, reservado: bool) -> None:
             if not (0 <= v["inicio"] < v["fin"] <= len(texto)) or texto[v["inicio"]:v["fin"]] != v["literal"]:
                 raise CustodiaError(f"{it['id']}/{v['id']}: salida[campo][inicio:fin] ≠ literal.")
             por_campo.setdefault(v["campo"], []).append((v["inicio"], v["fin"]))
-            if v.get("categoria") == "C08" and it["jurisdicciones"] != []:
-                raise CustodiaError(f"{it['id']}/{v['id']}: C08 solo en items con jurisdicciones == [].")
+            if v.get("categoria") == "C08" and not c08_admisible(it):
+                raise CustodiaError(f"{it['id']}/{v['id']}: C08 solo en items sin ordenamiento "
+                                    "configurado o con una fuente de OTRO ordenamiento (R2-C-N1).")
         for campo, spans in por_campo.items():
             spans.sort()
             for (a0, a1), (b0, _b1) in zip(spans, spans[1:]):

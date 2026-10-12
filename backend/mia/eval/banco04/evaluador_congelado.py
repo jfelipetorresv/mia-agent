@@ -383,3 +383,110 @@ def recall_markers_signal(diagnosis: str, draft: str, markers: tuple[str, ...] |
     }
 
 
+
+
+# ── R2-C-N4 · `jurisdiction_leak_signal` vendorizada Y CORREGIDA ───────────────────────
+# Origen: backend/mia/eval/scoring.py en HEAD 3611b75 (árbol de trabajo sin cambios en ese archivo;
+# sha256 en `ORIGEN_FUGA`). Se copian `_NEGATION_NEAR_CITATION`, `_NEGATION_NORM`, `_SENTENCE_SPLIT`
+# y `_oracion_de` LITERALES (con `verification._normalize` → `_normalize` de esta copia).
+#
+# CORRECCIÓN (única diferencia con el producto): en el producto, `_mencion_negada` mira si la
+# ORACIÓN tiene alguna negación (scoring.py:188-192), así que «La Ley 100 de 1993 es aplicable al
+# caso, aunque no consta la fecha del contrato» deja de ser fuga por un «no consta» que niega OTRA
+# cosa. Aquí la negación tiene que estar en la MISMA CLÁUSULA que la cita: la oración se parte en
+# cláusulas por coma (salvo la que abre una relativa: «, que…», «, cuyo…», «, la cual…») y por los
+# conectores que abren otra proposición (aunque, pero, sino, mientras, porque, pues, ya que, dado
+# que, puesto que, si bien, no obstante, sin embargo, pese a que, a pesar de que). Una coma DENTRO
+# de la cita no parte nada. El defecto PERSISTE en el producto (`scoring.py` no se tocó: es código
+# del producto, fuera del frente del banco).
+ORIGEN_FUGA = {"archivo": "backend/mia/eval/scoring.py", "commit": "3611b75",
+               "sha256": "f7765c505b3e4bd32c54288f916977cc25117430f1cf43a9f50b1165bbbad15c"}
+
+_NEGATION_NEAR_CITATION: tuple[str, ...] = (
+    "no corresponde", "no reconozco", "no la reconozco", "no lo reconozco",
+    "no existe", "no aparece", "no figura", "no consta",
+    "no es verificable", "no puedo verificar", "no logro verificar", "no pude verificar",
+    "no verificable", "sin verificar",
+    "no citable", "no es citable",
+    "no tengo respaldo", "sin respaldo", "no puedo respaldar",
+    "no puedo confirmar", "no me consta",
+    "no está configurado", "no configurado",
+    "materialmente imposible", "no puede ser", "no coincide",
+    "presunta", "presunto", "supuesta norma", "inexistente",
+)
+_NEGATION_NORM: tuple[str, ...] = tuple(
+    verification._normalize(p) for p in _NEGATION_NEAR_CITATION)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.;:!?])\s+|\n+")
+
+
+def _oracion_de(text: str, start: int, end: int) -> str:
+    """La oración que contiene el tramo [start, end) del texto. Pura."""
+    if not text:
+        return ""
+    ini = 0
+    for m in _SENTENCE_SPLIT.finditer(text, 0, start):
+        ini = m.end()
+    fin = len(text)
+    m2 = _SENTENCE_SPLIT.search(text, end)
+    if m2 is not None:
+        fin = m2.start()
+    return text[ini:fin]
+
+
+# ── Corrección R2-C-N4 (no está en el producto) ──
+_CONECTORES_CLAUSULA = (
+    "aunque", "pero", "sino", "mientras", "porque", "pues", "ya que", "dado que", "puesto que",
+    "si bien", "no obstante", "sin embargo", "pese a que", "a pesar de que",
+)
+_CORTE_CLAUSULA = re.compile(
+    r",(?!\s*(?:que|cuy[oa]s?|l[oa]s?\s+cual(?:es)?|el\s+cual|quien(?:es)?|donde)\b)"
+    r"|\s+(?=(?:" + "|".join(c.replace(" ", r"\s+") for c in _CONECTORES_CLAUSULA) + r")\b)",
+    re.IGNORECASE)
+
+
+def _clausula_de(text: str, start: int, end: int) -> str:
+    """La cláusula de la oración que contiene la cita [start, end): los cortes que caen DENTRO de
+    la cita no cuentan (una cita con comas no se parte)."""
+    ini = 0
+    for m in _SENTENCE_SPLIT.finditer(text, 0, start):
+        ini = m.end()
+    fin = len(text)
+    m2 = _SENTENCE_SPLIT.search(text, end)
+    if m2 is not None:
+        fin = m2.start()
+    c_ini, c_fin = ini, fin
+    for m in _CORTE_CLAUSULA.finditer(text, ini, fin):
+        if m.end() <= start:
+            c_ini = m.end()
+        elif m.start() >= end:
+            c_fin = m.start()
+            break
+    return text[c_ini:c_fin]
+
+
+def _mencion_negada(text: str, start: int, end: int) -> bool:
+    """¿La cita en [start, end) va acompañada de una negación explícita en SU MISMA CLÁUSULA?
+    (N-1: mención ≠ uso; R2-C-N4: la negación tiene que regir la cita). Pura y determinista."""
+    clausula = verification._normalize(_clausula_de(text, start, end))
+    return any(p in clausula for p in _NEGATION_NORM)
+
+
+def jurisdiction_leak_signal(text: str, extra_patterns: object = None) -> dict:
+    """Copia de `scoring.jurisdiction_leak_signal` (misma forma de salida, `v` = 2) con la
+    negación asociada a la cita (R2-C-N4; ver la cabecera de esta sección)."""
+    pats = compile_patterns(extra_patterns if isinstance(extra_patterns, list) else None)
+    t = text or ""
+    citas = scan_citations(t, pats)
+    usadas, negadas = [], []
+    for c in citas:
+        (negadas if _mencion_negada(t, c["start"], c["end"]) else usadas).append(c["citation"])
+    return {
+        "citas_detectadas": len(citas),
+        "negadas": len(negadas),
+        "citas_computadas": len(usadas),
+        "detalle": usadas[:10],
+        "detalle_negadas": negadas[:10],
+        "leak": len(usadas) > 0,
+        "v": 2,
+        "negacion": "por_clausula",
+    }

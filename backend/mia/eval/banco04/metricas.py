@@ -22,6 +22,7 @@ ENTRADA POR CORRIDA (`metricas_corrida`): un dict con
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import math
 import random
@@ -85,7 +86,11 @@ def envio_desde_material(material_turno: Mapping[str, Any] | None) -> Envio | No
     for t in material_turno["entraron_tramos"]:
         chars = t.get("chars_original")
         chars = int(chars) if isinstance(chars, int) and not isinstance(chars, bool) and chars >= 0 else None
-        tramos = [(int(a), int(b)) for a, b in t.get("tramos") or [] if int(b) > int(a)]
+        # R2-A-N2: un tramo enviado solo cuenta si es un intervalo válido DEL FRAGMENTO:
+        # 0 ≤ ini < fin ≤ chars_original. Invertido, vacío, negativo o fuera del fragmento → se
+        # descarta (no se repara); sin chars_original conocido no hay tramo que valga.
+        tramos = [(a, b) for a, b in (_par_entero(x) for x in t.get("tramos") or [])
+                  if a is not None and chars is not None and 0 <= a < b <= chars]
         completo = bool(t.get("completo")) and chars is not None and _cubre(tramos, chars)
         clave = (str(t["documento"]), int(t["indice"]))
         previo = out.get(clave)
@@ -96,10 +101,26 @@ def envio_desde_material(material_turno: Mapping[str, Any] | None) -> Envio | No
     return out
 
 
+def _par_entero(x: Any) -> tuple[int | None, int | None]:
+    """(ini, fin) si `x` es un par de enteros (no booleanos); si no, (None, None)."""
+    if (isinstance(x, (list, tuple)) and len(x) == 2
+            and all(isinstance(v, int) and not isinstance(v, bool) for v in x)):
+        return int(x[0]), int(x[1])
+    return None, None
+
+
+def rango_valido(ini: Any, fin: Any, longitud: int | None) -> bool:
+    """R2-A-N2: 0 ≤ ini < fin ≤ longitud del fragmento. Un rango invertido o vacío ([90,30),
+    [30,30)) o fuera del fragmento NO es un rango: nunca está «disponible»."""
+    a, b = _par_entero((ini, fin))
+    return (a is not None and isinstance(longitud, int) and not isinstance(longitud, bool)
+            and 0 <= a < b <= longitud)
+
+
 def ref_disponible(ref: tuple, envio: Envio | None) -> bool:
     """`ref` = (documento, índice) si la clave solo da el fragmento → exige el fragmento COMPLETO;
-    o (documento, índice, ini, fin) → el rango debe caer dentro de un tramo enviado, con
-    `chars_original` conocido."""
+    o (documento, índice, ini, fin) → el rango debe ser VÁLIDO para el fragmento (R2-A-N2) y caer
+    dentro de un tramo enviado, con `chars_original` conocido."""
     if envio is None:
         return False
     e = envio.get((str(ref[0]), int(ref[1])))
@@ -107,8 +128,10 @@ def ref_disponible(ref: tuple, envio: Envio | None) -> bool:
         return False
     if len(ref) == 2:
         return e["completo"]
+    if not rango_valido(ref[2], ref[3], e["chars"]):
+        return False
     a, b = int(ref[2]), int(ref[3])
-    return b <= e["chars"] and any(x <= a and b <= y for x, y in e["tramos"])
+    return any(x <= a and b <= y for x, y in e["tramos"])
 
 
 def disponible(refs: Iterable[tuple], envio: Envio | None) -> bool:
@@ -222,6 +245,24 @@ def candidatas_negativa_falsa(puntos: Iterable[Mapping[str, Any]]) -> list[str]:
             and p.get("resolucion") == "laguna_declarada"]
 
 
+def senal_fuga(c: Mapping[str, Any]) -> bool:
+    """§5.7 · señal determinista de fuga, calculada AQUÍ con la copia vendorizada y corregida
+    (`evaluador_congelado.jurisdiction_leak_signal`, R2-C-N4: la negación tiene que regir la cita,
+    no basta cualquier negación de la oración). Solo aplica en los casos SIN ordenamiento
+    configurado. Nunca se acepta una señal precalculada por el producto (`scoring.py:188` sigue con
+    el defecto): sin el texto completo de la salida no hay medición."""
+    if "fuga_senal" in c:
+        raise ValueError("R2-C-N4: `fuga_senal` precalculada no se acepta; pase `texto_salida` y "
+                         "`jurisdicciones` (la señal la calcula el evaluador congelado)")
+    texto, jur = c.get("texto_salida"), c.get("jurisdicciones")
+    if not isinstance(texto, str) or not isinstance(jur, (list, tuple)):
+        raise ValueError("R2-C-N4: faltan `texto_salida` (str) o `jurisdicciones` (lista)")
+    if list(jur):
+        return False
+    from .evaluador_congelado import jurisdiction_leak_signal  # copia corregida (R2-C-N4)
+    return bool(jurisdiction_leak_signal(texto)["leak"])
+
+
 def metricas_corrida(c: Mapping[str, Any]) -> dict:
     hechos = list(c.get("hechos") or [])
     puntos = list(c.get("puntos") or [])
@@ -290,6 +331,7 @@ def metricas_corrida(c: Mapping[str, Any]) -> dict:
         # I1: una corrida solo cuenta si la juzgaron los DOS jueces (pasadas 1 y 2). Sin el campo,
         # no está evaluada (nunca se presume).
         "evaluada": c.get("evaluada") is True,
+        "n_hechos_clave": len(hechos),
         "n_decisivos_clave": len(decisivos),
         "n_decisivos_disponibles": len(disp_dec),
         "limitada_o_abstencion": conducta in ("limitada_expresa", "abstencion"),
@@ -318,7 +360,7 @@ def metricas_corrida(c: Mapping[str, Any]) -> dict:
         "definitivo_con_hecho_no_disponible": DHND in cel.flags,
         "abstencion_injustificada": AI in cel.flags,
         "incoherencia_matriz": not cel.aplica,
-        "fuga_jurisdiccion": bool(c.get("fuga_senal")) or int(c.get("fuga_juez") or 0) > 0,
+        "fuga_jurisdiccion": senal_fuga(c) or int(c.get("fuga_juez") or 0) > 0,
         "turnos_completados": completada_ok,
         "falsos_bloqueos": int(c.get("falsos_bloqueos") or 0) > 0,
         "tasa_cambio_de_motor": bool(c.get("cambio_de_motor")),
@@ -338,6 +380,14 @@ METRICAS_MEDIA: tuple[str, ...] = (
 )
 
 
+def _entero_positivo(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 1
+
+
+def _entero_no_negativo(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
 def _media(valores: Iterable[Any]) -> Fraction | None:
     vs = [Fraction(v) if not isinstance(v, bool) else Fraction(int(v))
           for v in valores if v is not None]
@@ -354,6 +404,15 @@ def agregar_casos(metricas: Iterable[Mapping[str, Any]]) -> dict[str, dict]:
         if len(estratos) != 1:
             raise ValueError(f"{cid}: corridas en estratos distintos {estratos}")
         fila: dict[str, Any] = {"case_id": cid, "estrato": estratos.pop(), "R": len(ms)}
+        # R2-A-N1: la IDENTIDAD de cada repetición viaja con el caso. Una repetición repetida o sin
+        # identificador entero no es una ejecución independiente; el veredicto global exige el
+        # conjunto EXACTO {1..R} por versión y caso (aquí solo se registra, no se corrige).
+        reps = [m.get("repeticion") for m in ms]
+        fila["repeticiones"] = sorted((r for r in reps if _entero_positivo(r)), key=int)
+        fila["repeticiones_invalidas"] = sum(1 for r in reps if not _entero_positivo(r))
+        fila["repeticiones_evaluadas"] = sorted((m.get("repeticion") for m in ms
+                                                 if m.get("evaluada") is True
+                                                 and _entero_positivo(m.get("repeticion"))), key=int)
         for k in METRICAS_MEDIA:
             fila[k] = _media(m.get(k) for m in ms)
         for k in ("afirmaciones_sin_respaldo", "discordancias_sin_resolver"):
@@ -364,6 +423,7 @@ def agregar_casos(metricas: Iterable[Mapping[str, Any]]) -> dict[str, dict]:
                                                 for m in ms)
         fila["n_evaluadas"] = sum(m.get("evaluada") is True for m in ms)
         fila["n_decisivos_clave"] = max((int(m.get("n_decisivos_clave") or 0) for m in ms), default=0)
+        fila["n_hechos_clave"] = max((int(m.get("n_hechos_clave") or 0) for m in ms), default=0)
         fila["n_decisivos_disponibles"] = sum(int(m.get("n_decisivos_disponibles") or 0) for m in ms)
         fila["n_limitadas"] = sum(bool(m.get("limitada_o_abstencion")) for m in ms)
         out[cid] = fila
@@ -501,8 +561,17 @@ def bootstrap_casos(diferencias: list[Fraction | float], *, semilla: bytes | int
     k = len(diferencias)
     if k < P.K_MIN_BOOTSTRAP:
         raise InferenciaProhibida(f"bootstrap con k = {k} < {P.K_MIN_BOOTSTRAP}")
-    rng = random.Random(_semilla_int(semilla, etiqueta))
-    ds = [float(d) for d in diferencias]
+    # Pura y determinista (semilla + etiqueta): el veredicto global la RECALCULA (R2-A-I1), así que
+    # se memoriza por argumentos para no repetir los 10 000 remuestreos.
+    return _bootstrap(tuple(float(d) for d in diferencias), _semilla_int(semilla, etiqueta),
+                      int(remuestreos), Fraction(nivel))
+
+
+@functools.lru_cache(maxsize=4096)
+def _bootstrap(ds: tuple[float, ...], semilla_int: int, remuestreos: int,
+               nivel: Fraction) -> tuple[float, float]:
+    k = len(ds)
+    rng = random.Random(semilla_int)
     medias = sorted(sum(rng.choice(ds) for _ in range(k)) / k for _ in range(remuestreos))
     cola = float((1 - nivel) / 2)
     li = medias[int(math.floor(cola * remuestreos))]
@@ -522,6 +591,41 @@ def veredicto_comparativo(punto: float, limite_inferior: float, delta: Fraction)
     return "no_concluyente"
 
 
+# Campo que dice si la métrica se define en un caso (por construcción): sin hechos en la clave no
+# hay cobertura de hechos; sin decisivos, no hay cobertura de decisivos; sin corridas limitadas, no
+# hay utilidad. Las demás métricas se definen siempre que haya corridas.
+APLICABILIDAD_POR_CASO: dict[str, str] = {**P.APLICABILIDAD_COMPARATIVA,
+                                          "cobertura_hechos_materiales": "n_hechos_clave"}
+
+
+def pares_comparativos(metrica: str, casos: Iterable[str], base: Mapping[str, Mapping[str, Any]],
+                       nuevo: Mapping[str, Mapping[str, Any]]
+                       ) -> tuple[dict[str, float], list[str], list[str]]:
+    """(diferencia_por_caso, casos_no_aplica, pares_faltantes) de UNA métrica en un conjunto de
+    casos. R2-A-I1: un caso ausente en una versión, o con la métrica en None donde aplica, es un
+    par FALTANTE (nunca se salta)."""
+    sentido = P.METRICAS_COMPARATIVAS[metrica]["sentido"]
+    campo = APLICABILIDAD_POR_CASO.get(metrica)
+    por_caso: dict[str, float] = {}
+    no_aplica: list[str] = []
+    faltantes: list[str] = []
+    for cid in casos:
+        fb, fn = base.get(cid), nuevo.get(cid)
+        if fb is None or fn is None:
+            faltantes.append(cid)
+            continue
+        b, n = fb.get(metrica), fn.get(metrica)
+        aplica_caso = campo is None or any(int(f.get(campo) or 0) > 0 for f in (fb, fn))
+        if not aplica_caso and b is None and n is None:
+            no_aplica.append(cid)
+            continue
+        if b is None or n is None:
+            faltantes.append(cid)
+            continue
+        por_caso[cid] = sentido * (float(n) - float(b))
+    return por_caso, no_aplica, faltantes
+
+
 def comparar_metrica(*, metrica: str, unidad: str, base: Mapping[str, Mapping[str, Any]],
                      nuevo: Mapping[str, Mapping[str, Any]], casos: Iterable[str],
                      semilla: bytes | int, base_corridas: Mapping[str, list] | None = None,
@@ -531,19 +635,22 @@ def comparar_metrica(*, metrica: str, unidad: str, base: Mapping[str, Mapping[st
     conf = P.METRICAS_COMPARATIVAS[metrica]
     sentido, delta = conf["sentido"], conf["delta"]
     tratamiento = P.UNIDADES_INFERENCIA[unidad]["tratamiento"]
-    por_caso: dict[str, float] = {}
-    for cid in casos:
-        b, n = (base.get(cid) or {}).get(metrica), (nuevo.get(cid) or {}).get(metrica)
-        if b is None or n is None:
-            continue
-        por_caso[cid] = sentido * (float(n) - float(b))
-    campo = P.APLICABILIDAD_COMPARATIVA.get(metrica)
+    casos = list(casos)
+    por_caso, no_aplica, faltantes = pares_comparativos(metrica, casos, base, nuevo)
+    campo = APLICABILIDAD_POR_CASO.get(metrica)
     aplica = campo is None or any(int((lado.get(cid) or {}).get(campo) or 0) > 0
                                   for lado in (base, nuevo) for cid in casos)
     out: dict[str, Any] = {"metrica": metrica, "unidad": unidad, "sentido": sentido,
                            "delta": float(delta), "k": len(por_caso),
                            "diferencia_por_caso": por_caso, "aplica": aplica,
+                           "casos_no_aplica": no_aplica, "pares_faltantes": faltantes,
                            "rotulo": P.UNIDADES_INFERENCIA[unidad]["rotulo"]}
+    if faltantes:
+        # R2-A-I1: un caso de la unidad en que la métrica APLICA y le falta el par (en cualquiera
+        # de las dos versiones) es evidencia faltante; nunca se omite ni se compara «lo que hay».
+        out.update(veredicto="descriptivo_sin_inferencia", estimacion=None, sin_dato=True,
+                   nota=f"pares faltantes: {faltantes}")
+        return out
     if not por_caso:
         # I1: si la métrica aplica en la unidad, la falta de datos es evidencia faltante.
         out.update(veredicto="descriptivo_sin_inferencia", estimacion=None,
@@ -584,27 +691,45 @@ def veredicto_tras_extension(veredicto: str) -> dict:
 
 
 def perdidas_por_caso(base: Mapping[str, Mapping[str, Any]], nuevo: Mapping[str, Mapping[str, Any]],
-                      metrica: str) -> list[str]:
-    """«Ningún caso pierde más de 0,20» en cobertura."""
-    out = []
-    for cid in sorted(set(base) & set(nuevo)):
-        b, n = base[cid].get(metrica), nuevo[cid].get(metrica)
-        if b is not None and n is not None and Fraction(n) - Fraction(b) < -P.PERDIDA_MAX_COBERTURA_POR_CASO:
-            out.append(cid)
-    return out
+                      metrica: str, casos_esperados: Iterable[str]) -> tuple[list[str], list[str]]:
+    """«Ningún caso pierde más de 0,20» en cobertura → (casos que pierden, pares faltantes).
+    R2-A-I2: la completitud se comprueba ANTES: cada caso esperado tiene que estar en las dos
+    versiones con la métrica donde aplica. Diccionarios vacíos no son «sin pérdidas»."""
+    esperados = sorted(set(casos_esperados))
+    pares, _no_aplica, faltantes = pares_comparativos(metrica, esperados, base, nuevo)
+    out = [cid for cid in sorted(pares)   # aritmética exacta sobre los valores (no el float)
+           if Fraction(nuevo[cid][metrica]) - Fraction(base[cid][metrica])
+           < -P.PERDIDA_MAX_COBERTURA_POR_CASO]
+    if not esperados:
+        faltantes = ["<sin_casos_esperados>"]
+    return out, faltantes
 
 
 def decisivos_estables_perdidos(base: Mapping[str, Mapping[str, Fraction]],
-                                nuevo: Mapping[str, Mapping[str, Fraction]]) -> list[tuple[str, str]]:
-    """Hecho decisivo hallado por 0.3.3 en ≥ 3/5 de sus corridas que cae a ≤ 1/5 en 0.4.
-    Entrada: caso → hecho → fracción de corridas en que quedó cubierto."""
+                                nuevo: Mapping[str, Mapping[str, Fraction]],
+                                casos_esperados: Iterable[str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """Hecho decisivo hallado por 0.3.3 en ≥ 3/5 de sus corridas que cae a ≤ 1/5 en 0.4 →
+    (perdidos, faltantes). Entrada: caso → hecho → fracción de corridas en que quedó cubierto.
+    R2-A-I2: cada caso esperado debe estar en las dos versiones (un caso sin decisivos va como
+    `{}`), y un decisivo presente en la base y AUSENTE en la nueva no desaparece del control: es
+    un dato faltante (⇒ no certificable), nunca «no perdido»."""
+    esperados = sorted(set(casos_esperados))
+    faltantes: list[str] = [] if esperados else ["<sin_casos_esperados>"]
     out = []
-    for cid in sorted(set(base) & set(nuevo)):
+    for cid in esperados:
+        if cid not in base or cid not in nuevo:
+            faltantes.append(cid)
+            continue
         for hid, fb in base[cid].items():
             fn = nuevo[cid].get(hid)
-            if fn is not None and Fraction(fb) >= P.DECISIVO_ESTABLE_BASE_MIN and Fraction(fn) <= P.DECISIVO_CAIDA_MAX:
+            if fb is None or fn is None:
+                faltantes.append(f"{cid}/{hid}")
+                continue
+            if Fraction(fb) >= P.DECISIVO_ESTABLE_BASE_MIN and Fraction(fn) <= P.DECISIVO_CAIDA_MAX:
                 out.append((cid, hid))
-    return out
+        for hid in sorted(set(nuevo[cid]) - set(base[cid])):
+            faltantes.append(f"{cid}/{hid}:sin_base")
+    return out, faltantes
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════
@@ -612,18 +737,23 @@ def decisivos_estables_perdidos(base: Mapping[str, Mapping[str, Fraction]],
 # ════════════════════════════════════════════════════════════════════════════════════════
 def consumo(registro: Mapping[str, Any], *, campo: str = "tokens",
             campo_fallidos: str = "intentos_fallidos") -> Fraction | None:
-    """Tokens conocidos + cota conservadora de cada intento fallido (§5.5). None si algún
-    intento fallido no permite calcular su cota (⇒ techo no certificable)."""
-    base = registro.get(campo, 0)
-    if base is None:
+    """Tokens conocidos + cota conservadora de cada intento fallido (§5.5). None si el consumo
+    NO CONSTA (R2-A-I1: un registro sin el campo, o con un valor que no es un entero ≥ 0, no es
+    «cero») o si algún intento fallido no permite calcular su cota (⇒ techo no certificable)."""
+    if not isinstance(registro, Mapping) or not _entero_no_negativo(registro.get(campo)):
         return None
-    total = Fraction(int(base))
-    for f in registro.get(campo_fallidos) or []:
-        if f.get("consumo_conocido") is True and f.get("tokens") is not None:
+    total = Fraction(int(registro[campo]))
+    fallidos = registro.get(campo_fallidos, [])
+    if not isinstance(fallidos, list):
+        return None
+    for f in fallidos:
+        if not isinstance(f, Mapping):
+            return None
+        if f.get("consumo_conocido") is True and _entero_no_negativo(f.get("tokens")):
             total += int(f["tokens"])
             continue
         entrada, salida = f.get("tokens_entrada_estimados"), f.get("cota_salida")
-        if entrada is None or salida is None:
+        if not (_entero_no_negativo(entrada) and _entero_no_negativo(salida)):
             return None
         total += int(entrada) + int(salida)
     return total
@@ -643,6 +773,9 @@ def techo_cuota(base: Mapping[str, Mapping[str, Any]], nuevo: Mapping[str, Mappi
     """Condiciones de §6.3. Entrada por versión: caso → {"corridas": [{tokens, intentos_fallidos,
     inferencias, tokens_codex, intentos_fallidos_codex}], "aprobacion": {…mismo…}}."""
     motivos: list[str] = []
+    # R2-A-I1: sin consumo no hay techo que cumplir. `techo_cuota({}, {})` no es «cumple».
+    if not base or not nuevo:
+        motivos.append("sin_consumo")
     if set(base) != set(nuevo):
         motivos.append("casos_distintos")
     condiciones: list[dict] = []
@@ -650,17 +783,29 @@ def techo_cuota(base: Mapping[str, Mapping[str, Any]], nuevo: Mapping[str, Mappi
     cb: dict[str, dict] = {}
     cn: dict[str, dict] = {}
     cx: dict[str, dict] = {}
+    r_por_caso: dict[str, dict[str, int]] = {"base": {}, "nuevo": {}}
     for cid in sorted(set(base) & set(nuevo)):
-        if len(base[cid].get("corridas") or []) != len(nuevo[cid].get("corridas") or []):
+        corr_b, corr_n = base[cid].get("corridas") or [], nuevo[cid].get("corridas") or []
+        r_por_caso["base"][cid], r_por_caso["nuevo"][cid] = len(corr_b), len(corr_n)
+        if not corr_b or not corr_n:
+            motivos.append(f"{cid}:sin_corridas")
+        if len(corr_b) != len(corr_n):
             motivos.append(f"{cid}:R_distinta")
+        if not isinstance(base[cid].get("aprobacion"), Mapping) or not isinstance(
+                nuevo[cid].get("aprobacion"), Mapping):
+            motivos.append(f"{cid}:sin_aprobacion")
+        for lado, corr in (("base", corr_b), ("nuevo", corr_n)):
+            if any(not _entero_no_negativo(r.get("inferencias")) for r in corr):
+                motivos.append(f"{cid}:{lado}:inferencias_sin_dato")
         cb[cid] = _consumos_caso(base[cid], "tokens", "intentos_fallidos")
         cn[cid] = _consumos_caso(nuevo[cid], "tokens", "intentos_fallidos")
         cx[cid] = _consumos_caso(nuevo[cid], "tokens_codex", "intentos_fallidos_codex")
         for nombre, d in (("base", cb[cid]), ("nuevo", cn[cid]), ("codex", cx[cid])):
             if not d["certificable"]:
-                motivos.append(f"{cid}:{nombre}:intento_fallido_sin_cota")
+                motivos.append(f"{cid}:{nombre}:consumo_ausente_o_sin_cota")
     if motivos:
-        return {"resultado": NO_CERTIFICABLE, "motivos": sorted(set(motivos)), "condiciones": []}
+        return {"resultado": NO_CERTIFICABLE, "motivos": sorted(set(motivos)), "condiciones": [],
+                "R_por_caso": r_por_caso}
 
     def _cond(nombre: str, valor: Fraction, limite: Fraction, extra: dict | None = None) -> None:
         ok = valor <= limite
@@ -716,8 +861,16 @@ def techo_cuota(base: Mapping[str, Mapping[str, Any]], nuevo: Mapping[str, Mappi
         "nota": "la mediana y el p50 son solo descriptivos (§6.3)",
     }
     resultado = "cumple" if all(c["cumple"] for c in condiciones) else "no_cumple"
+    # Evidencia por ámbito para la atribución de subidas (R2-A-I2): lo que consumió cada caso
+    # (agregado y corrida máxima) y el total, en las dos versiones.
+    consumo_ambito = {"total": {"base": int(tot_b), "nuevo": int(tot_n)}}
+    for c in casos:
+        consumo_ambito[f"{c}:caso"] = {"base": int(cb[c]["agregado"]), "nuevo": int(cn[c]["agregado"])}
+        consumo_ambito[f"{c}:max_corrida"] = {"base": int(cb[c]["maximo"]), "nuevo": int(cn[c]["maximo"])}
+    consumo_ambito["ponderado"] = consumo_ambito["total"]
     return {"resultado": resultado, "condiciones": condiciones, "descriptivo": descriptivo,
-            "subidas_que_exigen_mejora_atribuible": req_mejora, "motivos": []}
+            "subidas_que_exigen_mejora_atribuible": req_mejora, "motivos": [],
+            "R_por_caso": r_por_caso, "consumo_por_ambito": consumo_ambito}
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════
@@ -766,96 +919,258 @@ def inventario_esperado(ids_custodiados: Iterable[str], *, contingencia: bool = 
                         extension: Mapping[str, int] | None = None) -> dict:
     """Manifiesto de lo que TIENE que existir para emitir un veredicto (I1): los 17 casos con su
     R (más la extensión pre-registrada, si la hubo), las filas absolutas por estrato, cada
-    métrica comparativa en cada unidad de inferencia y las filas comparativas obligatorias."""
+    métrica comparativa en cada unidad de inferencia y las filas comparativas obligatorias.
+
+    R2-A-I1: el manifiesto lleva sus PARÁMETROS (ids custodiados, contingencia, extensión) y el
+    veredicto lo RECONSTRUYE desde el protocolo con ellos (`validar_inventario`): un manifiesto
+    hecho a mano (p. ej. con todas sus colecciones vacías) no coincide y no aprueba. La extensión
+    solo admite lo pre-registrado: ≤ 5 casos y exactamente 5 corridas más en cada uno (§6.2)."""
     ids_c = list(ids_custodiados)
-    if len(ids_c) != P.N_CASOS_C_VOLUMINOSOS:
-        raise ValueError(f"se esperan {P.N_CASOS_C_VOLUMINOSOS} casos custodiados, hay {len(ids_c)}")
-    todos = (*P.CASOS_A_CANONICOS, *P.CASOS_A_RIESGO, *P.CASOS_A_VOLUMINOSO, *P.CASOS_C_PEQUENOS, *ids_c)
+    if len(ids_c) != P.N_CASOS_C_VOLUMINOSOS or len(set(ids_c)) != len(ids_c):
+        raise ValueError(f"se esperan {P.N_CASOS_C_VOLUMINOSOS} casos custodiados distintos, hay {ids_c}")
+    fijos = (*P.CASOS_A_CANONICOS, *P.CASOS_A_RIESGO, *P.CASOS_A_VOLUMINOSO, *P.CASOS_C_PEQUENOS)
+    if not all(isinstance(i, str) and i for i in ids_c) or set(ids_c) & set(fijos):
+        raise ValueError("ids custodiados inválidos o repetidos con la muestra fija")
+    if not isinstance(contingencia, bool):
+        raise ValueError("contingencia debe ser booleana")
+    todos = (*fijos, *ids_c)
+    if len(todos) != P.N_CASOS_TOTAL:
+        raise ValueError(f"la muestra no tiene {P.N_CASOS_TOTAL} casos")
+    ext = dict(extension or {})
+    if len(ext) > P.EXTENSION_MAX_CASOS or any(
+            cid not in todos or v != P.EXTENSION_CORRIDAS or isinstance(v, bool)
+            for cid, v in ext.items()):
+        raise ValueError("extensión fuera del pre-registro (§6.2: ≤ 5 casos, 5 corridas más cada uno)")
     casos = {cid: {"estrato": P.estrato_de(cid, ids_c),
-                   "R": P.repeticiones(cid, ids_c, contingencia=contingencia)
-                   + int((extension or {}).get(cid, 0))} for cid in todos}
+                   "R": P.repeticiones(cid, ids_c, contingencia=contingencia) + int(ext.get(cid, 0))}
+             for cid in todos}
     filas = {(f, None) for f in FILAS_ABSOLUTAS_GLOBALES}
     filas |= {(f, e) for e in P.ESTRATOS_LECTURA_COMPLETA for f in FILAS_LECTURA_COMPLETA}
     filas |= {(f, e) for e in P.ESTRATOS_VOLUMINOSOS for f in FILAS_VOLUMINOSAS}
     filas |= {(f, e) for e in P.ESTRATOS for f in FILAS_TODO_ESTRATO}
     comparativas = {(m, u) for m in P.METRICAS_COMPARATIVAS for u in P.UNIDADES_INFERENCIA}
     return {"casos": casos, "filas_absolutas": filas, "comparativas": comparativas,
-            "filas_extra": set(FILAS_EXTRA_OBLIGATORIAS)}
+            "filas_extra": set(FILAS_EXTRA_OBLIGATORIAS),
+            "parametros": {"ids_custodiados": ids_c, "contingencia": contingencia, "extension": ext}}
 
 
-def filas_comparativas_obligatorias(*, base: Mapping[str, Mapping[str, Any]] | None,
+def validar_inventario(inventario: Any) -> tuple[dict | None, list[str]]:
+    """R2-A-I1: (inventario RECONSTRUIDO desde el protocolo, motivos). El inventario suministrado
+    solo vale si coincide en todo con el que el protocolo produce con sus mismos parámetros; si
+    no, (None, motivos) y el veredicto es no certificable."""
+    if not isinstance(inventario, Mapping) or not isinstance(inventario.get("parametros"), Mapping):
+        return None, ["inventario_sin_parametros"]
+    par = inventario["parametros"]
+    try:
+        esperado = inventario_esperado(par.get("ids_custodiados") or [],
+                                       contingencia=par.get("contingencia", False),
+                                       extension=par.get("extension"))
+    except (KeyError, TypeError, ValueError) as exc:
+        return None, [f"inventario_invalido:{exc}"]
+    distintos = [k for k in ("casos", "filas_absolutas", "comparativas", "filas_extra")
+                 if inventario.get(k) != esperado[k]]
+    if distintos:
+        return None, [f"inventario_no_coincide_con_el_protocolo:{k}" for k in distintos]
+    return esperado, []
+
+
+def casos_de_unidad(inventario: Mapping[str, Any], unidad: str) -> list[str]:
+    estratos = P.UNIDADES_INFERENCIA[unidad]["estratos"]
+    return sorted(cid for cid, e in inventario["casos"].items() if e["estrato"] in estratos)
+
+
+def _ambito_de_subida(subida: str) -> tuple[str | None, str]:
+    """('caso_id' | None, clave de `techo.consumo_por_ambito`)."""
+    if subida in ("total", "ponderado"):
+        return None, subida
+    cid, _, nombre = subida.rpartition(":")
+    return (cid or None), subida
+
+
+def atribucion_valida(subida: str, a: Any, *, comparativas: Iterable[Mapping[str, Any]],
+                      techo: Mapping[str, Any], inventario: Mapping[str, Any]) -> list[str]:
+    """R2-A-I2: motivos por los que una subida de cuota > 10 % NO queda atribuida (vacío = válida).
+
+    Exige, además de una comparativa con veredicto `mejora` en (métrica, unidad):
+      · ÁMBITO: si la subida es de un caso, la mejora está en una unidad de su mismo grupo (a/c);
+      · EVIDENCIA DE CONSUMO (`usage_by_node`): {base: {nodo: tokens}, nuevo: {nodo: tokens}} del
+        mismo ámbito, que SUMA exactamente lo que el techo midió en las dos versiones;
+      · NODO: existe en el consumo de 0.4 con tokens > 0, su consumo SUBIÓ y es el nodo que más
+        subió (la subida es atribuible a él). Un nodo inexistente o sin `usage_by_node` no vale.
+    Lo que no se puede acreditar mecánicamente es la causalidad nodo → métrica: queda declarado."""
+    if not isinstance(a, Mapping):
+        return ["sin_atribucion"]
+    m, u, nodo = a.get("metrica"), a.get("unidad"), a.get("nodo")
+    if not (isinstance(m, str) and isinstance(u, str) and isinstance(nodo, str) and nodo.strip()):
+        return ["atribucion_incompleta"]
+    out: list[str] = []
+    if (m, u) not in {(c.get("metrica"), c.get("unidad")) for c in comparativas
+                      if c.get("veredicto") == "mejora"}:
+        out.append("sin_mejora_en_la_metrica")
+    cid, ambito = _ambito_de_subida(subida)
+    if cid is not None:
+        # Ámbito de una subida de UN caso: la mejora tiene que estar en una unidad de su mismo
+        # GRUPO, (a) o (c) — §6.2: la inferencia nunca cruza los grupos. No se exige la misma
+        # unidad porque A-voluminoso y C-pequeños son «sin inferencia» y nunca dan `mejora`.
+        e = (inventario.get("casos") or {}).get(cid)
+        grupos_u = ({P.GRUPO_DE_ESTRATO[x] for x in P.UNIDADES_INFERENCIA[u]["estratos"]}
+                    if u in P.UNIDADES_INFERENCIA else set())
+        if e is None or P.GRUPO_DE_ESTRATO.get(e["estrato"]) not in grupos_u:
+            out.append("mejora_fuera_del_ambito_de_la_subida")
+    medido = (techo.get("consumo_por_ambito") or {}).get(ambito)
+    uso = a.get("usage_by_node")
+    if not isinstance(uso, Mapping) or not all(isinstance(uso.get(k), Mapping) for k in ("base", "nuevo")):
+        return out + ["sin_usage_by_node"]
+    lados = {k: dict(uso[k]) for k in ("base", "nuevo")}
+    if not all(isinstance(n, str) and _entero_no_negativo(v) for d in lados.values() for n, v in d.items()):
+        return out + ["usage_by_node_invalido"]
+    if not isinstance(medido, Mapping) or any(sum(lados[k].values()) != medido.get(k)
+                                              for k in ("base", "nuevo")):
+        out.append("usage_by_node_no_suma_el_consumo_medido")
+    if lados["nuevo"].get(nodo, 0) <= 0:
+        return out + ["nodo_inexistente_en_el_consumo"]
+    deltas = {n: lados["nuevo"].get(n, 0) - lados["base"].get(n, 0)
+              for n in set(lados["base"]) | set(lados["nuevo"])}
+    if deltas[nodo] <= 0:
+        out.append("el_nodo_no_subio")
+    elif deltas[nodo] < max(deltas.values()):
+        out.append("otro_nodo_explica_mas_la_subida")
+    return out
+
+
+def filas_comparativas_obligatorias(*, inventario: Mapping[str, Any],
+                                    base: Mapping[str, Mapping[str, Any]] | None,
                                     nuevo: Mapping[str, Mapping[str, Any]] | None,
                                     decisivos_base: Mapping[str, Mapping[str, Fraction]] | None,
                                     decisivos_nuevo: Mapping[str, Mapping[str, Fraction]] | None,
                                     techo: Mapping[str, Any], comparativas: Iterable[Mapping[str, Any]],
                                     atribuciones: Iterable[Mapping[str, Any]] | None) -> list[dict]:
-    """I2: filas de §6.2/§6.3 que antes solo se calculaban. Entrada ausente ⇒ cumple None."""
+    """I2: filas de §6.2/§6.3 que antes solo se calculaban. Entrada ausente o INCOMPLETA respecto
+    del inventario (R2-A-I2) ⇒ cumple None (no certificable)."""
+    comparativas = list(comparativas)
+    casos_esp = sorted(inventario["casos"])
     filas: list[dict] = []
     for m in ("cobertura_hechos_materiales", "cobertura_hechos_decisivos"):
-        perd = None if base is None or nuevo is None else perdidas_por_caso(base, nuevo, m)
-        filas.append(_fila(f"perdida_por_caso:{m}", perd, "ningún caso pierde más de 0,20",
-                           None if perd is None else not perd, REPRUEBA))
-    perd = (None if decisivos_base is None or decisivos_nuevo is None
-            else decisivos_estables_perdidos(decisivos_base, decisivos_nuevo))
-    filas.append(_fila("decisivos_estables_perdidos", perd, "≥ 3/5 en 0.3.3 no cae a ≤ 1/5",
-                       None if perd is None else not perd, REPRUEBA))
+        perd, falt = ((None, ["sin_datos"]) if base is None or nuevo is None
+                      else perdidas_por_caso(base, nuevo, m, casos_esp))
+        f = _fila(f"perdida_por_caso:{m}", perd if not falt else {"faltantes": falt},
+                  "ningún caso pierde más de 0,20", None if falt else not perd, REPRUEBA)
+        f["casos_cubiertos"] = [] if falt else casos_esp
+        filas.append(f)
+    perd, falt = ((None, ["sin_datos"]) if decisivos_base is None or decisivos_nuevo is None
+                  else decisivos_estables_perdidos(decisivos_base, decisivos_nuevo, casos_esp))
+    f = _fila("decisivos_estables_perdidos", perd if not falt else {"faltantes": falt},
+              "≥ 3/5 en 0.3.3 no cae a ≤ 1/5", None if falt else not perd, REPRUEBA)
+    f["casos_cubiertos"] = [] if falt else casos_esp
+    filas.append(f)
     subidas = techo.get("subidas_que_exigen_mejora_atribuible")
     if techo.get("resultado") not in ("cumple", "no_cumple") or subidas is None or atribuciones is None:
         filas.append(_fila("atribucion_de_subidas_de_cuota", subidas, "toda subida > 10 % con mejora",
                            None, REPRUEBA))
     else:
-        mejoras = {(c.get("metrica"), c.get("unidad")) for c in comparativas
-                   if c.get("veredicto") == "mejora"}
-        por_subida = {a.get("subida"): a for a in atribuciones}
-        sin = [s_ for s_ in subidas if s_ not in por_subida
-               or (por_subida[s_].get("metrica"), por_subida[s_].get("unidad")) not in mejoras
-               or not por_subida[s_].get("nodo")]
+        por_subida = {a.get("subida"): a for a in atribuciones if isinstance(a, Mapping)}
+        sin = {s_: m_ for s_ in subidas
+               if (m_ := atribucion_valida(s_, por_subida.get(s_), comparativas=comparativas,
+                                           techo=techo, inventario=inventario))}
         filas.append(_fila("atribucion_de_subidas_de_cuota", sin, "toda subida > 10 % con mejora "
-                           "atribuible por nodo", not sin, REPRUEBA))
+                           "atribuible por nodo y ámbito, con usage_by_node", not sin, REPRUEBA))
     return filas
 
 
-def _recibo_extension_valido(cmp_: Mapping[str, Any]) -> bool:
-    ext = cmp_.get("extension")
-    if not isinstance(ext, Mapping):
+def _iguales(a: Mapping[str, Any] | None, b: Mapping[str, Any] | None) -> bool:
+    if not isinstance(a, Mapping) or not isinstance(b, Mapping) or set(a) != set(b):
         return False
-    casos = list(ext.get("casos") or [])
-    return (0 < len(casos) <= P.EXTENSION_MAX_CASOS
-            and set(casos) <= set(casos_para_extension(cmp_)) | set(ext.get("casos_previos") or [])
-            and ext.get("corridas_por_caso") == P.EXTENSION_CORRIDAS
-            and ext.get("veredicto_final") in P.VEREDICTOS_COMPARATIVOS)
+    return all(abs(float(a[k]) - float(b[k])) <= 1e-9 for k in a)
+
+
+def _motivos_recibo(c: Mapping[str, Any], recalculada: Mapping[str, Any],
+                    inventario: Mapping[str, Any], unidad_casos: list[str]) -> list[str]:
+    """R2-A-I1: el recibo de la extensión vale solo si está VINCULADO a lo que de verdad ocurrió:
+      · la comparativa PREVIA (antes de extender) era `no_concluyente` en la misma métrica y unidad;
+      · los casos extendidos son EXACTAMENTE los que fija la regla (`casos_para_extension`, ≤ 5);
+      · 5 corridas más por caso, y el INVENTARIO las incluye (así el veredicto exige que existan,
+        con identidad única, juzgadas por los dos jueces, y que el techo cuente su consumo);
+      · `veredicto_final` es el que da el RECÁLCULO hecho aquí con los datos ya extendidos."""
+    ext = c.get("extension")
+    if not isinstance(ext, Mapping):
+        return ["sin_recibo_de_extension"]
+    out: list[str] = []
+    previa = ext.get("comparativa_previa")
+    casos_ext = ext.get("casos")
+    if (not isinstance(previa, Mapping) or previa.get("veredicto") != "no_concluyente"
+            or (previa.get("metrica"), previa.get("unidad")) != (c.get("metrica"), c.get("unidad"))
+            or not isinstance(previa.get("diferencia_por_caso"), Mapping)
+            or not set(previa["diferencia_por_caso"]) <= set(unidad_casos)):
+        out.append("recibo_sin_comparativa_previa_no_concluyente")
+    elif (not isinstance(casos_ext, list) or not 0 < len(casos_ext) <= P.EXTENSION_MAX_CASOS
+          or sorted(casos_ext) != sorted(casos_para_extension(previa))):
+        out.append("recibo_con_casos_fuera_de_la_regla")
+    if ext.get("corridas_por_caso") != P.EXTENSION_CORRIDAS:
+        out.append("recibo_con_corridas_distintas_de_5")
+    ext_inv = (inventario.get("parametros") or {}).get("extension") or {}
+    if not isinstance(casos_ext, list) or any(ext_inv.get(cid) != P.EXTENSION_CORRIDAS
+                                              for cid in casos_ext):
+        out.append("recibo_sin_corridas_adicionales_en_el_inventario")
+    if ext.get("veredicto_final") != recalculada.get("veredicto"):
+        out.append("recibo_no_coincide_con_el_recalculo")
+    return out
+
+
+def _completitud_version(nombre: str, casos: Mapping[str, Mapping[str, Any]] | None,
+                         esperados: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Casos, estrato y repeticiones EXACTAS {1..R} (únicas, todas juzgadas por los dos jueces)
+    de UNA versión (R2-A-N1)."""
+    if not isinstance(casos, Mapping):
+        return [f"{nombre}:sin_casos"]
+    motivos: list[str] = []
+    for cid in sorted(set(esperados) - set(casos)):
+        motivos.append(f"{nombre}:falta_caso:{cid}")
+    for cid in sorted(set(casos) - set(esperados)):
+        motivos.append(f"{nombre}:caso_fuera_del_inventario:{cid}")
+    for cid, esp in sorted(esperados.items()):
+        f = casos.get(cid)
+        if f is None:
+            continue
+        R = esp["R"]
+        if f.get("estrato") != esp["estrato"]:
+            motivos.append(f"{nombre}:estrato_distinto:{cid}")
+        reps = list(f.get("repeticiones") or [])
+        if (int(f.get("R") or 0) != R or reps != list(range(1, R + 1))
+                or int(f.get("repeticiones_invalidas") or 0) != 0):
+            motivos.append(f"{nombre}:repeticiones_no_coinciden:{cid}:{reps}/1..{R}")
+        if (int(f.get("n_evaluadas") or 0) != R
+                or list(f.get("repeticiones_evaluadas") or []) != list(range(1, R + 1))):
+            motivos.append(f"{nombre}:corridas_sin_evaluar:{cid}:{f.get('n_evaluadas')}/{R}")
+    return motivos
 
 
 def veredicto_global(*, inventario: Mapping[str, Any], casos: Mapping[str, Mapping[str, Any]],
+                     casos_base: Mapping[str, Mapping[str, Any]], semilla: bytes | int,
                      absolutos: list[dict], comparativas: list[dict], techo: Mapping[str, Any],
                      filas_extra: list[dict], suspendido: bool = False, salidas_sin_juzgar: int = 0,
                      otros_motivos_no_certificable: Iterable[str] = ()) -> dict:
     """aprueba / reprueba / no_certificable contra el INVENTARIO completo (I1, I2).
 
-    Toda ausencia aplicable (caso, corrida evaluada, fila, métrica comparativa, dato) ⇒ no
-    certificable. `no_concluyente` solo vale con recibo de la extensión pre-registrada. Una sola
-    fila roja reprueba. Precedencia declarada: no_certificable > reprueba > aprueba."""
+    R2-A: nada se confía al llamador. El inventario se reconstruye desde el protocolo; las dos
+    versiones deben traer cada caso con sus repeticiones EXACTAS {1..R}; cada comparativa se
+    RECALCULA aquí desde las dos versiones (y la suministrada tiene que coincidir); las pérdidas por
+    caso se recalculan; el techo tiene que cubrir los 17 casos con las R del inventario en las dos
+    versiones; `no_concluyente` solo vale con un recibo vinculado a la extensión efectivamente
+    corrida y juzgada. Toda ausencia aplicable ⇒ no certificable. Una sola fila roja reprueba.
+    Precedencia declarada: no_certificable > reprueba > aprueba."""
     rojas: list[str] = []
     motivos: list[str] = list(otros_motivos_no_certificable)
-    # 1 · casos, repeticiones y evaluación por los dos jueces
-    esperados = inventario["casos"]
-    for cid in sorted(set(esperados) - set(casos)):
-        motivos.append(f"falta_caso:{cid}")
-    for cid in sorted(set(casos) - set(esperados)):
-        motivos.append(f"caso_fuera_del_inventario:{cid}")
-    for cid, esp in sorted(esperados.items()):
-        f = casos.get(cid)
-        if f is None:
-            continue
-        if f.get("estrato") != esp["estrato"]:
-            motivos.append(f"estrato_distinto:{cid}")
-        if int(f.get("R") or 0) != esp["R"]:
-            motivos.append(f"repeticiones_incompletas:{cid}:{f.get('R')}/{esp['R']}")
-        if int(f.get("n_evaluadas") or 0) != esp["R"]:
-            motivos.append(f"corridas_sin_evaluar:{cid}:{f.get('n_evaluadas')}/{esp['R']}")
+    esperado, mot_inv = validar_inventario(inventario)
+    if esperado is None:
+        return {"veredicto": NO_CERTIFICABLE, "filas_rojas": [],
+                "motivos_no_certificable": motivos + mot_inv, "rotulo": P.ROTULO_AUTOMATICO}
+    # 1 · casos, repeticiones (identidad única) y evaluación por los dos jueces, en las DOS versiones
+    motivos += _completitud_version("nuevo", casos, esperado["casos"])
+    motivos += _completitud_version("base", casos_base, esperado["casos"])
+    casos_base = casos_base if isinstance(casos_base, Mapping) else {}
     # 2 · filas absolutas
     presentes = {(f["fila"], f.get("estrato")) for f in absolutos}
-    for fila, est in sorted(inventario["filas_absolutas"] - presentes, key=str):
+    for fila, est in sorted(esperado["filas_absolutas"] - presentes, key=str):
         motivos.append(f"falta_fila:{fila}{'@' + est if est else ''}")
     for f in absolutos:
         nombre = f"{f['fila']}{'@' + f['estrato'] if f.get('estrato') else ''}"
@@ -863,47 +1178,82 @@ def veredicto_global(*, inventario: Mapping[str, Any], casos: Mapping[str, Mappi
             motivos.append(f"sin_dato:{nombre}")
         elif f["cumple"] is False:
             (motivos if f["efecto_si_falla"] == NO_CERTIFICABLE else rojas).append(nombre)
-    # 3 · comparativas
-    vistas = {(c.get("metrica"), c.get("unidad")) for c in comparativas}
-    for m, u in sorted(inventario["comparativas"] - vistas):
-        motivos.append(f"falta_comparativa:{m}@{u}")
-    for c in comparativas:
-        nombre = f"comparativa:{c.get('metrica')}@{c.get('unidad')}"
-        v = c.get("veredicto")
+    # 3 · comparativas: RECALCULADAS aquí; la suministrada debe coincidir
+    por_clave = {(c.get("metrica"), c.get("unidad")): c for c in comparativas}
+    recalculadas: list[dict] = []
+    extendidos: set[str] = set()
+    for m, u in sorted(esperado["comparativas"]):
+        nombre = f"comparativa:{m}@{u}"
+        ucasos = casos_de_unidad(esperado, u)
+        rc = comparar_metrica(metrica=m, unidad=u, base=casos_base, nuevo=casos, casos=ucasos,
+                              semilla=semilla)
+        c = por_clave.get((m, u))
+        if c is None:
+            motivos.append(f"falta_comparativa:{m}@{u}")
+            continue
+        recalculadas.append({**rc, **({"extension": c["extension"]} if "extension" in c else {})})
+        if (c.get("veredicto") != rc["veredicto"]
+                or not _iguales(c.get("diferencia_por_caso"), rc["diferencia_por_caso"])):
+            motivos.append(f"comparativa_no_coincide_con_el_recalculo:{nombre}")
+            continue
+        v = rc["veredicto"]
         if v not in P.VEREDICTOS_COMPARATIVOS:
             motivos.append(f"veredicto_desconocido:{nombre}")
-        elif c.get("sin_dato"):
+            continue
+        if rc.get("sin_dato"):
             motivos.append(f"sin_dato:{nombre}")
-        elif v == "regresion":
-            rojas.append(nombre)
-        elif v == "no_concluyente":
-            if not _recibo_extension_valido(c):
-                motivos.append(f"no_concluyente_sin_recibo_de_extension:{nombre}")
-            elif c["extension"]["veredicto_final"] == "regresion":
-                rojas.append(nombre + ":tras_extension")
-    # 4 · filas comparativas obligatorias (I2)
+            continue
+        if "extension" in c:
+            mr = _motivos_recibo(c, rc, esperado, ucasos)
+            if mr:
+                motivos += [f"{x}:{nombre}" for x in mr]
+            else:
+                extendidos |= set(c["extension"]["casos"])
+        if v == "regresion":
+            rojas.append(nombre + (":tras_extension" if "extension" in c else ""))
+        elif v == "no_concluyente" and "extension" not in c:
+            motivos.append(f"no_concluyente_sin_recibo_de_extension:{nombre}")
+    for cid in sorted(set(esperado["parametros"]["extension"]) - extendidos):
+        motivos.append(f"extension_sin_recibo_valido:{cid}")
+    # 4 · filas comparativas obligatorias (I2): presentes, completas y, las de pérdida, recalculadas
     vistas_extra = {f["fila"] for f in filas_extra}
-    for fila in sorted(inventario["filas_extra"] - vistas_extra):
+    for fila in sorted(esperado["filas_extra"] - vistas_extra):
         motivos.append(f"falta_fila:{fila}")
+    casos_esp = sorted(esperado["casos"])
     for f in filas_extra:
+        if f["fila"].startswith("perdida_por_caso:"):
+            perd, falt = perdidas_por_caso(casos_base, casos, f["fila"].split(":", 1)[1], casos_esp)
+            if falt:
+                motivos.append(f"sin_dato:{f['fila']}")
+            elif perd:
+                rojas.append(f["fila"])
+            continue
+        if f["fila"] == "decisivos_estables_perdidos" and f.get("casos_cubiertos") != casos_esp:
+            motivos.append(f"fila_incompleta:{f['fila']}")
+            continue
         if f["cumple"] is None:
             motivos.append(f"sin_dato:{f['fila']}")
         elif f["cumple"] is False:
             rojas.append(f["fila"])
-    # 5 · techo
+    # 5 · techo: tiene que cubrir los 17 casos con las R del inventario en las dos versiones
     if techo.get("resultado") == NO_CERTIFICABLE:
         motivos.append("techo_no_certificable")
-    elif techo.get("resultado") == "no_cumple":
-        rojas.append("techo_de_cuota")
-    elif techo.get("resultado") != "cumple":
+    elif techo.get("resultado") not in ("cumple", "no_cumple"):
         motivos.append("techo_ausente")
+    else:
+        r_esp = {cid: e["R"] for cid, e in esperado["casos"].items()}
+        rpc = techo.get("R_por_caso") or {}
+        if rpc.get("base") != r_esp or rpc.get("nuevo") != r_esp:
+            motivos.append("techo_no_cubre_el_inventario")
+        elif techo["resultado"] == "no_cumple":
+            rojas.append("techo_de_cuota")
     if suspendido:
         motivos.append(P.ROTULO_SUSPENSION)
     if salidas_sin_juzgar:
         motivos.append(f"salidas_sin_juzgar:{salidas_sin_juzgar}")
     veredicto = NO_CERTIFICABLE if motivos else (REPRUEBA if rojas else "aprueba")
     return {"veredicto": veredicto, "filas_rojas": rojas, "motivos_no_certificable": motivos,
-            "rotulo": P.ROTULO_AUTOMATICO}
+            "rotulo": P.ROTULO_AUTOMATICO, "comparativas_recalculadas": recalculadas}
 
 
 def resumen_publicable(veredicto: Mapping[str, Any], comparativas: Iterable[Mapping[str, Any]] = (),
@@ -975,7 +1325,16 @@ def _refs_hecho(h: Mapping[str, Any]) -> list[tuple]:
     fin}]); si no, solo los fragmentos (y entonces se exige el fragmento completo)."""
     doc = str(h["documento"])
     if h.get("rangos"):
-        return [(doc, int(r["fragmento"]), int(r["inicio"]), int(r["fin"])) for r in h["rangos"]]
+        frs = {int(f) for f in h.get("fragmentos") or []}
+        out = []
+        for r in h["rangos"]:
+            # R2-A-N2: la clave no puede traer un rango invertido, vacío o negativo, ni un rango
+            # de un fragmento que el hecho no declara. Es la clave la que está mal: falla cerrado.
+            a, b = _par_entero((r.get("inicio"), r.get("fin")))
+            if a is None or not 0 <= a < b or int(r["fragmento"]) not in frs:
+                raise ValueError(f"R2-A-N2: rango inválido en la clave para {h.get('id')!r}: {r}")
+            out.append((doc, int(r["fragmento"]), a, b))
+        return out
     return [(doc, int(f)) for f in h["fragmentos"]]
 
 
