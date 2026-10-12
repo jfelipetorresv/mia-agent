@@ -1,6 +1,6 @@
 # Banco de calidad 0.4 — Protocolo (fijado antes de correr)
 
-Versión del protocolo: **banco04-v1.2** · Fecha: 2026-10-11 · Plan: `como-vamos-con-la-robust-llama.md`
+Versión del protocolo: **banco04-v1.3** · Fecha: 2026-10-11 · Plan: `como-vamos-con-la-robust-llama.md`
 (Bloque 0, contrato 11, respuestas a Astra rondas 1-2, objeciones N1 y O17). La v1.1 incorporó la
 primera revisión de Codex Astra (NO APTO, 12 objeciones). La v1.2 incorpora su segunda revisión
 (cinco parciales y N1-N5) y las decisiones de Pipe del 2026-10-11 (§11). Detalle de los cambios en
@@ -1224,3 +1224,60 @@ Astra emitió APTO CON CAMBIOS en la ronda 3 (2026-10-11), condicionado a dos co
 sobre el kappa con clase única (N2): §8.5 y la prueba de §10.2.13. El director las aplicó textualmente.
 Con ellas, **banco04-v1.2 queda congelado**. Cualquier cambio posterior abre una versión nueva con su
 propia revisión, antes de correr el banco, nunca después.
+
+### 12.4 Aclaraciones de interpretación durante la implementación (2026-10-12)
+
+No cambian umbrales, muestra ni métricas; fijan la lectura del texto congelado donde era ambiguo.
+Las decide el director y quedan sujetas a la revisión de Astra sobre el código.
+
+- **C2.** `pasaje_contradictorio.fuente` admite también `expediente:<pieza_id>` para las piezas no
+  leídas.
+- **C3.** Si tras el reintento solo quedan errores de pasaje, manda la regla específica: esos átomos
+  pasan a presunto `sin_respaldo` y la presunción se propaga a las inferencias que dependen de ellos.
+  Cualquier error estructural deja la salida no evaluada.
+- **C3-bis.** La negativa falsa que solo detecta la pasada 2 se resuelve por ubicación y voto ciego.
+- **C4.** Tres estados distintos con al menos un defecto cuentan como discordancia. En cualquier otro
+  caso decide la mayoría binaria (defecto / no defecto).
+- **C5.** Un átomo sale del kappa solo si los dos jueces lo marcaron `no_aplica`.
+- **C6.** En las celdas de §7.2 sin efecto declarado sobre el proxy se aplica el efecto de la celda
+  homóloga, con la marca `proxy_inferido`.
+- **C7.** Un punto está disponible si entraron todos sus fragmentos, o todos sus hechos cuando no
+  lista fragmentos. Una laguna real siempre cuenta como disponible.
+- **C9.** Sin lista de partes, se rechazan los nombres propios que el material escribe con mayúscula
+  a mitad de frase. La lista cerrada de exclusiones se completa con ordinales y rótulos procesales
+  (`protocolo.ROLES_Y_ROTULOS`).
+- **C10.** Un átomo es compuesto según la heurística versionada en `protocolo.py`; para declararlo
+  una sola proposición se usa el prefijo `UNA_PROPOSICION:`.
+- **C11.** El evaluador usa una copia congelada de las funciones de segmentación de
+  `agents/verification.py` en 7b9aaa0 (`eval/banco04/evaluador_congelado.py`), para que los Bloques 0
+  y 7 sigan siendo comparables.
+- **C13 (REVOCADA el 2026-10-12 por I7 de Astra; ver §12.5).** La primera lectura excluía del
+  material la configuración de jurisdicción. Era errónea: tener pasaje no prueba que la norma sea
+  aplicable al ordenamiento configurado.
+- **C14.** Los esquemas de la pasada 2, del tercer voto y del voto de cobertura los fija el código.
+- **C15.** Precedencia de veredictos: `no_certificable` > `reprueba` > `aprueba`.
+- **C16.** La regla de cifras de P5 se aplica por átomo.
+- **C8 y C12 quedan abiertas.**
+  - C8: el alcance se mide con la lista real de fragmentos que entraron al prompt.
+  - C12: si la tanda piloto muestra que la reserva del juicio no alcanza, se lleva a Pipe antes de la
+    línea base.
+- **C17 (reserva del juicio del Bloque 7).** Se reservan unos 13 M de cuota Claude y 6 M de Codex,
+  derivados de las partidas del Bloque 7 en §3.2. En Codex la reserva no es «total», como sí lo es en el
+  Bloque 0, porque 0.4 usa Codex en producción (revisión 5C encendida por defecto).
+
+### 12.5 Versión banco04-v1.3 (2026-10-12): jurisdicción en el material del juez
+
+Motivo: la objeción I7 de Astra a la implementación. Una norma puede tener pasaje en el corpus y
+aun así pertenecer a un ordenamiento que el despacho no tiene configurado. Sin conocer esa
+configuración, el juez no puede medir la fuga de §5.7.
+
+Cambio único: el material del juez de §8.2 incluye las **jurisdicciones configuradas del despacho**
+como contexto permitido, tanto en la validación de los jueces (§8.6) como en la medición real. La
+norma respaldada pero no habilitada cuenta como `fuga`. No cambian ni la muestra, ni las
+repeticiones, ni las métricas, ni los umbrales, ni los techos. La versión se fija antes de cualquier
+corrida; v1.2 no llegó a ejecutarse.
+
+Versión de la custodia: el formato y los artefactos custodiados siguen en `banco04-v1.2`
+(`protocolo.PROTOCOLO_CUSTODIA`), con su AAD ligada a esa versión. La v1.3 no cambia ningún artefacto
+custodiado, así que la versión del protocolo (`VERSION_PROTOCOLO`) y la de la custodia se versionan por
+separado.

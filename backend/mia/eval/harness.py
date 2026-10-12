@@ -567,6 +567,78 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         # `source="eval"` separa el gasto del banco del de los turnos del abogado en
         # `turn_usage`.
         scope_token = usage_metrics.set_usage_scope(tenant_id, matter_id, source="eval")
+        # BANCO 0.4 · C8 — la lista REAL de fragmentos que entraron al prompt, DESPUÉS de cualquier
+        # recorte por contexto (`shrink_documents`) y de la relectura dirigida (que añade fragmentos
+        # que `state["documents"]` no trae). Se OBSERVA sin tocar el producto: cada prompt que lleva
+        # el expediente pasa por `untrusted.render_documents` (se guarda texto renderizado → filas) y
+        # por `llm.call_llm` (se busca ese texto dentro de los mensajes enviados). Solo cuentan las
+        # llamadas que TERMINARON bien. Los parches viven lo que dura el turno y se restauran SIEMPRE.
+        _capt: dict[str, Any] = {"renders": {}, "llamadas": [], "sin_identificar": 0,
+                                 "instalada": False, "error": None}
+        _untrusted_mod = _orig_render = _orig_call = None
+        try:
+            from ..agents import context_recovery as _context_recovery
+            from ..agents import untrusted as _untrusted_mod
+            _orig_render, _orig_call = _untrusted_mod.render_documents, llm_mod.call_llm
+
+            def _render_capturado(doc_list):
+                salida_render = _orig_render(doc_list)
+                try:
+                    filas = []
+                    for d in (doc_list or []):
+                        d = d if isinstance(d, dict) else {"content": str(d)}
+                        cont = str(d.get("content") or "")
+                        # I3 — `shrink_documents` deja el PREFIJO del fragmento + este marcador:
+                        # lo enviado es `[0, len(prefijo))`; el resto NO llegó al modelo.
+                        marcador_corte = _context_recovery.DOC_TRUNCATED_MARKER
+                        cortado = cont.endswith(marcador_corte)
+                        enviado = cont[:-len(marcador_corte)] if cortado else cont
+                        filas.append({"id": d.get("id"), "document_id": d.get("document_id"),
+                                      "filename": d.get("filename"), "ord": d.get("ord"),
+                                      "chars_enviados": len(enviado), "truncado_marcador": cortado,
+                                      "chars": len(cont),
+                                      "sha256": hashlib.sha256(cont.encode("utf-8")).hexdigest()})
+                    if filas:
+                        _capt["renders"][salida_render] = filas
+                except Exception as exc:  # noqa: BLE001
+                    _capt["error"] = f"render: {type(exc).__name__}: {exc}"
+                return salida_render
+
+            def _registrar_llamada(messages, task, ok):
+                partes = []
+                for m in (messages or []):
+                    cuerpo = m.get("content") if isinstance(m, dict) else m
+                    if isinstance(cuerpo, list):
+                        partes += [str(b.get("text", "")) if isinstance(b, dict) else str(b)
+                                   for b in cuerpo]
+                    else:
+                        partes.append(str(cuerpo or ""))
+                texto = "\n".join(partes)
+                filas = [f for salida_render, fs in list(_capt["renders"].items())
+                         if salida_render in texto for f in fs]
+                if filas:
+                    _capt["llamadas"].append({"task": task, "ok": ok, "fragmentos": [
+                        dict(f, n=i + 1) for i, f in enumerate(filas)]})
+                elif "<<<DOC" in texto:
+                    _capt["sin_identificar"] += 1          # sellos que no coinciden con ningún render
+
+            def _call_capturado(messages, *a, **k):
+                ok = False
+                try:
+                    res = _orig_call(messages, *a, **k)
+                    ok = True
+                    return res
+                finally:
+                    try:
+                        _registrar_llamada(messages, k.get("task"), ok)
+                    except Exception as exc:  # noqa: BLE001
+                        _capt["error"] = f"llamada: {type(exc).__name__}: {exc}"
+
+            _untrusted_mod.render_documents = _render_capturado
+            llm_mod.call_llm = _call_capturado
+            _capt["instalada"] = True
+        except Exception as exc:  # noqa: BLE001 — sin captura el turno corre igual y se declara
+            _capt["error"] = f"instalacion: {type(exc).__name__}: {exc}"
         try:
             # El runtime HTTP abre este recolector alrededor de cada turno. El banco debe
             # reproducir la misma frontera: además de evitar pagar otra vez un CLI ya agotado
@@ -579,6 +651,9 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
                         pass
                     st = await graph.aget_state(cfg)
         finally:
+            if _capt["instalada"]:
+                _untrusted_mod.render_documents = _orig_render
+                llm_mod.call_llm = _orig_call
             usage_metrics.reset_usage_scope(scope_token)
     elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
 
@@ -669,6 +744,133 @@ async def run_case(tenant_id: str, case: GoldenCase, *, tenant_allow_real: Optio
         # Sin juez (S5): calificación DETERMINISTA de cobertura de citas y conclusiones clave.
         # No sale a la red, así que no hay nada que gobernar.
         result["substantive"] = substantive_score(draft, diagnosis, case.rubric)
+
+    # BANCO 0.4 · ítem 4 (§9.4 «Material del turno») — ADITIVO: solo añade claves, no cambia
+    # ninguna señal ni el flujo. Antes el material que el turno leyó no se persistía, y sin él el
+    # juez no puede comprobar un [doc n] ni saber qué se leyó. Se calcula con lo que ya existe
+    # aquí; si algo falla, el turno SIGUE y el fallo queda escrito en `errores_instrumentacion`
+    # (una instrumentación rota se declara, nunca se traga ni tumba la corrida).
+    #   · `documents_map`: `state["documents"]` EN ORDEN de sellado (posición i → [doc i+1]).
+    #     Es la lista de intake, ANTERIOR a cualquier `_shrink` por contexto de los nodos: por
+    #     eso se rotula así y no «lo que entró al prompt» (`recorte_posible_por_contexto`).
+    #     El `content` completo solo viaja con `MIA_EVAL_PERSIST_FULL=1` (el runner lo activa);
+    #     sin él queda el sha256 de cada fragmento para poder comprobarlo después.
+    #   · `soul_sha256`: hash de los BYTES del SOUL del tenant (None si no existe).
+    #   · `cli_version`: la fija el runner por entorno (`MIA_EVAL_CLI_VERSION`); aquí no se
+    #     lanza ningún subproceso.
+    #   · `intentos_fallidos`: los intentos fallidos del caso con su cota (`spend_guard`).
+    errores_instrumentacion: list[str] = []
+    material_turno: dict[str, Any] = {}
+    try:
+        import json as _json
+
+        def _jsonable(valor: Any) -> Any:
+            return _json.loads(_json.dumps(valor, ensure_ascii=False, default=str))
+
+        persistir_completo = os.getenv("MIA_EVAL_PERSIST_FULL", "").strip() == "1"
+        mapa: list[dict[str, Any]] = []
+        for pos, fragmento in enumerate(values.get("documents") or [], 1):
+            if not isinstance(fragmento, dict):
+                fragmento = {"content": str(fragmento)}
+            contenido = str(fragmento.get("content") or "")
+            fila: dict[str, Any] = {
+                "n": pos, "id": fragmento.get("id"),
+                "document_id": fragmento.get("document_id"),
+                "filename": fragmento.get("filename"), "ord": fragmento.get("ord"),
+                "folio_ancla": fragmento.get("folio_ancla"), "chars": len(contenido),
+                "sha256": hashlib.sha256(contenido.encode("utf-8")).hexdigest(),
+            }
+            if persistir_completo:
+                fila["content"] = contenido
+            mapa.append(fila)
+        material_turno["documents_map"] = _jsonable(mapa)
+        material_turno["documents_origen"] = "state['documents'] de intake (anterior a _shrink)"
+        material_turno["recorte_posible_por_contexto"] = True   # ver `fragmentos_en_prompt`/`entraron`
+        material_turno["contenido_completo_persistido"] = persistir_completo
+        # C8 · lo que de verdad entró al prompt (ver el bloque de captura de arriba)
+        intake_chars = {str(d.get("id")): len(str(d.get("content") or ""))
+                        for d in (values.get("documents") or []) if isinstance(d, dict)}
+        detalle: dict[tuple, dict] = {}
+        for llamada in _capt["llamadas"]:
+            if not llamada["ok"]:
+                continue
+            for f in llamada["fragmentos"]:
+                clave = (f.get("filename"), f.get("ord")) if (
+                    f.get("filename") is not None and f.get("ord") is not None) else ("id", f.get("id"))
+                fila = detalle.setdefault(clave, {
+                    "id": f.get("id"), "document_id": f.get("document_id"),
+                    "filename": f.get("filename"), "ord": f.get("ord"), "max_chars": 0,
+                    "max_enviados": 0, "marcador_en_el_mayor": False, "visto_sin_marcador": 0,
+                    "n_llamadas": 0, "tasks": []})
+                fila["max_chars"] = max(fila["max_chars"], f["chars"])
+                if f["chars_enviados"] > fila["max_enviados"]:
+                    fila["max_enviados"] = f["chars_enviados"]
+                    fila["marcador_en_el_mayor"] = bool(f["truncado_marcador"])
+                if not f["truncado_marcador"]:
+                    fila["visto_sin_marcador"] = max(fila["visto_sin_marcador"], f["chars_enviados"])
+                fila["n_llamadas"] += 1
+                if llamada["task"] not in fila["tasks"]:
+                    fila["tasks"].append(llamada["task"])
+        for fila in detalle.values():
+            # largo ORIGINAL: el de intake si lo hay; si no (fragmento que añadió la relectura),
+            # el del render en que llegó SIN marcador de corte; si solo llegó cortado, se ignora.
+            original = intake_chars.get(str(fila["id"]))
+            if original is None and fila["visto_sin_marcador"] > 0:
+                original = fila["visto_sin_marcador"]
+            fila["chars_original"] = original
+            # TRAMO efectivamente enviado: el prefijo [0, max_enviados). Un fragmento solo cuenta
+            # como leído COMPLETO si el tramo cubre todo el original y no lo cortó el marcador.
+            fila["tramos"] = [[0, fila["max_enviados"]]]
+            fila["completo"] = bool(original is not None and fila["max_enviados"] >= original
+                                    and not fila["marcador_en_el_mayor"])
+            fila["parcial"] = not fila["completo"]
+        con_clave = [v for k, v in detalle.items() if k[0] != "id"]
+        medido = bool(_capt["instalada"]) and _capt["error"] is None
+        material_turno["fragmentos_en_prompt"] = _jsonable({
+            "metodo": "render_documents + call_llm observados durante el turno (llamadas exitosas)",
+            "medido": medido, "completo": medido and _capt["sin_identificar"] == 0,
+            "llamadas_sin_identificar": _capt["sin_identificar"], "error_captura": _capt["error"],
+            "llamadas": [{"task": c["task"], "ok": c["ok"], "n_fragmentos": len(c["fragmentos"]),
+                          "fragmentos": c["fragmentos"]} for c in _capt["llamadas"]],
+            "detalle": list(detalle.values()),
+            "fragmentos_sin_clave_documento_orden": len(detalle) - len(con_clave)})
+        # `entraron` = lo que consume `banco04.metricas` ((documento, índice) de la clave); None si
+        # no se pudo medir: sin lista no se presume lectura.
+        material_turno["entraron"] = (
+            _jsonable([[v["filename"], v["ord"]] for v in con_clave if v["completo"]])
+            if medido else None)
+        # I3 — NUNCA se certifica lectura completa de un fragmento cortado: va aparte, con sus tramos.
+        material_turno["entraron_parcial"] = (
+            _jsonable([[v["filename"], v["ord"]] for v in con_clave if v["parcial"]])
+            if medido else None)
+        material_turno["entraron_tramos"] = (_jsonable([
+            {"documento": v["filename"], "indice": v["ord"], "id": v["id"],
+             "chars_original": v["chars_original"], "tramos": v["tramos"],
+             "completo": v["completo"]} for v in con_clave]) if medido else None)
+        material_turno["research_sources"] = _jsonable(md.get("research_sources"))
+        material_turno["alcance_lectura"] = _jsonable(md.get("alcance_lectura"))
+    except Exception as exc:  # noqa: BLE001 — la instrumentación no tumba el turno
+        errores_instrumentacion.append(f"material: {type(exc).__name__}: {exc}")
+    try:
+        from ..onboarding import soul_interview as _soul
+
+        ruta_soul = _soul.soul_path(tenant_id)
+        material_turno["soul_sha256"] = (
+            hashlib.sha256(ruta_soul.read_bytes()).hexdigest() if ruta_soul.is_file() else None)
+    except Exception as exc:  # noqa: BLE001
+        material_turno["soul_sha256"] = None
+        errores_instrumentacion.append(f"soul: {type(exc).__name__}: {exc}")
+    material_turno["cli_version"] = os.getenv("MIA_EVAL_CLI_VERSION", "").strip() or None
+    try:
+        import json as _json2
+
+        result["intentos_fallidos"] = _json2.loads(_json2.dumps(
+            list(getattr(case_usage, "intentos_fallidos", None) or []), default=str))
+    except Exception as exc:  # noqa: BLE001
+        result["intentos_fallidos"] = None
+        errores_instrumentacion.append(f"intentos_fallidos: {type(exc).__name__}: {exc}")
+    material_turno["errores_instrumentacion"] = errores_instrumentacion
+    result["material_turno"] = material_turno
 
     return result
 

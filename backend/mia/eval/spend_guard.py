@@ -1076,6 +1076,66 @@ def _capped_kwargs(kwargs: dict) -> dict:
     return {**kwargs, "max_tokens": EVAL_MAX_OUTPUT_TOKENS}
 
 
+# I4 · COTA REAL de un intento por CLI (banco 0.4). `max_tokens` no llega al CLI, pero en una llamada
+# de UN solo turno SIN herramientas la salida no puede pasar del máximo de tokens de salida del modelo
+# (en la API ese máximo cubre también el razonamiento). Tabla VERSIONADA, con fuente y fecha; un modelo
+# sin dato documentado NO tiene cota (queda desconocida y el techo no certificable).
+CLI_SALIDA_MAXIMA: dict = {
+    "version": "2026-10-12",
+    "fuente": ("https://platform.claude.com/docs/en/about-claude/models/overview — fila «Max output» "
+               "(API síncrona): Claude Fable 5.1, Opus 5.5, Sonnet 5.5 y Haiku 5.5 = 128K tokens; "
+               "consultada el 2026-10-12. Se toma 128×1024 para no subestimar."),
+    # clave = alias de modelo que `subscription_llm` pasa al CLI (`--model`); los alias opus/sonnet/haiku
+    # son punteros flotantes: ningún modelo vigente ni anterior documentado supera 128K en síncrono.
+    "claude": {"opus": 131_072, "sonnet": 131_072, "haiku": 131_072},
+    # `gpt-5.6-sol` (codex_subscription_llm.DEFAULT_MODEL): SIN dato documentado de salida máxima → sin cota.
+    "codex": {},
+}
+
+
+def _flag_con_valor(flags: list, nombre: str, valor: str) -> bool:
+    return any(f == nombre and i + 1 < len(flags) and flags[i + 1] == valor for i, f in enumerate(flags))
+
+
+def cota_salida_cli(alias: str) -> tuple:
+    """(máximo de salida | None, motivo/fuente). Solo hay cota si la invocación REAL de MIA es de un
+    solo turno y sin herramientas (se lee de `subscription_llm`/`codex_subscription_llm` en vivo: si el
+    día de mañana se permiten herramientas o un bucle, la cota vuelve a ser desconocida) y el modelo
+    tiene máximo documentado en `CLI_SALIDA_MAXIMA`."""
+    alias = str(alias or "")
+    try:
+        if alias.startswith("cli-codex"):
+            from ..agent import codex_subscription_llm as cx
+            cmd = [str(x) for x in cx._command(Path("codex"), schema=Path("s"), output=Path("o"), effort="high")]
+            un_turno = (_flag_con_valor(cmd, "--sandbox", "read-only")
+                        and "features.shell_tool=false" in cx._overrides("high")
+                        and "agents.enabled=false" in cx._overrides("high")
+                        and "exec" in cmd and "--ephemeral" in cmd)
+            maximo = CLI_SALIDA_MAXIMA["codex"].get(cx.DEFAULT_MODEL)
+            if not un_turno:
+                return None, "la invocación de Codex no es de un solo turno sin herramientas"
+            if maximo is None:
+                return None, f"sin máximo de salida documentado para {cx.DEFAULT_MODEL}"
+            return int(maximo), f"codex {cx.DEFAULT_MODEL}: máximo documentado ({CLI_SALIDA_MAXIMA['version']})"
+        if alias.startswith("cli-"):
+            from ..agent import llm as llm_mod
+            from ..agent import subscription_llm as sub
+            fl = list(sub._BASE_FLAGS)
+            un_turno = (_flag_con_valor(fl, "--max-turns", "1") and _flag_con_valor(fl, "--tools", "")
+                        and "--strict-mcp-config" in fl and "-p" in fl)
+            if not un_turno:
+                return None, "la invocación del CLI de Claude no es de un solo turno sin herramientas"
+            from .. import config
+            hint = llm_mod._CLI_MODEL_HINTS.get(alias) or getattr(config, "MIA_CLI_MODEL", "sonnet")
+            maximo = CLI_SALIDA_MAXIMA["claude"].get(hint)
+            if maximo is None:
+                return None, f"sin máximo de salida documentado para el alias {hint!r}"
+            return int(maximo), f"claude -p un turno sin herramientas, {hint}: máximo documentado ({CLI_SALIDA_MAXIMA['version']})"
+    except Exception as exc:  # noqa: BLE001 — si no se puede comprobar, NO hay cota
+        return None, f"no se pudo comprobar la invocación: {type(exc).__name__}"
+    return None, "alias sin invocación conocida"
+
+
 def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None,
                     quality_escalation: Any = None) -> Any:
     """UN intento cobrable de `agent.llm`, gobernado por el guardián ACTIVO (si lo hay).
@@ -1123,6 +1183,99 @@ def _guarded_invoke(client: Any, alias: str, kwargs: dict, task: Any = None,
                         cost_usd=0.0 if no_gastado
                         else (reservation.estimate if reservation else 0.0),
                         seconds=time.perf_counter() - started)
+        # BANCO 0.4 · §5.5 (ítem 5) — INTENTO FALLIDO = consumo DESCONOCIDO con cota superior.
+        # `note_call` de arriba se queda tal cual (tokens CONOCIDOS = 0: nunca se mezclan con
+        # estimados). Aquí se añade el registro aparte: tokens de entrada estimados antes de
+        # enviar (`memory.tokens.estimate_tokens` sobre el texto de los mensajes, bloques
+        # incluidos: nunca `str(content)`) y, como cota superior de salida, el `max_tokens` ya
+        # acotado de esta llamada. Un timeout del CLI puede haber gastado cuota en el
+        # servidor, así que TODO fallo lleva `consumo_conocido=False`; `proveedor_no_alcanzado`
+        # solo permite distinguir después los que se pudo demostrar que no llegaron.
+        # Si la cota no se puede calcular queda `None` y el techo del circuito es NO
+        # CERTIFICABLE (P10): jamás se rellena con un cero tranquilizador. Nada de esto puede
+        # tumbar ni enmascarar la excepción original.
+        try:
+            try:
+                from ..memory.tokens import estimate_tokens
+                partes: list[str] = []
+                for m in (kwargs.get("messages") or []):
+                    if not isinstance(m, dict):
+                        raise TypeError("mensaje que no es un dict")
+                    cuerpo = m.get("content")
+                    if isinstance(cuerpo, str):
+                        partes.append(cuerpo)
+                    elif isinstance(cuerpo, list):
+                        for bloque in cuerpo:
+                            if isinstance(bloque, str):
+                                partes.append(bloque)
+                            elif isinstance(bloque, dict) and isinstance(bloque.get("text"), str):
+                                partes.append(bloque["text"])
+                            else:  # bloque sin texto (herramienta, imagen): se cuenta entero
+                                partes.append(json.dumps(bloque, ensure_ascii=False, default=str))
+                    elif cuerpo is not None:
+                        raise TypeError("contenido de mensaje no reconocido")
+                    resto = {k: v for k, v in m.items() if k not in ("content", "role")}
+                    if resto:
+                        partes.append(json.dumps(resto, ensure_ascii=False, default=str))
+                if kwargs.get("tools"):
+                    partes.append(json.dumps(kwargs.get("tools"), ensure_ascii=False, default=str))
+                entrada_est: Optional[int] = int(estimate_tokens("\n".join(partes)))
+                cota_salida: Optional[int] = int(kwargs["max_tokens"])
+                if entrada_est < 0 or cota_salida <= 0:
+                    raise ValueError("cota no válida")
+            except Exception:  # noqa: BLE001 — sin cota calculable: queda None, no un 0
+                entrada_est, cota_salida = None, None
+            # I4 — la cota de salida solo vale si el proveedor la APLICA. `agent.llm._invoke`
+            # descarta `max_tokens` para `cli-codex` y para todo alias `cli-*` (el CLI headless
+            # no lo acepta): ahí el `max_tokens` pedido es un deseo, no un tope, y NO se puede
+            # afirmar que el intento fallido consumió a lo sumo eso. Cota DESCONOCIDA (None) →
+            # `cota_de_fallidos` la trata como incalculable → techo NO certificable (P10).
+            max_tokens_pedido = cota_salida
+            es_cli = str(alias).startswith("cli-")
+            cota_fuente: Optional[str] = "max_tokens_aplicado"
+            motivo_cota: Optional[str] = None
+            if es_cli:
+                # `max_tokens` NO llega al CLI. Cota REAL solo si la invocación es de un turno sin
+                # herramientas y el modelo tiene máximo de salida documentado (`CLI_SALIDA_MAXIMA`).
+                maximo, motivo_cota = cota_salida_cli(alias)
+                if maximo is not None and entrada_est is not None:
+                    cota_salida, cota_fuente = maximo, "maximo_documentado_cli_un_turno"
+                else:
+                    cota_salida, cota_fuente = None, None
+            cota_aplicada = cota_salida is not None
+            intento = {
+                "alias": alias,
+                "cota_aplicada": cota_aplicada,
+                "cota_fuente": cota_fuente,
+                "max_tokens_pedido": max_tokens_pedido,
+                "motivo_cota": motivo_cota,
+                "tokens_entrada_estimados": entrada_est,
+                "cota_salida": cota_salida,
+                "tokens_cota_superior": (entrada_est + cota_salida
+                                         if entrada_est is not None and cota_salida is not None
+                                         else None),
+                "tipo_error": type(exc).__name__,
+                "consumo_conocido": False,
+                "proveedor_no_alcanzado": bool(no_gastado),
+            }
+            with guard._lock:
+                if getattr(guard, "intentos_fallidos", None) is None:
+                    guard.intentos_fallidos = []
+                guard.intentos_fallidos.append(intento)
+            uso_caso = guard.current_case()
+            if uso_caso is not None:
+                if getattr(uso_caso, "intentos_fallidos", None) is None:
+                    uso_caso.intentos_fallidos = []
+                uso_caso.intentos_fallidos.append(dict(intento))
+        except Exception:  # noqa: BLE001 — la telemetría jamás tapa el fallo original
+            logger.warning("no se pudo registrar el intento fallido del banco", exc_info=True)
+            # Un intento que no se pudo ni registrar es un hueco en la cota: se deja constancia
+            # para que el techo salga NO CERTIFICABLE en vez de optimista.
+            try:
+                guard.intentos_fallidos_sin_registro = int(
+                    getattr(guard, "intentos_fallidos_sin_registro", 0) or 0) + 1
+            except Exception:  # noqa: BLE001
+                pass
         raise
     seconds = time.perf_counter() - started
     served_alias, prompt, completion, total, actual = _alias_and_cost(resp, alias)
