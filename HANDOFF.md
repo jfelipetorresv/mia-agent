@@ -1,42 +1,71 @@
-# CHECKPOINT EN CURSO — 2026-10-11 · MIA 0.4 «Hermes legal», Bloque 0
+# CHECKPOINT — 2026-10-11 · MIA 0.4 «Hermes legal», Bloque 0 (a mitad)
 
 **Plan aprobado por Pipe:** `C:\Users\USER\.claude\plans\como-vamos-con-la-robust-llama.md`
-(8 bloques, contrato de 13 escenarios). Consenso con Codex Astra (`gpt-6-astra`, siempre con
-`-c model_reasoning_effort=high`): APTO en la ronda 3.
+(8 bloques, contrato de 13 escenarios). Consenso con Codex Astra (`gpt-6-astra`, SIEMPRE con
+`-c model_reasoning_effort=high`: el perfil por defecto de esta máquina es xhigh y exige
+autorización de Pipe): APTO en la ronda 3. Memoria del director: `goal-mia-04-hermes-legal.md`.
 
-**Hecho.**
-- `main` avanzó por fast-forward a 7b9aaa0 (0.3.3) y quedó subido. Se trabaja en la rama
-  `feat/mia-04-hermes-legal`.
+**Hecho y commiteado en `feat/mia-04-hermes-legal`.**
+- `main` avanzó por fast-forward a 7b9aaa0 (0.3.3) y quedó subido, por decisión de Pipe.
 - `hermes-ref` está clonado en 835c3dd y `CLAUDE.md` §F quedó corregido.
-- La prueba de herramientas bajo suscripción es viable con condiciones (`scratchpad/spike-tools`).
-- El protocolo del banco de calidad `docs/banco-calidad-04-protocolo.md` quedó CONGELADO como
-  banco04-v1.2 tras tres rondas de Astra.
-- Decisiones de Pipe:
-  - doble juez y banco completo;
-  - cuota autorizada;
-  - diagnóstico limitado expreso por debajo de 0,95 de lectura;
-  - techo de +25 %.
-- `scripts/verify.ps1` (aprendizaje 103): `quick` exporta la base aislada (PG_*, DATABASE_URL,
-  MIA_APP_DIR), rechaza el puerto 55432 fuera de CI e incluye `critical_contracts`.
-  - Corrida oficial: 46 de 47 verdes.
-  - `test_rls`, `test_citation_seals`, `test_hitl_flow` y `test_gates_no_ciegos`: verdes.
-  - Durante la corrida no hubo conexiones a 55432.
+- Protocolo del banco `docs/banco-calidad-04-protocolo.md`, CONGELADO como banco04-v1.2 tras tres
+  rondas de Astra.
+- Decisiones de Pipe registradas en el protocolo:
+  - doble juez Claude + Codex y banco completo;
+  - cuota del Bloque 0 de unos 18 M Claude + 5 M Codex; techo del Bloque 7 de 32 M + 8 M;
+  - por debajo de 0,95 de lectura, diagnóstico limitado expreso;
+  - techo de +25 % de cuota frente a 0.3.3.
+- `scripts/verify.ps1` (aprendizaje 103): `quick` exporta la base aislada, rechaza 55432 fuera de CI e
+  incluye `critical_contracts`.
+  - Corrida oficial: 46 de 47 verdes, con `test_rls`, `test_citation_seals`, `test_hitl_flow` y
+    `test_gates_no_ciegos` en verde y cero conexiones a 55432.
+  - `test_api_launcher` dio rojo en esa corrida (no respondió `/health` en 120 s bajo `MIA_APP_DIR`),
+    pero después pasó 2 de 2 aislada con el mismo entorno.
+  - La causa NO está demostrada. Hipótesis: carga de la máquina (había otros agentes y mutaciones en
+    paralelo). Repetir `verify quick` completo con la máquina en reposo antes de darlo por cerrado.
+- La prueba de herramientas bajo suscripción es viable con condiciones (informe en el scratchpad de la
+  sesión `spike-tools/INFORME.md`). Defectos que encontró, para el Bloque 1:
+  - `untrusted.neutralize` no neutraliza un encabezado falso de «instrucciones del sistema»;
+  - `_split_messages` pierde una llamada a herramienta sin texto en la ruta de Claude.
 
-**Abierto.**
-- `test_api_launcher` está rojo bajo `MIA_APP_DIR`: `/health` no responde en 120 s. Está en
-  diagnóstico.
-- En curso:
-  - casos reservados V1-V4: los escribe un autor independiente y los custodia cifrados en
-    `C:\Users\USER\AppData\Local\MIA-banco04-custodia\` con llave DPAPI;
-  - núcleo de juicio en `backend/mia/eval/banco04/`;
-  - runner `execution/run_banco04.py`.
-- Sin commit: `CLAUDE.md`, `scripts/verify.ps1`, `APRENDIZAJES.md` y el protocolo.
+**Hecho por el autor independiente (sin commit todavía).**
+- Casos V1-V4, sus claves, mutaciones (ajuste: 47 defectos y 40 controles; reservado: 68 defectos y
+  45 controles) y la semilla, cifrados con AES-256-GCM en
+  `C:\Users\USER\AppData\Local\MIA-banco04-custodia\`, llave DPAPI. En el repo: solo
+  `backend/mia/eval/banco04/custodia_manifest.json` y `docs/banco04-custodia-formato.md`.
+- Pendiente del mismo autor, nunca del implementador:
+  - claves de los 13 casos existentes;
+  - rehacer el conjunto RESERVADO de mutaciones sobre salidas reales de la tanda piloto de 0.3.3,
+    como pide §8.6 (decisión del director). El conjunto sintético queda solo para el ajuste.
 
-**Retomar.** Mirar `git status`, el estado de la custodia y los informes del scratchpad.
-Después:
-1. Mutación por un tercero de los gates del banco.
-2. Corrida de la línea base 0.3.3 con el protocolo congelado.
-3. Bloque 1.
+**En curso al cerrar (subagentes en segundo plano; su trabajo NO está commiteado ni verificado).**
+- Núcleo de juicio (Opus): `backend/mia/eval/banco04/{protocolo,segmentos,ceguera,jueces,metricas}.py`,
+  `prompts/`, `execution/banco04_validar_jueces.py`, `banco04_calibracion.py`,
+  `test_banco04_juicio.py`, `docs/banco-calidad-04-resultados.md`. Informe esperado:
+  `scratchpad/banco04-juicio-informe.md`.
+- Producción (Sonnet): `banco04/custodia.py`, `eval/harness.py` (solo `run_case`),
+  `eval/spend_guard.py` (solo intentos fallidos), `execution/run_banco04.py`,
+  `test_banco04_produccion.py`. Informe esperado: `scratchpad/banco04-produccion-informe.md`.
+- Si la sesión se cerró antes de que terminaran, los archivos pueden estar a medias: revisar
+  `git status` y el informe. Si falta el informe, tratar el trabajo como no hecho y relanzar el
+  encargo con la especificación del protocolo §10.2.
+
+**Retomar, en este orden.**
+1. `git status` y estado de los dos frentes anteriores.
+2. Verificar que `custodia.py` lee el formato real del manifiesto del autor.
+3. Correr `test_banco04_*` y hacer la mutación con un TERCERO (no el implementador).
+4. Revisión de Astra del código del banco.
+5. Commit.
+6. Tanda piloto de 0.3.3 → el autor rehace el conjunto reservado.
+7. Línea base 0.3.3 completa (en segundo plano, cuota autorizada).
+8. Bloque 1.
+
+**Entorno.**
+- Clúster sintético 55448 detenido (salida 0, puerto libre), en
+  `C:\Users\USER\AppData\Local\Temp\mia-evidence-test-20260928-01a0e8f8`.
+- `pg_ctl start` con salida entubada se cuelga en Windows: lanzarlo con
+  `Start-Process -WindowStyle Hidden -Wait` o sin entubar.
+- Nunca tocar la base instalada 55432.
 
 ---
 # CIERRE DE DISTRIBUCIÓN — 2026-09-29 · Mia 0.3.3 Core/Compact

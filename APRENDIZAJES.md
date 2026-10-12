@@ -941,5 +941,5 @@ Tampoco corrían en local los contratos críticos (`test_rls` es HALT); solo CI 
 Si la URL falta o usa el puerto 55432 fuera de CI, no corre ninguna suite; `quick` incluye ahora
 `critical_contracts`. Mutación probada: un archivo sin `DATABASE_URL` y otro con 55432 dan
 PRECHECK con exit 2. Trampa adicional: PowerShell 5.1 borra las comillas dobles dentro de
-`python -c`; dentro de ese Python se usan solo comillas simples. Estado: Aplicado, pendiente de la
-corrida verde completa.
+`python -c`; dentro de ese Python se usan solo comillas simples. Estado: Aplicado. Corrida oficial 46/47; test_api_launcher dio rojo en ella bajo carga y
+pasó 2/2 aislado con el mismo entorno. Causa no demostrada: repetir el quick en reposo.

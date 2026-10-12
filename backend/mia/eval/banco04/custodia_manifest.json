@@ -1,0 +1,869 @@
+{
+  "schema": "banco04-custodia-manifest/v1",
+  "protocolo": "banco04-v1.2",
+  "creado": "2026-10-11",
+  "autoria": "agente autor independiente de los casos reservados; no implementa 0.4 ni el runner de produccion",
+  "ubicacion": {
+    "variable_entorno": "MIA_BANCO04_CUSTODIA",
+    "regla": "carpeta fuera del repositorio, fuera de los MIA_HOME del productor y de los directorios de trabajo de los implementadores (§2.3); los nombres de 'archivo' son relativos a ella"
+  },
+  "cifrado": {
+    "algoritmo": "AES-256-GCM",
+    "formato_archivo": "nonce (12 bytes) || ciphertext || tag (16 bytes)",
+    "aad": "UTF-8 de 'banco04-v1.2|' + id del artefacto",
+    "llave": {
+      "archivo": "llave.dpapi",
+      "longitud_bytes": 32,
+      "proteccion": "Windows DPAPI CryptProtectData, ambito usuario actual (sin CRYPTPROTECT_LOCAL_MACHINE), sin entropia adicional, flag CRYPTPROTECT_UI_FORBIDDEN",
+      "sha256_blob_dpapi": "b1d86a5b7301a3e82fd3ac305c6c32c8f60be5c67e999b81e5cf141f2c7e63e0"
+    },
+    "limite_declarado": "DPAPI de usuario no protege frente a procesos del mismo usuario de Windows (§2.3)"
+  },
+  "hash_en_claro": "sha256 de los bytes en claro exactos. Para JSON, los bytes son json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8'), sin BOM ni salto final; recalcular sobre el objeto re-serializado de esa forma debe dar el mismo hash. Para los generadores, los bytes del archivo .py tal cual.",
+  "artefactos": [
+    {
+      "id": "V1",
+      "tipo": "caso",
+      "archivo": "c-V1.bin",
+      "sha256_claro": "4b1c424a47d424c6637508545c938195cb7ea87da7ebb96eb7c2bd1cfd990e0b",
+      "sha256_cifrado": "339f9583a9e543b0ee4874af12d5a7f332be7e4f127489ff37c98713a1a7e9dd",
+      "bytes_claro": 62699,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-caso/v1"
+    },
+    {
+      "id": "V2",
+      "tipo": "caso",
+      "archivo": "c-V2.bin",
+      "sha256_claro": "cc1c2e0af73243db38e6a79de8a874f02d4b12f12735d142d165c1f5bbcbdcec",
+      "sha256_cifrado": "f64c70220ab4885e20ef0d98634da39ff92983fdbab70d4a0116df75674427d8",
+      "bytes_claro": 59867,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-caso/v1"
+    },
+    {
+      "id": "V3",
+      "tipo": "caso",
+      "archivo": "c-V3.bin",
+      "sha256_claro": "fc5f81e2503a61372d80faa2185c5943c2903afe4a8105ffcd47c72688b2159b",
+      "sha256_cifrado": "fa52ab7e69bf5d6603d9b5e15f47029db728c70f98318ddb4c9e9d8b87b1aa96",
+      "bytes_claro": 34632,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-caso/v1"
+    },
+    {
+      "id": "V4",
+      "tipo": "caso",
+      "archivo": "c-V4.bin",
+      "sha256_claro": "a9e9b2a2c8b58870b50377c9595e51fafa54095334b84e2880aff0b569a1a90c",
+      "sha256_cifrado": "70b59e6ad782c15cdab94bcc2c9e14cc70ef47535a67e84264d55e97a2b9bf5d",
+      "bytes_claro": 70825,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-caso/v1"
+    },
+    {
+      "id": "clave-V1",
+      "tipo": "clave",
+      "archivo": "k-V1.bin",
+      "sha256_claro": "105fae19d81629de0a08bf3445705dbf944f307e43c484bd0c7a802235216358",
+      "sha256_cifrado": "ccdaa3e32736adfc7a69a4992bd134d3cb695fc7f724499e97aa369f5e7ef4f1",
+      "bytes_claro": 12320,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-clave/v1"
+    },
+    {
+      "id": "clave-V2",
+      "tipo": "clave",
+      "archivo": "k-V2.bin",
+      "sha256_claro": "a4299626944a9cdc792772684d132c02af2533e85fb1467cb24aead5ec83a093",
+      "sha256_cifrado": "dd76e4c69ffb8601509bc0071f0c3cd79e02979566948294d63c227a4f8154e4",
+      "bytes_claro": 13464,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-clave/v1"
+    },
+    {
+      "id": "clave-V3",
+      "tipo": "clave",
+      "archivo": "k-V3.bin",
+      "sha256_claro": "88077edc388d7c88d988af9697741e676ba479649f8f2bf3c3b3df78db4209ed",
+      "sha256_cifrado": "5c6f2cfc78aa88be663d2e03a6444e4d4af6575e18d8b5331638664d14a940b2",
+      "bytes_claro": 9050,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-clave/v1"
+    },
+    {
+      "id": "clave-V4",
+      "tipo": "clave",
+      "archivo": "k-V4.bin",
+      "sha256_claro": "c86b04f66b3ff323d4abd2af663e584c5fe90dd0849ecead205f317f28043248",
+      "sha256_cifrado": "fbb6cf0d7fa6c5e9c45b6ce5e503175141728a078d9a3814d7132b4a7388933c",
+      "bytes_claro": 10149,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-clave/v1"
+    },
+    {
+      "id": "mut-ajuste",
+      "tipo": "mutaciones_ajuste",
+      "archivo": "m-aj.bin",
+      "sha256_claro": "2af875b12a4387d7f27c0237ebe879fc80c4ae51d7c5286f83e323dcbd51f459",
+      "sha256_cifrado": "2f04b1dac3fe634582e2b8e049d85dbfc7fef71ba573ab2adfa1fe8b078662c4",
+      "bytes_claro": 64127,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-mutaciones/v1"
+    },
+    {
+      "id": "mut-reservado",
+      "tipo": "mutaciones_reservadas",
+      "archivo": "m-res.bin",
+      "sha256_claro": "7fdf2ac13cb49a3c96e60d56cc83778102f9f8e474dae91a60c8fa1878e78fa9",
+      "sha256_cifrado": "940fcbddc4fa4720ac5545bad39e08602eafa39807dd22e552bbe3953751837d",
+      "bytes_claro": 84740,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-mutaciones/v1"
+    },
+    {
+      "id": "semilla",
+      "tipo": "semilla",
+      "archivo": "s.bin",
+      "sha256_claro": "3758279ab972e88025992980454ef67bce821b961ef226931b6aa6744aac984e",
+      "sha256_cifrado": "ea6dae8a6673c2c15d00b1ebb4d252e971acb33218c3fb9b4b6ae20f77edf7b4",
+      "bytes_claro": 383,
+      "formato_claro": "json-canonico-utf8",
+      "esquema": "banco04-semilla/v1"
+    },
+    {
+      "id": "gen-casos",
+      "tipo": "generador",
+      "archivo": "g-casos.bin",
+      "sha256_claro": "556b3f5bbc9d497150ed32523703aa6a9178330f1d46c2e9e6081ccd2f503816",
+      "sha256_cifrado": "0e50b29eb1d6bb70b76c7f6674e709abe143039b704d6f6764c87c41f9d25397",
+      "bytes_claro": 110545,
+      "formato_claro": "texto-python-utf8",
+      "esquema": null
+    },
+    {
+      "id": "gen-mutaciones",
+      "tipo": "generador",
+      "archivo": "g-mut.bin",
+      "sha256_claro": "3bfef3e9fd19bc53ff6a6c095eb980596e5657a07e23a102180342a781ec484c",
+      "sha256_cifrado": "0c9b0586aa6966f1ef012b202efcbdbfcdd3ced771844fcbb711ee39c8ff807c",
+      "bytes_claro": 66513,
+      "formato_claro": "texto-python-utf8",
+      "esquema": null
+    }
+  ],
+  "esquemas": {
+    "banco04-caso/v1": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "protocolo",
+        "id",
+        "title",
+        "message",
+        "jurisdicciones",
+        "profile",
+        "synthetic",
+        "expect_reaches_draft",
+        "recall_markers",
+        "rubric",
+        "documents",
+        "n_fragmentos",
+        "semilla_relleno"
+      ],
+      "properties": {
+        "schema": {
+          "const": "banco04-caso/v1"
+        },
+        "protocolo": {
+          "const": "banco04-v1.2"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^V[1-4]$"
+        },
+        "title": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "jurisdicciones": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "profile": {
+          "type": "object"
+        },
+        "synthetic": {
+          "const": true
+        },
+        "expect_reaches_draft": {
+          "type": "boolean"
+        },
+        "recall_markers": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "rubric": {
+          "type": "object",
+          "maxProperties": 0
+        },
+        "documents": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "filename",
+              "chunks"
+            ],
+            "properties": {
+              "filename": {
+                "type": "string",
+                "minLength": 1
+              },
+              "chunks": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "n_fragmentos": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 600
+        },
+        "semilla_relleno": {
+          "type": "integer"
+        }
+      }
+    },
+    "banco04-clave/v1": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "protocolo",
+        "case_id",
+        "base_indice_fragmento",
+        "n_fragmentos",
+        "orden_documentos",
+        "hechos_materiales",
+        "puntos_materiales",
+        "conclusion_correcta",
+        "conclusiones_erroneas_previsibles",
+        "conducta_bajo_cobertura_parcial",
+        "distractores",
+        "normas_ficticias",
+        "propiedades_construccion",
+        "marcadores_auxiliares",
+        "notas"
+      ],
+      "properties": {
+        "schema": {
+          "const": "banco04-clave/v1"
+        },
+        "protocolo": {
+          "const": "banco04-v1.2"
+        },
+        "case_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "base_indice_fragmento": {
+          "const": 0
+        },
+        "n_fragmentos": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "orden_documentos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hechos_materiales": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "enunciado",
+              "documento",
+              "documento_orden",
+              "fragmentos",
+              "fragmento_principal",
+              "posicion_relativa_en_documento",
+              "posicion_global",
+              "posicion_global_relativa",
+              "enterrado",
+              "marcador_auxiliar",
+              "literales_exclusivos",
+              "decisivo",
+              "rol"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "enunciado": {
+                "type": "string",
+                "minLength": 1
+              },
+              "documento": {
+                "type": "string"
+              },
+              "documento_orden": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fragmentos": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "fragmento_principal": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "posicion_relativa_en_documento": {
+                "type": "number"
+              },
+              "posicion_global": {
+                "type": "integer"
+              },
+              "posicion_global_relativa": {
+                "type": "number"
+              },
+              "enterrado": {
+                "type": "boolean"
+              },
+              "marcador_auxiliar": {
+                "type": "string",
+                "minLength": 1
+              },
+              "literales_exclusivos": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "decisivo": {
+                "type": "boolean"
+              },
+              "rol": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "puntos_materiales": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "enunciado",
+              "tipo",
+              "depende_de_hechos",
+              "fragmentos"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "enunciado": {
+                "type": "string"
+              },
+              "tipo": {
+                "enum": [
+                  "conclusion",
+                  "laguna_real",
+                  "conflicto",
+                  "excepcion"
+                ]
+              },
+              "depende_de_hechos": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "fragmentos": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "documento",
+                    "fragmento"
+                  ],
+                  "properties": {
+                    "documento": {
+                      "type": "string"
+                    },
+                    "fragmento": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "conclusion_correcta": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conclusiones_erroneas_previsibles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "conducta_bajo_cobertura_parcial": {
+          "type": "object",
+          "required": [
+            "alcance_esperado",
+            "conducta_exigida",
+            "descripcion",
+            "debe_nombrar",
+            "no_debe"
+          ]
+        },
+        "distractores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "literal",
+              "documento",
+              "fragmento",
+              "nota"
+            ]
+          }
+        },
+        "normas_ficticias": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "propiedades_construccion": {
+          "type": "object"
+        },
+        "marcadores_auxiliares": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notas": {
+          "type": "object"
+        }
+      }
+    },
+    "banco04-mutaciones/v1": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "protocolo",
+        "conjunto",
+        "uso",
+        "base",
+        "regla_de_deteccion",
+        "categorias",
+        "items",
+        "resumen"
+      ],
+      "properties": {
+        "schema": {
+          "const": "banco04-mutaciones/v1"
+        },
+        "protocolo": {
+          "const": "banco04-v1.2"
+        },
+        "conjunto": {
+          "enum": [
+            "ajuste",
+            "reservado"
+          ]
+        },
+        "uso": {
+          "enum": [
+            "depuracion_de_prompts",
+            "un_solo_uso_con_prompts_congelados"
+          ]
+        },
+        "base": {
+          "type": "string"
+        },
+        "regla_de_deteccion": {
+          "type": "string"
+        },
+        "categorias": {
+          "type": "object",
+          "patternProperties": {
+            "^C[0-9]{2}$": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "resumen": {
+          "type": "object",
+          "required": [
+            "salidas",
+            "defectos",
+            "controles",
+            "clausulas_falsas_breves",
+            "por_categoria"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "jurisdicciones",
+              "material",
+              "salida",
+              "verdad"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^M[AR]-[0-9]{2}$"
+              },
+              "jurisdicciones": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "material": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "mensaje_abogado",
+                  "documentos",
+                  "mapa_doc",
+                  "piezas_fuera_del_mapa",
+                  "fuentes_corpus",
+                  "aviso_alcance"
+                ],
+                "properties": {
+                  "mensaje_abogado": {
+                    "type": "string"
+                  },
+                  "documentos": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "filename",
+                        "chunks"
+                      ],
+                      "properties": {
+                        "filename": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "chunks": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "mapa_doc": {
+                    "type": "object",
+                    "patternProperties": {
+                      "^[0-9]+$": {
+                        "type": "object",
+                        "required": [
+                          "documento",
+                          "fragmento"
+                        ],
+                        "properties": {
+                          "documento": {
+                            "type": "string"
+                          },
+                          "fragmento": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "piezas_fuera_del_mapa": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "documento",
+                        "fragmento"
+                      ]
+                    }
+                  },
+                  "fuentes_corpus": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "ref",
+                        "texto",
+                        "ficticia"
+                      ],
+                      "properties": {
+                        "ref": {
+                          "type": "string",
+                          "pattern": "^corpus:"
+                        },
+                        "texto": {
+                          "type": "string"
+                        },
+                        "ficticia": {
+                          "const": true
+                        }
+                      }
+                    }
+                  },
+                  "aviso_alcance": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "salida": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "diagnostico",
+                  "borrador"
+                ],
+                "properties": {
+                  "diagnostico": {
+                    "type": "string"
+                  },
+                  "borrador": {
+                    "type": "string"
+                  }
+                }
+              },
+              "verdad": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "clase",
+                    "categoria",
+                    "campo",
+                    "inicio",
+                    "fin",
+                    "literal",
+                    "estado_esperado",
+                    "estados_aceptables",
+                    "subtipo_esperado",
+                    "nota"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "clase": {
+                      "enum": [
+                        "defecto",
+                        "control"
+                      ]
+                    },
+                    "categoria": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^C[0-9]{2}$"
+                    },
+                    "campo": {
+                      "enum": [
+                        "diagnostico",
+                        "borrador"
+                      ]
+                    },
+                    "inicio": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "fin": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "literal": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "estado_esperado": {
+                      "enum": [
+                        "con_respaldo",
+                        "con_respaldo_sin_localizador",
+                        "localizador_falso",
+                        "marcada_correctamente",
+                        "marcada_innecesariamente",
+                        "dicho_abogado_fiel",
+                        "inferencia_valida",
+                        "sin_respaldo",
+                        "no_aplica"
+                      ]
+                    },
+                    "estados_aceptables": {
+                      "type": "array",
+                      "items": {
+                        "enum": [
+                          "con_respaldo",
+                          "con_respaldo_sin_localizador",
+                          "localizador_falso",
+                          "marcada_correctamente",
+                          "marcada_innecesariamente",
+                          "dicho_abogado_fiel",
+                          "inferencia_valida",
+                          "sin_respaldo",
+                          "no_aplica"
+                        ]
+                      }
+                    },
+                    "subtipo_esperado": {
+                      "enum": [
+                        "hecho",
+                        "juridica_sin_cita",
+                        "cita_no_sostiene",
+                        "contradicha_por_expediente",
+                        "negativa_falsa",
+                        "procedencia",
+                        "fuga",
+                        "localizador_falso",
+                        null
+                      ]
+                    },
+                    "oracion": {
+                      "type": "string"
+                    },
+                    "proporcion_en_oracion": {
+                      "type": "number",
+                      "exclusiveMaximum": 0.2
+                    },
+                    "original": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "evidencia_del_error": {
+                      "type": [
+                        "object",
+                        "null"
+                      ]
+                    },
+                    "respaldo": {
+                      "type": [
+                        "object",
+                        "null"
+                      ]
+                    },
+                    "nota": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "banco04-semilla/v1": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "protocolo",
+        "algoritmo",
+        "hmac_key_hex",
+        "usos",
+        "creada"
+      ],
+      "properties": {
+        "schema": {
+          "const": "banco04-semilla/v1"
+        },
+        "protocolo": {
+          "const": "banco04-v1.2"
+        },
+        "algoritmo": {
+          "const": "HMAC-SHA256"
+        },
+        "hmac_key_hex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "usos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "creada": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "invariantes_semanticas": [
+    "caso: n_fragmentos == suma de len(chunks); recall_markers vacio (los marcadores viven en la clave)",
+    "clave: case_id coincide con un caso; cada hecho apunta a documento y fragmentos existentes del caso",
+    "mutaciones: salida[campo][inicio:fin] == literal para toda entrada de verdad; spans del mismo campo sin solape",
+    "mutaciones: material de 'ajuste' y 'reservado' disjunto; la categoria C08 solo en items con jurisdicciones == []",
+    "mutaciones (reservado): al menos 30 defectos, 30 controles y 10 de categoria C12 con proporcion_en_oracion < 0.20"
+  ]
+}
