@@ -56,9 +56,30 @@ autorización de Pipe.
   techo no certificable. Es relevante para el Bloque 7, donde la 0.4 usa Codex en 5C.
 - `test_api_launcher` dio rojo una vez bajo carga y pasó 2/2 aislado. Causa no demostrada.
 
+**CORRECCIÓN DE ESTADO (2026-10-12, ronda 3 de Astra + inventario verificado por el director).**
+El banco NO está «implementado»: es una biblioteca de puertas sin cadena que la recorra. Lo que dicen
+72a6162 y este HANDOFF en sentido contrario era falso.
+- El director lo verificó con grep: el único llamador de `jueces.pasada1` fuera de tests es
+  `banco04_validar_jueces.py:229`. Nadie llama a `veredicto_global`, `metricas_corrida` ni
+  `agregar_casos`. `run_banco04.py` solo importa `protocolo` y `custodia`, y no existe el agregador
+  desde crudos que exige §9.5.
+- Ninguna corrida de producción se juzga ni se agrega, así que el banco no puede emitir veredicto.
+- Inventario completo: scratchpad 2876318c…/`r4/inventario-puerta.md`, brechas B1–B14.
+- Ronda 3 de Astra (`r3/veredicto_A/B/C.md`): NO APTO en los tres frentes. La causa común es que la
+  puerta acepta conclusiones del llamador (`cumple`, techo, `R_por_caso`, `usage_by_node`, previa de
+  la extensión).
+- Dos defectos tocan el PRODUCTO:
+  - `subscription_llm.py:258-270` y `codex_subscription_llm.py:244-263` convierten la telemetría
+    ausente en cero antes del guardián;
+  - `turn_usage` solo registra las llamadas exitosas y se borra con el tenant.
+- **BLOQUEADOS** los pasos 5 y 8 (piloto y línea base): gastarían cuota real en salidas que nadie
+  puede juzgar. Pendiente: la decisión de alcance de Pipe sobre el esqueleto de punta a punta.
+
 **Retomar, en este orden.**
 1. Recontar las suites (juicio, producción, spend_guard, gates no ciegos).
-2. Ronda 3 de Astra sobre las correcciones de la ronda 2, hasta APTO.
+2. Decisión de Pipe sobre el alcance. Luego, construir la cadena runner → registros crudos → juicio
+   persistido → agregador → puerta que recibe solo rutas. La revisión de Astra traza la
+   alcanzabilidad desde `main`.
 3. Mutación por un TERCERO (agente nuevo, no el implementador). El número de mutaciones que
    sobreviven es el resultado.
 4. Commit limpio.
