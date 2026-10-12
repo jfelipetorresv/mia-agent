@@ -48,6 +48,42 @@ except (RuntimeError, ValueError, OSError):
         Write-Error 'PRECHECK: quick requiere MIA_TEST_ENV_FILE valido de una base temporal; CI admite PG_* explicitas del servicio efimero. No se ejecutaron suites.' -ErrorAction Continue
         exit 2
     }
+    # Recuento 2026-10-11: siete suites con base leen PG_* del entorno del proceso y no
+    # de MIA_TEST_ENV_FILE. Sin estas variables caian al 5432 y daban un rojo de entorno
+    # (ConnectionTimeout) que parecia del codigo. Se exportan las PG_* de la base aislada
+    # que valida `select` (nunca la 55432 instalada) y el mismo MIA_ENV que fija
+    # `isolated_test_env.load`. Los valores no se imprimen. Dentro de este Python NUNCA
+    # comillas dobles: PowerShell 5.1 las borra al pasar el argumento a un ejecutable nativo.
+    # Ademas: `mia.config` carga el .env del REPO si DATABASE_URL no viene en el entorno, y
+    # ese .env apunta a la base INSTALADA. Se exporta la DATABASE_URL de la base aislada y,
+    # con archivo, MIA_APP_DIR apunta a su carpeta para que config lea ESE .env. Si la URL
+    # falta o usa el puerto 55432, no corre ninguna suite (fail-closed).
+    $exportCode = @'
+import json, os, sys
+from urllib.parse import urlparse
+sys.path.insert(0, sys.argv[1])
+from isolated_test_env import select
+values = select(os.environ)
+out = {k: v for k, v in values.items() if k.startswith('PG_') and v is not None}
+ci = any(str(os.environ.get(k, '')).lower() == 'true' for k in ('CI', 'GITHUB_ACTIONS'))
+url = values.get('DATABASE_URL') or (os.environ.get('DATABASE_URL') if ci else '') or ''
+if not url or urlparse(url).port is None or (not ci and urlparse(url).port == 55432):
+    sys.exit(3)
+out['DATABASE_URL'] = url
+print(json.dumps(out))
+'@
+    $pgJson = & $python -B -c $exportCode $executionDir
+    if ($LASTEXITCODE -ne 0 -or -not $pgJson) {
+        Write-Error 'PRECHECK: la base aislada no trae DATABASE_URL propia o apunta a la base instalada (55432). No se ejecutaron suites.' -ErrorAction Continue
+        exit 2
+    }
+    foreach ($pgVar in ($pgJson | ConvertFrom-Json).PSObject.Properties) {
+        Set-Item -LiteralPath ('Env:' + $pgVar.Name) -Value ([string]$pgVar.Value)
+    }
+    if ($env:MIA_TEST_ENV_FILE) {
+        $env:MIA_APP_DIR = Split-Path -Parent $env:MIA_TEST_ENV_FILE
+    }
+    $env:MIA_ENV = 'dev'
 }
 
 if ($Mode -eq 'full' -and $catalog.full_requires_database) {
@@ -64,7 +100,10 @@ if ($Mode -eq 'full' -and $catalog.full_requires_database) {
 }
 
 if ($Mode -eq 'quick') {
-    $tests = @($catalog.quick | ForEach-Object { Join-Path $root $_ })
+    # Los contratos criticos (test_rls es HALT segun CLAUDE.md) corren siempre en quick;
+    # antes solo CI los ejecutaba y un quick verde se leia como aislamiento aprobado.
+    $tests = @(@($catalog.quick) + @($catalog.critical_contracts) |
+        Select-Object -Unique | ForEach-Object { Join-Path $root $_ })
 } else {
     $tests = @(Get-ChildItem -LiteralPath (Join-Path $root 'execution') -Filter 'test_*.py' |
         Sort-Object Name | Select-Object -ExpandProperty FullName)

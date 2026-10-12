@@ -151,8 +151,10 @@ Dos memorias separadas:
 
 ## F · Referencias
 - Repos de referencia (en "D:\Inteligencia Artificial\Mia-Super Agent\"):
-  hermes-ref/ (MIT) · agent-os-ref/
-  · claudeos-ref/
+  hermes-ref/ (MIT), clon de solo lectura de NousResearch/hermes-agent
+  fijado en 835c3dd (2026-10-11). Se clonó ese día porque faltaba en
+  disco. agent-os-ref/ y claudeos-ref/ NO existen en disco (verificado
+  2026-10-11); no citarlos como disponibles.
 - Hermes docs (leer antes de implementar):
   github.com/mudrii/hermes-agent-docs
   (architecture.md · memory.md · skills.md · plugins.md · cron.md)

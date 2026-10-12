@@ -929,3 +929,17 @@ sin cuerpo de respuesta; guardar stdout/stderr fuera del payload y retener el
 handle de proceso para no perder ExitCode en PowerShell 5. El fallo original no
 prueba coldstart ni antivirus. Una repetición verde no reescribe una build roja.
 Barrera: execution/test_frontend_smoke.py; revisión estática independiente Opus5.5.
+
+103. **2026-10-11 · Una base de pruebas a medias deja abierta la base instalada.**
+`verify.ps1 -Mode quick` validaba `MIA_TEST_ENV_FILE`, pero no exportaba sus valores. Siete suites
+leen `PG_*` del proceso y el pool lee `DATABASE_URL`. Sin ellas, `mia.config` carga el `.env` del
+REPO, que apunta a la base INSTALADA (55432). Ese día no pasó nada solo porque la base instalada
+estaba apagada: las suites terminaron en `ConnectionTimeout`, un rojo que parecía del código.
+Tampoco corrían en local los contratos críticos (`test_rls` es HALT); solo CI los ejecutaba, y un
+`quick` verde se leía como aislamiento aprobado. Arreglo en `scripts/verify.ps1`: se exportan las
+`PG_*` y la `DATABASE_URL` de la base aislada, `MIA_APP_DIR` apunta a su carpeta y `MIA_ENV=dev`.
+Si la URL falta o usa el puerto 55432 fuera de CI, no corre ninguna suite; `quick` incluye ahora
+`critical_contracts`. Mutación probada: un archivo sin `DATABASE_URL` y otro con 55432 dan
+PRECHECK con exit 2. Trampa adicional: PowerShell 5.1 borra las comillas dobles dentro de
+`python -c`; dentro de ese Python se usan solo comillas simples. Estado: Aplicado, pendiente de la
+corrida verde completa.

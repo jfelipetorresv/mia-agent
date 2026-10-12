@@ -1,3 +1,44 @@
+# CHECKPOINT EN CURSO — 2026-10-11 · MIA 0.4 «Hermes legal», Bloque 0
+
+**Plan aprobado por Pipe:** `C:\Users\USER\.claude\plans\como-vamos-con-la-robust-llama.md`
+(8 bloques, contrato de 13 escenarios). Consenso con Codex Astra (`gpt-6-astra`, siempre con
+`-c model_reasoning_effort=high`): APTO en la ronda 3.
+
+**Hecho.**
+- `main` avanzó por fast-forward a 7b9aaa0 (0.3.3) y quedó subido. Se trabaja en la rama
+  `feat/mia-04-hermes-legal`.
+- `hermes-ref` está clonado en 835c3dd y `CLAUDE.md` §F quedó corregido.
+- La prueba de herramientas bajo suscripción es viable con condiciones (`scratchpad/spike-tools`).
+- El protocolo del banco de calidad `docs/banco-calidad-04-protocolo.md` quedó CONGELADO como
+  banco04-v1.2 tras tres rondas de Astra.
+- Decisiones de Pipe:
+  - doble juez y banco completo;
+  - cuota autorizada;
+  - diagnóstico limitado expreso por debajo de 0,95 de lectura;
+  - techo de +25 %.
+- `scripts/verify.ps1` (aprendizaje 103): `quick` exporta la base aislada (PG_*, DATABASE_URL,
+  MIA_APP_DIR), rechaza el puerto 55432 fuera de CI e incluye `critical_contracts`.
+  - Corrida oficial: 46 de 47 verdes.
+  - `test_rls`, `test_citation_seals`, `test_hitl_flow` y `test_gates_no_ciegos`: verdes.
+  - Durante la corrida no hubo conexiones a 55432.
+
+**Abierto.**
+- `test_api_launcher` está rojo bajo `MIA_APP_DIR`: `/health` no responde en 120 s. Está en
+  diagnóstico.
+- En curso:
+  - casos reservados V1-V4: los escribe un autor independiente y los custodia cifrados en
+    `C:\Users\USER\AppData\Local\MIA-banco04-custodia\` con llave DPAPI;
+  - núcleo de juicio en `backend/mia/eval/banco04/`;
+  - runner `execution/run_banco04.py`.
+- Sin commit: `CLAUDE.md`, `scripts/verify.ps1`, `APRENDIZAJES.md` y el protocolo.
+
+**Retomar.** Mirar `git status`, el estado de la custodia y los informes del scratchpad.
+Después:
+1. Mutación por un tercero de los gates del banco.
+2. Corrida de la línea base 0.3.3 con el protocolo congelado.
+3. Bloque 1.
+
+---
 # CIERRE DE DISTRIBUCIÓN — 2026-09-29 · Mia 0.3.3 Core/Compact
 
 **Instalador verificado y copiado a Downloads; no instalado.**
