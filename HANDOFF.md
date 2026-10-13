@@ -82,9 +82,11 @@ El banco NO está «implementado»: es una biblioteca de puertas sin cadena que 
      Astra sobre la cadena entera; al final, 17 casos.
    - «Que se reanude con mi autorización»: el consumo desconocido detiene el juicio y solo sigue
      con una referencia de aprobación de Pipe (contrato §5).
-   El contrato `docs/banco04-cadena-contrato.md` va por la v2 (49fc225). Astra le dio NO APTO dos
-   veces y la v3 está en curso: cierra K1, K4, K5, K7, K8, K10 y K13–K15 (dictamen en
-   `r4/veredicto_contrato2.md`).
+   Contrato `docs/banco04-cadena-contrato.md`: **v5 con APTO de Astra** (6c26afc). Ronda 5: K1–K16
+   resueltas. En K7 el director adoptó el «compromiso irrevocable» en `seq_envio`, con el residual
+   declarado. En curso:
+   - pruebas E2E en rojo, por un autor independiente, en `execution/test_banco04_cadena.py`;
+   - investigación de la cota del CLI con fuente oficial (Q14), en `r5/cota-cli-informe.md`.
    - El banco NO toca el producto: la telemetría cruda se captura con un envoltorio del eval.
    - El panel del abogado, que muestra cero ante consumo desconocido, pasa al Bloque 1.
    - El reservado actual se retira; el autor independiente escribe uno nuevo.
