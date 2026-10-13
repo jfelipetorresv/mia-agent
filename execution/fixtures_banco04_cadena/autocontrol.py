@@ -8,6 +8,7 @@ bloque que puede salir verde hoy por diseño, y su verde es legítimo: no toca n
 """
 from __future__ import annotations
 
+import inspect
 from fractions import Fraction
 from typing import Callable
 
@@ -139,8 +140,13 @@ def correr(check: Callable[[str, bool], None]) -> None:
         res = [x for it in por_item for x in it["verdades"]]
         pares = [p for it in por_item if it["estado"] == "evaluada" for p in it["pares_kappa"]]
         disc = sum(int(it.get("discordancias") or 0) for it in por_item)
+        kw = {}
+        # §8.6 bis (v8): `consumo_certificable` sale de la habilitación; si la firma conserva el
+        # parámetro `consumo` (código de hoy), se le pasa un consumo certificable para aislar la calidad.
+        if "consumo" in inspect.signature(vj.evaluar_exigencias).parameters:
+            kw["consumo"] = {"cota_calculable": True, "resumen": {}}
         return vj.evaluar_exigencias(res, tipo="reservado", discordancias=disc, pares_kappa=pares,
-                                     acreditacion=v, consumo={"cota_calculable": True, "resumen": {}})
+                                     acreditacion=v, **kw)
 
     out = circuito(dobles.runners())
     fallan = {k: e for k, e in out["exigencias"].items() if not e["cumple"]}
@@ -203,3 +209,37 @@ def correr(check: Callable[[str, bool], None]) -> None:
     check("0.17 la escalada excepcional produce OTRA firma de comando del mismo alias (base de E2E-16)",
           bool(e_escalada) and e_escalada != e_normal
           and len({firmas.firma(c["cmd"])["sha256"] for c in cl.llamadas}) == 2)
+
+    # v9 · dobles de consumo exacto, de tiempo agotado y registro del `env` (E2E-19)
+    cl2 = dobles.ClaudeCLIDoble(total_exacto=lambda c, r, n: 60 if n == "exacto" else None,
+                                timeout_si=lambda c, r, n: n == "timeout",
+                                omitir_salida_si=lambda c, r, n: n == "sin_salida")
+    previo = (sl.subprocess, sl._resolve_exe)
+    res2: dict = {}
+    try:
+        sl.subprocess = proxy(cl2)
+        sl._resolve_exe = lambda: firmas.EXE_CLAUDE
+        with R.politica_fija(llm):
+            res2["exacto"] = llm.call_llm([{"role": "user", "content": "[[BANCO04 caso=x|rep=1|nodo=exacto]] h"}],
+                                          task="legal_draft")
+            try:
+                llm.call_llm([{"role": "user", "content": "[[BANCO04 caso=x|rep=1|nodo=timeout]] h"}],
+                             task="legal_draft")
+                res2["timeout"] = None
+            except Exception as exc:  # noqa: BLE001
+                res2["timeout"] = type(exc).__name__
+            res2["sin_salida"] = llm.call_llm([{"role": "user", "content": "[[BANCO04 caso=x|rep=1|nodo=sin_salida]] h"}],
+                                              task="legal_draft")
+    except Exception as exc:  # noqa: BLE001
+        print("     ", type(exc).__name__, exc)
+    finally:
+        sl.subprocess, sl._resolve_exe = previo
+    check("0.19 `total_exacto` fija el total de la llamada (60) a través del `call_llm` real",
+          getattr(getattr(res2.get("exacto"), "usage", None), "total_tokens", None) == 60)
+    check(f"0.20 `timeout_si` hace que el `call_llm` real falle por tiempo ({res2.get('timeout')}) y "
+          "`omitir_salida_si` devuelve una respuesta sin `output_tokens` (base de E2E-19.1 y 19.7)",
+          bool(res2.get("timeout")) and res2.get("sin_salida") is not None
+          and getattr(res2["sin_salida"].usage, "completion_tokens", None) == 0)
+    esperado = sl._sanitized_env()
+    check("0.21 el doble registra el `env` que el producto pasa a `subprocess.run` (= `_sanitized_env()`)",
+          len(cl2.envs) == 3 and all(e == esperado for e in cl2.envs))

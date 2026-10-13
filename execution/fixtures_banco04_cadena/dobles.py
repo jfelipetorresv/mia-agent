@@ -63,7 +63,13 @@ class ClaudeCLIDoble:
     factor_salida: Mapping[str, float] = field(default_factory=dict)   # caso -> factor
     falla_si: Optional[Callable[[str, int, str], bool]] = None         # (caso, rep, nodo) -> ¿falla?
     barrera: Optional[Callable[[str, int, str], None]] = None   # E2E-13: (caso, rep, nodo), ANTES de responder
+    # v9 (E2E-19): control EXACTO del consumo por llamada. Todos reciben (caso, rep, nodo).
+    total_exacto: Optional[Callable[[str, int, str], Optional[int]]] = None   # total de la llamada
+    salida_si: Optional[Callable[[str, int, str], Optional[int]]] = None      # output_tokens
+    omitir_salida_si: Optional[Callable[[str, int, str], bool]] = None        # sin output_tokens
+    timeout_si: Optional[Callable[[str, int, str], bool]] = None              # agota el tiempo
     llamadas: list = field(default_factory=list)
+    envs: list = field(default_factory=list)          # el `env` que recibió cada llamada (E2E-19.5)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __call__(self, cmd, *a, input=None, **kw):  # noqa: A002
@@ -75,15 +81,26 @@ class ClaudeCLIDoble:
             modelo = cmd[cmd.index("--model") + 1]
         with self._lock:
             self.llamadas.append({"cmd": list(cmd), "caso": caso, "rep": rep, "nodo": nodo})
+            self.envs.append(dict(kw["env"]) if isinstance(kw.get("env"), Mapping) else kw.get("env"))
         if self.barrera is not None:
             self.barrera(caso, rep, nodo)
+        if self.timeout_si and self.timeout_si(caso, rep, nodo):
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 1)
         if self.falla_si and self.falla_si(caso, rep, nodo):
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="error del doble (sin JSON)")
         entrada = 100 + len(texto) // 40
         salida = int(round(40 * float(self.factor_salida.get(caso, 1))))
+        t = self.total_exacto(caso, rep, nodo) if self.total_exacto else None
+        if isinstance(t, int):
+            entrada, salida = t - 1, 1
+        x = self.salida_si(caso, rep, nodo) if self.salida_si else None
+        if isinstance(x, int):
+            salida = x
         usage = {"input_tokens": entrada, "output_tokens": salida,
                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         omitir = set(self.omitir)
+        if self.omitir_salida_si and self.omitir_salida_si(caso, rep, nodo):
+            omitir.add("output_tokens")
         if self.omitir_si and self.omitir_si(caso, list(cmd)):
             omitir |= {"cache_creation_input_tokens", "cache_read_input_tokens"}
         for k in omitir:
@@ -215,6 +232,10 @@ class Guion:
     marcar_muerte: Optional[Callable[[str, int], None]] = None
     infra_antes: set = field(default_factory=set)           # {(caso, rep)}: muere ANTES de llamar
     llamada_api_fallida: set = field(default_factory=set)   # {caso}: una llamada `api` con max_tokens que falla
+    api_max_tokens: int = 1                                 # `max_tokens` de esa llamada (fija su cota)
+    llamadas_extra_rep: Mapping[tuple, tuple] = field(default_factory=dict)   # (caso, rep) -> llamadas
+    tolerar_fallos_en: frozenset = frozenset()              # nodos cuyo fallo el turno absorbe
+    aprobar_sin_llamada: bool = False                       # la aprobación no llama al modelo
 
 
 class Mundo:
@@ -248,6 +269,9 @@ class Mundo:
             tok = usage.set_node(nodo)
             try:
                 await asyncio.to_thread(llm.call_llm, mensajes, task=task, **kw)
+            except Exception:  # noqa: BLE001
+                if nodo not in g.tolerar_fallos_en:
+                    raise                      # el producto falla; si es tolerado, el turno sigue
             finally:
                 usage.reset_node(tok)
 
@@ -261,7 +285,8 @@ class Mundo:
             raise RuntimeError("session has expired (doble: infraestructura antes de llamar)")
         if caso.id in g.llamada_api_fallida:
             await self._llamada_api(caso, rep)
-        llamadas = tuple(g.llamadas) + tuple(g.llamadas_extra.get(caso.id, ()))
+        llamadas = (tuple(g.llamadas) + tuple(g.llamadas_extra.get(caso.id, ()))
+                    + tuple(g.llamadas_extra_rep.get((caso.id, rep), ())))
         await self._llamar(caso, rep, llamadas)
         if (caso.id, rep) in g.fallo_producto:
             raise RuntimeError("fallo del producto después de llamar al modelo (doble)")
@@ -277,7 +302,7 @@ class Mundo:
         try:
             await asyncio.to_thread(llm.call_llm, [
                 {"role": "user", "content": f"[[BANCO04 caso={caso.id}|rep={rep}|nodo=auxiliar_api]] x"}],
-                task="legal_edit", model="claude-haiku", max_tokens=256)
+                task="legal_edit", model="claude-haiku", max_tokens=int(self.guion.api_max_tokens))
         except Exception:  # noqa: BLE001 — la falla es el punto
             pass
         finally:
@@ -297,6 +322,8 @@ class Mundo:
             n = self._intentos_aprob.get(cid, 0) + 1
             self._intentos_aprob[cid] = n
             raise RuntimeError("session has expired (doble: infraestructura)")
+        if self.guion.aprobar_sin_llamada:
+            return {"aprobada": True, "aprendizaje": "sin_llamada", "trabajos": {"pendientes": 0}}
         from mia.agent import llm  # noqa: WPS433
         from mia.metrics import usage  # noqa: WPS433
         tok = usage.set_node("aprendizaje")

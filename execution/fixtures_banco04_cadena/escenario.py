@@ -1,6 +1,6 @@
 """Recorrido de las etapas de la cadena DESDE SUS `main` (IC-1) y lectura de lo que dejaron en disco.
 
-INTERFAZ FIJADA POR LAS PRUEBAS (el contrato la deja abierta; ver el informe):
+INTERFAZ (contrato v9, §3.1, §4.4 y §6.4; antes fijada por estas pruebas):
 
   run_banco04.main(argv, *, proveedores=None, mundo=None)
       argv añade a los actuales: --casos a,b (con --permitir-parcial), --solo-piloto,
@@ -14,14 +14,18 @@ INTERFAZ FIJADA POR LAS PRUEBAS (el contrato la deja abierta; ver el informe):
                        [--linea-base]
       juzgar --cadena <R8> --custodia <C> [--reanudar-aprobado-por-pipe REF --etapas juicio
                        --versiones a,b]
-  banco04_decidir.main(argv)
+  banco04_decidir.main(argv, *, _prueba=None)          (solo parámetro de Python, §3.1)
       previa    --nuevo --base --custodia --cadena
       veredicto --nuevo --base --custodia --cadena --salida <VEREDICTO.json>
       linea-base --base --custodia --cadena --salida <INFORME_LINEA_BASE.json>
   banco04_medir_codex.main(argv, *, proveedores=None, mundo=None)   (argv de R14, §2)
   puerta.decidir(*, dir_nuevo, dir_base, custodia, cadena, _prueba=None)
   puerta.medir_linea_base(*, dir_base, custodia, cadena, _prueba=None)
-  puerta.PruebaPuerta(manifiesto_custodia=<ruta>, desproteger=<fn>)
+  puerta.PruebaPuerta(manifiesto_custodia=None, desproteger=None, directorio_instantaneas=None,
+                      aceptar_dobles=False, aceptar_arbol_sucio=False)   (relajaciones separadas)
+  Todos los `main` salvo `banco04_decidir` reciben además `instantaneas_dir=` (§4.4 v6): las
+  instantáneas de prueba viven en un directorio temporal fuera del repo; nada se escribe bajo
+  `backend/`.
 
 Toda llamada a un `main` existente pasa SIEMPRE `proveedores=`/`mundo=`/`runners=`: hoy esos
 parámetros no existen y la llamada falla en el acto con `TypeError`, antes de tocar ningún CLI
@@ -41,7 +45,8 @@ from . import custodia_falsa as CF
 from . import dobles, entorno, firmas
 
 BLOQUE = 7
-CAMPOS_RUTA = ("raiz", "S", "soul", "cadena", "appdata", "custodia", "manifiesto_custodia")
+CAMPOS_RUTA = ("raiz", "S", "soul", "cadena", "appdata", "custodia", "manifiesto_custodia",
+               "instantaneas_dir")
 SOUL ="# SOUL de plantilla del banco 0.4 (sintético, idéntico por versión)\n"
 
 
@@ -163,6 +168,7 @@ class Escenario:
         self.cli_claude, self.cli_codex = versiones_cli()
         self.instantanea = instantanea or firmas.instantanea(self.cli_claude, self.cli_codex)
         self.sha_instantanea: Optional[str] = None
+        self.instantaneas_dir = entorno.dir_instantaneas_prueba()
         self.sha = head_sha()
 
     # ── contexto común ──────────────────────────────────────────────────────────
@@ -174,10 +180,7 @@ class Escenario:
 
     def preparar_instantanea(self) -> str:
         if self.sha_instantanea is None:
-            try:
-                self.sha_instantanea, _ = entorno.instalar_instantanea(self.instantanea)
-            except FileNotFoundError as exc:
-                raise PuntoDeEntradaAusente(str(exc)) from exc
+            self.sha_instantanea, _ = entorno.instalar_instantanea(self.instantanea, self.instantaneas_dir)
         return self.sha_instantanea
 
     def dir(self, version: str) -> Path:
@@ -216,11 +219,13 @@ class Escenario:
         prov = proveedores if proveedores is not None else dobles.proveedores()
         if sin_mundo:
             with self.contexto():
-                return invocar(R.main, self.argv_runner(version, **kw), proveedores=prov)
+                return invocar(R.main, self.argv_runner(version, **kw), proveedores=prov,
+                               instantaneas_dir=self.instantaneas_dir)
         m = mundo if mundo is not None else dobles.Mundo(self.soul, guion, version=version)
         self.ultimo_mundo = m
         with self.contexto():
-            return invocar(R.main, self.argv_runner(version, **kw), proveedores=prov, mundo=m)
+            return invocar(R.main, self.argv_runner(version, **kw), proveedores=prov, mundo=m,
+                           instantaneas_dir=self.instantaneas_dir)
 
     def aprobar(self, version: str, *, proveedores: Optional[dict] = None, mundo=None,
                 guion: Optional[dobles.Guion] = None, sin_mundo: bool = False, **kw) -> int:
@@ -257,7 +262,7 @@ class Escenario:
         carpeta = appdata or self.appdata
         with self.contexto():
             return invocar(VJ.main, a, runners=runners or dobles.runners(cli_claude=self.cli_claude, cli_codex=self.cli_codex),
-                           carpeta_local_appdata=lambda: carpeta)
+                           carpeta_local_appdata=lambda: carpeta, instantaneas_dir=self.instantaneas_dir)
 
     # ── juzgar ────────────────────────────────────────────────────────────────
     def registrar_cadena(self, *, base: str = "base", nuevo: Optional[str] = "nuevo",
@@ -270,7 +275,7 @@ class Escenario:
         if linea_base:
             a += ["--linea-base"]
         with self.contexto():
-            return invocar(J.main, a)
+            return invocar(J.main, a, instantaneas_dir=self.instantaneas_dir)
 
     def juzgar(self, runners: Optional[dict] = None, *, reanudar: Optional[str] = None,
                etapas: str = "juicio", versiones: Optional[str] = None) -> int:
@@ -280,24 +285,36 @@ class Escenario:
             a += ["--reanudar-aprobado-por-pipe", reanudar, "--etapas", etapas,
                   "--versiones", versiones or ",".join(self.versiones)]
         with self.contexto():
-            return invocar(J.main, a, runners=runners or dobles.runners(cli_claude=self.cli_claude, cli_codex=self.cli_codex))
+            return invocar(J.main, a, runners=runners or dobles.runners(cli_claude=self.cli_claude, cli_codex=self.cli_codex),
+                           instantaneas_dir=self.instantaneas_dir)
 
     # ── decidir ───────────────────────────────────────────────────────────────
-    def prueba_puerta(self):
+    def prueba_puerta(self, *, manifiesto: bool = True, instantaneas: bool = True,
+                      dobles_: bool = True, arbol: bool = True):
+        """`PruebaPuerta` con cada relajación por separado (§3.1 v6+)."""
         puerta = importar("mia.eval.banco04.puerta")
         from mia.eval.banco04 import custodia as cus
-        return puerta.PruebaPuerta(manifiesto_custodia=self.manifiesto_custodia,
-                                   desproteger=cus.desproteger_dpapi)
+        return puerta.PruebaPuerta(
+            manifiesto_custodia=self.manifiesto_custodia if manifiesto else None,
+            desproteger=cus.desproteger_dpapi if manifiesto else None,
+            directorio_instantaneas=self.instantaneas_dir if instantaneas else None,
+            aceptar_dobles=dobles_, aceptar_arbol_sucio=arbol)
 
-    def decidir(self, *, prueba: bool = True, base: str = "base", nuevo: str = "nuevo") -> dict:
+    def decidir(self, *, prueba: bool = True, base: str = "base", nuevo: str = "nuevo",
+                relajaciones: Optional[dict] = None) -> dict:
+        """F17: todas las relajaciones (§6.1: F17 activa también `aceptar_dobles` y
+        `aceptar_arbol_sucio`). `relajaciones` permite activarlas por separado."""
         puerta = importar("mia.eval.banco04.puerta")
+        pp = self.prueba_puerta(**(relajaciones or {})) if prueba else None
         with self.contexto():
             return puerta.decidir(dir_nuevo=self.dir(nuevo), dir_base=self.dir(base),
-                                  custodia=self.custodia, cadena=self.cadena,
-                                  _prueba=self.prueba_puerta() if prueba else None)
+                                  custodia=self.custodia, cadena=self.cadena, _prueba=pp)
 
     def decidir_cli(self, subcomando: str = "veredicto", *, base: str = "base",
                     nuevo: Optional[str] = "nuevo") -> tuple[int, Optional[dict], Path]:
+        """Esqueleto (§6.1 v6+): `banco04_decidir.main([...], _prueba=PruebaPuerta(manifiesto,
+        desproteger, directorio_instantaneas))` con `aceptar_dobles` y `aceptar_arbol_sucio` SIN
+        relajar: `corridas_con_dobles` aparece y el resultado lleva `modo_prueba: true`."""
         D = importar("banco04_decidir")
         salida = self.raiz / ("INFORME_LINEA_BASE.json" if subcomando == "linea-base" else "VEREDICTO.json")
         a = [subcomando, "--base", str(self.dir(base)), "--custodia", str(self.custodia),
@@ -307,7 +324,7 @@ class Escenario:
         if subcomando != "previa":
             a += ["--salida", str(salida)]
         with self.contexto():
-            code = invocar(D.main, a)
+            code = invocar(D.main, a, _prueba=self.prueba_puerta(dobles_=False, arbol=False))
         return code, leer(salida), salida
 
     def medir_linea_base(self, *, prueba: bool = True) -> dict:
@@ -328,7 +345,7 @@ class Escenario:
              "--incluir-custodiados", "--versiones-contador", ",".join(self.versiones)]
         prov = proveedores if proveedores is not None else dobles.proveedores(con_codex=True)
         with self.contexto():
-            return invocar(M.main, a, proveedores=prov,
+            return invocar(M.main, a, proveedores=prov, instantaneas_dir=self.instantaneas_dir,
                            mundo=dobles.Mundo(self.soul, guion or dobles.Guion(
                                llamadas=dobles.LLAMADAS_POR_DEFECTO + (("legal_research", "investigacion"),)),
                                version=version))
@@ -413,8 +430,5 @@ def derivar(origen: Escenario, nombre: str, *, regenerar: Iterable[str] = (), re
 
 
 def instalar(instantanea: dict):
-    """Instala una instantánea de prueba; sin el directorio del contrato, punto de entrada ausente."""
-    try:
-        return entorno.instalar_instantanea(instantanea)
-    except FileNotFoundError as exc:
-        raise PuntoDeEntradaAusente(str(exc)) from exc
+    """Instala una instantánea de prueba en el directorio temporal de prueba (nunca bajo backend/)."""
+    return entorno.instalar_instantanea(instantanea)

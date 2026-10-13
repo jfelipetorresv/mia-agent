@@ -1,6 +1,9 @@
 """
 Mia · test_banco04_cadena.py — pruebas de PUNTA A PUNTA de la cadena del banco 0.4
-(contrato `docs/banco04-cadena-contrato.md`, banco04-cadena/v5, §6; protocolo banco04-v1.3).
+(contrato `docs/banco04-cadena-contrato.md`, banco04-cadena/v9, §6; protocolo banco04-v1.3 y la
+propuesta v1.4 de «Separar calidad y cuota»). Ajustada a v9 el 2026-10-13: dos veredictos (CALIDAD y
+CUOTA por intervalo, §3.1 y §4.5), `PruebaPuerta` con relajaciones separadas, instantáneas de prueba
+fuera de `backend/` (`instantaneas_dir=`), E2E-19.
 
 Autor independiente de pruebas. Estas pruebas son la BARRERA: se escriben antes de la cadena y
 quien la implemente no puede editarlas. Cada prueba entra por los PUNTOS DE ENTRADA REALES
@@ -20,6 +23,8 @@ Bloques:
   INV familia inversa: mutar derivados no cambia el veredicto
   EXT recorrido positivo de la extensión (F17-ext) y sus variantes
   R13 contraejemplos de la estimación de Codex (10 + 1.000 ⇒ 1.263, redondeos)
+  E2E-19 veredicto de CUOTA separado y por intervalo (§4.5: 1, 2, 3, 3b, 3c, 3d, 3e, 4, 5, 6, 7, 7b, 8)
+  P   perímetro: nada se escribe bajo `backend/`
 
 Offline: no llama proveedores (dobles en memoria), no toca la base 55432 ni la custodia real ni el
 registro de uso real. E2E-1 y las tres mutaciones del esqueleto con base de datos exigen el clúster
@@ -86,7 +91,7 @@ discordancias_sin_resolver incoherencia_matriz negativa_correcta_contradictoria 
 circuito_no_utilizable validacion_reservada_ausente reservado_retirado falsos_bloqueos_sin_dato
 informe_del_muro_ausente cambio_de_motor_contradictorio sin_dato par_faltante no_concluyente_sin_extension
 extension_sin_causa extension_no_coincide extension_incompleta submuestra_incompleta
-consumo_desconocido_sin_cota techo_sin_aprobacion atribucion_mapa_no_coincide telemetria_contradictoria
+techo_sin_aprobacion atribucion_mapa_no_coincide telemetria_contradictoria instantaneas_de_prueba
 telemetria_acreditada_no_coincide circuito_suspendido llamada_tras_desconocido_sin_autorizacion
 reanudacion_invalida identidad_efectiva_ausente acreditacion_ambigua acreditacion_snapshot_distinto
 no_enviado_contradictorio seq_incoherente estimacion_codex_no_reproducible entrada_no_permitida
@@ -108,6 +113,15 @@ F_ESQUELETO = frozenset({"cadena_ilegible", "custodia_no_coincide", "identidad_v
                          "no_concluyente_sin_extension", "extension_sin_causa", "extension_no_coincide",
                          "extension_incompleta", "entrada_no_permitida", "entrada_inaccesible",
                          "consumo_desconocido_sin_cota"})
+# §3.8 v7: `consumo_desconocido_sin_cota` es SOLO código de parada en ejecución y causa del máximo ∞
+# de la cuota; NUNCA motivo de calidad (por eso no está en VOCABULARIO y `vocab_ok` lo rechaza).
+CODIGO_SOLO_PARADA = "consumo_desconocido_sin_cota"
+AVISO_ESTIMADA = ("Cuota estimada: el consumo real está en el intervalo publicado y cruza el umbral; la cifra "
+                  "puntual es una estimación empírica no garantizada y no certifica el techo")
+CUOTA_TOKENS = ("claude_", "codex_", "inferencia", "atribu", "C25", "techo", "tokens_por_operacion")
+CALIDAD_TOKENS = ("afirmaciones", "fuga", "cobertura", "kappa", "discordancias", "definitivo", "omision",
+                  "utilidad", "aprobacion_sin_edicion", "turnos", "falsos_bloqueos", "cambio_de_motor",
+                  "abstencion", "decisivos", "alcance")
 CODIGOS_CALIDAD = frozenset({"discordancias_sin_resolver", "incoherencia_matriz", "negativa_correcta_contradictoria",
                              "kappa_reservado", "kappa_real", "circuito_no_utilizable", "sin_dato", "par_faltante"})
 CASO = "caducidad-reparacion-directa"           # PR:35, A-canónicos (esqueleto, §6.1)
@@ -125,6 +139,44 @@ def vocab_ok(v) -> bool:
     if v.get("veredicto") == "no_certificable" and not cs:
         return False
     return cs <= VOCABULARIO
+
+
+def cuota(v) -> dict:
+    return ((v or {}).get("cuota") or {}) if isinstance(v, dict) else {}
+
+
+def cuota_estimada(v, ids=()) -> bool:
+    """§4.5: `estimada`, `resultado: null`, el aviso literal, alguna condición `estimada` y los
+    intentos sin cota indicados en `intentos_sin_cota`."""
+    c = cuota(v)
+    return (c.get("estado") == "estimada" and c.get("resultado") is None and c.get("aviso") == AVISO_ESTIMADA
+            and any(x.get("estado") == "estimada" for x in c.get("condiciones") or [])
+            and set(ids) <= set(c.get("intentos_sin_cota") or []))
+
+
+def cuota_certificada(v, resultado: str) -> bool:
+    c = cuota(v)
+    conds = c.get("condiciones") or []
+    if not (c.get("estado") == "certificada" and c.get("resultado") == resultado and conds):
+        return False
+    if resultado == "cumple":
+        return all(x.get("estado") == "certificada_cumple" for x in conds)
+    return any(x.get("estado") == "certificada_excede" for x in conds)
+
+
+def sin_motivo_de_cuota(v) -> bool:
+    """La calidad no lleva ningún motivo por consumo (§3.1, §3.8 v7)."""
+    return isinstance(v, dict) and CODIGO_SOLO_PARADA not in codigos(v)
+
+
+def separacion_estricta(v) -> bool:
+    """E2E-19.8: ninguna condición de cuota entre las de calidad ni al revés; la cuota existe."""
+    if not isinstance(v, dict) or not cuota(v).get("condiciones"):
+        return False
+    cal = [str(c.get("id", "")) for c in v.get("condiciones") or []]
+    cuo = [str(c.get("id", "")) for c in cuota(v).get("condiciones") or []]
+    return (not [i for i in cal if any(t in i for t in CUOTA_TOKENS)]
+            and not [i for i in cuo if any(t in i for t in CALIDAD_TOKENS)] and sin_motivo_de_cuota(v))
 
 
 def frase(caso_id: str = CASO) -> str:
@@ -175,7 +227,8 @@ def exigir(cond: bool, motivo: str) -> None:
 # ════════════════════════════════════════════════════════════════════════════════════════
 def construir_esqueleto(nombre: str, *, guion_base=None, guion_nuevo=None, prov_base=None, prov_nuevo=None,
                         instantanea=None, runners=None, juzgar: bool = True, decidir: bool = True,
-                        medir_codex_nuevo: bool = False, versiones=VERS_ESQ) -> dict:
+                        medir_codex_nuevo: bool = False, versiones=VERS_ESQ,
+                        reanudar_si_para: bool = False) -> dict:
     """§6.1 con `mundo=` (sin base de datos): 1 caso, 1 repetición, dos versiones, Bloque 7."""
     esc = ESC.Escenario(nombre, instantanea=instantanea, versiones=versiones)
     b, n = versiones
@@ -189,6 +242,8 @@ def construir_esqueleto(nombre: str, *, guion_base=None, guion_nuevo=None, prov_
     if juzgar:
         out["cadena"] = esc.registrar_cadena(base=b, nuevo=n)
         out["juicio"] = esc.juzgar(runners)
+        if out["juicio"] != 0 and reanudar_si_para:
+            out["juicio_reanudado"] = esc.juzgar(runners, reanudar=REF_PIPE)
     if decidir:
         out["cli"] = esc.decidir_cli("veredicto", base=b, nuevo=n)
         out["v"] = out["cli"][1]
@@ -355,11 +410,33 @@ METRICAS_NUEVAS = {"falsos_bloqueos_corrida": ("informe", "fuentes"),
                    "cambio_de_motor_corrida": ("fallbacks", "filas_R4"), "casos_extension": None}
 
 
+def a8_vj_exigencias() -> bool:
+    import banco04_validar_jueces as VJ
+    if "consumo" in inspect.signature(VJ.evaluar_exigencias).parameters:
+        return False
+    conj = CF.conjunto_mutaciones("reservado")
+    items = VJ.validar_conjunto(conj)
+    rn = dobles.runners()
+    por = [VJ.evaluar_item(it, opus=rn["opus"], codex=rn["codex"], llave=autocontrol.LLAVE) for it in items]
+    res = [x for it in por for x in it["verdades"]]
+    pares = [q for it in por if it["estado"] == "evaluada" for q in it["pares_kappa"]]
+    acr = {"ok": True, "motivos": []}
+    ok_sin = VJ.evaluar_exigencias(res, tipo="reservado", discordancias=0, pares_kappa=pares, acreditacion=acr)
+    con_disc = VJ.evaluar_exigencias(res, tipo="reservado", discordancias=1, pares_kappa=pares, acreditacion=acr)
+    sin_acr = VJ.evaluar_exigencias(res, tipo="reservado", discordancias=0, pares_kappa=pares, acreditacion=None)
+    conservadas = {"salidas_sin_evaluar", "discordancias_sin_resolver", "acreditacion_compatibilidad_v13",
+                   "sensibilidad_final", "falsos_positivos_finales", "kappa", "sensibilidad_clausula_breve"}
+    return (ok_sin.get("circuito_utilizable") is True and "consumo_certificable" not in ok_sin.get("exigencias", {})
+            and conservadas <= set(ok_sin.get("exigencias", {}))
+            and con_disc.get("circuito_utilizable") is False and sin_acr.get("circuito_utilizable") is False)
+
+
 def bloque_a() -> None:
     print("\nA · alcanzabilidad estática (firmas, sin conclusiones como parámetro, sin puerta trasera)")
     import importlib
     for mod in ("mia.eval.banco04.telemetria", "mia.eval.banco04.registros", "mia.eval.banco04.reproduccion",
-                "mia.eval.banco04.puerta", "banco04_juzgar", "banco04_decidir", "banco04_medir_codex"):
+                "mia.eval.banco04.puerta", "banco04_juzgar", "banco04_decidir", "banco04_medir_codex",
+                "banco04_medir_fondo_cli"):
         try:
             importlib.import_module(mod)
             ok = True
@@ -367,7 +444,25 @@ def bloque_a() -> None:
             ok = False
             print(f"       {mod}: {type(exc).__name__}: {exc}")
         check(f"A1 existe el módulo de la cadena {mod} (§1.2)", ok)
-    check("A1 existe el directorio de instantáneas `telemetria_acreditada/` (§4.4)", entorno.DIR_INSTANTANEAS.is_dir())
+    check("A1 existe el directorio de PRODUCCIÓN de instantáneas `telemetria_acreditada/` (§4.4; las pruebas no "
+          "escriben en él)", entorno.DIR_INSTANTANEAS.is_dir())
+    # A1b · los `main` reciben `instantaneas_dir=` y `banco04_decidir.main` recibe `_prueba=` (§4.4, §6.4.4)
+    import importlib as _il
+    for mod in ("run_banco04", "banco04_validar_jueces", "banco04_juzgar", "banco04_medir_codex",
+                "banco04_medir_fondo_cli"):
+        try:
+            ps = inspect.signature(_il.import_module(mod).main).parameters
+            ok = "instantaneas_dir" in ps and ps["instantaneas_dir"].kind == inspect.Parameter.KEYWORD_ONLY
+        except Exception:  # noqa: BLE001
+            ok = False
+        check(f"A1b `{mod}.main` acepta `instantaneas_dir=` solo como parámetro de Python (keyword-only)", ok)
+    try:
+        ps = inspect.signature(_il.import_module("banco04_decidir").main).parameters
+        ok = ("_prueba" in ps and ps["_prueba"].kind == inspect.Parameter.KEYWORD_ONLY and ps["_prueba"].default is None
+              and "instantaneas_dir" not in ps)
+    except Exception:  # noqa: BLE001
+        ok = False
+    check("A1b `banco04_decidir.main(argv, *, _prueba=None)` (§3.1) y sin `instantaneas_dir`", ok)
     # A2 · firma exacta de la puerta
     try:
         puerta = importlib.import_module("mia.eval.banco04.puerta")
@@ -382,7 +477,16 @@ def bloque_a() -> None:
             check(f"A2 `{fn.__name__}` es keyword-only con EXACTAMENTE {sorted(esperados)} + `_prueba` (§3.1)",
                   solo_kw and nombres == esperados | {"_prueba"} and ps["_prueba"].default is None
                   and all(ps[n].default is inspect.Parameter.empty for n in esperados))
-        check("A2 `PruebaPuerta` existe y es la única relajación (§3.1)", hasattr(puerta, "PruebaPuerta"))
+        pp = getattr(puerta, "PruebaPuerta", None)
+        firma_pp = dict(inspect.signature(pp).parameters) if pp is not None else {}
+        esperada = {"manifiesto_custodia": None, "desproteger": None, "directorio_instantaneas": None,
+                    "aceptar_dobles": False, "aceptar_arbol_sucio": False}
+        check("A2 `PruebaPuerta` tiene EXACTAMENTE las relajaciones separadas de §3.1 v6 con sus valores por "
+              "defecto (manifiesto, desproteger, directorio de instantáneas, aceptar_dobles, aceptar_arbol_sucio)",
+              set(firma_pp) == set(esperada) and all(firma_pp[k].default == d for k, d in esperada.items()))
+        rm = getattr(puerta, "RUTA_MANIFIESTO_REPO", None)
+        check("A2 la puerta fija `RUTA_MANIFIESTO_REPO` = `custodia_manifest.json` del repo (§3.1 v6)",
+              rm is not None and Path(rm).resolve() == (entorno.BACKEND / "mia/eval/banco04/custodia_manifest.json").resolve())
     except Exception as exc:  # noqa: BLE001
         check(f"A2 firma de la puerta (no importa: {type(exc).__name__}: {exc})", False)
     # A3 · metricas.py no recibe conclusiones
@@ -447,6 +551,10 @@ def bloque_a() -> None:
     check(f"A7 la huella del evaluador incluye los módulos nuevos de §1.2 (faltan {faltan})", not faltan)
     check("A7 las instantáneas de acreditación NO entran en la huella del evaluador (K13)",
           "telemetria_acreditada" not in arch and not faltan)
+    # A8 · §8.6 bis: de la habilitación de VJ SOLO se retira `consumo_certificable`
+    check("A8 `evaluar_exigencias` de VJ ya no recibe `consumo` ni exige `consumo_certificable`; conserva "
+          "salidas sin evaluar, discordancias, acreditación v1.3, sensibilidades, falsos positivos, kappa y "
+          "cláusula breve (§8.6 bis)", a8_vj_exigencias())
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════
@@ -580,12 +688,12 @@ def e2e_2_e_inversa_esqueleto() -> None:
         exigir(isinstance(v, dict) and v.get("condiciones"), "el esqueleto no produjo un veredicto con condiciones")
         leidas = [Path(x.get("ruta", "")) for x in v.get("entradas_leidas") or []]
         permitidas = (esc.S, esc.custodia, entorno.BACKEND / "mia", entorno.ROOT / "execution",
-                      esc.manifiesto_custodia.parent)
+                      esc.manifiesto_custodia.parent, esc.instantaneas_dir)
         fuera = [str(p) for p in leidas if not any(str(p).startswith(str(r)) for r in permitidas)]
         derivados = [str(p) for p in leidas if p.name in ("estado_banco.json", "aprobaciones_estado.json",
                                                           "VEREDICTO.json", "INFORME_LINEA_BASE.json")
                      or p.name.endswith(".derivado.json") or p.name.startswith("usage_by_node")]
-        inst = entorno.DIR_INSTANTANEAS / f"{esc.sha_instantanea}.json"
+        inst = esc.instantaneas_dir / f"{esc.sha_instantanea}.json"      # PruebaPuerta.directorio_instantaneas
         evid = [entorno.ROOT / e["archivo"] for ent in esc.instantanea["entradas"] for e in ent["evidencia"]]
         check(f"E2E-2 `entradas_leidas` ⊆ inventario de §3.9 (fuera: {fuera[:2]}) y sin derivados ({derivados[:2]})",
               bool(leidas) and not fuera and not derivados)
@@ -680,9 +788,10 @@ def e2e_3_4() -> None:
               d["juicio"] != 0 and any((c.get("eventos") or []) == [desc[0]["id"]] for c in contenido if desc)
               and any(f.get("estado") == "no_enviado" and str(f.get("fase", "")).startswith("juicio")
                       for f in esc.todas_r4()))
-        check("E2E-3 el techo es no certificable en la puerta (`consumo_desconocido_sin_cota`) y la denegación "
-              "NO es una infracción (sin `llamada_tras_desconocido_sin_autorizacion`)",
-              "consumo_desconocido_sin_cota" in codigos(d["v"])
+        check("E2E-3 en la puerta la CUOTA queda `estimada` (evento en la versión NUEVA, mínimo del cociente "
+              "≤ 1,25), con la fila en `intentos_sin_cota` y el aviso literal; la CALIDAD no tiene ningún motivo "
+              "por el evento y la denegación NO es una infracción",
+              bool(desc) and cuota_estimada(d["v"], [desc[0]["id"]]) and sin_motivo_de_cuota(d["v"])
               and "llamada_tras_desconocido_sin_autorizacion" not in codigos(d["v"]) and vocab_ok(d["v"]))
     except EscenarioNoDisponible as exc:
         check(f"E2E-3: {exc}", False)
@@ -691,13 +800,22 @@ def e2e_3_4() -> None:
              "Codex sin evento `usage`"),):
         try:
             d = memo(nombre, lambda prov=prov, nombre=nombre: construir_esqueleto(
-                nombre, prov_nuevo=prov, medir_codex_nuevo=True,
+                nombre, prov_nuevo=prov, medir_codex_nuevo=True, reanudar_si_para=True,
                 guion_nuevo=dobles.Guion(llamadas=dobles.LLAMADAS_POR_DEFECTO + (("legal_research", "investigacion"),))))
             filas = d["esc"].r4(VERS_ESQ[1])
             cx = [f for f in filas if f.get("proveedor_cuota") == "codex" and f.get("fase") == "produccion"]
-            check(f"E2E-3 variante {desc_txt}: fila desconocida sin cota, el juicio se detiene y la puerta no certifica",
-                  any(desconocida_sin_cota(f) for f in cx) and d.get("juicio") != 0
-                  and "consumo_desconocido_sin_cota" in codigos(d.get("v")))
+            ids = [f["id"] for f in cx if desconocida_sin_cota(f)]
+            check(f"E2E-3 variante {desc_txt}: fila desconocida sin cota, el juicio se detiene, la cuota queda "
+                  "`estimada` y la calidad sin motivo por el evento",
+                  bool(ids) and d.get("juicio") != 0 and cuota_estimada(d.get("v"), ids)
+                  and sin_motivo_de_cuota(d.get("v")))
+            # E2E-19.6 · Codex sin cota: fondo no medido y calidad intacta
+            check("E2E-19.6 Codex sin cota ⇒ `cuota: estimada`, `fondo_observado_fuente = \"no_medido\"` y "
+                  "calidad intacta (motivos ⊆ E del esqueleto)",
+                  bool(ids) and cuota_estimada(d.get("v"), ids)
+                  and all((((f.get("estimacion_empirica") or {}).get("inicial") or {}).get("componentes") or {})
+                          .get("fondo_observado_fuente") == "no_medido" for f in cx if f["id"] in ids)
+                  and codigos(d.get("v")) <= E_ESQUELETO)
         except EscenarioNoDisponible as exc:
             check(f"E2E-3 variante {desc_txt}: {exc}", False)
     check("E2E-3 variante `cli-codex-eval` con `None`: NO EJECUTABLE con dobles — exige el override del harness "
@@ -711,11 +829,12 @@ def e2e_3_4() -> None:
             "e2e3-con-cota", guion_nuevo=dobles.Guion(llamada_api_fallida={CASO})))
         filas = d["esc"].r4(VERS_ESQ[1])
         api = [f for f in filas if f.get("familia") == "api"]
-        check("E2E-3 variante con cota: una fila `api` que falla con `max_tokens` aplicado es desconocida CON cota, "
-              "no detiene el juez y el techo sigue certificable",
+        check("E2E-3 variante con cota: una fila `api` que falla con `max_tokens` aplicado (1) es desconocida "
+              "CON cota, no detiene el juez y el techo sigue certificable (`certificada · cumple`: su máximo "
+              "posible no cruza ningún umbral)",
               bool(api) and all((f.get("uso_validado") or {}).get("consumo_conocido") is False
                                 and isinstance((f.get("cota") or {}).get("tokens_cota_superior"), int) for f in api)
-              and d.get("juicio") == 0 and "consumo_desconocido_sin_cota" not in codigos(d.get("v"))
+              and d.get("juicio") == 0 and sin_motivo_de_cuota(d.get("v")) and cuota_certificada(d.get("v"), "cumple")
               and not ESC.archivos(d["esc"].dir(VERS_ESQ[1]), "suspensiones/*.json"))
     except EscenarioNoDisponible as exc:
         check(f"E2E-3 variante con cota: {exc}", False)
@@ -734,9 +853,9 @@ def e2e_3_4() -> None:
               code == 0 and sorted(ev) == sorted(desc) and bool(desc)
               and all((ESC.leer(r) or {}).get("referencia_aprobacion_pipe") == REF_PIPE for r in rean))
         v = esc.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
-        check("E2E-4 con la reanudación válida la puerta acepta el orden, pero el techo SIGUE no certificable "
-              "(una reanudación nunca acredita consumo)",
-              "consumo_desconocido_sin_cota" in codigos(v)
+        check("E2E-4 con la reanudación válida la puerta acepta el orden; la reanudación nunca acredita consumo: "
+              "la cuota sigue `estimada` y la calidad no tiene motivo por el evento",
+              cuota_estimada(v, desc) and sin_motivo_de_cuota(v)
               and not codigos(v) & {"llamada_tras_desconocido_sin_autorizacion", "reanudacion_invalida"})
         # editar una fila cubierta invalida la reanudación
         e2 = ESC.copiar(esc, "e2e4-editada")
@@ -1013,7 +1132,7 @@ def e2e_6() -> None:
         from mia.agent import codex_subscription_llm as cx, llm, subscription_llm as sl
         from mia.metrics import usage
         import run_banco04 as R
-        originales = (sl._to_openai_response, cx._usage, sl._build_command, cx._command)
+        originales = (sl._to_openai_response, cx._usage, sl._build_command, cx._command, sl._sanitized_env)
 
         def llamar():
             cl, co = dobles.ClaudeCLIDoble(), dobles.CodexCLIDoble()
@@ -1044,7 +1163,7 @@ def e2e_6() -> None:
                     "hint": getattr(r, "mia_model_hint", None), "effort": getattr(r, "mia_effort", None)}
         sin_env = llamar()
         with tele.instalar():
-            dentro = (sl._to_openai_response, cx._usage, sl._build_command, cx._command)
+            dentro = (sl._to_openai_response, cx._usage, sl._build_command, cx._command, sl._sanitized_env)
             con_env = llamar()
         limpiar = lambda fs: [sin_tiempo({k: v for k, v in f.items() if k not in ("ts", "created_at")})  # noqa: E731
                               for f in fs]
@@ -1059,7 +1178,8 @@ def e2e_6() -> None:
             pass
         check("E2E-6.3 al salir de `telemetria.instalar()`, incluso por excepción, los atributos vuelven a ser "
               "los originales (`is`)",
-              all(x is y for x, y in zip((sl._to_openai_response, cx._usage, sl._build_command, cx._command),
+              all(x is y for x, y in zip((sl._to_openai_response, cx._usage, sl._build_command, cx._command,
+                                          sl._sanitized_env),
                                          originales)))
     except (PuntoDeEntradaAusente, AttributeError) as exc:
         check(f"E2E-6.2/6.3: {type(exc).__name__}: {exc}", False)
@@ -1083,10 +1203,21 @@ def e2e_7() -> None:
     try:
         d = esqueleto()
         v = d["v"]
-        check("E2E-7 con `dobles: true` y SIN `_prueba` (línea de comandos), el resultado es `no_certificable` "
-              "con `corridas_con_dobles` y `modo_prueba` falso",
+        check("E2E-7 con `dobles: true` y `aceptar_dobles` SIN relajar (esqueleto, §6.1 v6), el resultado es "
+              "`no_certificable` con `corridas_con_dobles` y `modo_prueba: true`",
               (v or {}).get("veredicto") == "no_certificable" and "corridas_con_dobles" in codigos(v)
-              and v.get("modo_prueba") is False)
+              and v.get("modo_prueba") is True)
+        vpub = d["esc"].decidir(prueba=False, base=VERS_ESQ[0], nuevo=VERS_ESQ[1])
+        check("E2E-7 la puerta PÚBLICA (sin `_prueba`) solo usa el `custodia_manifest.json` del repo: sustituir "
+              "`custodia._MANIFEST_PATH` no tiene efecto y la custodia de prueba no abre ⇒ `custodia_no_coincide`, "
+              "con `modo_prueba: false`",
+              isinstance(vpub, dict) and vpub.get("veredicto") == "no_certificable"
+              and "custodia_no_coincide" in codigos(vpub) and vpub.get("modo_prueba") is False)
+        vsi = d["esc"].decidir(prueba=True, base=VERS_ESQ[0], nuevo=VERS_ESQ[1],
+                               relajaciones={"instantaneas": False})
+        check("E2E-7 R1 escritos con `instantaneas_dir=` y leídos SIN `directorio_instantaneas` ⇒ "
+              "`instantaneas_de_prueba` (§3.8, §4.4 v6); otra relajación activa sigue marcando `modo_prueba`",
+              "instantaneas_de_prueba" in codigos(vsi) and vsi.get("modo_prueba") is True)
         vp = d["esc"].decidir(prueba=True, base=VERS_ESQ[0], nuevo=VERS_ESQ[1])
         from mia.eval.banco04 import metricas as M
         try:
@@ -1130,7 +1261,8 @@ def e2e_1_esqueleto_mundo() -> None:
               "`cadenas_politica`, `firmas_previstas` y `telemetria_acreditada_sha256` (§2 R1)",
               r1.get("dobles") is True and r1.get("bloque") == 7 and r1.get("solo_piloto") is True
               and r1.get("muestra_restringida") == [CASO] and isinstance(r1.get("cadenas_politica"), dict)
-              and r1.get("telemetria_acreditada_sha256") == esc.sha_instantanea and r1.get("firmas_previstas"))
+              and r1.get("telemetria_acreditada_sha256") == esc.sha_instantanea and r1.get("firmas_previstas")
+              and r1.get("instantaneas_de_prueba") is True)
         r2 = esc.r2(n, CASO, 1) or {}
         check("E2E-1m R2 lleva `caso_digest`, `prompt_version_hash`, `jurisdicciones_fijadas = []` e "
               "`intentos[].llamadas` con los ids de R4",
@@ -1419,7 +1551,8 @@ def e2e_11() -> None:
         j = esc.juzgar()
         code, inf, ruta = esc.decidir_cli("linea-base", base="base-b0", nuevo=None)
         claves = {"schema", "version", "rotulo", "modo_prueba", "estado", "motivos", "absolutos", "matriz_7_2",
-                  "por_caso", "consumo", "circuito_bloque0", "jueces", "cotas_ilustrativas", "entradas_leidas"}
+                  "por_caso", "consumo", "circuito_bloque0", "jueces", "cotas_ilustrativas", "cuota",
+                  "entradas_leidas"}
         inf = inf or {}
         cad = ESC.leer(esc.cadena) or {}
         check("E2E-11 R8 del Bloque 0: `bloque: 0`, `bloque_0_linea_base: true` y una sola versión `rol: base`",
@@ -1437,6 +1570,11 @@ def e2e_11() -> None:
               and cb.get("techo_codex") == 5_000_000
               and set((inf.get("consumo") or {}).get("clases_de_consumo") or {}) == {"conocido", "con_cota", "sin_cota"}
               and all(m.get("codigo") in VOCABULARIO for m in inf.get("motivos") or []))
+        cu = inf.get("cuota") or {}
+        check("E2E-11 el informe del Bloque 0 lleva el veredicto de CUOTA separado (§3.5 v7): consumo pequeño, "
+              "sin intentos sin cota ⇒ `certificada`, `circuito: cumple`, con `consumo_conocido` y sin aviso",
+              cu.get("estado") == "certificada" and cu.get("circuito") == "cumple"
+              and "consumo_conocido" in cu and cu.get("aviso") in (None, ""))
     except (PuntoDeEntradaAusente, EscenarioNoDisponible) as exc:
         check(f"E2E-11: {exc}", False)
 
@@ -1498,9 +1636,10 @@ def e2e_13_15() -> None:
               and bool(siguientes) and siguientes[0].get("estado") == "no_enviado")
         v = esc.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
         check("E2E-13 (i) la puerta ACEPTA B (garantía de compromiso irrevocable): sin "
-              "`llamada_tras_desconocido_sin_autorizacion` ni `seq_incoherente`, y su consumo cuenta",
+              "`llamada_tras_desconocido_sin_autorizacion` ni `seq_incoherente`; el evento de A va a la cuota "
+              "(`estimada`) y no a la calidad",
               isinstance(v, dict) and not codigos(v) & {"llamada_tras_desconocido_sin_autorizacion", "seq_incoherente"}
-              and "consumo_desconocido_sin_cota" in codigos(v))
+              and cuota_estimada(v, [a[0]["id"]]) and sin_motivo_de_cuota(v))
         # (ii) manipulación: B con seq_envio posterior al cierre de A y sin reanudación
         e2 = ESC.copiar(esc, "e2e13-ii-falsa")
         falsificar_juez_tras_evento(e2, VERS_ESQ[1], a[0]["id"])
@@ -1557,8 +1696,9 @@ def e2e_13_15() -> None:
               and a["seq_inicio"] < a["seq_envio"] < orf[0]["seq_deteccion"])
         v = esc.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
         check("E2E-13 (iii) / E2E-15 la puerta no da `seq_incoherente`; la huérfana enviada es desconocida sin "
-              "cota y la siguiente sección que la detecta se detiene",
-              isinstance(v, dict) and "seq_incoherente" not in codigos(v) and "consumo_desconocido_sin_cota" in codigos(v)
+              "cota (en `cuota.intentos_sin_cota`, cuota `estimada`) y la siguiente sección que la detecta se detiene",
+              isinstance(v, dict) and "seq_incoherente" not in codigos(v) and bool(a)
+              and cuota_estimada(v, [a["id"]]) and sin_motivo_de_cuota(v)
               and len(juez) >= 2 and juez[1].get("estado") == "no_enviado")
     except (EscenarioNoDisponible, PuntoDeEntradaAusente, KeyError, TypeError) as exc:
         check(f"E2E-13 (iii): {type(exc).__name__}: {exc}", False)
@@ -1579,9 +1719,11 @@ def e2e_13_15() -> None:
         e2.registrar_cadena(base=VERS_ESQ[0], nuevo=VERS_ESQ[1])
         cj = e2.juzgar()
         v = e2.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
-        check("E2E-15 lo no enviado no es consumo ni detiene: el juez sigue (exit 0) y el techo no queda "
-              "`consumo_desconocido_sin_cota` por ella",
-              cj == 0 and isinstance(v, dict) and "consumo_desconocido_sin_cota" not in codigos(v))
+        check("E2E-15 lo no enviado no es consumo ni detiene: el juez sigue (exit 0), la fila no entra en "
+              "`cuota.intentos_sin_cota` y la cuota no queda `estimada` por ella",
+              cj == 0 and isinstance(v, dict) and sin_motivo_de_cuota(v) and bool(cuota(v).get("condiciones"))
+              and not set(f["id"] for f in den) & set(cuota(v).get("intentos_sin_cota") or [])
+              and cuota(v).get("estado") == "certificada")
         # huérfana NO enviada (la fila que dejaría morir entre `en_curso` y `t_envio_utc`)
         e3 = ESC.derivar(d["esc"], "e2e15-huerfana")
         fabricar_huerfana_no_enviada(e3)
@@ -1591,8 +1733,9 @@ def e2e_13_15() -> None:
         v3 = e3.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
         check("E2E-15 una fila `en_curso` sin `t_envio_utc` de un proceso muerto queda, tras su registro de "
               "orfandad, como huérfana NO enviada: no detiene ni es consumo",
-              c3 == 0 and len(orf) == 1 and isinstance(v3, dict)
-              and not codigos(v3) & {"consumo_desconocido_sin_cota", "seq_incoherente"})
+              c3 == 0 and len(orf) == 1 and isinstance(v3, dict) and sin_motivo_de_cuota(v3)
+              and "seq_incoherente" not in codigos(v3) and not cuota(v3).get("intentos_sin_cota")
+              and cuota(v3).get("estado") == "certificada")
         # la fila `no_enviado` que la puerta SÍ lee: la Codex denegada de la nueva en E2E-3
         e4 = ESC.copiar(memo("e2e3", construir_e2e3)["esc"], "e2e15-contradictoria")
         nos = [Path(f["_ruta"]) for f in e4.r4(VERS_ESQ[1]) if f.get("estado") == "no_enviado"]
@@ -1621,10 +1764,17 @@ def fabricar_huerfana_no_enviada(esc) -> None:
 def e2e_14() -> None:
     print("\nE2E-14 · dos ciclos completos de suspensión y reanudación (K7)")
     try:
-        esc = base_e2e13("e2e14")
-        exigir(esc.aprobar(VERS_ESQ[1], casos=[CASO], solo_piloto=True, custodiados=False) == 0, "aprobación falló")
+        # v9: el evento 1 está en la versión NUEVA (numerador): su producción omite `output_tokens` una vez;
+        # el evento 2 es una llamada de juez sin uso.
+        esc = ESC.Escenario("e2e14", versiones=VERS_ESQ)
+        a = esc.producir_y_aprobar(VERS_ESQ[0], casos=[CASO], solo_piloto=True, custodiados=False)
+        b = esc.producir_y_aprobar(VERS_ESQ[1], proveedores=dobles.proveedores(claude=OmitirUnaVez()), casos=[CASO],
+                                   solo_piloto=True, custodiados=False)
+        exigir(a == (0, 0) and b == (0, 0), f"producción previa a E2E-14 terminó con {a}, {b}")
+        exigir(esc.registrar_cadena(base=VERS_ESQ[0], nuevo=VERS_ESQ[1]) == 0, "registrar-cadena falló")
+        ev_prod = [f["id"] for f in esc.r4(VERS_ESQ[1]) if f.get("fase") == "produccion" and desconocida_sin_cota(f)]
         rn = dobles.runners(cli_claude=esc.cli_claude, cli_codex=esc.cli_codex,
-                            opus_kw={"romper_uso": lambda i, nombre: i in (1, 3)})
+                            opus_kw={"romper_uso": lambda i, nombre: i == 1})
         c1 = esc.juzgar(rn)
         s1 = ESC.archivos(esc.dir(VERS_ESQ[0]), "suspensiones/juicio-*.json") + ESC.archivos(
             esc.dir(VERS_ESQ[1]), "suspensiones/juicio-*.json")
@@ -1639,8 +1789,10 @@ def e2e_14() -> None:
         check("E2E-14 evento 1 → s1 → r1 → evento 2 → s2 (s1 intacta, mismo sha256) → r2 → el juicio termina",
               c1 != 0 and c2 != 0 and c3 == 0 and len(s1) == 1 and len(susp) == 2 and len(rean) == 2
               and all(entorno.sha256_archivo(Path(p)) == h for p, h in sha_s1.items()))
-        check("E2E-14 la puerta acepta el orden de los dos ciclos y el techo es no certificable",
-              isinstance(v, dict) and "consumo_desconocido_sin_cota" in codigos(v)
+        check("E2E-14 la puerta acepta el orden de los dos ciclos, la calidad se calcula sin motivo por los "
+              "eventos y la cuota queda `estimada` (evento 1 en la NUEVA, mínimo del cociente ≤ 1,25)",
+              isinstance(v, dict) and len(ev_prod) == 1 and cuota_estimada(v, ev_prod) and sin_motivo_de_cuota(v)
+              and bool(v.get("condiciones"))
               and not codigos(v) & {"llamada_tras_desconocido_sin_autorizacion", "reanudacion_invalida",
                                     "circuito_suspendido", "seq_incoherente"})
         e2 = ESC.copiar(esc, "e2e14-r2-parcial")
@@ -1747,6 +1899,9 @@ def bloque_f17() -> None:
         check(f"F17 con `_prueba`, la puerta da `aprueba` (requisito previo de la familia; motivos "
               f"{sorted(codigos(v))[:5]}, filas rojas {(v or {}).get('filas_rojas', [])[:3]})",
               v.get("veredicto") == "aprueba" and not codigos(v) and v.get("modo_prueba") is True)
+        check("F17 sin intentos sin cota ni cotas, la CUOTA es `certificada · cumple` y la separación calidad/cuota "
+              "es estricta (E2E-19.3 sobre F17, E2E-19.8)",
+              cuota_certificada(v, "cumple") and separacion_estricta(v))
         esc = d["esc"]
         from mia.eval.banco04 import protocolo as P
         n_rep = sum(1 for _ in esc.dir("nuevo").glob("*/rep-??.json")) + sum(
@@ -1785,6 +1940,24 @@ def s(nombre, desc, construir, *, veredicto, cierre, condicion=None, codigo=None
         check(f"{nombre} {desc} ⇒ {veredicto}{' `' + codigo + '`' if codigo else ''} "
               f"(cambio exigido {'sí' if ok_cond else 'NO'}; fuera del cierre {fuera[:3]}; motivos {sorted(cs)[:4]})",
               ok_v and ok_cond and not fuera and vocab_ok({**v, "veredicto": v.get("veredicto")}))
+    except EscenarioNoDisponible as exc:
+        check(f"{nombre} {desc}: {exc}", False)
+
+
+def s_cuota(nombre, desc, construir, *, esperado: str, condicion=None):
+    """S08, S09, S10 (v9): la CALIDAD no cambia (`aprueba`, ninguna condición de calidad cambia) y la CUOTA
+    queda `certificada · excede` o `estimada`."""
+    try:
+        d = memo(nombre, construir)
+        ref, v = d["ref"], d["v"]
+        fuera = fuera_del_cierre(ref, v, ())            # ninguna condición de CALIDAD puede cambiar
+        ok_cuota = cuota_certificada(v, "excede") if esperado == "excede" else cuota_estimada(v)
+        ok_cond = condicion(v) if condicion else True
+        check(f"{nombre} {desc} ⇒ calidad SIN cambio (`aprueba`) y cuota "
+              f"{'`certificada · excede`' if esperado == 'excede' else '`estimada`'} "
+              f"(condición de cuota {'sí' if ok_cond else 'NO'}; calidad cambiada {fuera[:3]}; motivos {sorted(codigos(v))[:3]})",
+              v.get("veredicto") == "aprueba" and not codigos(v) and not fuera and ok_cuota and ok_cond
+              and separacion_estricta(v))
     except EscenarioNoDisponible as exc:
         check(f"{nombre} {desc}: {exc}", False)
 
@@ -1836,25 +2009,28 @@ def bloque_s() -> None:
       lambda: regenerar("s07", nuevo={"guion": dobles.Guion(medicion_incompleta={CASO_VOL})}),
       veredicto="reprueba", cierre=MATERIAL,
       condicion=lambda a, b: cambio(a, b, "definitivo_con_lectura_insuficiente", sube))
-    s("S08", "los proveedores dobles devuelven más `output_tokens` en un caso de la nueva",
-      lambda: regenerar("s08", nuevo={"proveedores": dobles.proveedores(
-          claude=dobles.ClaudeCLIDoble(factor_salida={CASO: 3}))}),
-      veredicto="reprueba", cierre=CONSUMO,
-      condicion=lambda a, b: any(num(x) is not None and num(x) > Fraction(125, 100)
-                                 for x in valores(b, "claude_extremo_por_caso")))
-    s("S09", "un proveedor doble de Claude omite `output_tokens` en una llamada (el juicio se detiene y se "
-      "reanuda con autorización)",
-      lambda: regenerar("s09", nuevo={"proveedores": dobles.proveedores(claude=OmitirUnaVez())},
-                        reanudar_si_para=True),
-      veredicto="no_certificable", codigo="consumo_desconocido_sin_cota", cierre=CONSUMO)
-    s("S10", "el mundo fija con `set_node` un nodo fuera de `atribucion_preregistrada` en las llamadas que suben "
-      "más del 10 % (y menos del 25 %)",
-      lambda: regenerar("s10", nuevo={"guion": dobles.Guion(nodo_forzado={CASO: "nodo_no_preregistrado"}),
-                                      "proveedores": dobles.proveedores(
-                                          claude=dobles.ClaudeCLIDoble(factor_salida={CASO: 1.55}))}),
-      veredicto="reprueba", cierre=CONSUMO,
-      condicion=lambda a, b: any(c.get("estado") == "no_cumple"
-                                 for c in condiciones(b, "atribu") + condiciones(b, "C25")))
+    s_cuota("S08", "los proveedores dobles devuelven más `output_tokens` en un caso de la nueva",
+            lambda: regenerar("s08", nuevo={"proveedores": dobles.proveedores(
+                claude=dobles.ClaudeCLIDoble(factor_salida={CASO: 3}))}),
+            esperado="excede",
+            condicion=lambda v: any(c.get("estado") == "certificada_excede"
+                                    and num((c.get("intervalo") or [None])[0]) is not None
+                                    and num(c["intervalo"][0]) > Fraction(125, 100)
+                                    for c in cuota(v).get("condiciones") or []
+                                    if "claude_extremo_por_caso" in str(c.get("id", ""))))
+    s_cuota("S09", "un proveedor doble de Claude omite `output_tokens` en una llamada de la NUEVA (el juicio se "
+            "detiene y se reanuda con autorización)",
+            lambda: regenerar("s09", nuevo={"proveedores": dobles.proveedores(claude=OmitirUnaVez())},
+                              reanudar_si_para=True),
+            esperado="estimada", condicion=lambda v: bool(cuota(v).get("intentos_sin_cota")))
+    s_cuota("S10", "el mundo fija con `set_node` un nodo fuera de `atribucion_preregistrada` en las llamadas que "
+            "suben más del 10 % (y menos del 25 %)",
+            lambda: regenerar("s10", nuevo={"guion": dobles.Guion(nodo_forzado={CASO: "nodo_no_preregistrado"}),
+                                            "proveedores": dobles.proveedores(
+                                                claude=dobles.ClaudeCLIDoble(factor_salida={CASO: 1.55}))}),
+            esperado="excede",
+            condicion=lambda v: any(c.get("estado") == "certificada_excede" for c in cuota(v).get("condiciones") or []
+                                    if any(t in str(c.get("id", "")) for t in ("atribu", "C25"))))
     s("S11", "los runners de pasada 2 hacen caer un decisivo de 3/5 en la base a 1/5 en la nueva",
       construir_s11, veredicto="reprueba", cierre=P2,
       condicion=lambda a, b: any(c.get("estado") == "no_cumple" for c in condiciones(b, "decisivos_estables")))
@@ -1970,13 +2146,24 @@ def i02(esc):
 
 
 def i03(esc):
-    f = dict(primera(esc, "nuevo", lambda x: x.get("fase") == "produccion"))
+    """v9: fila R4 huérfana ENVIADA, con su registro de orfandad y el contexto de una corrida, que el R2
+    no cita ⇒ `ledger_incompleto` (el consumo va a la cuota, nunca a la calidad)."""
+    f = dict(primera(esc, "nuevo", lambda x: x.get("fase") == "produccion" and x.get("caso_id") == CASO
+                     and x.get("rep") == 1))
     f.pop("_ruta")
-    seq = max(int(x.get("seq_cierre") or x.get("seq_inicio") or 0) for x in esc.todas_r4()) + 3
-    f.update(id=f"produccion-_-r00-i0-huerfana-{seq:06d}", estado="en_curso", seq_inicio=seq, seq_envio=seq + 1,
-             seq_cierre=None, uso_crudo=None, caso_id=None, rep=None, intento=None, fase="sin_contexto",
-             t_envio_utc="2030-01-01T00:00:00Z", pid=999999)
+    seq = max(int(x.get("seq_cierre") or x.get("seq_envio") or x.get("seq_inicio") or 0) for x in esc.todas_r4()) + 3
+    p = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    pid = int(p.stdout.strip())
+    f.update(id=f"produccion-{CASO}-r01-i1-huerfana-{seq:06d}", estado="en_curso", seq_inicio=seq, seq_envio=seq + 1,
+             seq_cierre=None, uso_crudo=None, exito=False, t_envio_utc="2030-01-01T00:00:00Z", pid=pid,
+             estimacion_empirica=None)
     (esc.dir("nuevo") / "llamadas" / f"{f['id']}.json").write_text(json.dumps(f), encoding="utf-8")
+    orf = esc.dir("nuevo") / "orfandades"
+    orf.mkdir(exist_ok=True)
+    (orf / f"{seq + 2}.json").write_text(json.dumps({
+        "id_fila": f["id"], "pid": pid, "t_envio_utc": f["t_envio_utc"], "seq_deteccion": seq + 2,
+        "detectada_por": "prueba-I03"}), encoding="utf-8")
 
 
 def i06(esc):
@@ -2025,7 +2212,7 @@ _RESTAURAR: list = []
 
 
 def i15(esc):
-    ruta = entorno.DIR_INSTANTANEAS / f"{esc.sha_instantanea}.json"
+    ruta = esc.instantaneas_dir / f"{esc.sha_instantanea}.json"
     datos = ruta.read_bytes()
     _RESTAURAR.append((ruta, datos))          # se restaura SIEMPRE (la comparten los demás escenarios)
     ruta.write_bytes(datos.replace(b'"presente_siempre"', b'"omitido_si_cero"', 1))
@@ -2034,8 +2221,8 @@ def i15(esc):
 FAMILIA_I = [
     ("I01", "`jurisdicciones_fijadas` de un custodiado", i01, "jurisdiccion_no_coincide", ()),
     ("I02", "borrar una fila R4 citada por un R2", i02, "ledger_incompleto", ()),
-    ("I03", "añadir una fila R4 `en_curso` huérfana", i03, "consumo_desconocido_sin_cota",
-     ("ledger_sin_contexto", "seq_incoherente")),
+    ("I03", "añadir una fila R4 huérfana enviada, con su registro de orfandad y el contexto de una corrida, "
+            "sin citarla en el R2", i03, "ledger_incompleto", ()),
     ("I04", "`soul_sha256` en R1 de la base",
      lambda e: editar_json(e.dir("base") / "MANIFIESTO.json", lambda x: x.update(soul_sha256="0" * 64)),
      "identidad_version", ()),
@@ -2051,8 +2238,7 @@ FAMILIA_I = [
      lambda e: editar_json(e.dir("nuevo") / CASO / "rep-02.json", lambda x: x.update(rep=3)), "repeticiones",
      ("rep_sha256_no_coincide", "muestra_incompleta", "ledger_incompleto")),
     ("I09", "fila de juez falsificada tras un evento sin cota no autorizado", i09,
-     "llamada_tras_desconocido_sin_autorizacion", ("consumo_desconocido_sin_cota", "ledger_incompleto",
-                                                   "juicio_incompleto")),
+     "llamada_tras_desconocido_sin_autorizacion", ("ledger_incompleto", "juicio_incompleto")),
     ("I10", "`salida` de un R5 editada sin su `crudo_sha256`", i10, "juicio_contradictorio", ()),
     ("I11", "`material_turno` de un R2 editado sin rejuzgar",
      lambda e: editar_json(e.dir("nuevo") / CASO / "rep-01.json",
@@ -2251,6 +2437,288 @@ def bloque_r13() -> None:
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════
+# E2E-19 · veredicto de CUOTA separado, por intervalo (§4.5, decisión de Pipe «Separar calidad y cuota»)
+# ════════════════════════════════════════════════════════════════════════════════════════
+def tot(analisis: int, redaccion: int, **extra: int):
+    """Total EXACTO de cada llamada por nodo (doble del CLI): la consulta suma `analisis + redaccion`."""
+    tabla = {"analisis": analisis, "redaccion": redaccion, **extra}
+    return lambda c, r, n: tabla.get(n)
+
+
+def construir_cuota(nombre: str, *, base: dict, nuevo: dict) -> dict:
+    """Esqueleto sin juicio (la CUOTA sale solo de R4, §3.3 D): consumo por llamada fijado con exactitud y
+    la aprobación sin llamada al modelo, para que la consulta del caso sea exactamente la suma fijada."""
+    esc = ESC.Escenario(nombre, versiones=VERS_ESQ)
+    out: dict = {"esc": esc}
+    for ver, cfg in ((VERS_ESQ[0], base), (VERS_ESQ[1], nuevo)):
+        prov = dobles.proveedores(claude=dobles.ClaudeCLIDoble(**cfg.get("claude", {})))
+        g = dobles.Guion(aprobar_sin_llamada=True, **cfg.get("guion", {}))
+        out[ver] = esc.producir_y_aprobar(ver, proveedores=prov, guion=g, casos=[CASO], solo_piloto=True,
+                                          custodiados=False)
+    out["cadena"] = esc.registrar_cadena(base=VERS_ESQ[0], nuevo=VERS_ESQ[1])
+    out["v"] = esc.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
+    return out
+
+
+def suma_cotas(esc, version: str) -> int:
+    return sum(int((f.get("cota") or {}).get("tokens_cota_superior") or 0) for f in esc.r4(version)
+               if f.get("fase") == "produccion" and isinstance((f.get("cota") or {}).get("tokens_cota_superior"), int))
+
+
+def hay_intervalo(v, lo, hi) -> bool:
+    for c in cuota(v).get("condiciones") or []:
+        iv = c.get("intervalo") or []
+        if len(iv) == 2 and num(iv[0]) is not None and num(iv[1]) is not None:
+            if abs(float(iv[0]) - float(lo)) < 1e-6 and abs(float(iv[1]) - float(hi)) < 1e-6:
+                return True
+    return False
+
+
+EXTRA_SIN_SALIDA = (("legal_edit", "extra_sin_salida"),)
+OMITE_EXTRA = {"omitir_salida_si": lambda c, r, n: n == "extra_sin_salida"}
+
+
+def e2e_19() -> None:
+    print("\nE2E-19 · veredicto de CUOTA separado, por intervalo (§4.5)")
+    casos = [
+        ("19.3", "sin incertidumbre: nueva 100 = base 100 ⇒ `certificada · cumple`",
+         {"claude": {"total_exacto": tot(60, 40)}}, {"claude": {"total_exacto": tot(60, 40)}},
+         lambda d: cuota_certificada(d["v"], "cumple") and hay_intervalo(d["v"], 1, 1)),
+        ("19.3x", "sin incertidumbre: nueva 200 frente a base 100 ⇒ `certificada · excede`",
+         {"claude": {"total_exacto": tot(60, 40)}}, {"claude": {"total_exacto": tot(120, 80)}},
+         lambda d: cuota_certificada(d["v"], "excede") and hay_intervalo(d["v"], 2, 2)),
+        ("19.3b", "contraejemplo de Astra: nueva 100; base 10 + un intento con cota (≥ 90) ⇒ intervalo "
+         "[100/(10+cota), 10] que cruza 1,25 ⇒ `estimada`, NUNCA `certificada · cumple`",
+         {"claude": {"total_exacto": tot(6, 4)}, "guion": {"llamada_api_fallida": {CASO}, "api_max_tokens": 90}},
+         {"claude": {"total_exacto": tot(60, 40)}},
+         lambda d: (cuota_estimada(d["v"]) and not cuota_certificada(d["v"], "cumple")
+                    and suma_cotas(d["esc"], VERS_ESQ[0]) >= 90
+                    and hay_intervalo(d["v"], Fraction(100, 10 + suma_cotas(d["esc"], VERS_ESQ[0])), 10))),
+        ("19.3c", "inverso: nueva 100 + un intento con cota (≥ 1 000); base 100 ⇒ `estimada`, NUNCA un falso "
+         "`certificada · excede`",
+         {"claude": {"total_exacto": tot(60, 40)}},
+         {"claude": {"total_exacto": tot(60, 40)}, "guion": {"llamada_api_fallida": {CASO}, "api_max_tokens": 1000}},
+         lambda d: (cuota_estimada(d["v"]) and not cuota_certificada(d["v"], "excede")
+                    and hay_intervalo(d["v"], 1, Fraction(100 + suma_cotas(d["esc"], VERS_ESQ[1]), 100)))),
+        ("19.3d", "solo cotas finitas que no cruzan: nueva 100; base 92 + una cota ⇒ intervalo ⊂ [·, 100/92] "
+         "≤ 1,25 ⇒ `certificada · cumple` (92 y no 90: con 90 la subida máxima 1,11 cruzaría el 10 % de C25)",
+         {"claude": {"total_exacto": tot(55, 37)}, "guion": {"llamada_api_fallida": {CASO}, "api_max_tokens": 5}},
+         {"claude": {"total_exacto": tot(60, 40)}},
+         lambda d: (cuota_certificada(d["v"], "cumple")
+                    and hay_intervalo(d["v"], Fraction(100, 92 + suma_cotas(d["esc"], VERS_ESQ[0])), Fraction(100, 92)))),
+        ("19.3e", "evento sin cota SOLO en el denominador: nueva 100; base 100 conocidos + un intento sin cota ⇒ "
+         "cociente [0, 1] ⇒ `certificada · cumple`",
+         {"claude": {"total_exacto": tot(60, 40), **OMITE_EXTRA},
+          "guion": {"llamadas_extra_rep": {(CASO, 1): EXTRA_SIN_SALIDA}}},
+         {"claude": {"total_exacto": tot(60, 40)}},
+         lambda d: cuota_certificada(d["v"], "cumple") and hay_intervalo(d["v"], 0, 1)),
+        ("19.3e-num", "el mismo evento en el NUMERADOR ⇒ `estimada`",
+         {"claude": {"total_exacto": tot(60, 40)}},
+         {"claude": {"total_exacto": tot(60, 40), **OMITE_EXTRA},
+          "guion": {"llamadas_extra_rep": {(CASO, 1): EXTRA_SIN_SALIDA}}},
+         lambda d: cuota_estimada(d["v"])),
+        ("19.2", "el mínimo excede: nueva 200 conocidos + un intento sin cota; base 100 sin filas sin cota ⇒ "
+         "`certificada · excede`",
+         {"claude": {"total_exacto": tot(60, 40)}},
+         {"claude": {"total_exacto": tot(120, 80), **OMITE_EXTRA},
+          "guion": {"llamadas_extra_rep": {(CASO, 1): EXTRA_SIN_SALIDA}}},
+         lambda d: cuota_certificada(d["v"], "excede") and bool(cuota(d["v"]).get("intentos_sin_cota"))),
+    ]
+    for k, desc, base, nuevo, pred in casos:
+        try:
+            d = memo(f"e2e{k}", lambda base=base, nuevo=nuevo, k=k: construir_cuota(f"e2e{k}", base=base, nuevo=nuevo))
+            check(f"E2E-{k} {desc} (cuota {cuota(d.get('v')).get('estado')}/{cuota(d.get('v')).get('resultado')})",
+                  isinstance(d.get("v"), dict) and pred(d) and sin_motivo_de_cuota(d["v"]) and separacion_estricta(d["v"]))
+        except EscenarioNoDisponible as exc:
+            check(f"E2E-{k} {desc}: {exc}", False)
+    e2e_19_1_7b()
+    e2e_19_4()
+    e2e_19_5()
+    e2e_19_7()
+
+
+def construir_e19_1() -> dict:
+    g = dobles.Guion(llamadas_extra_rep={(CASO, 1): (("legal_edit", "extra_sin_salida"), ("legal_edit", "extra_timeout"))},
+                     tolerar_fallos_en=frozenset({"extra_timeout"}))
+    cl = dobles.ClaudeCLIDoble(omitir_salida_si=lambda c, r, n: n == "extra_sin_salida",
+                               timeout_si=lambda c, r, n: n == "extra_timeout")
+    return regenerar("e2e19-1", nuevo={"guion": g, "proveedores": dobles.proveedores(claude=cl)},
+                     reanudar_si_para=True)
+
+
+def e2e_19_1_7b() -> None:
+    try:
+        d = memo("e2e19-1", construir_e19_1)
+        esc, v = d["esc"], d["v"]
+        sin = [f for f in esc.r4("nuevo") if f.get("fase") == "produccion" and f.get("caso_id") == CASO
+               and f.get("rep") == 1 and f.get("nodo") in ("extra_sin_salida", "extra_timeout")]
+        ids = [f["id"] for f in sin]
+        check("E2E-19.1 F17 con un intento sin `output_tokens` y otro que agota el tiempo ⇒ CALIDAD `aprueba` y "
+              "CUOTA `estimada`, con `consumo.conocido`, `estimacion_empirica` por intento, el aviso literal y "
+              "`intentos_sin_cota`",
+              len(sin) == 2 and all(desconocida_sin_cota(f) for f in sin)
+              and all(isinstance((((f.get("estimacion_empirica") or {}).get("inicial") or {}).get("tokens")), int)
+                      for f in sin)
+              and v.get("veredicto") == "aprueba" and not codigos(v) and cuota_estimada(v, ids)
+              and "conocido" in (cuota(v).get("consumo") or {}))
+        dr = ESC.leer(esc.dir("nuevo") / "decision_r.json") or {}
+        usadas = {x.get("fila"): x for x in dr.get("estimaciones_usadas") or []}
+        check("E2E-19.7b piloto con intentos sin cota: `decision_r.json` registra `estimaciones_usadas` (fila, tokens, "
+              "corte_seq, observaciones_sha256) y `corte_decision_seq`; la puerta lo reproduce sin "
+              "`decision_r_no_coincide`, exige todas las R y certifica la calidad",
+              set(ids) <= set(usadas) and all(isinstance(usadas[i].get("tokens"), int) and "corte_seq" in usadas[i]
+                                              and usadas[i].get("observaciones_sha256") for i in ids)
+              and isinstance(dr.get("corte_decision_seq"), int) and v.get("veredicto") == "aprueba"
+              and "decision_r_no_coincide" not in codigos(v))
+        check("E2E-19.8 separación estricta: ninguna condición de cuota en la calidad ni de calidad en la cuota, y "
+              "`consumo_desconocido_sin_cota` nunca es motivo de calidad", separacion_estricta(v))
+    except EscenarioNoDisponible as exc:
+        check(f"E2E-19.1/7b/8: {exc}", False)
+
+
+def construir_e19_4() -> dict:
+    """Base y nueva con una llamada de redacción ENORME (0,4·T conocidos cada una) en su primer caso; la
+    nueva omite `output_tokens` en la redacción de su segundo caso: lo conocido (0,8·T) queda bajo el tope
+    T, pero con la estimación empírica (salida observada 0,4·T, misma firma) lo supera ⇒ suspensión antes
+    de la tercera corrida."""
+    import run_banco04 as R
+    k = R.constantes_de_protocolo(R.cargar_protocolo(), 7)
+    T = R.ContadorCuota(techo_claude=k["techo_claude"], techo_codex=k["techo_codex"],
+                        reserva_juicio_claude=k["reserva_claude"],
+                        reserva_juicio_codex=k["reserva_codex"]).tope_produccion_claude
+    X = (4 * int(T)) // 10
+    casos = [CASO, "prescripcion-seguro-cumplimiento", "excepcion-contrato-no-cumplido"]
+
+    def doble(omitir_segundo: bool):
+        vistos: list = []
+
+        def idx(c):
+            if c != "_" and c not in vistos:
+                vistos.append(c)
+            return vistos.index(c) if c in vistos else -1
+        return dobles.ClaudeCLIDoble(salida_si=lambda c, r, n: X if (idx(c) == 0 and n == "redaccion") else None,
+                                     omitir_salida_si=lambda c, r, n: omitir_segundo and idx(c) == 1 and n == "redaccion")
+    esc = ESC.Escenario("e2e19-4", versiones=VERS_ESQ)
+    out = {"esc": esc, "T": int(T), "casos": casos}
+    out["base"] = esc.producir(VERS_ESQ[0], proveedores=dobles.proveedores(claude=doble(False)), casos=casos,
+                               solo_piloto=True, custodiados=False)
+    out["nuevo"] = esc.producir(VERS_ESQ[1], proveedores=dobles.proveedores(claude=doble(True)), casos=casos,
+                                solo_piloto=True, custodiados=False)
+    esc.registrar_cadena(base=VERS_ESQ[0], nuevo=VERS_ESQ[1])
+    out["v"] = esc.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
+    return out
+
+
+def e2e_19_4() -> None:
+    try:
+        d = memo("e2e19-4", construir_e19_4)
+        esc = d["esc"]
+        conocidas = [f for f in esc.todas_r4() if f.get("fase") == "produccion"
+                     and (f.get("uso_validado") or {}).get("consumo_conocido") is True]
+        conocido = sum(int(f["uso_validado"]["total"]) for f in conocidas)
+        r2n = list(esc.dir(VERS_ESQ[1]).glob("*/rep-01.json"))
+        susp = [ESC.leer(s_) or {} for s_ in ESC.archivos(esc.dir(VERS_ESQ[1]), "suspensiones/produccion-*.json")]
+        sin = [f["id"] for f in esc.r4(VERS_ESQ[1]) if desconocida_sin_cota(f)]
+        check(f"E2E-19.4 suspensión conservadora: lo conocido ({conocido}) queda bajo el tope ({d['T']}), pero con la "
+              "estimación empírica inicial lo supera ⇒ la nueva se suspende ANTES de su tercera corrida",
+              0 < conocido < d["T"] and len(r2n) == 2 and bool(susp) and d["nuevo"] != 0 and len(sin) == 1)
+        check("E2E-19.4 la misma corrida publica la cuota por intervalo: evento en la NUEVA, mínimo del cociente "
+              "≤ 1,25 ⇒ `estimada`", cuota_estimada(d["v"], sin) and sin_motivo_de_cuota(d["v"]))
+    except (EscenarioNoDisponible, PuntoDeEntradaAusente) as exc:
+        check(f"E2E-19.4: {exc}", False)
+
+
+def e2e_19_5() -> None:
+    """El envoltorio no toca el entorno del CLI (§4.3, §4.5 «Entorno del CLI»)."""
+    from mia.agent import subscription_llm as sl
+    for valor in ("0", "15", None):
+        try:
+            with entorno.entorno(CLAUDE_CODE_MAX_RETRIES=valor, CLAUDE_CODE_RETRY_WATCHDOG="1"):
+                cl = dobles.ClaudeCLIDoble()
+                esc = ESC.Escenario(f"e2e19-5-{valor or 'ausente'}", versiones=VERS_ESQ)
+                code = esc.producir(VERS_ESQ[0], proveedores=dobles.proveedores(claude=cl), casos=[CASO],
+                                    solo_piloto=True, custodiados=False)
+                esperado = {k: v for k, v in os.environ.items() if not sl._is_sensitive_env(k)}
+            filas = [f for f in esc.r4(VERS_ESQ[0]) if f.get("familia") == "claude_cli"]
+            ent = {"max_retries": esperado.get("CLAUDE_CODE_MAX_RETRIES"),
+                   "retry_watchdog_definida": "CLAUDE_CODE_RETRY_WATCHDOG" in esperado,
+                   "max_output_tokens": esperado.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS")}
+            check(f"E2E-19.5 con `CLAUDE_CODE_MAX_RETRIES` {valor if valor is not None else 'ausente'} y "
+                  "`CLAUDE_CODE_RETRY_WATCHDOG=1`, el `env` que recibe `subprocess.run` es IDÉNTICO al del producto "
+                  "y `entorno_cli` registra esos valores",
+                  code == 0 and bool(cl.envs) and all(e == esperado for e in cl.envs)
+                  and ("CLAUDE_CODE_MAX_RETRIES" in esperado) == (valor is not None)
+                  and bool(filas) and all(f.get("entorno_cli") == ent for f in filas))
+        except (EscenarioNoDisponible, PuntoDeEntradaAusente) as exc:
+            check(f"E2E-19.5 ({valor}): {exc}", False)
+
+
+def construir_e19_7() -> dict:
+    """Las tres llamadas de redacción usan la MISMA firma (legal_draft). La base (antes) sale con 100; la
+    nueva: 100, una SIN `output_tokens` y, DESPUÉS, una con 200."""
+    llam = (("legal_draft", "r1"), ("legal_draft", "r2"), ("legal_draft", "r3"))
+    esc = ESC.Escenario("e2e19-7", versiones=VERS_ESQ)
+    out = {"esc": esc}
+    out["base"] = esc.producir_y_aprobar(
+        VERS_ESQ[0], proveedores=dobles.proveedores(claude=dobles.ClaudeCLIDoble(salida_si=lambda c, r, n: 100)),
+        guion=dobles.Guion(llamadas=llam, aprobar_sin_llamada=True), casos=[CASO], solo_piloto=True, custodiados=False)
+    out["nuevo"] = esc.producir_y_aprobar(
+        VERS_ESQ[1], proveedores=dobles.proveedores(claude=dobles.ClaudeCLIDoble(
+            salida_si=lambda c, r, n: {"r1": 100, "r3": 200}.get(n), omitir_salida_si=lambda c, r, n: n == "r2")),
+        guion=dobles.Guion(llamadas=llam, aprobar_sin_llamada=True), casos=[CASO], solo_piloto=True, custodiados=False)
+    esc.registrar_cadena(base=VERS_ESQ[0], nuevo=VERS_ESQ[1])
+    out["v"] = esc.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
+    return out
+
+
+def e2e_19_7() -> None:
+    try:
+        d = memo("e2e19-7", construir_e19_7)
+        esc, v = d["esc"], d["v"]
+        filas = {f.get("nodo"): f for f in esc.r4(VERS_ESQ[1]) if f.get("fase") == "produccion"}
+        u, r3 = filas.get("r2") or {}, filas.get("r3") or {}
+        ini = (u.get("estimacion_empirica") or {}).get("inicial") or {}
+        check("E2E-19.7 estimación INICIAL congelada: `salida_observada` = 100 (solo observaciones con "
+              "`seq_cierre < corte_seq`), la fila posterior de 200 no está entre sus observaciones, y la puerta NO "
+              "da `telemetria_contradictoria`; solo cambia la `estimacion_puntual_final`",
+              desconocida_sin_cota(u) and (ini.get("componentes") or {}).get("salida_observada") == 100
+              and ini.get("corte_seq") == u.get("seq_cierre") and r3.get("id") not in (ini.get("observaciones") or [])
+              and isinstance(v, dict) and "telemetria_contradictoria" not in codigos(v)
+              and any(num(c.get("estimacion_puntual_final")) is not None
+                      and num(c.get("estimacion_puntual_inicial")) is not None
+                      and num(c["estimacion_puntual_final"]) > num(c["estimacion_puntual_inicial"])
+                      for c in cuota(v).get("condiciones") or []))
+        for nombre, mut, desc in (
+                ("e2e19-7-tokens", lambda x: x["estimacion_empirica"]["inicial"].update(
+                    tokens=int(x["estimacion_empirica"]["inicial"]["tokens"]) + 1), "su `tokens`"),
+                ("e2e19-7-obs", lambda x: x["estimacion_empirica"]["inicial"].update(
+                    observaciones=list(x["estimacion_empirica"]["inicial"]["observaciones"])[:-1]),
+                 "su conjunto de observaciones")):
+            e2 = ESC.copiar(esc, nombre)
+            ruta = next(Path(f["_ruta"]) for f in e2.r4(VERS_ESQ[1]) if f.get("id") == u.get("id"))
+            editar_json(ruta, mut)
+            v2 = e2.decidir_cli("veredicto", base=VERS_ESQ[0], nuevo=VERS_ESQ[1])[1]
+            check(f"E2E-19.7 editar {desc} de `estimacion_empirica.inicial` ⇒ calidad `no_certificable` "
+                  "(`telemetria_contradictoria`)",
+                  isinstance(v2, dict) and v2.get("veredicto") == "no_certificable"
+                  and "telemetria_contradictoria" in codigos(v2))
+    except (EscenarioNoDisponible, PuntoDeEntradaAusente, StopIteration, KeyError, TypeError) as exc:
+        check(f"E2E-19.7: {type(exc).__name__}: {exc}", False)
+
+
+def bloque_perimetro() -> None:
+    print("\nP · perímetro: las pruebas no escriben nada bajo backend/ (decisión del director, v6)")
+    r = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--", "backend"], capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", timeout=60)
+    inst = list(entorno.dir_instantaneas_prueba().glob("*.json"))
+    r1_prueba = [m for m in _MEMO.values() if m[0] == "ok" and isinstance(m[1], dict) and "esc" in m[1]
+                 and any((m[1]["esc"].r1(ver) or {}).get("instantaneas_de_prueba") is True for ver in m[1]["esc"].versiones)]
+    check(f"P nada bajo `backend/` tras la suite ({r.stdout.strip()[:120] or 'vacío'}); las instantáneas de prueba "
+          f"viven en el directorio temporal ({len(inst)}) y algún R1 lo declara con `instantaneas_de_prueba: true`",
+          r.returncode == 0 and not r.stdout.strip() and bool(inst) and bool(r1_prueba))
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════
 # Orquestación
 # ════════════════════════════════════════════════════════════════════════════════════════
 BLOQUES = [
@@ -2276,6 +2744,8 @@ BLOQUES = [
     ("INV", bloque_inversa),
     ("EXT", bloque_ext),
     ("R13", bloque_r13),
+    ("E2E-19", e2e_19),
+    ("P", bloque_perimetro),
 ]
 
 

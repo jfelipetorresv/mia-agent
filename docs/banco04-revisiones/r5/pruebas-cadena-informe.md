@@ -228,3 +228,63 @@ cambiarlas.
 - Los dobles validan hoy contra los validadores v1.2/v1.3 existentes (autocontrol). La pasada 2 añade
   `negativa_correcta` solo si el esquema la declara.
 - `BANCO04_CADENA_CONSERVAR=1` conserva la carpeta temporal para depurar.
+
+## 7. Ajuste a v9 (2026-10-13)
+
+Contrato `banco04-cadena/v9` (HEAD `cfdabbd`), sobre las pruebas de `3ba72f7`. Se mantienen el
+mismo frente y las mismas prohibiciones. Solo cambiaron `execution/test_banco04_cadena.py` y
+`execution/fixtures_banco04_cadena/`.
+
+### 7.1 Conteo nuevo
+
+**`RESULTADO: 27/180 PASS`** (antes 24/154): 0 tracebacks, exit 1.
+
+- **Verdes, los 27 legítimos.**
+  - 21 de autocontrol (antes 18). Los tres nuevos comprueban los dobles nuevos contra el
+    `call_llm` real: consumo exacto, tiempo agotado y el `env` que llega a `subprocess.run`.
+  - A5.
+  - V4, V5, V6, V8 y V9 en la capa de la señal.
+- **Rojos.** Ninguna prueba nueva sale verde. Todas fallan por una causa ausente: el módulo no
+  existe, el `main` no acepta `proveedores=`/`instantaneas_dir=`/`_prueba=`, sigue el `consumo` en
+  VJ, o falta el clúster 55448.
+- **Perímetro.** `git status` solo muestra los archivos del frente. Las 8 instantáneas de prueba de
+  la corrida quedaron en el directorio temporal y nada se escribió bajo `backend/`. El bloque P lo
+  comprueba, y hoy sale en rojo solo porque ningún R1 existe todavía.
+
+### 7.2 Qué cambió
+
+| Cambio de v9 | Dónde | Cambio en las pruebas |
+|---|---|---|
+| Dos veredictos: CALIDAD y CUOTA (§3.1, §3.5) | todo el archivo | `consumo_desconocido_sin_cota` sale del vocabulario de calidad. `vocab_ok` lo rechaza y `sin_motivo_de_cuota` lo exige ausente. Nuevos auxiliares: `cuota_estimada` (estado, `resultado: null`, aviso literal, condición `estimada`, `intentos_sin_cota`), `cuota_certificada` y `separacion_estricta` |
+| Cuota por intervalo (§4.5) | **E2E-19 nuevo** | 19.3 (100 = 100 ⇒ cumple; 200/100 ⇒ excede); 19.3b (nueva 100; base 10 + cota ≥ 90 ⇒ `estimada`, nunca cumple, con el intervalo [100/(10+cota), 10] verificado); 19.3c (el inverso ⇒ `estimada`, nunca un falso excede); 19.3d; 19.3e (evento sin cota solo en el denominador ⇒ cumple con [0, 1]; en el numerador ⇒ `estimada`); 19.2 (el mínimo excede). Consumos exactos con `ClaudeCLIDoble.total_exacto` y la aprobación sin llamada |
+| E2E-3, E2E-14 y S09 con el evento en la NUEVA | E2E-3, E2E-4, E2E-14, S09, E2E-13 | Cuota `estimada` con la fila en `intentos_sin_cota`, y la calidad sin motivo por el evento. E2E-14 se rehízo: el evento 1 es de la **producción de la nueva** y el evento 2, de un juez |
+| S08 y S10 conservan la calidad y cambian la cuota | S08, S10 (`s_cuota`) | `aprueba`, ninguna condición de calidad cambia (cierre vacío) y cuota `certificada · excede`. S08 exige `claude_extremo_por_caso` con un mínimo > 1,25; S10, la condición C25 en `certificada_excede` |
+| E2E-3, variante con cota | E2E-3 | `max_tokens = 1`: la cota no cruza y la cuota es `certificada · cumple` |
+| I03 | I03 | Fila huérfana **enviada**, con su registro de orfandad y el contexto de una corrida, que el R2 no cita ⇒ `ledger_incompleto` (ya no es código de consumo). I09 deja de admitirlo como concomitante |
+| Calidad certificable con intentos sin cota; estimación congelada; piloto | E2E-19.1, 19.7, 19.7b | 19.1: F17 con un intento sin `output_tokens` y otro que agota el tiempo ⇒ `aprueba` y cuota `estimada`, con `estimacion_empirica` por intento. 19.7: la inicial usa 100 y la llamada posterior de 200 no la contradice (solo cambia `estimacion_puntual_final`); editar `tokens` u `observaciones` ⇒ `telemetria_contradictoria`. 19.7b: `decision_r.json` con `estimaciones_usadas` y `corte_decision_seq`, sin `decision_r_no_coincide` y con todas las R |
+| Suspensión conservadora | E2E-19.4 | Lo conocido < T, pero con la estimación inicial (salida observada 0,4·T, misma firma) supera T ⇒ la nueva se suspende antes de su 3.ª corrida y la cuota queda `estimada` |
+| El envoltorio no toca el entorno; se revoca «acotar y medir» | E2E-19.5, E2E-6.3 | Con `CLAUDE_CODE_MAX_RETRIES` en 0, en 15 o ausente, y `CLAUDE_CODE_RETRY_WATCHDOG=1`, el `env` que recibe el doble es idéntico al del producto y `entorno_cli` registra esos valores. `_sanitized_env` entra en la restauración por `is`. Nunca hubo prueba del caso de 1 442 000: no había nada que retirar |
+| Codex sin cota | E2E-19.6 | Cuota `estimada`, `fondo_observado_fuente = "no_medido"` y calidad intacta. El escenario reanuda el juicio |
+| §5 bis.1: la puerta pública usa solo el manifiesto del repo | E2E-7, `escenario.decidir*` | La puerta ya no se apoya en redirigir `_MANIFEST_PATH`. Prueba nueva: la puerta **pública**, con la redirección activa, da `custodia_no_coincide` y `modo_prueba: false`. A2 exige `RUTA_MANIFIESTO_REPO` |
+| `PruebaPuerta` con relajaciones separadas; `modo_prueba` | A2, E2E-7, E2E-1m, F17 | A2 exige la firma exacta de §3.1. El esqueleto llama a `banco04_decidir.main(..., _prueba=PruebaPuerta(manifiesto, desproteger, directorio_instantaneas))` con dobles y árbol sin relajar ⇒ `corridas_con_dobles` y `modo_prueba: true`. F17 relaja también dobles y árbol. Sin `directorio_instantaneas` ⇒ `instantaneas_de_prueba` |
+| §5 bis.2: nada bajo `backend/` | `entorno`, `escenario`, A1b, P | Las instantáneas van a un directorio temporal. Todos los `main` salvo `banco04_decidir` reciben `instantaneas_dir=` (A1b lo exige como keyword-only). I15 edita la instantánea en ese directorio. R1 lleva `instantaneas_de_prueba: true`. Se añade `banco04_medir_fondo_cli` a A1 |
+| §6.4 adopta las interfaces 1-5 y 7-10 | `escenario` | Sin cambios de forma. La 6 (redirigir el manifiesto) queda solo para los `main` que no son la puerta (runner, juzgar, VJ, medición), donde el contrato no fija otra vía |
+| §8.6 bis: VJ solo pierde `consumo_certificable` | A8, autocontrol | A8 exige que `evaluar_exigencias` no reciba `consumo`, que habilite el circuito sin él, y que siga negándolo con una discordancia o sin la acreditación v1.3. El autocontrol pasa `consumo` solo si la firma aún lo tiene |
+
+### 7.3 Lo que v9 no permite probar al pie de la letra
+
+- **19.3d.** Con base 90 + cota, la subida máxima (100/90 = 1,11) cruza el 10 % de C25, y la cuota
+  saldría `estimada` por C25. Se usa base 92 para aislar el umbral de 1,25. El ejemplo de §4.5
+  ignora C25. **El director debería confirmarlo o ajustar el ejemplo.**
+- **Cotas exactas (90, 1 000, 5).** La cota de una fila `api` es la entrada estimada más
+  `max_tokens`, y la entrada no se puede fijar con exactitud. Además, `call_llm` puede reintentar
+  contra el proxy cerrado. Las pruebas leen la cota real de R4 (la suman) y verifican el intervalo
+  con ella. La propiedad que exige el contrato se conserva.
+- **El fondo del CLI (`banco04_medir_fondo_cli`).** Solo se prueba su ausencia
+  (`fondo_observado_fuente = "no_medido"`) y la firma del `main`. La medición real necesita el
+  instrumento `--debug-file` o un proxy, que el contrato deja pendiente (§8.6).
+- **La forma de los `id` de las condiciones de cuota.** Se asume la interfaz 7 (el nombre literal de
+  la métrica) también para la cuota: `claude_extremo_por_caso`, `atribu`/`C25`. La separación
+  estricta se comprueba con esos nombres.
+- Sigue igual: E2E-1 y las mutaciones con base de datos necesitan el clúster 55448;
+  `cli-codex-eval` con `None` sigue sin ser ejecutable con dobles.

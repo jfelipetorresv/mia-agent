@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
 EXEC = ROOT / "execution"
 FIXTURES = Path(__file__).resolve().parent
+# directorio de PRODUCCIÓN de las instantáneas (§4.4): las pruebas NUNCA escriben en él
 DIR_INSTANTANEAS = BACKEND / "mia" / "eval" / "banco04" / "telemetria_acreditada"
 PUERTO_AISLADO = "55448"
 PUERTO_PROHIBIDO = "55432"
@@ -39,7 +40,7 @@ PUERTO_PROHIBIDO = "55432"
 # clúster aislado de E2E-1: el `MIA_TEST_ENV_FILE` que provea el implementador).
 ENTORNO_ORIGINAL: dict[str, str] = dict(os.environ)
 
-_ESTADO: dict = {"preparado": False, "raiz": None, "instantaneas_creadas": []}
+_ESTADO: dict = {"preparado": False, "raiz": None}
 
 CLAVES_A_VACIAR = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY",
                    "GOOGLE_API_KEY", "MINIMAX_API_KEY", "PINECONE_API_KEY", "MISTRAL_API_KEY",
@@ -140,10 +141,6 @@ def preparar_proceso(env_real: Optional[Path] = None) -> Path:
 
 
 def limpiar() -> None:
-    for p in list(_ESTADO["instantaneas_creadas"]):
-        with contextlib.suppress(OSError):
-            Path(p).unlink()
-    _ESTADO["instantaneas_creadas"].clear()
     r = _ESTADO.get("raiz")
     if r is not None and os.environ.get("BANCO04_CADENA_CONSERVAR") != "1":
         shutil.rmtree(r, ignore_errors=True)
@@ -218,38 +215,27 @@ def cluster_aislado() -> tuple[bool, str, Optional[Path]]:
     return True, "ok", p
 
 
-# ── instantáneas de acreditación de prueba (§4.4) ─────────────────────────────────────────────
-def instalar_instantanea(contenido: dict) -> tuple[str, Path]:
-    """Escribe una instantánea de PRUEBA, direccionada por contenido, en el directorio que fija el
-    contrato (§4.4: `backend/mia/eval/banco04/telemetria_acreditada/<sha256>.json`).
+# ── instantáneas de acreditación de prueba (§4.4, v6+: NADA bajo backend/) ─────────────────────
+def dir_instantaneas_prueba() -> Path:
+    """Directorio temporal de instantáneas de PRUEBA, fuera del repo (§4.4 v6: los `main` lo
+    reciben por `instantaneas_dir=` y la puerta por `PruebaPuerta.directorio_instantaneas`)."""
+    d = raiz() / "instantaneas-de-prueba"
+    d.mkdir(exist_ok=True)
+    return d
 
-    El contrato no admite otra ubicación y exige que cada R1 cite una instantánea con TODAS sus
-    `firmas_previstas` acreditadas, así que una prueba que corra el runner no puede evitarlo. Se
-    escribe solo si el directorio YA existe (lo crea la implementación; si falta, la prueba queda
-    en rojo con ese motivo) y se borra al terminar el proceso."""
-    if not DIR_INSTANTANEAS.is_dir():
-        raise FileNotFoundError(f"no existe el directorio de instantáneas {DIR_INSTANTANEAS} (§4.4)")
+
+def instalar_instantanea(contenido: dict, directorio: Optional[Path] = None) -> tuple[str, Path]:
+    """Escribe una instantánea de prueba, direccionada por contenido, en el directorio de prueba.
+    Nunca escribe bajo `backend/` (decisión del director, v6)."""
+    d = Path(directorio) if directorio is not None else dir_instantaneas_prueba()
+    if ROOT in d.resolve().parents or d.resolve() == ROOT:
+        raise RuntimeError("el directorio de instantáneas de prueba no puede estar bajo el repo")
     datos = canonico(contenido)
     sha = hashlib.sha256(datos).hexdigest()
-    ruta = DIR_INSTANTANEAS / f"{sha}.json"
+    ruta = d / f"{sha}.json"
     if not ruta.exists():
         ruta.write_bytes(datos)
-        _ESTADO["instantaneas_creadas"].append(str(ruta))
     return sha, ruta
-
-
-def instalar_instantanea_corrupta(contenido: dict) -> tuple[str, Path]:
-    """I15: una instantánea cuyo NOMBRE ya no es el sha256 de sus bytes (editada en sitio)."""
-    sha, ruta = instalar_instantanea(contenido)
-    datos = ruta.read_bytes()
-    editado = datos.replace(b'"presente_siempre"', b'"omitido_si_cero"', 1)
-    if editado == datos:
-        editado = datos + b" "
-    nombre = hashlib.sha256(datos + b"#i15").hexdigest()
-    corrupta = DIR_INSTANTANEAS / f"{nombre}.json"
-    corrupta.write_bytes(editado)
-    _ESTADO["instantaneas_creadas"].append(str(corrupta))
-    return nombre, corrupta
 
 
 def canonico(obj) -> bytes:

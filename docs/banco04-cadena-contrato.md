@@ -1380,8 +1380,9 @@ empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición 
 3e. **Evento sin cota solo en el denominador (obligatorio, Astra v8).** Nueva = 100 exactos; base =
    100 conocidos + un intento sin cota → base [100, ∞]; cociente [0, 1] ≤ 1,25 → `certificada ·
    cumple`. Su variante con el evento en el numerador da `estimada`.
-3d. **Solo cotas finitas que no cruzan.** Nueva 100; base 90 + una cota de 5 → [100/95, 100/90] =
-   [1,05; 1,11] ≤ 1,25 → `certificada · cumple`.
+3d. **Solo cotas finitas que no cruzan.** Nueva 100; base 92 + una cota de 5 → [100/97, 100/92] =
+   [1,03; 1,09] ≤ 1,25 → `certificada · cumple`. (Base 92 y no 90: con 90 el máximo, 1,11, pasa el
+   10 % de C25 y la subida exigiría atribución; ajuste del autor de pruebas aceptado por el director.)
 4. **Suspensión conservadora.** Un acumulado conocido por debajo del tope, pero que con la
    estimación empírica lo supera → suspensión **antes** de la siguiente corrida. La misma corrida
    publica la cuota por intervalo; con los datos fijados (el evento está en la versión NUEVA (numerador) y el mínimo del cociente no supera el umbral, por lo que el intervalo lo cruza), `estimada`.
