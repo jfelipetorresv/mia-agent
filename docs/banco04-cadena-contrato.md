@@ -1,6 +1,6 @@
 # Banco 0.4: contrato de la cadena (producir, juzgar, decidir)
 
-Versión del contrato: **banco04-cadena/v5** (propuesta). Fecha: 2026-10-12. Base: HEAD `315a127`,
+Versión del contrato: **banco04-cadena/v6** (propuesta). Fecha: 2026-10-12. Base: HEAD `3ba72f7` (v5 con APTO de Astra en `6c26afc`),
 rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad-04-protocolo.md`).
 
 **Cambios de v1 a v2.**
@@ -11,6 +11,16 @@ rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad
   marcado como revocado.
 - **El banco no cambia ningún archivo del producto** (K8): la telemetría cruda se captura desde
   `eval/` (§4.3).
+
+**Cambios de v5 a v6** (acotados; Astra revisa solo el diff).
+
+- **Decisión de Pipe del 2026-10-12, «Acotar y medir»:** el intento fallido del CLI de Claude pasa a
+  tener cota, con las condiciones y la fórmula de §4.5. Codex sigue sin cota (pendiente).
+- **Decisiones del director sobre el §5 bis del autor de pruebas:**
+  - la puerta pública solo acepta el `custodia_manifest.json` del repo;
+  - `PruebaPuerta` activa cada relajación por separado;
+  - nada se escribe bajo `backend/` en las pruebas (§3.1, §3.9, §4.4, §6.1).
+- **§6.4:** las interfaces que fijan las pruebas pasan a ser contrato.
 
 **Cambios de v4 a v5.**
 
@@ -232,7 +242,7 @@ B14).
 | `seq_inicio`, `seq_envio`, `seq_cierre` | int, int \| null, int \| null | números de secuencia **globales del bloque**, asignados bajo el cerrojo de §5.4: al escribir `en_curso`, al registrar el compromiso de envío y al cerrar. `seq_envio` es el **punto de compromiso irrevocable** de la llamada (§4.2, §5.4). `seq_envio` es `null` en `no_enviado`; `seq_cierre` es `null` en una huérfana enviada, que lleva en su lugar el `seq_deteccion` de su registro de orfandad (K7) |
 | `t_envio_utc` | str \| null | se escribe de forma atómica y duradera, **bajo el mismo cerrojo que el control previo y sin soltarlo entre medias**, junto con `seq_envio`, inmediatamente antes de llamar a `_original_invoke` o al subproceso del juez. `null` = la llamada no salió (K7, K15) |
 | `t_inicio_utc`, `t_fin_utc` | str ISO-8601 UTC | informativos. El orden lo dan `seq_inicio` y `seq_cierre` |
-| `fase` | enum | `produccion`, `aprobacion_turno`, `aprobacion_aprobar`, `aprobacion_trabajos`, `embeddings_siembra`, `juicio_p1_opus`, `juicio_p1_codex`, `juicio_tercer_voto`, `juicio_negativa_falsa`, `juicio_p2_opus`, `juicio_p2_codex`, `juicio_voto_cobertura_opus`, `juicio_voto_cobertura_codex`, `juicio_estabilidad`, `validacion`, `medicion_codex` (R14), `sin_contexto` |
+| `fase` | enum | `produccion`, `aprobacion_turno`, `aprobacion_aprobar`, `aprobacion_trabajos`, `embeddings_siembra`, `juicio_p1_opus`, `juicio_p1_codex`, `juicio_tercer_voto`, `juicio_negativa_falsa`, `juicio_p2_opus`, `juicio_p2_codex`, `juicio_voto_cobertura_opus`, `juicio_voto_cobertura_codex`, `juicio_estabilidad`, `validacion`, `medicion_codex` (R14), `medicion_fondo` (§4.5), `sin_contexto` |
 | `caso_id`, `rep`, `intento` | str/int \| null | vienen del contexto de llamada (ContextVar de `telemetria`) |
 | `candidate_id`, `pasada`, `objetivo` | str \| null | jueces; `objetivo` = id de unidad, hecho o (punto, parte) |
 | `alias` | str | el alias de la cadena, tal como lo recibe `_guarded_invoke` |
@@ -252,7 +262,8 @@ B14).
 | `exito` | bool | |
 | `tipo_error`, `proveedor_no_alcanzado` | str \| null, bool \| null | solo la clase de la excepción, nunca su texto (I8) |
 | `motivo_parada`, `motivo_parada_fuente` | str \| null, `cli` \| `api` \| `no_informado` | §4.3, Q9 |
-| `cota` | dict | `{tokens_entrada_estimados, cota_salida, tokens_cota_superior, fuente, motivo}`; igual que SG:1233-1247; en `cli-*` la cota es `null` (C18) |
+| `cota` | dict | `{tokens_entrada_estimados, cota_salida, tokens_cota_superior, fuente, motivo}`; igual que SG:1233-1247. En `claude_cli`, la cota es la de §4.5 si se cumplen sus condiciones (`fuente: "cota_cli_acreditada"`); si no, `null`. En `codex_cli` es siempre `null` (C18; pendiente, §4.5) |
+| `entorno_cli` | `{max_retries: str\|null, retry_watchdog_definida: bool, max_output_tokens: str\|null}` \| null | solo en `claude_cli`: los **tres** valores del entorno efectivo que recibió el subproceso, capturados por la ranura (§4.5). No guarda ninguna otra variable |
 | `reanudacion_vigente` | str \| null | referencia de R6 bajo la que se lanzó (jueces y Codex de producción) |
 | `eventos_desconocidos_vistos` | list[str] | ids de filas desconocidas que el control previo vio (§5) |
 | `prompt_sha256` | str \| null | obligatorio en las fases `juicio_*` y `validacion` |
@@ -570,14 +581,29 @@ Exige igualdad con lo escrito.
   --custodia <MIA_BANCO04_CUSTODIA> --cadena <MANIFIESTO_CADENA.json> --salida <VEREDICTO.json>`.
 - **Prohibido en la firma:** cualquier parámetro de conclusión, agregado, etiqueta, semilla,
   inventario, `R`, techo, atribución, recibo, `suspendido` o recuento.
+- **Manifiesto de custodia (decisión del director, v6).**
+  - La puerta **pública** solo acepta el `custodia_manifest.json` del repo.
+  - Lo pasa de forma explícita a `custodia.abrir(manifest_path=RUTA_MANIFIESTO_REPO)`, con una
+    constante de `puerta.py` calculada desde la raíz del repo. **Ninguna ruta se redirige en tiempo
+    de llamada:** sustituir `custodia._MANIFEST_PATH` o `custodia.cargar_manifiesto` no tiene efecto
+    en la puerta.
 - **Único parámetro adicional, solo de Python y solo para pruebas:** `_prueba: PruebaPuerta | None`.
-  Relaja exactamente tres cosas, **y nada más**:
-  1. abrir la custodia con un desprotector DPAPI de prueba y un manifiesto de custodia de prueba;
-  2. aceptar `dobles: true` en R1 y R8;
-  3. aceptar `arbol_limpio: false` en R1, porque las pruebas corren en árboles de desarrollo.
-
-  Con `_prueba`, el resultado lleva `"modo_prueba": true` y `resumen_publicable` se niega a
-  publicarlo.
+  - Firma: `PruebaPuerta(manifiesto_custodia: Path | None = None, desproteger: Callable | None =
+    None, directorio_instantaneas: Path | None = None, aceptar_dobles: bool = False,
+    aceptar_arbol_sucio: bool = False)`.
+  - Cada relajación se activa **por separado** y no hay ninguna más:
+    1. `manifiesto_custodia` y `desproteger`: abrir una custodia de prueba con su manifiesto y su
+       desprotector DPAPI de prueba;
+    2. `directorio_instantaneas`: leer las instantáneas de acreditación de un directorio de prueba
+       en lugar de `backend/mia/eval/banco04/telemetria_acreditada/` (§4.4);
+    3. `aceptar_dobles`: aceptar `dobles: true` en R1 y R8;
+    4. `aceptar_arbol_sucio`: aceptar `arbol_limpio: false` en R1.
+  - Con **cualquier** relajación activa, el resultado lleva `"modo_prueba": true` y
+    `resumen_publicable` se niega a publicarlo.
+  - **El veredicto se calcula igual**, para que el esqueleto o F17 puedan mostrar `aprueba` con
+    `modo_prueba: true`.
+  - `banco04_decidir.main(argv, *, _prueba=None)` acepta el mismo objeto **solo como parámetro de
+    Python**; la línea de comandos no lo expone (E2E-7).
 - **Salida:** `{veredicto: aprueba|reprueba|no_certificable, motivos: [{codigo, detalle}],
   filas_rojas: [..], condiciones: [{id, valor, umbral, estado: cumple|no_cumple|no_aplica|sin_dato,
   fuentes: [rutas+sha256]}], comparativas: [...], techo: {...}, entradas_leidas: [{ruta, sha256}],
@@ -899,6 +925,7 @@ sigue fuera del banco.
 | `no_enviado_contradictorio` · `seq_incoherente` | §4.2, §5.4 (K15, K7) |
 | `estimacion_codex_no_reproducible` | R13, R14 (K5) |
 | `entrada_no_permitida` · `entrada_inaccesible` | §3.9 (K14) |
+| `instantaneas_de_prueba` | R1 o R9 escritos con `instantaneas_dir=` y leídos sin `PruebaPuerta.directorio_instantaneas` (§4.4, v6) |
 
 ### 3.9 Inventario cerrado de `entradas_leidas` (K14)
 
@@ -911,8 +938,9 @@ poder abrir algo obligatorio, `entrada_inaccesible`.
 2. **Fuentes de R13:** el directorio de medición `S/<ver>-medicion-codex/`, con su R1, **todas**
    sus filas R4, todos sus recibos y R13, cada uno con su sha256 cotejado (K16).
 3. **Instantáneas de acreditación** citadas por R1, R8 y R9
-   (`backend/mia/eval/banco04/telemetria_acreditada/<sha256>.json`) y **cada archivo de su
-   `evidencia`**.
+   (`backend/mia/eval/banco04/telemetria_acreditada/<sha256>.json`, o
+   `PruebaPuerta.directorio_instantaneas/<sha256>.json` con esa relajación), incluidas las entradas
+   `fondo_cli` (§4.5), y **cada archivo de su `evidencia`**.
 4. **Artefactos de custodia** que abre `custodia.abrir`: la llave DPAPI, los cifrados del
    manifiesto, `custodia_manifest.json` y los casos, claves, semilla, jurisdicciones y mutaciones
    del reservado vigente. Se registran por id de artefacto y `sha256_cifrado`.
@@ -956,10 +984,12 @@ La aplican la captura de producción (§4.2) y los runners de juez, que sustituy
 | `embeddings` | caracteres de los textos (estimación declarada, SG:1294) | — | `proveedor_cuota = ninguno`: no cuenta en ninguna cuota |
 
 - **Fallo (excepción):** siempre `consumo_conocido = false`, con la cota de SG:1209-1243.
-  - En `cli-*` la cota es `null` (desconocido sin cota), salvo que `spend_guard.cota_salida_cli`
-    devuelva una cota acreditada según C18 (§8.4, Q14): entonces es desconocido con cota (R4).
+  - En `claude_cli`, la cota es la de §4.5 si se cumplen sus cuatro condiciones (desconocido con
+    cota); si no, `null` (desconocido sin cota).
+  - En `codex_cli`, la cota es siempre `null`.
 - **Éxito con un componente ausente o inválido:** `consumo_conocido = false`, con
-  `componentes_ausentes`. Cota: `cli-*` → `null`; `api` → entrada estimada + `max_tokens` aplicado.
+  `componentes_ausentes`. Cota: `claude_cli` → la de §4.5 si se cumplen sus condiciones, si no
+  `null`; `codex_cli` → `null`; `api` → entrada estimada + `max_tokens` aplicado.
 - **`uso_crudo` ausente:** desconocido.
 - **Fila huérfana:** se clasifica según R4, «clasificación única de las huérfanas»: si fue enviada, desconocida sin cota; si no, no enviada.
 - **Prohibido:** registrar una llamada como éxito con 0 tokens. Ese es el patrón de SG:1268-1274 que
@@ -1049,6 +1079,8 @@ HEAD` está vacío en los tres archivos. **El mismo envoltorio vale para las dos
 | `backend/mia/agent/subscription_llm.py:231` (`_build_command`), llamada en `:304` | se sustituye el atributo de módulo por una función que guarda en la ranura el `argv` que devuelve la original y lo devuelve sin cambios | comando efectivo de Claude, para `firma_comando` (K4) | es el único punto donde existe el `argv` real con `--model` y `--effort` |
 | `backend/mia/agent/codex_subscription_llm.py:235` (`_command`), llamada en `:285` | ídem | comando efectivo de Codex (K4) | ídem |
 | runners de juez (J:1571-1582 `ClaudeJuezRunner.comando`; J:1655-1665 `CodexJuezRunner.comando`) | código de `eval/`: guardan el `cmd` | comando efectivo del juez (K4) | — |
+| `backend/mia/agent/subscription_llm.py:140` (`_sanitized_env`), llamada en `:326` | se sustituye el atributo de módulo por una función que toma el entorno de la original, **impone `CLAUDE_CODE_MAX_RETRIES="10"`** (el valor de fábrica, así que no cambia la conducta) y guarda en la ranura los tres valores de `entorno_cli`. **Es la única diferencia** con lo que devuelve la original. No añade ni quita ninguna otra variable: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` contiene `TOKEN` y la original ya lo elimina (`:126`, `:133-137`) | entorno efectivo del CLI, para la cota de §4.5 | es el único punto donde existe el entorno real del subproceso |
+| `entorno_juez_claude` (J:1501-1512), código de `eval/` | impone `CLAUDE_CODE_MAX_RETRIES="10"` y devuelve los tres valores de `entorno_cli` | ídem, para el juez | — |
 
 **Ranura.** Una `ContextVar` de `telemetria` que abre `_guarded_invoke` antes de llamar a
 `_original_invoke` y lee al volver. `call_llm` corre en un hilo con `asyncio.to_thread` y
@@ -1079,7 +1111,9 @@ Fuera del proceso del banco nada cambia: el abogado nunca corre con el envoltori
 2. Con dobles de `subprocess.run`, `call_llm` devuelve, con el envoltorio instalado y sin él,
    objetos con `choices`, `usage`, `model`, `mia_model_hint` y `mia_effort` idénticos campo a
    campo, y `metrics.usage.record` bufferiza la misma fila.
-3. Al salir de `telemetria.instalar()`, incluso por excepción, los dos atributos de módulo vuelven
+   - El `env` que recibe el doble de `subprocess.run` es idéntico **salvo** en
+     `CLAUDE_CODE_MAX_RETRIES="10"`, la única diferencia declarada (§4.5).
+3. Al salir de `telemetria.instalar()`, incluso por excepción, todos los atributos de módulo sustituidos vuelven
    a ser los originales (`is`).
 4. Siguen verdes `execution/test_rls.py`, `execution/test_gates_no_ciegos.py` y
    `test_eval_spend_guard`.
@@ -1096,6 +1130,13 @@ registran la versión del CLI.
 - Una acreditación vive en una **instantánea inmutable** direccionada por contenido:
   `backend/mia/eval/banco04/telemetria_acreditada/<sha256>.json`, donde el nombre es el sha256 de los
   bytes. Editarla cambia su nombre: es otra instantánea.
+- **En las pruebas no se escribe nada bajo `backend/`** (decisión del director, v6).
+  - Los `main` (`run_banco04`, `banco04_juzgar`, VJ, `banco04_medir_codex` y
+    `banco04_medir_fondo_cli`) aceptan el parámetro de Python `instantaneas_dir=`, nunca un flag de
+    línea de comandos.
+  - Con él, el R1 o el R9 que escriben llevan `instantaneas_de_prueba: true`.
+  - La puerta solo los acepta con `PruebaPuerta.directorio_instantaneas`. Sin ella, el resultado es
+    `no_certificable` (`instantaneas_de_prueba`).
 - No hay adiciones a una instantánea existente.
 - **Todos** los R1 de la cadena y R8 citan **la misma** instantánea; si no, `no_certificable`
   (`acreditacion_snapshot_distinto`).
@@ -1164,6 +1205,99 @@ precondición de la piloto. **Este contrato no llama a proveedores.**
   `no_certificable`;
 - Codex sin `campo_identidad` acreditado → `identidad_efectiva_ausente`.
 ---
+
+### 4.5 Cota acreditada del intento de Claude CLI (decisión de Pipe del 2026-10-12, «Acotar y medir»)
+
+Sustituye, solo para el CLI de Claude, la consecuencia de C18 y de §8.4 Q14 («ningún CLI tiene
+cota»). Fuente: el informe de la cota del CLI (scratchpad `r5/cota-cli-informe.md`):
+
+- `claude --version` = 2.1.296;
+- `code.claude.com/docs/en/env-vars` documenta `CLAUDE_CODE_MAX_RETRIES` (10 por defecto, tope 15) y
+  el tope de salida de 128 000 de `CLAUDE_CODE_MAX_OUTPUT_TOKENS`;
+- `CLAUDE_CODE_RETRY_WATCHDOG` sube los reintentos a 300 o los hace ilimitados.
+
+**Condiciones.** La cota existe solo si se cumplen las cuatro; si falta una, el intento queda **sin
+cota**:
+
+1. **Reintentos fijados.** `entorno_cli.max_retries == "10"` en el entorno efectivo del
+   subproceso. Lo impone el envoltorio del eval (§4.3); el producto no cambia. Cualquier otro valor
+   ⇒ sin cota.
+2. **Sin vigilante de reintentos.** `entorno_cli.retry_watchdog_definida == false`. Si está
+   definida en el entorno real ⇒ sin cota.
+3. **Tope de salida.** `entorno_cli.max_output_tokens` es `null` o un entero ≤ 128 000. Cualquier
+   otro valor ⇒ sin cota.
+4. **Fondo medido y acreditado.** Hay una entrada `fondo_cli` única en la instantánea citada (§4.4)
+   para la misma `familia`, la misma `cli_version` exacta y la misma `firma_comando` de la fila. Sin
+   ella ⇒ sin cota.
+
+**Fórmula** (enteros, sin `float`):
+
+`cota = 11 × (entrada_estimada + 128000) + 2 × fondo_max`
+
+- 11 = 1 intento + 10 reintentos;
+- `entrada_estimada` = `estimate_tokens` sobre los mensajes en producción (SG:1209), o
+  `jueces.entrada_estimada` en los jueces (J:1335);
+- `fondo_max` = el máximo observado de tokens de las peticiones laterales por invocación, según la
+  entrada `fondo_cli`; el factor de seguridad es 2.
+
+Esa cota cuenta en el techo y en las reservas igual que el consumo conocido (clase «desconocido con
+cota», R4). El techo queda certificable si cabe.
+
+**Medición del fondo** (`fondo_cli`; misma familia de acreditaciones que §4.4):
+
+- **Cuándo:** en la piloto, como su **paso 0**, antes del primer R1 de producción. Por K13 la
+  instantánea queda fija desde el primer R1 que la cita, así que la entrada `fondo_cli` tiene que
+  existir antes.
+- **Entrada:** `execution/banco04_medir_fondo_cli.py main --bloque <0|7> --salida <S>
+  --invocaciones-por-firma <n=3>`, con los mismos aislamiento, telemetría y cerrojo que
+  `run_banco04`.
+  - Por cada firma de `firmas_previstas` de `claude_cli`, lanza `n` invocaciones reales con el
+    mismo `argv` y el mismo entorno que producción.
+  - Para el contenido usa un mensaje sintético fijo del propio script, sin casos del banco ni texto
+    jurídico.
+- **Instrumento:** tiene que ver **todas** las peticiones a la API de una invocación:
+  - `--debug-file <ruta>` del CLI, si `claude --help` 2.1.296 lo lista (a verificar con la ayuda
+    real);
+  - si no, un proxy local en 127.0.0.1 que registre cada petición y su `usage`.
+
+  Los tokens del instrumento (`--debug-file <ruta>`) se excluyen de la normalización de
+  `firma_comando`, para que la firma medida sea la de producción. El instrumento queda declarado en
+  la entrada.
+- **Resultado:** filas R4 con `fase: medicion_fondo`, que cuentan en el presupuesto del circuito, y
+  una entrada nueva para una instantánea **nueva**: `{tipo: "fondo_cli", familia: "claude_cli",
+  cli_version, firma_comando, instrumento: "debug_file"|"proxy_local", n_invocaciones,
+  peticiones_por_invocacion: [int], tokens_laterales_por_invocacion: [int], fondo_max,
+  evidencia: [{archivo, sha256}], autor, fecha}`.
+  - `fondo_max` = el máximo de `tokens_laterales_por_invocacion`.
+  - Una petición lateral es toda petición a la API de la invocación distinta del turno.
+  - La puerta recalcula `fondo_max` desde la evidencia.
+- **Sin esa acreditación no hay cota.**
+
+**Codex: sin cota (pendiente).** La referencia oficial de configuración de Codex
+(`developers.openai.com/codex/config-reference`) no se pudo leer, y no hay fuente oficial de sus
+reintentos ni de su tope de salida. Todo intento fallido de `codex_cli` sigue siendo desconocido sin
+cota (C18). Queda en §8.6 como pendiente.
+
+**Cambios de código** (todos en `eval/` y `execution/`):
+
+- `spend_guard.cota_salida_cli` y `CLI_COTA_ACREDITADA` (SG:1096-1123) se sustituyen por
+  `telemetria.cota_intento_cli(fila, instantanea)`, que aplica las cuatro condiciones y la fórmula.
+  Codex devuelve `None`.
+- `jueces.cota_salida_juez` (J:1340-1353) delega en la misma función para el juez de Claude.
+- `ControlCuotaJueces.antes` reserva esa cota cuando existe (J:1435-1436).
+
+**Pruebas (E2E-19, obligatorias):**
+
+- `CLAUDE_CODE_RETRY_WATCHDOG` definida en el entorno real ⇒ sin cota;
+- `max_retries` distinto de `"10"` (por ejemplo `"15"`, o ausente porque otro envoltorio lo quitó)
+  ⇒ sin cota;
+- `max_output_tokens = "200000"` ⇒ sin cota;
+- sin entrada `fondo_cli` para esa firma, o con una entrada de otra firma o de otra versión ⇒ sin
+  cota;
+- **caso positivo con la fórmula exacta:** entrada estimada 3 000 y `fondo_max` 500 ⇒
+  11 × (3 000 + 128 000) + 2 × 500 = **1 442 000**. La fila queda «desconocido con cota», el techo
+  sigue certificable y el juez no se detiene;
+- Codex con un intento fallido ⇒ sin cota en cualquier caso.
 
 ## 5 · Reanudación (decisión de Pipe, 2026-10-12: «que se reanude con mi autorización»)
 
@@ -1361,6 +1495,15 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
 - **Custodia de prueba:** DPAPI de prueba, como en `test_banco04_produccion.py:891`. Contiene la
   clave del caso, la semilla y las jurisdicciones, y **4 ids custodiados de prueba**, que no se
   producen. Así `inventario_esperado` se construye y su ausencia sale como `muestra_incompleta`.
+  - Lleva también las claves de los 13 casos visibles (§6.4, interfaz 10).
+- **Puerta del esqueleto (v6):** `banco04_decidir.main(["veredicto", ...], _prueba=PruebaPuerta(
+  manifiesto_custodia=..., desproteger=..., directorio_instantaneas=...))`.
+  - `aceptar_dobles` y `aceptar_arbol_sucio` quedan **sin relajar**, así que `corridas_con_dobles`
+    aparece entre los motivos y el resultado lleva `modo_prueba: true`.
+  - F17 activa además `aceptar_dobles` y `aceptar_arbol_sucio`, y su `aprueba` también lleva
+    `modo_prueba: true`.
+  - Las instantáneas de prueba viven en un directorio temporal fuera de `backend/`, que se pasa a
+    los `main` con `instantaneas_dir=`.
 
 | Paso | Comando (Python, con dobles inyectados solo por parámetro) | Resultado exigido |
 |---|---|---|
@@ -1373,7 +1516,7 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
   - `muestra_incompleta`, que incluye por definición:
     - los casos ausentes (los otros 12 visibles y los 4 custodiados de prueba);
     - las repeticiones 2..5 que faltan del caso presente por `--solo-piloto`;
-  - `corridas_con_dobles` (el esqueleto llama a la puerta pública, sin `_prueba`);
+  - `corridas_con_dobles` (`aceptar_dobles` sin relajar);
   - `arbol_sucio`, solo si el árbol lo está;
   - `validacion_reservada_ausente`;
   - los `sin_dato` o `par_faltante` que se deben **solo** a lo anterior.
@@ -1512,6 +1655,8 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
   - Mismo alias y mismo `mia_model_hint`, pero `modelUsage` con un `canonicalModel` distinto entre
     versiones → `base_no_comparable_reproducir`.
   - Una fila Claude con éxito sin `modelUsage` → `identidad_efectiva_ausente`.
+- **E2E-19 · Cota del CLI de Claude (v6).** Las seis pruebas obligatorias de §4.5, incluido el caso
+  positivo 11 × (3 000 + 128 000) + 2 × 500 = 1 442 000.
 - **E2E-7 · Sin puerta trasera.**
   - `banco04_decidir.py` no tiene ningún flag que active `_prueba` ni acepte `dobles` (búsqueda en
     el código y en `--help`).
@@ -1647,6 +1792,52 @@ Después, un tercero muta la puerta y el resultado es el número de mutaciones q
 
 ---
 
+### 6.4 Interfaces fijadas por las pruebas (contrato desde la v6)
+
+Se adoptan como contrato las interfaces 1–5 y 7–10 del §4 del informe del autor de pruebas (scratchpad
+`r5/pruebas-cadena-informe.md`). La 6 queda sustituida por §3.1 (manifiesto de custodia del repo y
+`PruebaPuerta`). Quien implemente no puede cambiarlas.
+
+1. **`proveedores`.** Es un `dict` cuyas claves son literalmente los nombres de §6.1:
+   - obligatorias: `subscription_llm.subprocess.run`, `codex_subscription_llm.subprocess.run`,
+     `subscription_llm._resolve_exe`, `codex_subscription_llm._resolve_exe` y
+     `embeddings.embed_texts`;
+   - opcionales: `codex_subscription_llm._local_membership_allowed` y `llm.resolve_fallback_chain`.
+2. **`mundo`.** Es un objeto con `async producir(caso, rep)`, `hash_soul()`,
+   `fijar_jurisdicciones(codigos, tenant=None)`, `async abrir_despacho`, `producir_hasta_revision`,
+   `aprobar` y `cerrar_despacho`. Su `producir` llama al `llm.call_llm` real con el nodo fijado por
+   `set_node`.
+3. **`runners`** de juzgar y de VJ. Es `{"opus": Runner, "codex": Runner}`, y cada runner atiende
+   todas las etapas según el `schema` de su esquema.
+4. **Argumentos de línea de comandos:**
+   - `run_banco04` añade `--casos`, `--solo-piloto`, `--fase extension`,
+     `--telemetria-acreditada <sha>` y `--atribucion-preregistrada <ruta>`. Sin `--salida-custodia`,
+     los crudos custodiados van a `<MIA_BANCO04_CUSTODIA>/salidas`;
+   - `banco04_juzgar registrar-cadena --base --nuevo --custodia --salida --bloque [--linea-base]`;
+   - `banco04_juzgar juzgar --cadena --custodia [--reanudar-aprobado-por-pipe --etapas --versiones]`;
+   - `banco04_decidir previa | veredicto | linea-base` con `--base`, `--nuevo`, `--custodia`,
+     `--cadena` y `--salida`;
+   - `VJ main(argv, runners=, carpeta_local_appdata=)` con `--telemetria-acreditada`;
+   - `banco04_medir_codex` con el argv de R14 más `--telemetria-acreditada`,
+     `--permitir-arbol-sucio`, `--incluir-custodiados` y `--versiones-contador`;
+   - además (v6), todos esos `main` aceptan el parámetro de Python `instantaneas_dir=` (§4.4), y
+     `banco04_decidir.main` acepta `_prueba=` (§3.1).
+5. **`PruebaPuerta`.** Con la firma ampliada de §3.1: `manifiesto_custodia`, `desproteger`,
+   `directorio_instantaneas`, `aceptar_dobles` y `aceptar_arbol_sucio`, que se activan por separado.
+6. *(Sustituida por §3.1.)*
+7. **Identificación de condiciones.** El `id` de cada condición contiene el nombre literal de su
+   métrica: por ejemplo `afirmaciones_sin_respaldo`, `fuga_jurisdiccion`,
+   `cobertura_hechos_decisivos`, `claude_extremo_por_caso`, `decisivos_estables`, `alcance`, y
+   `atribu` o `C25`. El cierre de dependencias de la familia S se calcula sobre esos nombres.
+8. **`etiqueta_version` del candidato.** Es la etiqueta de la versión.
+9. **`IDENTIDADES_RESERVADO_RETIRADAS`.** Se consulta en tiempo de llamada, como atributo del
+   módulo VJ.
+10. **Claves de los 13 casos visibles.**
+    - Van en la custodia de prueba.
+    - Para los casos sin expediente, el esquema exige ≥ 1 hecho: se fija un hecho no decisivo del
+      mensaje y un punto `laguna_real`.
+    - La custodia real solo declara las claves de V1–V4: pendiente fuera de este frente (§8.6).
+
 ## 7 · Qué se conserva, qué se mueve y qué se elimina
 
 ### 7.1 `backend/mia/eval/banco04/metricas.py`
@@ -1754,6 +1945,9 @@ Después, un tercero muta la puerta y el resultado es el número de mutaciones q
 
 - **2026-10-12, reanudación:** «que se reanude con mi autorización». Se implementa como §5. Cierra
   el pendiente de C19 (DOC §12.6).
+- **2026-10-12, «Acotar y medir»:** el intento fallido del CLI de Claude tiene cota cuando el banco
+  fija los reintentos de fábrica, verifica el entorno real y mide el fondo. Se implementa como §4.5 y
+  sustituye, para Claude, la consecuencia de C18 y de §8.4 Q14. Codex sigue sin cota.
 
 ### 8.2 Resueltas por este contrato (las revisa Astra; no son decisiones de Pipe)
 
@@ -1918,7 +2112,9 @@ Primero va la redacción original; las revisiones posteriores al dictamen de Ast
 - **Q13.** La decisión de Pipe sobre C19 entra como aclaración C27 de v1.3. **[AMPLIADA en v5]**
   La garantía de compromiso irrevocable de §4.2 (decisión del director, K7) se recoge en la misma
   aclaración C27, como la forma en que se aplica la reanudación.
-- **Q14.** Se intenta acreditar la cota según C18, sin cambiar la conducta del producto. Para eso se
+- **Q14. [SUSTITUIDA para Claude por la decisión de Pipe «Acotar y medir», §4.5 y §8.1; para Codex
+  sigue vigente: sin cota]** Se intenta acreditar la cota según C18, sin cambiar la conducta del
+  producto. Para eso se
   necesitan dos datos de la documentación oficial de la versión instalada del CLI: el número máximo de
   reintentos por defecto y si en modo `-p --max-turns 1` sin herramientas se emiten peticiones de
   fondo. También hay que verificar que el entorno del banco no fija variables que lo alteren. Con eso,
@@ -1964,6 +2160,25 @@ Aplicadas tal como las pidió Astra en su ronda 2:
 
 ---
 
+### 8.6 Resoluciones del director para la v6 (2026-10-12; no son decisiones de Pipe) y pendientes
+
+- **§5 bis.1 del autor de pruebas (manifiesto de custodia).** Se adopta la alternativa:
+  - la puerta pública usa solo el manifiesto del repo;
+  - el esqueleto usa `PruebaPuerta` con relajaciones separadas y `aceptar_dobles` sin relajar, y el
+    resultado lleva `modo_prueba: true` (§3.1, §6.1).
+- **§5 bis.2 (instantáneas).** No se escribe bajo `backend/` durante las pruebas: hay un directorio
+  de instantáneas de prueba por `instantaneas_dir=` y `PruebaPuerta.directorio_instantaneas` (§3.9,
+  §4.4).
+- **Interfaces.** Las 1–5 y 7–10 del informe del autor de pruebas se adoptan como contrato (§6.4).
+- **Interpretación declarada para Astra.** La medición del fondo se hace como **paso 0 de la
+  piloto** (§4.5) y no durante las corridas, porque K13 congela la instantánea en el primer R1.
+- **Pendientes:**
+  - la cota de Codex: falta la fuente oficial de reintentos y del tope de salida;
+  - comprobar que `--debug-file` existe en `claude --help` 2.1.296, o montar el proxy local;
+  - las claves de los 13 casos visibles en la custodia real.
+
+---
+
 ## 9 · Cierre de las objeciones de Astra (ronda 1: K1–K12; ronda 2: parciales y K13–K15)
 
 | Objeción | Gravedad | Qué pedía Astra | Dónde la cierran la v2 y la v3 |
@@ -1984,3 +2199,5 @@ Aplicadas tal como las pidió Astra en su ronda 2:
 | **K14** | Mayor | ampliar el inventario de `entradas_leidas` a las acreditaciones, sus evidencias y las fuentes de R13 | §3.9; E2E-2; §4.4 (validación); R-14 |
 | **K15** | Mayor | estado terminal comprobable de «no enviado» para la denegación de `check_and_reserve`, sin contarlo como consumo desconocido ni como inferencia | R4 (`estado`, `t_envio_utc`); §4.2 («Orden fijo de una llamada»); §5.4 (U(C) excluye lo no enviado); E2E-15; códigos de §3.8 **v4:** las llamadas no enviadas quedan expresamente fuera de U(C) ⊆ A(C) («llamadas comprobadas», §5.4); clasificación única de las huérfanas (R4), remitida desde §4.1 y §4.2. |
 | **K16** | Mayor | R13 permitía acreditar una lista incompleta de llamadas (10 + 1.000 citando solo 10 daba 13 en vez de 1.263) | R1 (`seleccion_medicion`, k preregistrado); R14 (asignación preregistrada y recibos de completitud sin texto); R13 (igualdad entre las filas citadas, **todas** las R4 de la medición y los recibos; el cero exige una corrida completa; prueba obligatoria 10 + 1.000 → 1.263); §3.9 punto 2; §3.3 E (presupuesto del circuito con las filas de medición) |
+| **Pipe 2026-10-12 «Acotar y medir»** | Decisión | cota del intento fallido del CLI de Claude: reintentos de fábrica fijados por el eval, entorno real verificado y fondo medido | §4.5 (condiciones, fórmula `11 × (entrada + 128000) + 2 × fondo_max`, medición del fondo, Codex pendiente, E2E-19); R4 (`cota`, `entorno_cli`); §4.1; §4.3 (`_sanitized_env`, `entorno_juez_claude`); §8.1; §8.4 Q14 [SUSTITUIDA para Claude] |
+| **Director v6 · §5 bis del autor de pruebas** | Decisión | manifiesto de custodia en la puerta pública; escritura de instantáneas bajo `backend/` en las pruebas | §3.1 (manifiesto del repo, `PruebaPuerta` con relajaciones separadas, `modo_prueba`); §3.8 (`instantaneas_de_prueba`); §3.9 punto 3; §4.4 (`instantaneas_dir=`); §6.1 (puerta del esqueleto); §6.4 (interfaces 1–5 y 7–10); §8.6 |
