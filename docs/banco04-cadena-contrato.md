@@ -1,6 +1,6 @@
 # Banco 0.4: contrato de la cadena (producir, juzgar, decidir)
 
-Versión del contrato: **banco04-cadena/v6** (propuesta). Fecha: 2026-10-12. Base: HEAD `3ba72f7` (v5 con APTO de Astra en `6c26afc`),
+Versión del contrato: **banco04-cadena/v7** (propuesta). Fecha: 2026-10-12. Base: HEAD `5b142b5` (v5 con APTO de Astra en `6c26afc`; v6 rechazada),
 rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad-04-protocolo.md`).
 
 **Cambios de v1 a v2.**
@@ -12,7 +12,19 @@ rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad
 - **El banco no cambia ningún archivo del producto** (K8): la telemetría cruda se captura desde
   `eval/` (§4.3).
 
-**Cambios de v5 a v6** (acotados; Astra revisa solo el diff).
+**Cambios de v6 a v7.**
+
+- **Decisión de Pipe del 2026-10-12, «Separar calidad y cuota».** **Revoca** «Acotar y medir».
+  - El banco emite **dos veredictos**: CALIDAD y CUOTA (§3.1, §4.5).
+  - Un intento sin cota ya no hace no certificable la calidad: la cuota pasa a «estimada».
+  - El envoltorio **no toca** el entorno del CLI.
+- **Objeciones de Astra sobre la v6:**
+  - (a) la cota no era conservadora: ya no se certifica ninguna cota de CLI;
+  - (b) imponer los reintentos alteraba la conducta: se retira.
+- Propuesta de protocolo que acompaña: `docs/banco-calidad-04-protocolo-v1.4-propuesta.md`.
+
+**Cambios de v5 a v6** (acotados; Astra revisa solo el diff). *La parte «Acotar y medir» queda
+revocada por la v7.*
 
 - **Decisión de Pipe del 2026-10-12, «Acotar y medir»:** el intento fallido del CLI de Claude pasa a
   tener cota, con las condiciones y la fórmula de §4.5. Codex sigue sin cota (pendiente).
@@ -262,8 +274,9 @@ B14).
 | `exito` | bool | |
 | `tipo_error`, `proveedor_no_alcanzado` | str \| null, bool \| null | solo la clase de la excepción, nunca su texto (I8) |
 | `motivo_parada`, `motivo_parada_fuente` | str \| null, `cli` \| `api` \| `no_informado` | §4.3, Q9 |
-| `cota` | dict | `{tokens_entrada_estimados, cota_salida, tokens_cota_superior, fuente, motivo}`; igual que SG:1233-1247. En `claude_cli`, la cota es la de §4.5 si se cumplen sus condiciones (`fuente: "cota_cli_acreditada"`); si no, `null`. En `codex_cli` es siempre `null` (C18; pendiente, §4.5) |
-| `entorno_cli` | `{max_retries: str\|null, retry_watchdog_definida: bool, max_output_tokens: str\|null}` \| null | solo en `claude_cli`: los **tres** valores del entorno efectivo que recibió el subproceso, capturados por la ranura (§4.5). No guarda ninguna otra variable |
+| `cota` | dict | `{tokens_entrada_estimados, cota_salida, tokens_cota_superior, fuente, motivo}`; igual que SG:1233-1247. En `cli-*` (Claude y Codex) la cota es siempre `null` (C18). La v6 le daba cota a Claude; la v7 lo revoca |
+| `estimacion_empirica` | `{tokens: int, componentes: {entrada_heuristica, salida_observada, fondo_observado}, version_regla, instantanea_sha256}` \| null | solo en filas **sin cota**: estimación empírica **no garantizada** de §4.5. Sirve para publicar la cuota estimada y para suspender, **nunca para certificar** |
+| `entorno_cli` | `{max_retries: str\|null, retry_watchdog_definida: bool, max_output_tokens: str\|null}` \| null | solo en `claude_cli`: los tres valores del entorno efectivo, capturados **solo para publicarlos y versionar la estimación** (§4.5). El envoltorio no los cambia (v7) |
 | `reanudacion_vigente` | str \| null | referencia de R6 bajo la que se lanzó (jueces y Codex de producción) |
 | `eventos_desconocidos_vistos` | list[str] | ids de filas desconocidas que el control previo vio (§5) |
 | `prompt_sha256` | str \| null | obligatorio en las fases `juicio_*` y `validacion` |
@@ -278,7 +291,7 @@ B14).
   - **No detiene nada.**
 - **desconocido sin cota:** `consumo_conocido == false` y `cota.tokens_cota_superior` es `null`, o
   bien una fila **huérfana enviada** (ver abajo).
-  - Deja el techo no certificable.
+  - Deja la **cuota** `estimada` (§4.5, v7); la calidad sigue siendo certificable.
   - Es el **único** evento que detiene la ejecución y exige reanudación (§5).
 - **no enviado:** `estado == "no_enviado"`, o fila **huérfana no enviada**. No es consumo (§4.2).
 
@@ -604,11 +617,24 @@ Exige igualdad con lo escrito.
     `modo_prueba: true`.
   - `banco04_decidir.main(argv, *, _prueba=None)` acepta el mismo objeto **solo como parámetro de
     Python**; la línea de comandos no lo expone (E2E-7).
-- **Salida:** `{veredicto: aprueba|reprueba|no_certificable, motivos: [{codigo, detalle}],
-  filas_rojas: [..], condiciones: [{id, valor, umbral, estado: cumple|no_cumple|no_aplica|sin_dato,
-  fuentes: [rutas+sha256]}], comparativas: [...], techo: {...}, entradas_leidas: [{ruta, sha256}],
-  rotulo, modo_prueba}`.
-- **Precedencia:** `no_certificable` > `reprueba` > `aprueba` (C15).
+- **Salida: dos veredictos separados** (decisión de Pipe «Separar calidad y cuota»):
+  `{veredicto: aprueba|reprueba|no_certificable, motivos: [{codigo, detalle}], filas_rojas: [..],
+  condiciones: [{id, valor, umbral, estado: cumple|no_cumple|no_aplica|sin_dato, fuentes:
+  [rutas+sha256]}], comparativas: [...], cuota: {estado: certificada|estimada, resultado:
+  cumple|excede, motivo: str|null, consumo_conocido: {...}, estimacion_empirica: {...}|null,
+  aviso: str|null, condiciones: [...], intentos_sin_cota: [ids R4]}, entradas_leidas: [{ruta,
+  sha256}], rotulo, modo_prueba}`.
+  - `veredicto` es el **veredicto de CALIDAD**. No lee ninguna condición de cuota: solo las de
+    calidad e identidad de §3.3 A, B, C y E (salvo el techo), y §3.4.
+  - `cuota` es el **veredicto de CUOTA** de §3.3 D y §4.5. Las condiciones de cuota no entran nunca en
+    `veredicto`, ni las de calidad en `cuota`.
+- **Precedencia, por veredicto (C15 en v1.4):**
+  - calidad: `no_certificable` > `reprueba` > `aprueba`;
+  - cuota: (1) si la parte conocida ya excede alguna condición del techo, `certificada · excede`
+    (`motivo: conocido_excede`), aunque haya intentos sin cota; (2) si no, y hay algún intento sin
+    cota, `estimada`, con `resultado` calculado con conocido + cota + estimación empírica, publicado
+    como **no garantizado** y con el aviso; (3) si no hay ningún intento sin cota, `certificada ·
+    cumple|excede`.
 
 ### 3.2 Procedimiento (orden fijo)
 
@@ -700,7 +726,7 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 | `discordancias_sin_resolver` = 0 | `len(recuento.discordancias_sin_resolver)` (es una lista, J:1076; hoy M:341 hace `int()` sobre ella) + `discordancias` de las negativas falsas + cobertura con resultado `discordancia_sin_resolver` | si faltan los votos crudos, lo cubre el bloque A («Juicio completo»); cualquier discordancia > 0 | no certificable |
 | `kappa_reservado` ≥ 0,6 | `evaluar_kappa(pares, conjunto="reservado")` sobre los pares de la reproducción de R9 | falta R9; kappa < 0,6 | no certificable |
 | `kappa_salidas_reales` | `evaluar_kappa(..., "real")` sobre `pares_kappa` reproducidos de las corridas juzgadas de **las dos versiones** (§8.4, Q6) | se exige y queda < 0,6 | no certificable. Indefinido o inestable: se publica y no cuenta como ≥ 0,6 (§8.5) |
-| `circuito_sobre_mutaciones_reservadas` | `evaluar_exigencias` (VJ:277) sobre la reproducción de R9 + acreditación de R9 + consumo de las filas R4 `validacion` | falta R9; `circuito_utilizable` falso | no certificable |
+| `circuito_sobre_mutaciones_reservadas` | `evaluar_exigencias` (VJ:277) sobre la reproducción de R9 y la acreditación de R9. **v7:** la exigencia `consumo_certificable` (VJ:329-332) sale del circuito y pasa a la cuota: un intento sin cota en la validación deja la cuota `estimada`, no el circuito inutilizable | falta R9; `circuito_utilizable` falso por una exigencia de calidad | no certificable |
 | `evaluacion_completa_dos_jueces` | resultado del bloque A, «Juicio completo», en las dos versiones | cualquier corrida del inventario sin juicio completo de los dos jueces (regla del bloque A) | no certificable |
 | Cobertura de decisivos, lectura completa (media ≥ 0,90; ningún caso < 0,80) | `cubierto` final por hecho decisivo de la clave (pasada 2 y cobertura adjudicada), media sobre R por caso y media de casos por estrato | la clave del caso no se puede leer | reprueba |
 | `aprobacion_sin_edicion_proxy` ≥ 0,60 | M:316-327: `completada` (R2 `estado`), defectos (fila 1), omisiones (puntos de la pasada 2), celda, `aprobaria_sin_editar`; `negativa_correcta` de la pasada 2 (R5, campo nuevo, con su validación) | falta la pasada 2; `negativa_correcta` contradice los puntos o los defectos de la corrida | reprueba |
@@ -744,8 +770,8 @@ la entrada de `metricas_corrida` (M:266).
 
 | Condición | `no_certificable` si | Efecto |
 |---|---|---|
-| Total agregado, ponderado por caso, extremo por caso y extremo entre repeticiones (Claude 1,25×; Codex 0,50×) e inferencias | una fila desconocida sin cota (las que tienen cota entran con ella, P:464-468); una fila de producción o aprobación con `fase=sin_contexto` o `caso_id` nulo dentro de un tramo del banco (cuenta en el total, pero impide el cálculo por caso); falta la aprobación de un caso | `no_cumple` → reprueba |
-| C25: atribución de subidas > 10 % | `usage_by_node` por ámbito = las **mismas filas** de R4 agrupadas por `nodo` (nulo → `(sin nodo)`). La igualdad con el consumo medido (M:1027-1029) se cumple por construcción. El nodo atribuido es el de mayor aumento. La subida es atribuible si ese nodo está en `atribucion_preregistrada` de R1 de la versión nueva (con su sha256 igual al de R8) **y** alguna métrica suya tiene veredicto `mejora` (recalculado) en una unidad del mismo grupo (a)/(c) | si el techo no es certificable, lo cubre la fila anterior; si el sha256 del mapa no coincide con R8. Un mapa ausente no da `no_certificable`: la subida queda no atribuible | no atribuible → reprueba |
+| Total agregado, ponderado por caso, extremo por caso y extremo entre repeticiones (Claude 1,25×; Codex 0,50×) e inferencias | **ninguna: es veredicto de CUOTA, no de calidad.** Por cada condición se calculan la cota inferior del numerador (consumo conocido) y la superior del denominador (conocido + cotas; +∞ si hay alguna fila sin cota en su ámbito). Si la inferior/superior ya excede el factor → `certificada · excede` (`conocido_excede`). Si no, y hay alguna fila sin cota en el ámbito → `estimada`, con conocido + cota + estimación empírica. Si no hay ninguna → `certificada` exacta. Una fila de producción o aprobación con `fase=sin_contexto` o `caso_id` nulo cuenta en el total y deja `estimada` la condición por caso. Las inferencias son recuentos de intentos y siempre son exactas | cuota: `excede` |
+| C25: atribución de subidas > 10 % | `usage_by_node` por ámbito = las **mismas filas** de R4 agrupadas por `nodo` (nulo → `(sin nodo)`). La igualdad con el consumo medido (M:1027-1029) se cumple por construcción. El nodo atribuido es el de mayor aumento. La subida es atribuible si ese nodo está en `atribucion_preregistrada` de R1 de la versión nueva (con su sha256 igual al de R8) **y** alguna métrica suya tiene veredicto `mejora` (recalculado) en una unidad del mismo grupo (a)/(c) | CUOTA. Si la subida solo resulta de la estimación, la atribución se publica como estimada. Si el sha256 del mapa no coincide con R8, **calidad** `no_certificable` (identidad, `atribucion_mapa_no_coincide`). Un mapa ausente deja la subida no atribuible | cuota: `excede` (no atribuible) |
 
 **E · Alcance C8, fuga §5.7, kappa y estabilidad, y circuito §3.4.**
 
@@ -755,7 +781,7 @@ la entrada de `metricas_corrida` (M:266).
 | Fuga §5.7 | fila 2 del bloque B, con la regla de vinculación de §3.6. Sus pruebas obligatorias cierran R3-N2 del área C | falta el texto o las jurisdicciones |
 | Estabilidad (§8.6) | conjuntos de §3.7: población original y población de la extensión, por separado y por versión; etiqueta `estabilidad`; `acuerdo_estabilidad` (J:921) sobre la reproducción de las dos pasadas 1 de Opus | falta la segunda pasada de un elegido, o existe una de un no elegido de su población (Q15) |
 | Codex en la pasada 2, 15 % (§8.2) | ídem con el 15 % y la etiqueta `codex_p2`; `acuerdo_pasada2_agregado` (J:1179), que se publica | ídem |
-| Techo del circuito (§3.4) | Σ de **todas** las filas R4 con `bloque == R8.bloque` (incluidas las de los directorios de medición R14, las dos versiones, aprobaciones con su turno reproducido, juicio y validación) por proveedor. Las filas del Bloque 0 de una base reutilizada no cuentan en el Bloque 7, cada una con su clase de consumo | acumulado ≥ techo; una suspensión R6 activa, sin una reanudación válida que la cite |
+| Techo del circuito (§3.4) | Σ de **todas** las filas R4 con `bloque == R8.bloque` (incluidas las de los directorios de medición R14, las dos versiones, aprobaciones con su turno reproducido, juicio y validación) por proveedor. Las filas del Bloque 0 de una base reutilizada no cuentan en el Bloque 7, cada una con su clase de consumo. **Para suspender durante la corrida** se usa conocido + cotas + estimación empírica de las filas sin cota, para detener antes (§4.5); **nunca para certificar** | calidad `no_certificable` (incompleta) si queda una suspensión R6 activa sin una reanudación válida que la cite. El acumulado del circuito se publica en `cuota` |
 | Orden tras un consumo desconocido sin cota | §5.4 | una llamada de juez, de validación o de Codex de producción lanzada con un evento sin cota no autorizado para su etapa y versión |
 
 ### 3.4 Comparativa previa y extensión
@@ -815,8 +841,12 @@ selección de casos no es libre: la puerta la recalcula.
   total_claude, total_codex, clases_de_consumo: {conocido, con_cota, sin_cota}}, circuito_bloque0:
   {acumulado_claude, acumulado_codex, techo_claude: 18000000, techo_codex: 5000000, reserva_juicio,
   suspendido: bool}, jueces: {kappa_real, estabilidad, acuerdo_codex_p2, circuito_reservado},
-  cotas_ilustrativas, entradas_leidas}`.
-  - **No lleva el campo `veredicto`.**
+  cotas_ilustrativas, cuota: {estado: certificada|estimada, consumo_conocido, estimacion_empirica,
+  aviso, circuito: cumple|excede}, entradas_leidas}`.
+  - **No lleva el campo `veredicto`** de calidad comparativa.
+  - **Sí lleva el veredicto de cuota separado** (`cuota`, §4.5) del consumo del Bloque 0 frente al
+    techo del circuito (18 M / 5 M): `certificada` si no hubo ningún intento sin cota, `estimada`
+    si los hubo, y `excede` aunque haya sin cota si lo conocido ya supera el techo.
   - Un incumplimiento de 0.3.3 se publica en la primera línea del resumen (DOC §9.7).
 - **Separación:** el consumo del informe es **descriptivo**. El techo de §6.3 solo existe en
   `decidir`, con las dos versiones. El presupuesto del circuito del Bloque 0 (§3.4 del protocolo)
@@ -917,7 +947,8 @@ sigue fuera del banco.
 | `sin_dato` · `par_faltante` | métrica sin dato donde aplica; par de versiones faltante (§3.3 B y C) |
 | `no_concluyente_sin_extension` · `extension_sin_causa` · `extension_no_coincide` · `extension_incompleta` | §3.4 |
 | `submuestra_incompleta` | §3.3 E, §3.7 |
-| `consumo_desconocido_sin_cota` · `techo_sin_aprobacion` · `atribucion_mapa_no_coincide` | §3.3 D |
+| `techo_sin_aprobacion` · `atribucion_mapa_no_coincide` | calidad: completitud e identidad (§3.3 D) |
+| `consumo_desconocido_sin_cota` | **solo** código de parada en tiempo de ejecución (`CuotaAgotada`, `ParadaCodexProduccion`) y motivo de `cuota.estado = estimada`. **Nunca** es motivo de calidad `no_certificable` (v7) |
 | `telemetria_contradictoria` · `telemetria_acreditada_no_coincide` | §4.1, §4.4 |
 | `circuito_suspendido` · `llamada_tras_desconocido_sin_autorizacion` · `reanudacion_invalida` | §3.3 E, §5.4, R6 |
 | `identidad_efectiva_ausente` | §3.3 A, comparabilidad (K8) |
@@ -984,12 +1015,11 @@ La aplican la captura de producción (§4.2) y los runners de juez, que sustituy
 | `embeddings` | caracteres de los textos (estimación declarada, SG:1294) | — | `proveedor_cuota = ninguno`: no cuenta en ninguna cuota |
 
 - **Fallo (excepción):** siempre `consumo_conocido = false`, con la cota de SG:1209-1243.
-  - En `claude_cli`, la cota es la de §4.5 si se cumplen sus cuatro condiciones (desconocido con
-    cota); si no, `null` (desconocido sin cota).
-  - En `codex_cli`, la cota es siempre `null`.
+  - En `cli-*` (Claude y Codex) la cota es siempre `null`: desconocido sin cota. La fila lleva su
+    `estimacion_empirica` (§4.5).
 - **Éxito con un componente ausente o inválido:** `consumo_conocido = false`, con
-  `componentes_ausentes`. Cota: `claude_cli` → la de §4.5 si se cumplen sus condiciones, si no
-  `null`; `codex_cli` → `null`; `api` → entrada estimada + `max_tokens` aplicado.
+  `componentes_ausentes`. Cota: `cli-*` → `null`, con su `estimacion_empirica`; `api` → entrada
+  estimada + `max_tokens` aplicado.
 - **`uso_crudo` ausente:** desconocido.
 - **Fila huérfana:** se clasifica según R4, «clasificación única de las huérfanas»: si fue enviada, desconocida sin cota; si no, no enviada.
 - **Prohibido:** registrar una llamada como éxito con 0 tokens. Ese es el patrón de SG:1268-1274 que
@@ -1079,8 +1109,8 @@ HEAD` está vacío en los tres archivos. **El mismo envoltorio vale para las dos
 | `backend/mia/agent/subscription_llm.py:231` (`_build_command`), llamada en `:304` | se sustituye el atributo de módulo por una función que guarda en la ranura el `argv` que devuelve la original y lo devuelve sin cambios | comando efectivo de Claude, para `firma_comando` (K4) | es el único punto donde existe el `argv` real con `--model` y `--effort` |
 | `backend/mia/agent/codex_subscription_llm.py:235` (`_command`), llamada en `:285` | ídem | comando efectivo de Codex (K4) | ídem |
 | runners de juez (J:1571-1582 `ClaudeJuezRunner.comando`; J:1655-1665 `CodexJuezRunner.comando`) | código de `eval/`: guardan el `cmd` | comando efectivo del juez (K4) | — |
-| `backend/mia/agent/subscription_llm.py:140` (`_sanitized_env`), llamada en `:326` | se sustituye el atributo de módulo por una función que toma el entorno de la original, **impone `CLAUDE_CODE_MAX_RETRIES="10"`** (el valor de fábrica, así que no cambia la conducta) y guarda en la ranura los tres valores de `entorno_cli`. **Es la única diferencia** con lo que devuelve la original. No añade ni quita ninguna otra variable: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` contiene `TOKEN` y la original ya lo elimina (`:126`, `:133-137`) | entorno efectivo del CLI, para la cota de §4.5 | es el único punto donde existe el entorno real del subproceso |
-| `entorno_juez_claude` (J:1501-1512), código de `eval/` | impone `CLAUDE_CODE_MAX_RETRIES="10"` y devuelve los tres valores de `entorno_cli` | ídem, para el juez | — |
+| `backend/mia/agent/subscription_llm.py:140` (`_sanitized_env`), llamada en `:326` | se sustituye el atributo de módulo por una función que llama a la original, guarda en la ranura los tres valores de `entorno_cli` y **devuelve exactamente** el mismo dict. **No añade, no quita y no cambia ninguna variable** (v7: se retira el fijado de reintentos de la v6; Astra, v6 (b)) | entorno efectivo del CLI, solo para publicarlo y versionar la estimación | es el único punto donde existe el entorno real del subproceso |
+| `entorno_juez_claude` (J:1501-1512), código de `eval/` | sin cambios de conducta: el runner registra los tres valores de `entorno_cli` del dict que ya devuelve | ídem, para el juez | — |
 
 **Ranura.** Una `ContextVar` de `telemetria` que abre `_guarded_invoke` antes de llamar a
 `_original_invoke` y lee al volver. `call_llm` corre en un hilo con `asyncio.to_thread` y
@@ -1111,8 +1141,9 @@ Fuera del proceso del banco nada cambia: el abogado nunca corre con el envoltori
 2. Con dobles de `subprocess.run`, `call_llm` devuelve, con el envoltorio instalado y sin él,
    objetos con `choices`, `usage`, `model`, `mia_model_hint` y `mia_effort` idénticos campo a
    campo, y `metrics.usage.record` bufferiza la misma fila.
-   - El `env` que recibe el doble de `subprocess.run` es idéntico **salvo** en
-     `CLAUDE_CODE_MAX_RETRIES="10"`, la única diferencia declarada (§4.5).
+   - El `env` que recibe el doble de `subprocess.run` es **idéntico**, sin excepciones (v7), y lo
+     es también con `CLAUDE_CODE_MAX_RETRIES` igual a `0`, a `15` o ausente en el entorno de
+     partida.
 3. Al salir de `telemetria.instalar()`, incluso por excepción, todos los atributos de módulo sustituidos vuelven
    a ser los originales (`is`).
 4. Siguen verdes `execution/test_rls.py`, `execution/test_gates_no_ciegos.py` y
@@ -1206,98 +1237,107 @@ precondición de la piloto. **Este contrato no llama a proveedores.**
 - Codex sin `campo_identidad` acreditado → `identidad_efectiva_ausente`.
 ---
 
-### 4.5 Cota acreditada del intento de Claude CLI (decisión de Pipe del 2026-10-12, «Acotar y medir»)
+### 4.5 Veredicto de cuota separado y estimación empírica (decisión de Pipe del 2026-10-12, «Separar calidad y cuota»)
 
-Sustituye, solo para el CLI de Claude, la consecuencia de C18 y de §8.4 Q14 («ningún CLI tiene
-cota»). Fuente: el informe de la cota del CLI (scratchpad `r5/cota-cli-informe.md`):
+**Revoca «Acotar y medir»** (v6). Motivo: Astra mostró que la cota de la v6 no era conservadora.
 
-- `claude --version` = 2.1.296;
-- `code.claude.com/docs/en/env-vars` documenta `CLAUDE_CODE_MAX_RETRIES` (10 por defecto, tope 15) y
-  el tope de salida de 128 000 de `CLAUDE_CODE_MAX_OUTPUT_TOKENS`;
-- `CLAUDE_CODE_RETRY_WATCHDOG` sube los reintentos a 300 o los hace ilimitados.
+- la entrada se estimaba con una heurística (`memory/tokens.py`, caracteres/4; el juez,
+  caracteres/3);
+- la salida máxima depende del modelo, y 128 000 solo es el tope de los modelos que el CLI no
+  reconoce;
+- los diez reintentos son de **peticiones fallidas**;
+- una muestra del fondo no fija un máximo;
+- imponer `CLAUDE_CODE_MAX_RETRIES=10` alteraba la conducta si el entorno traía otro valor.
 
-**Condiciones.** La cota existe solo si se cumplen las cuatro; si falta una, el intento queda **sin
-cota**:
+**Dos veredictos (§3.1).**
 
-1. **Reintentos fijados.** `entorno_cli.max_retries == "10"` en el entorno efectivo del
-   subproceso. Lo impone el envoltorio del eval (§4.3); el producto no cambia. Cualquier otro valor
-   ⇒ sin cota.
-2. **Sin vigilante de reintentos.** `entorno_cli.retry_watchdog_definida == false`. Si está
-   definida en el entorno real ⇒ sin cota.
-3. **Tope de salida.** `entorno_cli.max_output_tokens` es `null` o un entero ≤ 128 000. Cualquier
-   otro valor ⇒ sin cota.
-4. **Fondo medido y acreditado.** Hay una entrada `fondo_cli` única en la instantánea citada (§4.4)
-   para la misma `familia`, la misma `cli_version` exacta y la misma `firma_comando` de la fila. Sin
-   ella ⇒ sin cota.
+- **CALIDAD:** `aprueba` / `reprueba` / `no_certificable`, por las causas de calidad e identidad que
+  ya existen.
+  - **Sigue siendo certificable aunque haya intentos fallidos sin cota.**
+  - Un fallo de una consulta solo cuenta para la calidad por sus efectos propios: turno no
+    completado, fallo sin texto (`texto_ausente`), juicio incompleto, etc., como hasta ahora.
+- **CUOTA:**
+  - `certificada · cumple|excede` si no hubo **ningún** intento sin cota en el ámbito de la
+    condición;
+  - `estimada` si los hubo. Se publican el consumo conocido, la estimación empírica de cada
+    intento sin cota declarada como **NO garantizada**, y el aviso literal: «Cuota estimada: hubo
+    N intentos de consumo desconocido sin cota; la cifra incluye una estimación empírica no
+    garantizada y no certifica el techo»;
+  - si la parte **conocida** ya excede el techo, el resultado es `certificada · excede`
+    (`conocido_excede`), aunque haya intentos sin cota. La regla exacta por condición está en
+    §3.3 D.
 
-**Fórmula** (enteros, sin `float`):
+**El techo sigue gobernando la suspensión** durante la corrida (§3.4 del protocolo).
 
-`cota = 11 × (entrada_estimada + 128000) + 2 × fondo_max`
+- El control previo y `ContadorCuota` suman conocido + cotas + **estimación empírica** de las filas
+  sin cota, de forma conservadora, para detener antes.
+- Esa suma nunca certifica nada.
+- La parada por evento sin cota de §5.1 y la reanudación con autorización de Pipe **siguen
+  iguales**, y C27 se mantiene.
 
-- 11 = 1 intento + 10 reintentos;
-- `entrada_estimada` = `estimate_tokens` sobre los mensajes en producción (SG:1209), o
-  `jueces.entrada_estimada` en los jueces (J:1335);
-- `fondo_max` = el máximo observado de tokens de las peticiones laterales por invocación, según la
-  entrada `fondo_cli`; el factor de seguridad es 2.
+**Estimación empírica de un intento sin cota (versionada, no garantizada):**
 
-Esa cota cuenta en el techo y en las reservas igual que el consumo conocido (clase «desconocido con
-cota», R4). El techo queda certificable si cabe.
+`estimacion = entrada_heuristica + salida_observada + fondo_observado`
 
-**Medición del fondo** (`fondo_cli`; misma familia de acreditaciones que §4.4):
+- `entrada_heuristica`: la misma de SG:1209 (`estimate_tokens`), o `jueces.entrada_estimada`
+  (J:1335) en los jueces. Se declara heurística.
+- `salida_observada`: el máximo de `uso_validado.salida` de las filas **conocidas** del bloque con la
+  misma familia, `cli_version` y `firma_comando`. Si no hay ninguna, el máximo observado de la
+  familia, con `componentes.salida_observada_fuente = "familia"`.
+- `fondo_observado`: el `fondo_max` de la entrada `fondo_cli` de la instantánea citada (misma
+  familia, versión y firma). Sin entrada, `0`, con `fondo_observado_fuente = "no_medido"`.
+- Cada fila sin cota guarda `estimacion_empirica` con sus componentes, la versión de la regla
+  (`banco04-estimacion-intento/v1`) y el sha256 de la instantánea. La puerta la recalcula y exige
+  igualdad; si difiere, `telemetria_contradictoria` (calidad, identidad del registro).
 
-- **Cuándo:** en la piloto, como su **paso 0**, antes del primer R1 de producción. Por K13 la
-  instantánea queda fija desde el primer R1 que la cita, así que la entrada `fondo_cli` tiene que
-  existir antes.
-- **Entrada:** `execution/banco04_medir_fondo_cli.py main --bloque <0|7> --salida <S>
-  --invocaciones-por-firma <n=3>`, con los mismos aislamiento, telemetría y cerrojo que
-  `run_banco04`.
-  - Por cada firma de `firmas_previstas` de `claude_cli`, lanza `n` invocaciones reales con el
-    mismo `argv` y el mismo entorno que producción.
-  - Para el contenido usa un mensaje sintético fijo del propio script, sin casos del banco ni texto
-    jurídico.
-- **Instrumento:** tiene que ver **todas** las peticiones a la API de una invocación:
-  - `--debug-file <ruta>` del CLI, si `claude --help` 2.1.296 lo lista (a verificar con la ayuda
-    real);
-  - si no, un proxy local en 127.0.0.1 que registre cada petición y su `usage`.
+**Medición del fondo: se conserva como estimación empírica versionada.**
 
-  Los tokens del instrumento (`--debug-file <ruta>`) se excluyen de la normalización de
-  `firma_comando`, para que la firma medida sea la de producción. El instrumento queda declarado en
-  la entrada.
-- **Resultado:** filas R4 con `fase: medicion_fondo`, que cuentan en el presupuesto del circuito, y
-  una entrada nueva para una instantánea **nueva**: `{tipo: "fondo_cli", familia: "claude_cli",
-  cli_version, firma_comando, instrumento: "debug_file"|"proxy_local", n_invocaciones,
-  peticiones_por_invocacion: [int], tokens_laterales_por_invocacion: [int], fondo_max,
-  evidencia: [{archivo, sha256}], autor, fecha}`.
-  - `fondo_max` = el máximo de `tokens_laterales_por_invocacion`.
-  - Una petición lateral es toda petición a la API de la invocación distinta del turno.
-  - La puerta recalcula `fondo_max` desde la evidencia.
-- **Sin esa acreditación no hay cota.**
+- Sigue la entrada `fondo_cli` de la v6: `banco04_medir_fondo_cli main`, paso 0 de la piloto, con
+  instrumento `--debug-file` o proxy local, filas R4 `fase: medicion_fondo` y la entrada en una
+  instantánea nueva con firma, versión del CLI, evidencia y sha256.
+- Cambian dos cosas:
+  - ya **no** hay factor de seguridad ni pretensión de máximo;
+  - su ausencia no bloquea nada: solo marca `fondo_observado_fuente = "no_medido"`.
 
-**Codex: sin cota (pendiente).** La referencia oficial de configuración de Codex
-(`developers.openai.com/codex/config-reference`) no se pudo leer, y no hay fuente oficial de sus
-reintentos ni de su tope de salida. Todo intento fallido de `codex_cli` sigue siendo desconocido sin
-cota (C18). Queda en §8.6 como pendiente.
+**Entorno del CLI.** Se **retira** el fijado de reintentos de la v6. El envoltorio **no toca** el
+entorno: solo lo lee y lo registra (`entorno_cli`, §4.3). Si el entorno trae
+`CLAUDE_CODE_RETRY_WATCHDOG` o unos reintentos distintos de los de fábrica, se publica junto a la
+cuota. No cambia nada más.
 
-**Cambios de código** (todos en `eval/` y `execution/`):
+**Codex.** Sus intentos sin cota caen en la misma regla: cuota `estimada`, con su estimación
+empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición equivalente).
 
-- `spend_guard.cota_salida_cli` y `CLI_COTA_ACREDITADA` (SG:1096-1123) se sustituyen por
-  `telemetria.cota_intento_cli(fila, instantanea)`, que aplica las cuatro condiciones y la fórmula.
-  Codex devuelve `None`.
-- `jueces.cota_salida_juez` (J:1340-1353) delega en la misma función para el juez de Claude.
-- `ControlCuotaJueces.antes` reserva esa cota cuando existe (J:1435-1436).
+**Cambios de código respecto de la v6:**
 
-**Pruebas (E2E-19, obligatorias):**
+- `telemetria.cota_intento_cli` se sustituye por `telemetria.estimacion_intento_sin_cota(fila,
+  instantanea)`;
+- `spend_guard.cota_salida_cli` vuelve a devolver `(None, motivo)` para todo `cli-*` (SG:1109-1123,
+  como en HEAD);
+- `ControlCuotaJueces.antes` reserva la estimación empírica cuando no hay cota (sustituye a
+  `estimacion_reserva`, J:1364-1368, solo para suspender).
 
-- `CLAUDE_CODE_RETRY_WATCHDOG` definida en el entorno real ⇒ sin cota;
-- `max_retries` distinto de `"10"` (por ejemplo `"15"`, o ausente porque otro envoltorio lo quitó)
-  ⇒ sin cota;
-- `max_output_tokens = "200000"` ⇒ sin cota;
-- sin entrada `fondo_cli` para esa firma, o con una entrada de otra firma o de otra versión ⇒ sin
-  cota;
-- **caso positivo con la fórmula exacta:** entrada estimada 3 000 y `fondo_max` 500 ⇒
-  11 × (3 000 + 128 000) + 2 × 500 = **1 442 000**. La fila queda «desconocido con cota», el techo
-  sigue certificable y el juez no se detiene;
-- Codex con un intento fallido ⇒ sin cota en cualquier caso.
+**Pruebas (E2E-19, obligatorias, sustituyen a las de la v6):**
+
+1. **Calidad certificable con intentos sin cota.** F17 con un intento sin cota (un doble de Claude
+   que omite `output_tokens`, y otro que agota el tiempo) → `veredicto: aprueba` y `cuota.estado:
+   estimada`, con `consumo_conocido`, `estimacion_empirica` por intento, el aviso literal y la lista
+   `intentos_sin_cota`.
+2. **Conocido ya excede.** Con intentos sin cota y el conocido de la nueva > 1,25 × (conocido + cotas)
+   de la base en un caso sin filas sin cota de la base → `cuota: certificada · excede ·
+   conocido_excede`.
+3. **Sin intentos sin cota.** `cuota: certificada · cumple`, y en otra variante `certificada ·
+   excede`.
+4. **Suspensión conservadora.** Un acumulado conocido por debajo del tope, pero que con la
+   estimación empírica lo supera → suspensión **antes** de la siguiente corrida. La misma corrida
+   publica `cuota: estimada`.
+5. **El envoltorio no toca el entorno.** Con `CLAUDE_CODE_MAX_RETRIES` igual a `0`, a `15` o ausente,
+   y con `CLAUDE_CODE_RETRY_WATCHDOG=1`, el `env` que recibe `subprocess.run` es idéntico al de la
+   original, y `entorno_cli` registra esos valores.
+6. **Codex sin cota** → `cuota: estimada`, `fondo_observado_fuente = "no_medido"`, calidad intacta.
+7. **Estimación recalculada.** Editar `estimacion_empirica` de una fila → calidad `no_certificable`
+   (`telemetria_contradictoria`).
+8. **Separación estricta.** Ninguna condición de cuota aparece en `veredicto.motivos`, y ninguna de
+   calidad en `cuota.condiciones`.
 
 ## 5 · Reanudación (decisión de Pipe, 2026-10-12: «que se reanude con mi autorización»)
 
@@ -1321,8 +1361,8 @@ cualquier versión de `versiones_contador`:
 - **La validación (VJ):** igual, con `etapa: validacion`.
 - **La producción Codex:** ningún compromiso `cli-codex*` nuevo de producción ni de aprobación.
   `GuardBanco.check_and_reserve` lanza `ParadaCodexProduccion` (R:1563-1568) con el mismo código.
-- **La producción Claude puede seguir** (C19). Sus métricas de calidad se calculan, pero el techo
-  queda `no_certificable`.
+- **La producción Claude puede seguir** (C19). Sus métricas de calidad se calculan y son
+  certificables. La cuota queda `estimada` (§4.5).
 
 ### 5.2 Cómo se reanuda
 
@@ -1454,17 +1494,21 @@ Se define e(C) como la etapa de C (`juicio`, `validacion`, `produccion` o `aprob
   evento 1 y `s1` → juicio sigue → evento 2 → suspensión `juicio-s2` (`s1` sigue en disco intacta,
   con su sha256) → reanudación `r2`, que cubre evento 2 y `s2` → juicio termina.
 
-  Exigido: las dos suspensiones y las dos reanudaciones existen y validan, la puerta acepta el orden
-  y el techo es `no_certificable`. Variantes:
+  Exigido: las dos suspensiones y las dos reanudaciones existen y validan, la puerta acepta el orden,
+  la calidad se calcula y la cuota queda `estimada`. Variantes:
   - `r2` que cubre solo el evento 1 → la llamada posterior al evento 2 da
     `llamada_tras_desconocido_sin_autorizacion`;
   - borrar o editar `s1` invalida `r1`.
 
 Si se viola, `no_certificable` con `llamada_tras_desconocido_sin_autorizacion`.
 
-**Con cualquier evento sin cota, el techo queda `no_certificable` para siempre**, y por §6.4 el
-veredicto global también. Reanudar permite terminar de medir y publicar; no certifica. Los eventos
-**con** cota no afectan la certificabilidad: entran en el techo con su cota.
+**Con cualquier evento sin cota, el veredicto de CUOTA queda `estimada`**, salvo que lo conocido
+ya exceda (`certificada · excede`). El veredicto de CALIDAD **no** se ve afectado por el evento:
+solo por sus efectos propios (§4.5). Reanudar permite terminar de medir y publicar.
+
+Lo que sí da calidad `no_certificable` es el orden: una llamada comprometida tras un evento sin
+cota no autorizado (`llamada_tras_desconocido_sin_autorizacion`), porque la regla de parada es parte
+de la identidad del circuito. Los eventos **con** cota entran en la cuota con su cota.
 
 ---
 
@@ -1575,8 +1619,8 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
     `consumo_desconocido_sin_cota`, no con el de presupuesto agotado. Su fila R4 queda
     `no_enviado` (K15).
   - La siguiente llamada de juez lanza `CuotaAgotada` con el mismo código y se escribe una
-    suspensión nueva R6 `suspensiones/juicio-<seq>.json` con `eventos` = [id de la fila]. El techo en
-    la puerta es `no_certificable`.
+    suspensión nueva R6 `suspensiones/juicio-<seq>.json` con `eventos` = [id de la fila]. En la
+    puerta, la cuota queda `estimada`, y la calidad no tiene ningún motivo por el evento.
   - Variantes con la misma exigencia: Codex sin evento `usage`; `cli-codex-eval` con `None`.
   - Variantes del registro de §4.4: las ocho pruebas listadas allí, con producción y con el juez
     Codex. El juez Codex con varios eventos `usage` persiste todos en R5 y R4.
@@ -1655,8 +1699,8 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
   - Mismo alias y mismo `mia_model_hint`, pero `modelUsage` con un `canonicalModel` distinto entre
     versiones → `base_no_comparable_reproducir`.
   - Una fila Claude con éxito sin `modelUsage` → `identidad_efectiva_ausente`.
-- **E2E-19 · Cota del CLI de Claude (v6).** Las seis pruebas obligatorias de §4.5, incluido el caso
-  positivo 11 × (3 000 + 128 000) + 2 × 500 = 1 442 000.
+- **E2E-19 · Veredicto de cuota separado (v7).** Las ocho pruebas obligatorias de §4.5. Sustituyen
+  a las de la v6, cuya fórmula de cota queda revocada.
 - **E2E-7 · Sin puerta trasera.**
   - `banco04_decidir.py` no tiene ningún flag que active `_prueba` ni acepte `dobles` (búsqueda en
     el código y en `--help`).
@@ -1729,7 +1773,7 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
 | S06 | el mundo emite `entraron_tramos` reducido (alcance 0,96 → 0,90) y se rejuzga con conducta `definitiva` | alcance C8 `suficiente` → `insuficiente`; DLI 0 → 1 | reprueba |
 | S07 | el mundo emite `fragmentos_en_prompt.completo=false` | alcance → `sin_medicion` (insuficiente); DLI 0 → 1 con conducta `definitiva` | reprueba |
 | S08 | los proveedores dobles devuelven más `output_tokens` en un caso de la nueva | `claude_extremo_por_caso` > 1,25 | reprueba |
-| S09 | un proveedor doble de Claude omite `output_tokens` en una llamada | fila sin cota; techo | no_certificable (y el juicio se detiene, E2E-3) |
+| S09 | un proveedor doble de Claude omite `output_tokens` en una llamada | la fila queda sin cota; `cuota.estado` → `estimada` | calidad **sin cambio** (`aprueba`), cuota `estimada`; el juicio se detiene hasta la reanudación (E2E-3) |
 | S10 | el mundo fija con `set_node` un nodo fuera de `atribucion_preregistrada` en las llamadas que suben más del 10 % | C25: la subida no es atribuible | reprueba |
 | S11 | los runners de pasada 2 hacen caer un decisivo de 3/5 en la base a 1/5 en la nueva | `decisivos_estables_perdidos` ≠ ∅ | reprueba |
 | S12 | VJ con runners dobles que fallan defectos plantados hasta que la sensibilidad < 0,95 | `circuito_sobre_mutaciones_reservadas` | no_certificable |
@@ -1751,7 +1795,7 @@ veredicto global también. Reanudar permite terminar de medir y publicar; no cer
 |---|---|---|
 | I01 | `jurisdicciones_fijadas` de un custodiado | `jurisdiccion_no_coincide` |
 | I02 | borrar una fila R4 citada por un R2 | `ledger_incompleto` |
-| I03 | añadir una fila R4 `en_curso` huérfana | `consumo_desconocido_sin_cota` |
+| I03 | añadir una fila R4 huérfana enviada, con su registro de orfandad y con el contexto de una corrida, sin citarla en el R2 | `ledger_incompleto` |
 | I04 | `soul_sha256` en R1 de la base | `identidad_version` |
 | I05 | `hash_evaluador` en un R5 | `evaluador_no_congelado` |
 | I06 | fila R4 con `consumo_conocido=true` y `uso_crudo` sin `output_tokens` | `telemetria_contradictoria` |
@@ -1913,6 +1957,8 @@ Se adoptan como contrato las interfaces 1–5 y 7–10 del §4 del informe del a
 - **Producto (`backend/mia/agent/`, `backend/mia/metrics/` y el resto fuera de `eval/`):
   ningún cambio** (K8, §4.3).
 - **`execution/banco04_validar_jueces.py`:**
+  - v7: se retira la exigencia `consumo_certificable` de `evaluar_exigencias` (VJ:329-332); el
+    consumo de la validación entra en la cuota (§4.5);
   - R9 crudo (cambia 388-389 y 706), escrito por ítem;
   - llave determinista (699);
   - `control_de_cuota` (615-635) pasa a `telemetria`;
@@ -1945,9 +1991,21 @@ Se adoptan como contrato las interfaces 1–5 y 7–10 del §4 del informe del a
 
 - **2026-10-12, reanudación:** «que se reanude con mi autorización». Se implementa como §5. Cierra
   el pendiente de C19 (DOC §12.6).
-- **2026-10-12, «Acotar y medir»:** el intento fallido del CLI de Claude tiene cota cuando el banco
-  fija los reintentos de fábrica, verifica el entorno real y mide el fondo. Se implementa como §4.5 y
-  sustituye, para Claude, la consecuencia de C18 y de §8.4 Q14. Codex sigue sin cota.
+- **2026-10-12, «Acotar y medir». [REVOCADA el mismo día por «Separar calidad y cuota»]**
+  ~~El intento fallido del CLI de Claude tiene cota cuando el banco fija los reintentos de fábrica,
+  verifica el entorno real y mide el fondo.~~
+- **2026-10-12, «Separar calidad y cuota».**
+  - El banco emite dos veredictos:
+    - CALIDAD (`aprueba` / `reprueba` / `no_certificable`), certificable aunque haya intentos sin
+      cota;
+    - CUOTA (`certificada` cumple / excede; `estimada` si hubo intentos sin cota; `excede` si lo
+      conocido ya excede).
+  - El techo sigue gobernando la suspensión, con conocido + estimación empírica.
+  - La reanudación y C27 siguen igual.
+  - Se retira el fijado de reintentos y se conserva la medición del fondo como estimación empírica
+    versionada.
+  - Codex cae en la misma regla.
+  - Se implementa como §3.1, §3.3 D, §4.5 y §5, y en la propuesta de protocolo v1.4.
 
 ### 8.2 Resueltas por este contrato (las revisa Astra; no son decisiones de Pipe)
 
@@ -2112,8 +2170,8 @@ Primero va la redacción original; las revisiones posteriores al dictamen de Ast
 - **Q13.** La decisión de Pipe sobre C19 entra como aclaración C27 de v1.3. **[AMPLIADA en v5]**
   La garantía de compromiso irrevocable de §4.2 (decisión del director, K7) se recoge en la misma
   aclaración C27, como la forma en que se aplica la reanudación.
-- **Q14. [SUSTITUIDA para Claude por la decisión de Pipe «Acotar y medir», §4.5 y §8.1; para Codex
-  sigue vigente: sin cota]** Se intenta acreditar la cota según C18, sin cambiar la conducta del
+- **Q14. [SUSTITUIDA por la decisión de Pipe «Separar calidad y cuota» (§4.5, §8.1): ningún CLI
+  tiene cota, y su consecuencia ya no es la no certificabilidad sino la cuota `estimada`]** Se intenta acreditar la cota según C18, sin cambiar la conducta del
   producto. Para eso se
   necesitan dos datos de la documentación oficial de la versión instalada del CLI: el número máximo de
   reintentos por defecto y si en modo `-p --max-turns 1` sin herramientas se emiten peticiones de
@@ -2173,9 +2231,19 @@ Aplicadas tal como las pidió Astra en su ronda 2:
 - **Interpretación declarada para Astra.** La medición del fondo se hace como **paso 0 de la
   piloto** (§4.5) y no durante las corridas, porque K13 congela la instantánea en el primer R1.
 - **Pendientes:**
-  - la cota de Codex: falta la fuente oficial de reintentos y del tope de salida;
+  - ~~la cota de Codex~~ (v7: sin objeto, porque ningún CLI tiene cota y rige la cuota estimada);
   - comprobar que `--debug-file` existe en `claude --help` 2.1.296, o montar el proxy local;
   - las claves de los 13 casos visibles en la custodia real.
+
+---
+
+### 8.7 Pendientes y preguntas de la v7 para el director
+
+- La propuesta `docs/banco-calidad-04-protocolo-v1.4-propuesta.md` necesita la revisión de Astra y
+  la integración del director antes de implementar. Mientras tanto rige v1.3, y esta parte del
+  contrato no se implementa.
+- Queda abierto qué combinación de veredictos habilita la entrega de 0.4 (§6.4 de la propuesta). Es
+  una decisión de producto, no se le atribuye a Pipe y no la toma este contrato.
 
 ---
 
@@ -2199,5 +2267,8 @@ Aplicadas tal como las pidió Astra en su ronda 2:
 | **K14** | Mayor | ampliar el inventario de `entradas_leidas` a las acreditaciones, sus evidencias y las fuentes de R13 | §3.9; E2E-2; §4.4 (validación); R-14 |
 | **K15** | Mayor | estado terminal comprobable de «no enviado» para la denegación de `check_and_reserve`, sin contarlo como consumo desconocido ni como inferencia | R4 (`estado`, `t_envio_utc`); §4.2 («Orden fijo de una llamada»); §5.4 (U(C) excluye lo no enviado); E2E-15; códigos de §3.8 **v4:** las llamadas no enviadas quedan expresamente fuera de U(C) ⊆ A(C) («llamadas comprobadas», §5.4); clasificación única de las huérfanas (R4), remitida desde §4.1 y §4.2. |
 | **K16** | Mayor | R13 permitía acreditar una lista incompleta de llamadas (10 + 1.000 citando solo 10 daba 13 en vez de 1.263) | R1 (`seleccion_medicion`, k preregistrado); R14 (asignación preregistrada y recibos de completitud sin texto); R13 (igualdad entre las filas citadas, **todas** las R4 de la medición y los recibos; el cero exige una corrida completa; prueba obligatoria 10 + 1.000 → 1.263); §3.9 punto 2; §3.3 E (presupuesto del circuito con las filas de medición) |
-| **Pipe 2026-10-12 «Acotar y medir»** | Decisión | cota del intento fallido del CLI de Claude: reintentos de fábrica fijados por el eval, entorno real verificado y fondo medido | §4.5 (condiciones, fórmula `11 × (entrada + 128000) + 2 × fondo_max`, medición del fondo, Codex pendiente, E2E-19); R4 (`cota`, `entorno_cli`); §4.1; §4.3 (`_sanitized_env`, `entorno_juez_claude`); §8.1; §8.4 Q14 [SUSTITUIDA para Claude] |
+| **Pipe 2026-10-12 «Acotar y medir»** | Decisión **[REVOCADA en v7]** | cota del intento fallido del CLI de Claude | sustituida por «Separar calidad y cuota» (fila siguiente) |
 | **Director v6 · §5 bis del autor de pruebas** | Decisión | manifiesto de custodia en la puerta pública; escritura de instantáneas bajo `backend/` en las pruebas | §3.1 (manifiesto del repo, `PruebaPuerta` con relajaciones separadas, `modo_prueba`); §3.8 (`instantaneas_de_prueba`); §3.9 punto 3; §4.4 (`instantaneas_dir=`); §6.1 (puerta del esqueleto); §6.4 (interfaces 1–5 y 7–10); §8.6 |
+| **Astra sobre v6 (a)** | Bloqueante | la cota de §4.5 no era conservadora: entrada heurística, salida dependiente del modelo, fondo muestral | §4.5 v7: ningún CLI tiene cota, y el intento sin cota da cuota `estimada` con estimación empírica **no garantizada**, nunca certificada; R4 (`cota` nula, `estimacion_empirica`); E2E-19 1–4 |
+| **Astra sobre v6 (b)** | Mayor | imponer `CLAUDE_CODE_MAX_RETRIES=10` alteraba la conducta | §4.3 v7 (el envoltorio devuelve el entorno idéntico); §4.5 («Entorno del CLI»); E2E-6 punto 2; E2E-19 5 |
+| **Pipe 2026-10-12 «Separar calidad y cuota»** | Decisión | dos veredictos; la calidad es certificable con intentos sin cota; la cuota es certificada o estimada; la suspensión usa conocido + estimación; Codex en la misma regla | §3.1 (salida y precedencia por veredicto); §3.3 D y E; §3.5 (`cuota` en el Bloque 0); §3.8; §4.1; §4.5; §5.1 y §5.4; §6.2 (E2E-3, E2E-14, E2E-19); §6.3 (S09, I03); §8.1; §8.7; propuesta de protocolo v1.4 |
