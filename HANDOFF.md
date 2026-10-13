@@ -77,9 +77,19 @@ El banco NO está «implementado»: es una biblioteca de puertas sin cadena que 
 
 **Retomar, en este orden.**
 1. Recontar las suites (juicio, producción, spend_guard, gates no ciegos).
-2. Decisión de Pipe sobre el alcance. Luego, construir la cadena runner → registros crudos → juicio
-   persistido → agregador → puerta que recibe solo rutas. La revisión de Astra traza la
-   alcanzabilidad desde `main`.
+2. Pipe decidió (2026-10-12):
+   - «Cadena completa»: primero el esqueleto de 1 caso de punta a punta; después, la revisión de
+     Astra sobre la cadena entera; al final, 17 casos.
+   - «Que se reanude con mi autorización»: el consumo desconocido detiene el juicio y solo sigue
+     con una referencia de aprobación de Pipe (contrato §5).
+   El contrato `docs/banco04-cadena-contrato.md` va por la v2 (49fc225). Astra le dio NO APTO dos
+   veces y la v3 está en curso: cierra K1, K4, K5, K7, K8, K10 y K13–K15 (dictamen en
+   `r4/veredicto_contrato2.md`).
+   - El banco NO toca el producto: la telemetría cruda se captura con un envoltorio del eval.
+   - El panel del abogado, que muestra cero ante consumo desconocido, pasa al Bloque 1.
+   - El reservado actual se retira; el autor independiente escribe uno nuevo.
+   Sigue: APTO de Astra al contrato → pruebas E2E en rojo por un autor que no implementa →
+   implementación → Astra con la consigna de alcanzabilidad desde `main`.
 3. Mutación por un TERCERO (agente nuevo, no el implementador). El número de mutaciones que
    sobreviven es el resultado.
 4. Commit limpio.

@@ -943,3 +943,21 @@ Si la URL falta o usa el puerto 55432 fuera de CI, no corre ninguna suite; `quic
 PRECHECK con exit 2. Trampa adicional: PowerShell 5.1 borra las comillas dobles dentro de
 `python -c`; dentro de ese Python se usan solo comillas simples. Estado: Aplicado. Corrida oficial 46/47; test_api_launcher dio rojo en ella bajo carga y
 pasó 2/2 aislado con el mismo entorno. Causa no demostrada: repetir el quick en reposo.
+
+104. **2026-10-12 · Una biblioteca de puertas sin llamador desde `main` no está implementada.**
+El commit 72a6162 y el HANDOFF dieron el banco 0.4 por «implementado»: tenía 499 checks en verde y
+tres rondas de revisión adversarial. Pero nada juzgaba ni agregaba las corridas de producción. El
+único llamador de `jueces.pasada1` era la validación con mutaciones, `run_banco04.py` no importaba
+`metricas` ni `jueces`, y `veredicto_global` aceptaba conclusiones del llamador: `cumple`, techo,
+`R_por_caso`, `usage_by_node`. Astra no lo vio en tres rondas porque el encargo pedía desviaciones
+por función, no alcanzabilidad. Cada ronda tapó el campo que Astra explotaba y Astra encontraba el
+siguiente. Corrección:
+- toda revisión de una cadena exige trazar desde `main` hasta el veredicto y marcar cada función
+  de la regla que ningún camino de producción llama;
+- una puerta recibe solo rutas de registros crudos y recalcula dentro, sin parámetros de
+  conclusión;
+- se diseña primero un contrato (`docs/banco04-cadena-contrato.md`) y se prueba un esqueleto de
+  punta a punta antes de agregar gates.
+Inventario de la brecha en el scratchpad de la sesión 2876318c (`r4/inventario-puerta.md`).
+Estado: Documentado. La barrera son las pruebas E2E del esqueleto (§6 del contrato), aún sin
+escribir.
