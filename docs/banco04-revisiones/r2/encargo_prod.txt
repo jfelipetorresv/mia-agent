@@ -1,0 +1,21 @@
+
+TU FRENTE (únicos archivos que puedes editar o crear):
+  backend/mia/eval/spend_guard.py
+  execution/run_banco04.py
+  execution/test_banco04_produccion.py
+  execution/test_eval_spend_guard.py (solo el check a-25, ver abajo)
+FRENTE AJENO (otro agente): backend/mia/eval/banco04/*, backend/mia/eval/harness.py, execution/banco04_validar_jueces.py, banco04_calibracion.py, test_banco04_juicio.py. Mantén estable la API pública de ContadorCuota (registrar, motivo_juicio, motivo_suspension, cota_calculable, resumen) y de spend_guard.cota_salida_cli: el otro agente la consume.
+
+OBJECIONES A CORREGIR (veredicto_B.md):
+- I4 PARCIAL. Hoy CLI_SALIDA_MAXIMA (spend_guard.py:1083) da cota 131.072 a los alias de Claude. El protocolo (fila P10 de §12) PERMITE «consumo desconocido con cota conservadora; sin cota, techo no certificable». Astra objeta que el máximo de salida de la API no acredita el límite efectivo de ESA ejecución CLI. Hueco concreto que debes cerrar o declarar: el CLI de Claude Code puede reintentar internamente la llamada a la API (un intento del banco = varias llamadas). Decide con evidencia:
+  (a) si puedes verificar en la documentación oficial vigente del CLI instalado (`claude --version`, `claude --help`, docs oficiales de Claude Code) una variable o flag que fije los reintentos internos, y la aplicas de forma verificable en la invocación que usa el banco SIN tocar backend/mia/agent/*, la cota pasa a ser (reintentos+1) × (entrada conocida + salida máxima), comprobada leyendo el comando y el entorno reales (sin llamar al modelo);
+  (b) si no puedes verificarlo o exigiría tocar el producto, la cota es DESCONOCIDA para Claude CLI igual que para Codex, y ajustas i-1/i-3 a esa conducta.
+  En ambos casos: propón en el informe el texto de una aclaración C18 para el protocolo y deja un check que se ponga rojo si alguien vuelve a declarar cota sin esa acreditación.
+- I5 PARCIAL: motivo_juicio debe negarse cuando cota_calculable sea False (consumo desconocido ⇒ no se lanza otro intento). La decisión de R (run_banco04.py:935), la proyección de aprobaciones (:1271) y la piloto (:922, hoy con estimación cero) aplican proyección y reserva Codex. En el Bloque 0 el presupuesto de producción Codex es CERO y no se lanza ninguna llamada Codex de producción (Astra reprodujo una llamada y un token consumidos antes de suspender: debe ser cero llamadas). En el Bloque 7, 2 M.
+- I8 PARCIAL: el texto de excepciones y errores reservados (run_banco04.py:847/:858 y aprobaciones :1212) va cifrado; en claro solo códigos y metadatos permitidos. Check negativo con una excepción que contenga un hecho del caso.
+- I10 PARCIAL: el manifiesto se vincula y coteja en TODO registro reutilizable (intentos parciales, aprobaciones :1150, decisiones de planificación), no solo rep-??.json. Check: aprobación con huella antigua bajo contexto nuevo ⇒ rechazada.
+- N1 (área B) está en jueces.py, frente ajeno: no lo toques.
+- N2 MAYOR: árbol sucio (:1486) ⇒ el estado final se propaga como no certificable (:962) y la identidad distingue modificaciones locales.
+- Pendiente de suite: execution/test_eval_spend_guard.py, check a-25, está rojo desde 7b9aaa0 porque espera claude-sonnet y el contrato de quality_adaptive para curator es [cli-claude-sonnet, mia-local]. Si confirmas en el código del producto que ese es el contrato vigente, alinea el test y deja esa suite en 83/83; si no, no lo toques y explica por qué.
+
+Informe: banco04-r2-produccion-informe.md

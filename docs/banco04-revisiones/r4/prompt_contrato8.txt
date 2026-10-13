@@ -1,0 +1,5 @@
+Eres Astra, revisor adversarial. Responde en español. NO modifiques archivos. NO leas la custodia, el registro de uso, mia-data, .env ni archivos cifrados. No ejecutes proveedores ni bases.
+
+Revisión ACOTADA, HEAD 57d0feb. Tu dictamen sobre la v7: <scratchpad-sesion-2876318c>/r4/veredicto_contrato7.md (NO APTO por: cuota certificable con cotas finitas; piloto que invalida la calidad; estimación sin congelar; textos viejos P10, §8.8, S08 y S10; §8.6 de VJ). Revisa SOLO:
+- git diff b89e4e8 57d0feb -- docs/banco04-cadena-contrato.md docs/banco-calidad-04-protocolo-v1.4-propuesta.md
+Para cada punto de tu dictamen anterior: RESUELTO / NO. Verifica además el barrido de §5 de la propuesta contra docs/banco-calidad-04-protocolo.md: ¿queda algún texto que contradiga la separación entre calidad y cuota? Objeciones nuevas solo si cambian el veredicto. Veredicto: APTO / APTO CON CAMBIOS / NO APTO. Máx. 600 palabras.

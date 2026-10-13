@@ -1,0 +1,23 @@
+**Veredicto: NO APTO.** Cinco objeciones quedan resueltas como diseño y cuatro permanecen parciales. El arranque de la medición sigue siendo circular y aparece una vía para acreditar consumo incompleto.
+
+Revisión estática de HEAD `56e25d0`, del diff solicitado y del dictamen anterior, con contraste independiente de los puntos críticos. **C** = [contrato v3](</D:/Inteligencia Artificial/Mia-Super Agent/mia/docs/banco04-cadena-contrato.md>). «Resuelta» acredita el contrato, no su implementación.
+
+| Objeción | Estado | Evidencia y corrección pendiente |
+|---|---|---|
+| **K1** | **RESUELTA** | C §3.3 C:632 recalcula `hay_borrador` desde `draft_full`; R5:270 excluye `reached_draft` del hash crudo y §6.3:1467–1470 exige su mutación inversa. |
+| **K4** | **RESUELTA** | C R4:228, §4.3:952–954 y §4.4:1018–1045 capturan la firma efectiva, seleccionan por familia, versión y comando, y rechazan conductas ambiguas. E2E-16:1331–1335 cubre comandos distintos. Se cierra la aplicación de `omitido_si_cero` acreditada para otro comando. |
+| **K5** | **PARCIAL** | C R13:453–460 fija correctamente fórmula y redondeo. Pero R14:469–472 reutiliza `_montaje_real`, exige `puede_codex=true` y escribe R1; R1:174 y §7.3:1535–1537 exigen R13 antes de arrancar. R14 solo lo produce al terminar (:485–487). Además, R13 declara I10 de la versión consumidora (:444), mientras R1 incorpora el hash de R13: otra dependencia circular. **Cambio:** manifiesto de medición explícitamente exento de R13; R13 ligado al manifiesto de medición y citado unidireccionalmente por el R1 consumidor. |
+| **K7** | **PARCIAL** | Las suspensiones inmutables quedan especificadas en R6:328–349. Sin embargo, §4.2:895–902 libera el cerrojo **antes del envío**. Secuencia posible: B controla → A cierra sin cota → B envía. U(B), definido por `seq_inicio` en §5.4:1125, excluye A; E2E-13:1146–1149 admite ese orden. **Cambio:** serializar también el despacho efectivo frente al cierre y probar esa intercalación. Además, una llamada A viva cuando B controló puede morir después: la puerta reconstruye retrospectivamente A como huérfana anterior y exige que B la hubiera visto (:1125–1134). Hace falta registrar la detección de orfandad con secuencia propia. |
+| **K8** | **RESUELTA** | C R4:225–227 conserva `modelUsage` completo y separa modelo solicitado de identidad efectiva. §3.3 A:585 compara las identidades principales y rechaza su ausencia; E2E-18:1339–1342 cubre el alias estable con modelo efectivo cambiado. |
+| **K10** | **RESUELTA** | C §6.3:1372–1397 define los efectos concomitantes permitidos y exige detectar cambios ajenos, fallos de identidad y motivos inesperados. El problema independiente del arranque sigue señalado en K5. |
+| **K13** | **PARCIAL** | C §4.4:999–1010 define instantáneas inmutables, igualdad R1↔R8 y una instantánea propia para R9, excluidas de la huella del evaluador. Pero la validación de :1040 vuelve a exigir que la instantánea coincida con R8 y cada R1, sin exceptuar R9. Contradice E2E-17:1336–1338. **Cambio:** separar comprobación de integridad de todas las instantáneas e igualdad exclusivamente entre las referencias R1/R8; R9 se coteja con su propia referencia. |
+| **K14** | **RESUELTA** | C §3.9:835–860 amplía expresamente el inventario a acreditaciones, evidencias y fuentes de R13; E2E-2:1249–1253 lo utiliza. La completitud de esas fuentes tiene un defecto distinto, K16. |
+| **K15** | **PARCIAL** | C §4.2:905–915 define `no_enviado` y excluye su consumo. Pero §5.4:1121–1137 aplica U(C)⊆A(C) también a **C no enviada**: una denegación correcta por evento no autorizado queda clasificada como infracción. Solo excluye esas filas de U, no del conjunto de llamadas comprobadas. Además, R4:252–253 y §4.1:886 siguen calificando toda huérfana como desconocida, contradiciendo :910–913. **Cambio:** excluir explícitamente las llamadas no enviadas del requisito de autorización y unificar la clasificación de huérfanas. |
+
+**K16 — MAYOR. R13 permite acreditar una lista incompleta de llamadas.** C R13:449–459 recalcula desde las filas citadas; §3.9:843–844 solo permite abrir esas filas de la medición. R14:474–478 no conserva recibos de corridas y R1 tampoco registra `k` ni la selección.
+
+Contraejemplo: una corrida consume 10 y 1.000 tokens Codex; R13 cita únicamente la primera llamada. El recálculo devuelve **13**, aunque corresponde **1.263**. La omisión también puede reducir el presupuesto contabilizado.
+
+**Corrección:** preregistrar selección y `k`, conservar recibos de completitud sin texto jurídico y exigir igualdad entre las filas citadas y todas las R4 de la medición. Un cero requiere acreditar una corrida completa.
+
+No modifiqué archivos ni accedí a los recursos prohibidos. No ejecuté proveedores, bases ni pruebas.

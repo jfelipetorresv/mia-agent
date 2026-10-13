@@ -1,115 +1,124 @@
-# CHECKPOINT — 2026-10-12 · MIA 0.4 «Hermes legal», Bloque 0 (banco de calidad implementado, sin revisión final)
+# CHECKPOINT — 2026-10-12 (cierre) · MIA 0.4 «Hermes legal», Bloque 0: banco de calidad
 
+**Proyecto y ruta:** MIA, repo `D:\Inteligencia Artificial\Mia-Super Agent\mia`, rama
+`feat/mia-04-hermes-legal` (subida a GitHub). `main` sigue en 7b9aaa0 (0.3.3).
 **Plan aprobado por Pipe:** `C:\Users\USER\.claude\plans\como-vamos-con-la-robust-llama.md`.
-Memoria del director: `goal-mia-04-hermes-legal.md`. Codex Astra SIEMPRE con
-`-c model_reasoning_effort=high`: el perfil por defecto de esta máquina es xhigh y está prohibido sin
-autorización de Pipe.
+**Memoria del director:** `goal-mia-04-hermes-legal.md`.
+**Codex Astra:** SIEMPRE `codex exec -m gpt-6-astra -c model_reasoning_effort=high -s read-only`, lanzado
+como tarea del harness en primer plano dentro de `run_in_background` (sin `&` interno: el proceso
+huérfano queda sin lector). El perfil por defecto de esta máquina es xhigh, prohibido sin autorización
+de Pipe.
 
-**Estado del Bloque 0.**
-- Hecho:
-  - `main` en 7b9aaa0 (0.3.3), subido.
-  - `hermes-ref` en 835c3dd.
-  - `verify.ps1` aislado (aprendizaje 103).
-  - Prueba de herramientas bajo suscripción: viable con condiciones.
-- Protocolo del banco `docs/banco-calidad-04-protocolo.md`: **banco04-v1.3**.
-  - v1.2 se congeló tras tres rondas de Astra.
-  - §12.4 registra las aclaraciones C2–C17.
-  - §12.5 explica la v1.3: el juez recibe las jurisdicciones configuradas (I7) y C13 queda revocada.
-  - La custodia conserva su propia versión, v1.2.
-- Casos reservados V1–V4: cifrados en la custodia `MIA_BANCO04_CUSTODIA` (fuera del repo, llave
-  DPAPI). Los escribió un autor independiente.
-- Implementación del banco commiteada como **WIP sin revisión final**:
-  - `backend/mia/eval/banco04/`;
-  - `execution/run_banco04.py`, `banco04_validar_jueces.py`, `banco04_calibracion.py`;
-  - gates `test_banco04_juicio.py` (283/283) y `test_banco04_produccion.py` (216/216);
-  - instrumentación aditiva en `eval/harness.py` (solo `run_case`) y en `eval/spend_guard.py`;
-  - mutaciones propias: juicio 89/89 rojas; producción 125 de 129 rojas, y las 4 restantes son
-    redundantes.
-- Revisión de Astra sobre la implementación: ronda 1 NO APTO (I1–I10). Las 10 se corrigieron, y
-  queda la ronda 2 de Astra.
+## 1. Dónde quedó, en una frase
 
-**Ronda 2 de Astra (2026-10-12): NO APTO en los tres frentes; corregida.**
-- Dictámenes, encargos e informes de los implementadores: scratchpad de la sesión 2876318c…, carpeta
-  `r2/` (`veredicto_A/B/C.md`, `banco04-r2-juicio-informe.md`, `banco04-r2-produccion-informe.md`).
-- I6 resuelta; I1–I5, I7–I10, las siete nuevas (A-N1..N3, B-N1..N2, C-N1..N4) y los dos pendientes
-  laterales, corregidos por dos agentes Opus en frentes disjuntos, con checks R2-* en ambos sentidos.
-  Mutaciones de los propios implementadores: juicio 49/49 rojas; producción 31/32 (I5c equivalente).
-- El director recontó: juicio 387/387, producción 238/238, `test_eval_spend_guard` 83/83 (a-25
-  alineado con el contrato), `test_gates_no_ciegos` 9/9. Sondas propias: `cota_salida_cli` da `None`
-  para Claude y Codex; la señal de fuga vendorizada distingue la negación por cláusula.
-- Protocolo: §12.6 con las aclaraciones C18–C26. `custodia_manifest.json`: invariante C08 ampliada
-  (C22).
-- **Consecuencia operativa (C18/C19):** ningún CLI tiene cota, así que un solo timeout de juez detiene
-  el juicio y deja el techo no certificable. **Pendiente de Pipe:** si el juicio puede reanudarse con
-  su aprobación expresa tras un consumo desconocido.
+El banco de calidad 0.4 tiene sus puertas escritas, pero **no tiene la cadena que las recorra**. Se
+diseñó esa cadena en un contrato (8 versiones, revisado por Astra) y sus pruebas de punta a punta ya
+están escritas en rojo. Falta el APTO de Astra a la v8 del contrato (su revisión quedó **interrumpida**
+al cerrar) y después la implementación.
+
+## 2. Decisiones de Pipe de esta sesión (2026-10-12)
+
+1. **«Que se reanude con mi autorización».** El consumo desconocido detiene el juicio, y solo sigue con
+   una referencia de aprobación de Pipe que cubre los eventos ya registrados. Un evento nuevo vuelve a
+   detenerlo. Va en el contrato §5 y en la aclaración C27 de la propuesta v1.4.
+2. **«Cadena completa».** Primero el esqueleto de 1 caso de punta a punta (producir → juzgar → guardar
+   → decidir), después Astra sobre la cadena entera, al final 17 casos.
+3. **«Separar calidad y cuota».** Sustituye a «acotar y medir», del mismo día y REVOCADA: Astra demostró
+   que esa cota no era conservadora. El banco emite DOS veredictos:
+   - **CALIDAD:** aprueba / reprueba / no_certificable. Sigue certificable con intentos sin cota.
+   - **CUOTA**, por intervalo [mínimo conocido, máximo posible]:
+     - «certificada · cumple» solo si cumple incluso en el peor caso;
+     - «certificada · excede» solo si excede incluso en el mejor caso;
+     - si el intervalo cruza el umbral, «estimada», con la cifra y el aviso de que no es garantía.
+   - El envoltorio del eval NO toca el entorno del CLI: no se fijan reintentos.
+4. **Pendiente de Pipe, para cuando el banco compare 0.3.3 con 0.4:** qué combinación de los dos
+   veredictos habilita la entrega de 0.4.
+
+## 3. Estado verificado (recontado por el director)
+
+- **Código del banco** (commit f5d678b, correcciones de la ronda 2 de Astra). Suites: juicio 387/387,
+  producción 238/238, `test_eval_spend_guard` 83/83 (a-25 alineado con el contrato),
+  `test_gates_no_ciegos` 9/9.
+- **Por qué no basta** (aprendizaje 104): nada juzga ni agrega las corridas de producción.
+  `run_banco04.py` no importa `metricas` ni `jueces`, y `veredicto_global` acepta conclusiones del
+  llamador. Inventario de brechas B1–B14: `docs/banco04-revisiones/r4/inventario-puerta.md`.
+- **Contrato de la cadena:** `docs/banco04-cadena-contrato.md`, **v8** (commit 57d0feb). Historia:
+  - v1: NO APTO, K1–K12.
+  - v2: NO APTO; 6 resueltas, 3 nuevas.
+  - v3: NO APTO; K16 nueva.
+  - v4: NO APTO, solo K7.
+  - **v5: APTO.** En K7 el director adoptó el «compromiso irrevocable» en `seq_envio`.
+  - v6: NO APTO; la cota de «acotar y medir» no era conservadora.
+  - v7: NO APTO; certificación de la cuota con cotas finitas.
+  - v8: cuota por intervalo. **Revisión de Astra INTERRUMPIDA al cerrar; hay que repetirla.**
+- **Propuesta de protocolo v1.4:** `docs/banco-calidad-04-protocolo-v1.4-propuesta.md`, rev. 2. Trae el
+  texto literal de cada cambio, el barrido de «certific», «techo» y «no_certificable» (§5 de la
+  propuesta) y §12.7 con las decisiones. El protocolo `.md` sigue en **v1.3**: la propuesta se integra
+  solo después del APTO de Astra.
+- **Pruebas de punta a punta:** `execution/test_banco04_cadena.py` y
+  `execution/fixtures_banco04_cadena/` (commit 3ba72f7), escritas por un autor independiente desde la
+  v5. **24/154 PASS según el autor (el director NO lo recontó; la corrida dura unos 7 min), en rojo por
+  diseño:** los verdes son autocontrol de dobles y de la señal, y
+  los rojos esperan la cadena. Los implementadores NO pueden editarlas. Tras v6–v8 hay que AJUSTARLAS
+  (lo hace el mismo autor independiente):
+  - dos veredictos y cuota por intervalo (E2E-3/14/19, S08, S09, S10, I03);
+  - `PruebaPuerta` con relajaciones separadas y `modo_prueba`;
+  - ninguna escritura bajo `backend/`;
+  - interfaces de §6.4.
+  - Informe del autor: `docs/banco04-revisiones/r5/pruebas-cadena-informe.md`.
+- **Cota del CLI:** no acreditable con fuente oficial (claude 2.1.296; codex-cli 0.156.0). Informe:
+  `docs/banco04-revisiones/r5/cota-cli-informe.md`. Codex: su página oficial de configuración no
+  cargó (ENOTFOUND); reintentarlo.
+- **Todas las revisiones de Astra e informes de esta sesión** están versionados en
+  `docs/banco04-revisiones/` (r1 a r5). El scratchpad de la sesión es temporal.
+
+## 4. Retomar, en este orden
+
+1. Recontar las suites: juicio, producción, spend_guard, gates no ciegos, y `test_banco04_cadena`
+   (el autor reportó 24/154; recontarlo).
+2. **Repetir la revisión de Astra sobre la v8** (encargo listo en
+   `docs/banco04-revisiones/r4/prompt_contrato8.txt`; sustituir `<scratchpad-sesion-2876318c>` por
+   `docs/banco04-revisiones` y `veredicto_contrato7.md` por su ruta en `r4/`). Iterar hasta APTO con el
+   agente redactor; las correcciones van como v9.
+3. Integrar la propuesta v1.4 en `docs/banco-calidad-04-protocolo.md` (cabecera, `VERSION_PROTOCOLO`
+   en `protocolo.py` y C27), con un check si es automatizable.
+4. El autor independiente de pruebas ajusta `test_banco04_cadena.py` a la v8 (lista del §3).
+5. Implementación de la cadena por frentes disjuntos, con las pruebas en rojo como barrera intocable.
+   Antes de implementar hay que verificar dos cosas: que todas las rutas del grafo que llegan al
+   borrador escriban el informe del muro, y la acreditación de la telemetría del CLI instalado (Q9 del
+   contrato).
+6. Astra sobre la cadena IMPLEMENTADA, con la consigna de alcanzabilidad desde `main` (aprendizaje 104).
+7. Mutación por un TERCERO.
+8. El autor independiente escribe el reservado NUEVO sobre salidas reales (el actual se retira; nunca
+   se usó: no existe registro de uso) y las claves de los 13 casos, incluida la mutación de I7.
+9. Piloto 0.3.3 → validación de jueces → línea base 0.3.3. **BLOQUEADOS hasta el paso 6.**
+10. Bloque 1. Incluye la corrección del producto: el panel del abogado muestra cero ante consumo
+    desconocido (`subscription_llm.py:258-270`, `codex_subscription_llm.py:244-263`, `turn_usage`).
+
+## 5. Avisos
+
+- **Los informes de subagentes no son fuente.** En esta sesión un implementador afirmó falsedades, y
+  un HANDOFF anterior dio por «implementado» lo que no lo estaba. Recontar siempre.
 - **N4 persiste en el producto** (`scoring.py`): la negación de la oración oculta la cita. Las cifras
-  históricas de «fuga real 0» pudieron medirse con ese punto ciego. Tarea aparte propuesta.
-
-**Avisos.**
-- El agente de juicio afirmó dos veces cosas falsas. Dijo que `verification.py` había cambiado (está
-  idéntico a 7b9aaa0) y que faltaba la reserva del Bloque 7 (está en `protocolo.py:156`). Sus
-  informes se verifican en la fuente.
-- `test_eval_spend_guard::a-25` está rojo desde antes: falla igual en 7b9aaa0, porque la cadena de
-  `curator` con `quality_adaptive` es por contrato `[cli-claude-sonnet, mia-local]` y el test espera
-  `claude-sonnet`. Pendiente: alinear el test con el contrato.
-- Codex no tiene máximo de salida documentado. Sus intentos fallidos quedan sin cota y vuelven el
-  techo no certificable. Es relevante para el Bloque 7, donde la 0.4 usa Codex en 5C.
+  históricas de «fuga real 0» pudieron medirse con ese punto ciego. Hay una tarea propuesta aparte;
+  Pipe no la ha lanzado.
 - `test_api_launcher` dio rojo una vez bajo carga y pasó 2/2 aislado. Causa no demostrada.
+- En los commits de este repo el autor sale como «Codex» porque `git config user.name` local vale
+  `Codex`, aunque los haya hecho Claude. Revisar antes de atribuir trabajo por autor.
+- **Costo de desarrollo de esta sesión** (no sale de la cuota autorizada del banco): entre 3,1 y 6,5 M
+  de tokens de subagentes Claude, entre implementadores, inventario, redactor del contrato, autor de
+  pruebas e investigación. Los contadores por agente no dejan claro si son acumulados. A eso se suman
+  unas 13 revisiones de Astra.
 
-**CORRECCIÓN DE ESTADO (2026-10-12, ronda 3 de Astra + inventario verificado por el director).**
-El banco NO está «implementado»: es una biblioteca de puertas sin cadena que la recorra. Lo que dicen
-72a6162 y este HANDOFF en sentido contrario era falso.
-- El director lo verificó con grep: el único llamador de `jueces.pasada1` fuera de tests es
-  `banco04_validar_jueces.py:229`. Nadie llama a `veredicto_global`, `metricas_corrida` ni
-  `agregar_casos`. `run_banco04.py` solo importa `protocolo` y `custodia`, y no existe el agregador
-  desde crudos que exige §9.5.
-- Ninguna corrida de producción se juzga ni se agrega, así que el banco no puede emitir veredicto.
-- Inventario completo: scratchpad 2876318c…/`r4/inventario-puerta.md`, brechas B1–B14.
-- Ronda 3 de Astra (`r3/veredicto_A/B/C.md`): NO APTO en los tres frentes. La causa común es que la
-  puerta acepta conclusiones del llamador (`cumple`, techo, `R_por_caso`, `usage_by_node`, previa de
-  la extensión).
-- Dos defectos tocan el PRODUCTO:
-  - `subscription_llm.py:258-270` y `codex_subscription_llm.py:244-263` convierten la telemetría
-    ausente en cero antes del guardián;
-  - `turn_usage` solo registra las llamadas exitosas y se borra con el tenant.
-- **BLOQUEADOS** los pasos 5 y 8 (piloto y línea base): gastarían cuota real en salidas que nadie
-  puede juzgar. Pendiente: la decisión de alcance de Pipe sobre el esqueleto de punta a punta.
+## 6. Entorno
 
-**Retomar, en este orden.**
-1. Recontar las suites (juicio, producción, spend_guard, gates no ciegos).
-2. Pipe decidió (2026-10-12):
-   - «Cadena completa»: primero el esqueleto de 1 caso de punta a punta; después, la revisión de
-     Astra sobre la cadena entera; al final, 17 casos.
-   - «Que se reanude con mi autorización»: el consumo desconocido detiene el juicio y solo sigue
-     con una referencia de aprobación de Pipe (contrato §5).
-   Contrato `docs/banco04-cadena-contrato.md`: **v5 con APTO de Astra** (6c26afc). Ronda 5: K1–K16
-   resueltas. En K7 el director adoptó el «compromiso irrevocable» en `seq_envio`, con el residual
-   declarado. En curso:
-   - pruebas E2E en rojo, por un autor independiente, en `execution/test_banco04_cadena.py`;
-   - investigación de la cota del CLI con fuente oficial (Q14), en `r5/cota-cli-informe.md`.
-   - El banco NO toca el producto: la telemetría cruda se captura con un envoltorio del eval.
-   - El panel del abogado, que muestra cero ante consumo desconocido, pasa al Bloque 1.
-   - El reservado actual se retira; el autor independiente escribe uno nuevo.
-   Sigue: APTO de Astra al contrato → pruebas E2E en rojo por un autor que no implementa →
-   implementación → Astra con la consigna de alcanzabilidad desde `main`.
-3. Mutación por un TERCERO (agente nuevo, no el implementador). El número de mutaciones que
-   sobreviven es el resultado.
-4. Commit limpio.
-5. Tanda piloto 0.3.3: mide C12, la reserva del juicio.
-6. El autor independiente rehace el conjunto RESERVADO sobre salidas reales y escribe las claves de
-   los 13 casos existentes. Incluye la mutación que pidió Astra en I7: una norma con respaldo
-   documental pero de un ordenamiento NO configurado, con una negación ajena a su aplicabilidad. La
-   escribe el autor independiente, nunca el implementador: si no, la reserva queda contaminada.
-7. Validación de jueces.
-8. Línea base 0.3.3 completa, en segundo plano.
-9. Bloque 1.
-
-**Entorno.**
+- Al cierre no queda ningún proceso de MIA vivo. Se detuvo la revisión de Astra sobre la v8. Los
+  procesos de otros proyectos (harness de litigio, pipe-web, apps de Codex) no se tocaron.
 - Clúster sintético 55448 en `C:\Users\USER\AppData\Local\Temp\mia-evidence-test-20260928-01a0e8f8`,
-  detenido.
-- `pg_ctl` se lanza con `Start-Process -WindowStyle Hidden -Wait`, nunca con la salida entubada.
-- Nunca tocar 55432.
-- En esta sesión, el límite mensual de gasto de la organización cortó a los subagentes una vez.
+  detenido. `pg_ctl` se lanza con `Start-Process -WindowStyle Hidden -Wait`.
+- **Nunca tocar 55432** (base instalada). El postgres que corre como servicio de Windows no es de esta
+  sesión.
+- Custodia `MIA_BANCO04_CUSTODIA`, fuera del repo, con llave DPAPI: no se leyó en esta sesión.
 
 ---
 # CIERRE DE DISTRIBUCIÓN — 2026-09-29 · Mia 0.3.3 Core/Compact

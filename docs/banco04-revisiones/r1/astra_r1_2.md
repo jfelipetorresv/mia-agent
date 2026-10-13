@@ -1,0 +1,22 @@
+# PROMPT
+Eres Astra, revisor adversarial. Responde en español. NO modifiques archivos. NO leas la custodia (C:\Users\USER\AppData\Local\MIA-banco04-custodia), mia-data ni .env.
+Revisa la IMPLEMENTACIÓN del banco de calidad de MIA 0.4 contra su protocolo congelado docs/banco-calidad-04-protocolo.md (banco04-v1.2 + aclaraciones §12.4, C2-C17). Código: backend/mia/eval/banco04/*.py (+ prompts/), execution/run_banco04.py, execution/banco04_validar_jueces.py, execution/banco04_calibracion.py, cambios en backend/mia/eval/harness.py y spend_guard.py (git diff), tests execution/test_banco04_juicio.py y test_banco04_produccion.py.
+Busca: desviaciones del protocolo que cambien el veredicto; vías para que el banco apruebe sin acreditar (gates ciegos, fallos abiertos, cero ciego); fugas de la clave o de los casos reservados hacia el productor/juez; riesgos de tocar la base instalada 55432 o el .env del repo; que la instrumentación de harness altere la conducta del producto; contabilidad de cuota que subestime; y si alguna aclaración C2-C17 contradice el protocolo. Formato: objeciones numeradas I1..In (BLOQUEANTE/MAYOR/MENOR), evidencia archivo:línea, cambio concreto. Veredicto: APTO / APTO CON CAMBIOS / NO APTO. Máx. 1.200 palabras.
+
+
+# VEREDICTO
+Hallazgos verificados en lectura estática; ejecuté únicamente una sonda pura del contador, extrayendo su AST con Python `-B`. No abrí custodia, mia-data ni .env; no modifiqué archivos.
+
+1. **BLOQUEANTE — Cota ficticia de consumo fallido.** `backend/mia/eval/spend_guard.py:1163` toma `max_tokens` como máximo efectivo; el guardián lo limita a 8.192 (`:168`). Sin embargo, `backend/mia/agent/llm.py:1010` y `:1023` descarta explícitamente ese parámetro para Codex y Claude CLI. Un timeout puede consumir más y el banco lo declara calculable. Los tests (`execution/test_banco04_produccion.py:108`) solo confirman el parámetro nominal con proveedor simulado. **Cambio:** usar un límite efectivamente aplicado por el proveedor o registrar cota desconocida y bloquear certificación.
+
+2. **MAYOR — La reserva Codex no protege el juicio.** `execution/run_banco04.py:386` verifica techo global Codex y reserva Claude, pero nunca resta la reserva Codex. `:377` solo emite advertencia para Bloque 0. **Reproducción:** techo Codex 8 M, reserva 6 M, producción 7 M → `motivo_suspension() == None`, `cota_calculable == True`. Contradice §3.4 y C17. **Cambio:** imponer presupuesto de producción Codex de 2 M en Bloque 7 y cero en Bloque 0, incluyendo proyección y aprobaciones.
+
+3. **BLOQUEANTE — Juicio y validación no están conectados al techo del circuito.** Los subprocess de `backend/mia/eval/banco04/jueces.py:1399` y `:1479` no consultan contador; los timeouts devuelven `uso={}` (`:1403`, `:1483`). `llamar_validado` reintenta cualquier error (`:1543`) y solo conserva uso en memoria. `execution/banco04_validar_jueces.py:395` ejecuta el circuito y escribe al terminar. `registrar_consumo_externo` (`execution/run_banco04.py:853`) es un helper sin llamadas desde esos caminos. **Cambio:** contador compartido obligatorio, registro duradero por intento y suspensión ante cuota/consumo desconocido antes de continuar.
+
+4. **MAYOR — Los crudos custodiados se escriben en claro.** §2.3 exige cifrado AES para las salidas crudas (`docs/banco-calidad-04-protocolo.md:112`, `:118`). `execution/run_banco04.py:575` elimina únicamente `content` del mapa; conserva diagnóstico y borrador. `:742` persiste mediante `escribir_atomico`, que hace `write_text(json.dumps(...))` (`:251`). Estar fuera del repo no cifra esos hechos reservados. **Cambio:** cifrar los crudos al persistir y dejar fuera de custodia solamente hashes y agregados.
+
+5. **MAYOR — La idempotencia puede mezclar versiones realmente distintas.** `execution/run_banco04.py:681` devuelve cualquier resultado terminal previo situado bajo versión/caso/repetición sin cotejar SHA, SOUL, CLI, política o digest actual. `--sha` se copia como rótulo (`:738`, `:1310`), sin acreditar que corresponde al checkout ejecutado. **Cambio:** manifiesto inmutable de corrida comprobado al iniciar y antes de reutilizar registros; rechazar reanudación con identidad distinta.
+
+Observación adicional para integrar con tu hallazgo C8: no encontré una alteración inequívoca del texto o resultado del producto por la instrumentación en el runner secuencial; delega las llamadas originales y restaura los wrappers. El defecto confirmado es medir como leídos fragmentos truncados, que ya verificaste.
+
+**Veredicto del área: NO APTO.**

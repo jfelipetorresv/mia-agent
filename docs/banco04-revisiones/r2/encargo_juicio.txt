@@ -1,0 +1,27 @@
+
+TU FRENTE (únicos archivos que puedes editar o crear):
+  backend/mia/eval/banco04/metricas.py, segmentos.py, ceguera.py, jueces.py, custodia.py, evaluador_congelado.py, protocolo.py (solo constantes de código), prompts/*.md
+  backend/mia/eval/harness.py
+  execution/banco04_validar_jueces.py, execution/banco04_calibracion.py
+  execution/test_banco04_juicio.py
+FRENTE AJENO (otro agente): backend/mia/eval/spend_guard.py, execution/run_banco04.py, execution/test_banco04_produccion.py, execution/test_eval_spend_guard.py. Su API pública ContadorCuota (registrar, motivo_juicio, motivo_suspension, cota_calculable, resumen) y spend_guard.cota_salida_cli se mantienen; el otro agente hará que motivo_juicio también se niegue cuando cota_calculable sea False. Tú cableas validar_jueces a ese contador.
+
+OBJECIONES A CORREGIR:
+Área A (veredicto_A.md):
+- I1 parcial: manifiesto validado contra el protocolo, no confiado al llamador (un manifiesto con colecciones vacías no aprueba); consumo ausente ⇒ no_certificable (techo_cuota({}, {}) no puede dar cumple); comparación A-pequeños con pares faltantes ⇒ no_certificable; recibo de extensión vinculado a las ejecuciones adicionales efectivamente juzgadas, su consumo y el recálculo.
+- I2 parcial: completitud de casos y hechos antes de calcular pérdidas (cuatro diccionarios vacíos no son «sin pérdidas»); un decisivo presente en la base y ausente en la nueva nunca desaparece del control; la atribución de mejora exige evidencia de consumo y de mejora del nodo y del ámbito (rechaza nodo inexistente y usage_by_node ausente).
+- N1 BLOQUEANTE: repeticiones duplicadas cuentan como independientes (metricas.py:356/:365): ids únicos y conjunto exacto esperado por versión y caso.
+- N2: rangos invertidos o vacíos aceptados (metricas.py:110 y custodia.py:364): exigir 0 ≤ inicio < fin ≤ longitud_original y coherencia con el fragmento.
+- N3: duplicación de fragmentos por renders históricos en harness.py:617. El wrapper debe seguir siendo transparente para el producto y restaurarse.
+Área B, partes en tu frente (veredicto_B.md):
+- I4 en jueces.py:1321: no fabricar una cota genérica. Codex sin cota documentada ⇒ desconocida. Para Claude, usa spend_guard.cota_salida_cli (la decide el otro agente), nunca una cota propia.
+- N1 BLOQUEANTE jueces.py:1333/:1386: telemetría parcial (`{"cache_read_input_tokens": 0}`) no es consumo conocido. Exige los componentes necesarios de entrada y salida con valores válidos; si faltan, consumo DESCONOCIDO.
+- I5 en banco04_validar_jueces.py:414 y :464: el circuito usa obligatoriamente el contador compartido, con las versiones y salidas custodiadas que correspondan; circuito_utilizable exige consumo certificable.
+Área C (veredicto_C.md):
+- I7/N1 BLOQUEANTE: validar_jueces no habilita el circuito con material reservado sin una acreditación de compatibilidad v1.3 vinculada a los hashes de casos, claves y mutaciones y al evaluador v1.3. Exige casos C08 de fuga, incluido el despacho configurado para OTRO ordenamiento (no solo jurisdicciones == []). El material lo escribirá después un AUTOR INDEPENDIENTE: tú solo haces que el código lo exija; NO escribes casos, claves ni mutaciones reservadas (con dobles sintéticos en los tests sí).
+- N2 MAYOR jueces.py:506 y prompts/pasada1_opus.md:56: distinguir el uso de una fuente como derecho aplicable de su descripción o del rechazo de su aplicabilidad; probar ambos sentidos.
+- I9 parcial: el registro de uso único no puede depender de la ubicación del material: ligado a la identidad sellada y a una raíz permanente que no cambie con MIA_BANCO04_CUSTODIA; check de reubicación con la misma identidad ⇒ rechazada.
+- N3: incluir execution/banco04_validar_jueces.py en ARCHIVOS_EVALUADOR (jueces.py:1853) y probar por mutación que cambiar sus exigencias invalida la congelación.
+- N4: la negación de la oración se aplica a cualquier cita (scoring.py:188). NO edites scoring.py (es del producto): VENDORIZA jurisdiction_leak_signal en evaluador_congelado.py con la negación asociada a la cita; haz que metricas.py (≈:321) use la copia vendorizada; prueba ambos sentidos («La Ley 100 de 1993 es aplicable al caso, aunque no consta la fecha del contrato» ⇒ fuga; «No consta que la Ley 100 de 1993 sea aplicable» ⇒ sin fuga). Declara en el informe que el defecto persiste en el producto.
+
+Informe: banco04-r2-juicio-informe.md
