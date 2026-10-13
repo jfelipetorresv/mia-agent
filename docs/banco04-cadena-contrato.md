@@ -1,6 +1,6 @@
 # Banco 0.4: contrato de la cadena (producir, juzgar, decidir)
 
-Versión del contrato: **banco04-cadena/v4** (propuesta). Fecha: 2026-10-12. Base: HEAD `56e25d0`,
+Versión del contrato: **banco04-cadena/v5** (propuesta). Fecha: 2026-10-12. Base: HEAD `315a127`,
 rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad-04-protocolo.md`).
 
 **Cambios de v1 a v2.**
@@ -11,6 +11,14 @@ rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad
   marcado como revocado.
 - **El banco no cambia ningún archivo del producto** (K8): la telemetría cruda se captura desde
   `eval/` (§4.3).
+
+**Cambios de v4 a v5.**
+
+- Cierra K7, la única objeción que la ronda 4 de Astra dejó abierta, con tres cambios:
+  - la garantía de **compromiso irrevocable**, adoptada expresamente por el director;
+  - la comprobación de secuencia propia para las huérfanas enviadas;
+  - las orfandades en el inventario de lecturas.
+- Lo demás no cambia.
 
 **Cambios de v3 a v4.**
 
@@ -221,7 +229,7 @@ B14).
 | `tramo_id`, `pid`, `seq` | str, int, int | proceso y orden dentro de él |
 | `bloque` | int (0 \| 7) | el de R1 de la versión en producción y aprobaciones, y el de R8 en juicio; en validación, el `--bloque` de VJ. El presupuesto del circuito de un bloque solo suma sus filas |
 | `estado` | `en_curso` \| `cerrada` \| `no_enviado` | `en_curso` se escribe **antes** de `check_and_reserve`; `no_enviado` es el estado terminal de una llamada denegada antes de salir al proveedor (K15, §4.2) |
-| `seq_inicio`, `seq_envio`, `seq_cierre` | int, int \| null, int \| null | números de secuencia **globales del bloque**, asignados bajo el cerrojo de §5.4: al escribir `en_curso`, al registrar el envío y al cerrar. `seq_envio` es `null` en `no_enviado` (K7) |
+| `seq_inicio`, `seq_envio`, `seq_cierre` | int, int \| null, int \| null | números de secuencia **globales del bloque**, asignados bajo el cerrojo de §5.4: al escribir `en_curso`, al registrar el compromiso de envío y al cerrar. `seq_envio` es el **punto de compromiso irrevocable** de la llamada (§4.2, §5.4). `seq_envio` es `null` en `no_enviado`; `seq_cierre` es `null` en una huérfana enviada, que lleva en su lugar el `seq_deteccion` de su registro de orfandad (K7) |
 | `t_envio_utc` | str \| null | se escribe de forma atómica y duradera, **bajo el mismo cerrojo que el control previo y sin soltarlo entre medias**, junto con `seq_envio`, inmediatamente antes de llamar a `_original_invoke` o al subproceso del juez. `null` = la llamada no salió (K7, K15) |
 | `t_inicio_utc`, `t_fin_utc` | str ISO-8601 UTC | informativos. El orden lo dan `seq_inicio` y `seq_cierre` |
 | `fase` | enum | `produccion`, `aprobacion_turno`, `aprobacion_aprobar`, `aprobacion_trabajos`, `embeddings_siembra`, `juicio_p1_opus`, `juicio_p1_codex`, `juicio_tercer_voto`, `juicio_negativa_falsa`, `juicio_p2_opus`, `juicio_p2_codex`, `juicio_voto_cobertura_opus`, `juicio_voto_cobertura_codex`, `juicio_estabilidad`, `validacion`, `medicion_codex` (R14), `sin_contexto` |
@@ -898,7 +906,7 @@ La puerta registra en `entradas_leidas` **todo** lo que abre, con ruta y sha256,
 abrir lo siguiente. Abrir algo fuera de la lista da `no_certificable` (`entrada_no_permitida`), y no
 poder abrir algo obligatorio, `entrada_inaccesible`.
 
-1. **Crudos R1–R13** de los dos directorios de versión, de `<custodia>/salidas/<ver>/` y de
+1. **Crudos R1–R13**, y los registros de orfandad del punto 8, de los dos directorios de versión, de `<custodia>/salidas/<ver>/` y de
    `<custodia>/validacion/<identidad>/`.
 2. **Fuentes de R13:** el directorio de medición `S/<ver>-medicion-codex/`, con su R1, **todas**
    sus filas R4, todos sus recibos y R13, cada uno con su sha256 cotejado (K16).
@@ -914,6 +922,16 @@ poder abrir algo obligatorio, `entrada_inaccesible`.
    de §1.2) y los prompts de los jueces (J:1954-1955), para `verificar_congelado`.
 7. **`telemetria_acreditada/`** (el índice del directorio) y `protocolo.py`, para la versión y la
    huella del protocolo.
+8. **Registros de orfandad** (K7). Se adscriben a **R4**, como complemento de la fila que declaran
+   huérfana:
+   - **ruta:** `S/<ver>/orfandades/<seq_deteccion>.json` de cada directorio de versión y de medición
+     (R14);
+   - **identidad:** `id_fila` (id de la fila R4) y `seq_deteccion`, único en el bloque;
+   - **huella:** sha256 del archivo, que se registra en `entradas_leidas`.
+
+   La puerta exige que cada uno cite una fila R4 existente con `estado == en_curso` y
+   `seq_cierre == null`, y que no haya dos registros de orfandad para la misma fila. Si no,
+   `seq_incoherente`.
 
 No se abren derivados (`*.derivado.json`, `estado_banco.json`, `aprobaciones_estado.json`,
 `usage_by_node.*.json` ni los `VEREDICTO.json` o `INFORME_LINEA_BASE.json` previos). Abrirlos da
@@ -951,6 +969,19 @@ La aplican la captura de producción (§4.2) y los runners de juez, que sustituy
 ### 4.2 Captura en el eval (no es producto)
 
 - **`SG._guarded_invoke` (SG:1126-1275):**
+  - **Garantía de compromiso irrevocable (K7; decisión expresa del director, 2026-10-12; se recoge
+    en la aclaración C27 del protocolo, junto con la decisión de Pipe sobre la reanudación, §8.4 Q13):**
+    - el punto de compromiso de una llamada es su `seq_envio`, escrito bajo el cerrojo;
+    - una llamada B con `B.seq_envio < A.seq_cierre`, siendo A una llamada cerrada sin cota (o
+      `< A.seq_deteccion` si A es una huérfana enviada), es **legítima** aunque B invoque físicamente
+      al proveedor después de que A cierre;
+    - lo prohibido es **registrar un `seq_envio` posterior** a ese cierre o a esa detección sin una
+      reanudación válida que lo cubra.
+    - **Residual declarado:** B puede consumir cuota después de que se produzca el evento
+      desconocido de A. Quedó comprometida antes de que se conociera, y su consumo cuenta en el techo
+      como cualquier otro, con su clase.
+    - La garantía **no** es «nada se invoca después de un evento desconocido», sino «nada se
+      **compromete** después de un evento desconocido no autorizado».
   - **Orden fijo de una llamada (K7, K15):**
     1. **toma el cerrojo de §5.4 y no lo suelta hasta el paso 4:**
        - registra las orfandades que detecte (§5.4);
@@ -962,10 +993,12 @@ La aplican la captura de producción (§4.2) y los runners de juez, que sustituy
        con `estado: no_enviado`, `motivo_codigo` y `seq_cierre`, suelta el cerrojo y la excepción
        sigue su curso;
     3. **bajo el mismo cerrojo**, abre la ranura de captura (§4.3) y escribe de forma atómica
-       `t_envio_utc` y `seq_envio`. Ese es el **despacho efectivo**: la decisión de enviar queda
-       fijada y ordenada frente a todo cierre;
-    4. suelta el cerrojo e inmediatamente llama a `_original_invoke`. Entre soltar y llamar no se
-       toma ninguna decisión ni se lee ningún estado;
+       `t_envio_utc` y `seq_envio`. Ese es el **compromiso irrevocable**: desde ahí la llamada queda
+       comprometida y ordenada frente a todo cierre y toda detección de orfandad;
+    4. suelta el cerrojo y llama a `_original_invoke`. **La invocación real no se serializa:**
+       sostener el cerrojo durante la llamada al modelo serializaría todo el circuito (decisión del
+       director, 2026-10-12). Entre soltar y llamar no se toma ninguna decisión ni se lee ningún
+       estado, pero otro proceso sí puede avanzar;
     5. toma el cerrojo y cierra con `seq_cierre`, `uso_crudo` = lo que dejó la ranura y
        `uso_validado`; en el camino de excepción, con la cota de SG:1209-1243.
   - **`no_enviado` (K15)** es un estado terminal comprobable: exige `t_envio_utc == null`, ranura
@@ -1139,14 +1172,20 @@ precondición de la piloto. **Este contrato no llama a proveedores.**
 **Solo detiene un evento desconocido SIN cota** (R4, «clases de consumo»; K7). Un desconocido con
 cota acreditada no detiene nada: cuenta con su cota (P:464-468, P:1297-1300).
 
-En cuanto exista en R4 una fila sin cota que **no esté autorizada** para la etapa y la versión de
-la llamada siguiente (§5.4), sea del bloque o de cualquier versión de `versiones_contador`:
+«Detener» quiere decir **no registrar ningún compromiso nuevo** (`seq_envio`, §4.2). Las llamadas
+ya comprometidas antes del evento terminan y se contabilizan: es la garantía de compromiso
+irrevocable, con su residual declarado en §4.2.
 
-- **El juicio:** ninguna llamada de juez nueva (Opus ni Codex), incluida la estabilidad. El runner
-  de juez lanza `CuotaAgotada` (código `consumo_desconocido_sin_cota`) antes de invocar y escribe
-  una suspensión **nueva** R6 `suspensiones/juicio-<seq>.json` con `eventos`, aunque ya haya otras.
+En cuanto exista en R4 una fila sin cota (cerrada, o huérfana enviada ya detectada) que **no esté
+autorizada** para la etapa y la versión de la llamada siguiente (§5.4), sea del bloque o de
+cualquier versión de `versiones_contador`:
+
+- **El juicio:** ningún compromiso de juez nuevo (Opus ni Codex), incluida la estabilidad. El runner
+  de juez lanza `CuotaAgotada` (código `consumo_desconocido_sin_cota`) en la sección crítica de
+  §4.2, antes de registrar `seq_envio`. La fila queda `no_enviado` y se escribe una suspensión
+  **nueva** R6 `suspensiones/juicio-<seq>.json` con `eventos`, aunque ya haya otras.
 - **La validación (VJ):** igual, con `etapa: validacion`.
-- **La producción Codex:** ninguna llamada `cli-codex*` de producción ni de aprobación.
+- **La producción Codex:** ningún compromiso `cli-codex*` nuevo de producción ni de aprobación.
   `GuardBanco.check_and_reserve` lanza `ParadaCodexProduccion` (R:1563-1568) con el mismo código.
 - **La producción Claude puede seguir** (C19). Sus métricas de calidad se calculan, pero el techo
   queda `no_certificable`.
@@ -1183,8 +1222,8 @@ que no esté autorizada para la etapa y la versión de la llamada siguiente.
   cerrojo.
 - Bajo el cerrojo, y solo bajo él, ocurren:
   - (a) en **una sola sección crítica**: el control previo de una llamada, su `en_curso`
-    (`seq_inicio`), `check_and_reserve` y el despacho efectivo (`t_envio_utc`, `seq_envio`), o su
-    cierre `no_enviado`. El cerrojo **no se libera antes del despacho** (K7);
+    (`seq_inicio`), `check_and_reserve` y el compromiso irrevocable (`t_envio_utc`, `seq_envio`), o su
+    cierre `no_enviado`. El cerrojo **no se libera antes del compromiso** (K7); la invocación real queda fuera de la sección (§4.2);
   - (b) todo cierre de fila (`seq_cierre`);
   - (c) el registro de una suspensión o de una reanudación (su `seq`);
   - (d) el **registro de orfandad**: `S/<ver>/orfandades/<seq_deteccion>.json`, exclusivo, con
@@ -1195,9 +1234,11 @@ que no esté autorizada para la etapa y la versión de la llamada siguiente.
       (`_recuperar_huerfanas`, R:851-874).
     - Una fila es huérfana **solo desde su `seq_deteccion`** (K7).
 - Con eso, cada cierre y cada detección de orfandad ocurren **estrictamente antes o estrictamente
-  después** del despacho de cualquier otra llamada. No hay ventana sin orden: «B controla, A cierra,
-  B envía» es imposible, porque A no puede cerrar mientras B tiene el cerrojo entre el control y el
-  despacho.
+  después** del **compromiso** (`seq_envio`) de cualquier otra llamada.
+  - «B controla, A cierra, B se compromete» es imposible: A no puede cerrar mientras B tiene el
+    cerrojo entre el control y el compromiso.
+  - «B se compromete, A cierra, B invoca» es posible y **legítimo** según la garantía de compromiso
+    irrevocable (§4.2). No se serializa la invocación real.
 
 **Llamadas comprobadas (K15).** Para cada fila C **enviada** (`t_envio_utc` y `seq_envio` no
 nulos) con `fase` de juicio, validación o `medicion_codex`, o con `proveedor_cuota=codex` en
@@ -1225,7 +1266,20 @@ Se define e(C) como la etapa de C (`juicio`, `validacion`, `produccion` o `aprob
   cerrojo, así que la igualdad es exacta.
 - Se exige que el `eventos_sha256` de cada reanudación coincida con las filas actuales: una fila
   editada después invalida la reanudación.
-- Se exige que los `seq` sean únicos, que haya `seq_inicio < seq_envio < seq_cierre` en cada fila enviada y `seq_inicio < seq_cierre` en cada `no_enviado`, y que ningún `seq_cierre` ni `seq_deteccion` de otra fila caiga entre `seq_inicio` y `seq_envio` de C, porque esa sección es única. Si no, `seq_incoherente`.
+- **Coherencia de secuencias (K7).** Se exige que los `seq` sean únicos y, según la clase de la
+  fila:
+  - **enviada y cerrada:** `seq_inicio < seq_envio < seq_cierre`;
+  - **huérfana enviada:** `seq_cierre == null` (se conserva nulo) y `seq_inicio < seq_envio <
+    seq_deteccion`, donde `seq_deteccion` es el de su registro de orfandad;
+  - **`no_enviado`:** `seq_envio == null` y `seq_inicio < seq_cierre`;
+  - **huérfana no enviada:** `seq_envio == null`, `seq_cierre == null` y `seq_inicio <
+    seq_deteccion`.
+
+  Además, ningún `seq_cierre` ni `seq_deteccion` de otra fila cae entre `seq_inicio` y `seq_envio`
+  de C, porque esa sección es única. Una fila `en_curso` sin cierre y sin registro de orfandad al
+  llegar la puerta se clasifica con la regla de R4 sobre su `t_envio_utc`, entra en el techo y no
+  entra en U(C) de nadie, porque nadie la detectó. Si no se cumple algo de esto, `seq_incoherente`.
+  La orfandad tardía (E2E-13 iii) cumple estas reglas y **no** da `seq_incoherente`.
 
 **Pruebas (K7):**
 
@@ -1234,22 +1288,34 @@ Se define e(C) como la etapa de C (`juicio`, `validacion`, `produccion` o `aprob
   - el B hace el control previo y el despacho de una llamada de juez;
   - con barreras de prueba se fuerzan tres órdenes.
 
-  (i) **«B controla, A cierra, B envía» (contraejemplo de Astra).**
-  - A queda bloqueado en el cerrojo hasta que B registra su `seq_envio`.
-  - Exigido: `B.seq_envio < A.seq_cierre`, la puerta acepta B y la llamada siguiente se detiene.
-  - La variante que suelta el cerrojo entre el control y el despacho tiene que dar rojo: la prueba
-    instrumenta el cerrojo y comprueba que ningún cierre ocurre entre `seq_inicio` y `seq_envio`.
+  (i) **B comprometida antes del cierre de A → admitida.**
+  - Se pone una barrera **entre el compromiso de B (`seq_envio`) y su invocación real**: B registra,
+    suelta el cerrojo y se pausa; A cierra sin cota; después B invoca.
+  - Exigido:
+    - `B.seq_envio < A.seq_cierre`;
+    - la puerta **acepta** B y su consumo cuenta en el techo (garantía de compromiso irrevocable,
+      residual declarado);
+    - la llamada siguiente queda `no_enviado` y se detiene.
+  - Un cierre de A intentado mientras B está entre el control y el compromiso queda bloqueado en el
+    cerrojo hasta el `seq_envio` de B. La variante que suelta el cerrojo entre el control y el
+    compromiso tiene que dar rojo.
 
-  (ii) **A cierra antes de que B controle.** B ve el evento y no envía (fila `no_enviado` y
-  suspensión nueva). La puerta no la cuenta como infracción (K15).
+  (ii) **B comprometida después del cierre de A → detenida o `no_certificable`.**
+  - Con el cierre de A antes del control de B, B ve el evento y no se compromete (fila `no_enviado`
+    y suspensión nueva). La puerta no lo cuenta como infracción (K15).
+  - Variante de manipulación: una fila B con `seq_envio > A.seq_cierre` y sin reanudación que lo
+    cubra da `no_certificable` (`llamada_tras_desconocido_sin_autorizacion`).
 
   (iii) **Orfandad tardía.**
   - A está enviada y viva cuando B despacha; después muere.
-  - Exigido: el registro de orfandad de A lleva `seq_deteccion > B.seq_envio`, y la puerta no exige
-    que B lo hubiera visto.
-  - La siguiente sección (a) que lo detecta se detiene.
+  - Exigido:
+    - el registro de orfandad de A lleva `seq_deteccion > B.seq_envio`, y la puerta no exige que B
+      lo hubiera visto;
+    - A cumple `seq_inicio < seq_envio < seq_deteccion` con `seq_cierre == null`, y la puerta no da
+      `seq_incoherente`;
+    - la siguiente sección (a) que lo detecta se detiene.
 
-  En ningún orden hay una llamada enviada con un evento sin cota anterior y no autorizado.
+  En ningún orden hay un **compromiso** (`seq_envio`) posterior a un evento sin cota no autorizado.
 - **E2E-14 · Dos ciclos completos.** Evento 1 → suspensión `juicio-s1` → reanudación `r1`, que cubre
   evento 1 y `s1` → juicio sigue → evento 2 → suspensión `juicio-s2` (`s1` sigue en disco intacta,
   con su sha256) → reanudación `r2`, que cubre evento 2 y `s2` → juicio termina.
@@ -1849,7 +1915,9 @@ Primero va la redacción original; las revisiones posteriores al dictamen de Ast
   - Residual declarado: un operador con control local puede borrar el registro.
   - La validación con el reservado nuevo corre después de implementar el contrato, con el hash
     nuevo del evaluador.
-- **Q13.** La decisión de Pipe sobre C19 entra como aclaración C27 de v1.3.
+- **Q13.** La decisión de Pipe sobre C19 entra como aclaración C27 de v1.3. **[AMPLIADA en v5]**
+  La garantía de compromiso irrevocable de §4.2 (decisión del director, K7) se recoge en la misma
+  aclaración C27, como la forma en que se aplica la reanudación.
 - **Q14.** Se intenta acreditar la cota según C18, sin cambiar la conducta del producto. Para eso se
   necesitan dos datos de la documentación oficial de la versión instalada del CLI: el número máximo de
   reintentos por defecto y si en modo `-p --max-turns 1` sin herramientas se emiten peticiones de
@@ -1906,7 +1974,7 @@ Aplicadas tal como las pidió Astra en su ronda 2:
 | **K4** | Bloqueante | persistir todos los eventos del juez Codex; registro versionado de acreditación validado por la puerta; pruebas de varios eventos y de acreditación ausente | R5 («Telemetría cruda de los jueces»); R4 (`uso_crudo`, `cli_version`, `acreditacion_aplicada`); §4.1; §4.4; E2E-3; I15; §8.4 Q9 [REVISADA]; **v3:** `firma_comando` en R4, capturada en `_build_command`/`_command` (§4.3); selección por familia, versión y firma; rechazo de la ambigüedad (§4.4); `firmas_previstas` (R1); E2E-16. Cierra la vía ausencia→cero por otro comando. |
 | **K5** | Mayor | productor y estimación previa acreditada de Codex en la piloto; bloquear su ausencia; probarlo desde el montaje real del Bloque 7 | R1 (`cadenas_politica`, `puede_codex`, `estimacion_piloto_codex`); R13; §3.3 A («Codex en la piloto»); §7.3; E2E-9; **v3:** R14 (`banco04_medir_codex main`, presupuesto y control propios, asignación por clase); R13 v2 con redondeo `(5·max+3)//4`; E2E-12; R-14. **v4:** manifiesto de la medición exento de R13 (`proposito: medicion_codex`, R1); R13 dentro del directorio de la medición, ligado a su manifiesto y citado en un solo sentido por el R1 consumidor (R13, R14). |
 | **K6** | Mayor | resolver los conflictos de Q1 (§4.1) y Q3 (consumo de la aprobación) sin cambiar reglas | §3.3 A («Texto juzgable»); §3.3 C (`turnos_completados`); §3.3 D (`aprobacion`); §8.4 Q1 y Q3 [REVOCADAS]; prueba S21 |
-| **K7** | Mayor | filtrar la autorización por etapa, versión, evento y suspensión; distinguir sin cota de con cota; reanudación de la validación; la autorización no acredita consumo | R4 («Clases de consumo»); R6 (esquema v2 y reglas de validez); R9 («Reanudación de la validación»); §4.1; §5.1–§5.4; E2E-3 (variante con cota); E2E-4; **v3:** suspensiones inmutables por id y etapa (R6); cerrojo y `seq` del bloque que serializan control, envío y cierre (§4.2, §5.4); E2E-13 (intercalación) y E2E-14 (dos ciclos). **v4:** el cerrojo cubre en una sola sección el control, `check_and_reserve` y el despacho efectivo (`seq_envio`), y no se libera antes del envío (§4.2, §5.4); U(C) por `seq_envio`; registro de orfandad con `seq_deteccion` propia; E2E-13 (i) «B controla, A cierra, B envía» y (iii) orfandad tardía. |
+| **K7** | Mayor | filtrar la autorización por etapa, versión, evento y suspensión; distinguir sin cota de con cota; reanudación de la validación; la autorización no acredita consumo | R4 («Clases de consumo»); R6 (esquema v2 y reglas de validez); R9 («Reanudación de la validación»); §4.1; §5.1–§5.4; E2E-3 (variante con cota); E2E-4; **v3:** suspensiones inmutables por id y etapa (R6); cerrojo y `seq` del bloque que serializan control, envío y cierre (§4.2, §5.4); E2E-13 (intercalación) y E2E-14 (dos ciclos). **v4:** el cerrojo cubre en una sola sección el control, `check_and_reserve` y el despacho efectivo (`seq_envio`), y no se libera antes del envío (§4.2, §5.4); U(C) por `seq_envio`; registro de orfandad con `seq_deteccion` propia; E2E-13 (i) «B controla, A cierra, B envía» y (iii) orfandad tardía. **v5:** garantía de **compromiso irrevocable** adoptada expresamente (`seq_envio` bajo el cerrojo es el punto de compromiso; la invocación real no se serializa; residual declarado) en §4.2, §5.1 y §5.4; E2E-13 (i) admitida si se comprometió antes del cierre de A, con barrera entre compromiso e invocación, y (ii) detenida o `no_certificable` si se comprometió después; coherencia de secuencias por clase de fila, con `seq_inicio < seq_envio < seq_deteccion` y cierre nulo para las huérfanas enviadas; registros de orfandad en §3.9 (punto 8, adscritos a R4); C27 (§8.4 Q13). |
 | **K8** | Mayor | exigir la comparabilidad (reproducir la base si cambian CLI o modelo); perímetro del parche; invariancia del comportamiento del abogado | §4.3 (intercepción desde `eval/`, sin cambios de producto); R1 (`sha_producto`, `rutas_modificadas_respecto_del_producto`, `codex_cli_version`); §3.2 paso 1; §3.3 A («Comparabilidad», con la base del Bloque 0 reutilizable si no cambian el CLI ni el modelo; «Perímetro», solo `eval/` y `execution/`); R4 (`bloque`); §6.1 (`proveedores` con alcance de módulo); E2E-6; I14; §7.4; **v3:** `model_usage_crudo` completo e `identidades_efectivas` (R4); comparación por identidad efectiva y `identidad_efectiva_ausente` (§3.3 A); E2E-18. |
 | **K9** | Mayor | orden total reproducible para los casos de la extensión; población de las submuestras fija; preservar las originales | §3.4 («Selección de casos con orden total reproducible»); §3.7; §3.3 E (estabilidad y Codex 15 %); §7.2 (`seleccionar_con_semilla`); §7.4 (`casos_extension`); §8.2 R-7 [SUSTITUIDA] |
 | **K10** | Mayor | separar la manipulación incoherente de la mutación semántica (regenerar desde `main`); recorrido positivo de la extensión y de Codex de producción; que el mundo no fabrique telemetría | §6.1 (`mundo=` sin telemetría propia, `origen: "captura"`); §6.2 (mutación semántica del esqueleto, E2E-8); §6.3 (familias S e I, F17-ext); §3.8 (códigos exactos que exige la familia I); R5 (`rep_sha256` sobre la parte cruda); **v3:** cierre de dependencias de los efectos concomitantes permitidos y prohibición de fallos ajenos o de identidad (§6.3); el arranque de R13 queda cubierto por K5 y las lecturas por K14. |
