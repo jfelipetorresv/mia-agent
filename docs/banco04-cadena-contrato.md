@@ -1,6 +1,6 @@
 # Banco 0.4: contrato de la cadena (producir, juzgar, decidir)
 
-Versión del contrato: **banco04-cadena/v7** (propuesta). Fecha: 2026-10-12. Base: HEAD `5b142b5` (v5 con APTO de Astra en `6c26afc`; v6 rechazada),
+Versión del contrato: **banco04-cadena/v8** (propuesta). Fecha: 2026-10-12. Base: HEAD `b89e4e8` (v5 con APTO de Astra en `6c26afc`; v6 y v7 rechazadas),
 rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad-04-protocolo.md`).
 
 **Cambios de v1 a v2.**
@@ -11,6 +11,17 @@ rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad
   marcado como revocado.
 - **El banco no cambia ningún archivo del producto** (K8): la telemetría cruda se captura desde
   `eval/` (§4.3).
+
+**Cambios de v7 a v8** (dictamen de Astra sobre la v7).
+
+- **Cuota por intervalo** (decisión del director, que aplica el cambio de Astra en (b)): cada
+  consumo es un intervalo [mínimo, máximo]. Solo se certifica lo que el intervalo garantiza (§4.5).
+- **Piloto:** un intento sin cota ya no deja la calidad en `no_certificable`. R se recalcula con la
+  estimación congelada (§3.3 A, R11).
+- **Estimación congelada** con un corte de secuencia: la estimación inicial va aparte de la
+  actualización final (R4, §4.5).
+- S08 y S10 exigen el resultado separado de CUOTA y conservan la CALIDAD.
+- §8.6 explicita lo único que se retira de la habilitación de VJ.
 
 **Cambios de v6 a v7.**
 
@@ -275,7 +286,7 @@ B14).
 | `tipo_error`, `proveedor_no_alcanzado` | str \| null, bool \| null | solo la clase de la excepción, nunca su texto (I8) |
 | `motivo_parada`, `motivo_parada_fuente` | str \| null, `cli` \| `api` \| `no_informado` | §4.3, Q9 |
 | `cota` | dict | `{tokens_entrada_estimados, cota_salida, tokens_cota_superior, fuente, motivo}`; igual que SG:1233-1247. En `cli-*` (Claude y Codex) la cota es siempre `null` (C18). La v6 le daba cota a Claude; la v7 lo revoca |
-| `estimacion_empirica` | `{tokens: int, componentes: {entrada_heuristica, salida_observada, fondo_observado}, version_regla, instantanea_sha256}` \| null | solo en filas **sin cota**: estimación empírica **no garantizada** de §4.5. Sirve para publicar la cuota estimada y para suspender, **nunca para certificar** |
+| `estimacion_empirica` | `{inicial: {tokens, componentes: {entrada_heuristica, salida_observada, fondo_observado, *_fuente}, corte_seq, observaciones: [ids R4], observaciones_sha256, version_regla, instantanea_sha256}}` \| null | solo en filas **sin cota**, o con cota finita (para la estimación puntual de §4.5). **Inicial y congelada:** se calcula al cerrar la fila (o al registrar su orfandad) con las observaciones de `seq_cierre < corte_seq`, donde `corte_seq` = su propio `seq_cierre` o `seq_deteccion`. Ese conjunto queda registrado. La **actualización final** no se guarda aquí: la calcula la puerta (§4.5) |
 | `entorno_cli` | `{max_retries: str\|null, retry_watchdog_definida: bool, max_output_tokens: str\|null}` \| null | solo en `claude_cli`: los tres valores del entorno efectivo, capturados **solo para publicarlos y versionar la estimación** (§4.5). El envoltorio no los cambia (v7) |
 | `reanudacion_vigente` | str \| null | referencia de R6 bajo la que se lanzó (jueces y Codex de producción) |
 | `eventos_desconocidos_vistos` | list[str] | ids de filas desconocidas que el control previo vio (§5) |
@@ -621,20 +632,23 @@ Exige igualdad con lo escrito.
   `{veredicto: aprueba|reprueba|no_certificable, motivos: [{codigo, detalle}], filas_rojas: [..],
   condiciones: [{id, valor, umbral, estado: cumple|no_cumple|no_aplica|sin_dato, fuentes:
   [rutas+sha256]}], comparativas: [...], cuota: {estado: certificada|estimada, resultado:
-  cumple|excede, motivo: str|null, consumo_conocido: {...}, estimacion_empirica: {...}|null,
-  aviso: str|null, condiciones: [...], intentos_sin_cota: [ids R4]}, entradas_leidas: [{ruta,
-  sha256}], rotulo, modo_prueba}`.
+  cumple|excede|null, condiciones: [{id, intervalo: [min, max], umbral, estado:
+  certificada_cumple|certificada_excede|estimada, estimacion_puntual_inicial,
+  estimacion_puntual_final}], consumo: {conocido, cotas_finitas, n_sin_cota}, aviso: str|null,
+  intentos_sin_cota: [ids R4]}, entradas_leidas: [{ruta, sha256}], rotulo, modo_prueba}`.
   - `veredicto` es el **veredicto de CALIDAD**. No lee ninguna condición de cuota: solo las de
     calidad e identidad de §3.3 A, B, C y E (salvo el techo), y §3.4.
   - `cuota` es el **veredicto de CUOTA** de §3.3 D y §4.5. Las condiciones de cuota no entran nunca en
     `veredicto`, ni las de calidad en `cuota`.
 - **Precedencia, por veredicto (C15 en v1.4):**
   - calidad: `no_certificable` > `reprueba` > `aprueba`;
-  - cuota: (1) si la parte conocida ya excede alguna condición del techo, `certificada · excede`
-    (`motivo: conocido_excede`), aunque haya intentos sin cota; (2) si no, y hay algún intento sin
-    cota, `estimada`, con `resultado` calculado con conocido + cota + estimación empírica, publicado
-    como **no garantizado** y con el aviso; (3) si no hay ningún intento sin cota, `certificada ·
-    cumple|excede`.
+  - cuota, **por intervalo** (§4.5):
+    1. si alguna condición tiene su **mínimo** posible por encima del umbral → `certificada ·
+       excede`, aunque otras sean inciertas;
+    2. si no, y alguna condición tiene un intervalo que **cruza** el umbral → `estimada`
+       (`resultado: null`), con los intervalos, las estimaciones puntuales y el aviso. Vale también
+       con solo cotas finitas, sin ningún intento sin cota;
+    3. si no, todas tienen su **máximo** posible dentro del umbral → `certificada · cumple`.
 
 ### 3.2 Procedimiento (orden fijo)
 
@@ -711,7 +725,7 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 | Caso y jurisdicción | R2 `caso_digest`, `jurisdicciones_fijadas` | el digest difiere del caso cargado; las jurisdicciones difieren de `custodia.jurisdicciones()` (custodiados) o de `[]` (visibles) |
 | Ledger de la corrida | R2 `intentos[].llamadas` frente a R4 | falta un id; hay una fila con ese contexto que no está en la lista; contexto distinto; fila huérfana sin cerrar |
 | Juicio completo | reproducción | falta una llamada que la reproducción pide; sobra una que no pide; el `prompt_sha256` no coincide; queda una salida no evaluada (estructural tras el reintento, J:1764); falta el tercer voto (`no_evaluada_tercer_voto`, J:1863) |
-| R11 y R12 | se recalculan con `decidir_r` y `elegir_aprobaciones` | ausentes o distintos; consumo de la piloto con alguna fila desconocida sin cota |
+| R11 y R12 | se recalculan con `decidir_r` y `elegir_aprobaciones`. El consumo de la piloto que entra a `decidir_r` es, por corrida, **conocido + cotas finitas + estimación empírica inicial** de sus filas sin cota (§4.5), y R11 registra `estimaciones_usadas: [{fila, tokens, corte_seq, observaciones_sha256}]` y `corte_decision_seq` | ausentes o distintos del recálculo con esas mismas estimaciones congeladas. **Un intento sin cota en la piloto no da `no_certificable`** (v8): la decisión de R se reproduce con la estimación registrada, la selección de aprobaciones sigue siendo la de `elegir_aprobaciones` con `R1.semilla`, y el inventario sigue exigiendo **todas** las repeticiones 1..R de la R decidida |
 | Codex en la piloto (K5) | R1.`puede_codex` y `cadenas_politica`, R13 y R4 | `puede_codex` sin R13, o un R13 que no se reproduce desde su fuente; filas R4 Codex de producción con `puede_codex == false`; una fila R4 de producción cuyo `alias` no está en `cadenas_politica["<tarea>|<escalada>"]` de su `tarea` y su `escalada`, lo que prueba que las cadenas registradas no eran las reales |
 
 **B · Umbrales absolutos (§6.1).** Por corrida, la puerta construye la entrada de `metricas_corrida`
@@ -770,7 +784,7 @@ la entrada de `metricas_corrida` (M:266).
 
 | Condición | `no_certificable` si | Efecto |
 |---|---|---|
-| Total agregado, ponderado por caso, extremo por caso y extremo entre repeticiones (Claude 1,25×; Codex 0,50×) e inferencias | **ninguna: es veredicto de CUOTA, no de calidad.** Por cada condición se calculan la cota inferior del numerador (consumo conocido) y la superior del denominador (conocido + cotas; +∞ si hay alguna fila sin cota en su ámbito). Si la inferior/superior ya excede el factor → `certificada · excede` (`conocido_excede`). Si no, y hay alguna fila sin cota en el ámbito → `estimada`, con conocido + cota + estimación empírica. Si no hay ninguna → `certificada` exacta. Una fila de producción o aprobación con `fase=sin_contexto` o `caso_id` nulo cuenta en el total y deja `estimada` la condición por caso. Las inferencias son recuentos de intentos y siempre son exactas | cuota: `excede` |
+| Total agregado, ponderado por caso, extremo por caso y extremo entre repeticiones (Claude 1,25×; Codex 0,50×) e inferencias | **ninguna: es veredicto de CUOTA, no de calidad.** Cada condición se evalúa **por intervalo** (§4.5): `certificada_cumple` si su máximo posible cumple, `certificada_excede` si su mínimo posible excede, y `estimada` si cruza el umbral, también con solo cotas finitas. Una fila con `fase=sin_contexto` o `caso_id` nulo suma a los intervalos de todos los casos posibles (al mínimo de ninguno y al máximo de todos). Las inferencias son recuentos de intentos, y su intervalo es degenerado | cuota según el intervalo |
 | C25: atribución de subidas > 10 % | `usage_by_node` por ámbito = las **mismas filas** de R4 agrupadas por `nodo` (nulo → `(sin nodo)`). La igualdad con el consumo medido (M:1027-1029) se cumple por construcción. El nodo atribuido es el de mayor aumento. La subida es atribuible si ese nodo está en `atribucion_preregistrada` de R1 de la versión nueva (con su sha256 igual al de R8) **y** alguna métrica suya tiene veredicto `mejora` (recalculado) en una unidad del mismo grupo (a)/(c) | CUOTA. Si la subida solo resulta de la estimación, la atribución se publica como estimada. Si el sha256 del mapa no coincide con R8, **calidad** `no_certificable` (identidad, `atribucion_mapa_no_coincide`). Un mapa ausente deja la subida no atribuible | cuota: `excede` (no atribuible) |
 
 **E · Alcance C8, fuga §5.7, kappa y estabilidad, y circuito §3.4.**
@@ -845,8 +859,9 @@ selección de casos no es libre: la puerta la recalcula.
   aviso, circuito: cumple|excede}, entradas_leidas}`.
   - **No lleva el campo `veredicto`** de calidad comparativa.
   - **Sí lleva el veredicto de cuota separado** (`cuota`, §4.5) del consumo del Bloque 0 frente al
-    techo del circuito (18 M / 5 M): `certificada` si no hubo ningún intento sin cota, `estimada`
-    si los hubo, y `excede` aunque haya sin cota si lo conocido ya supera el techo.
+    techo del circuito (18 M / 5 M), **por intervalo** (§4.5): `certificada · cumple` si el máximo
+    posible ≤ techo; `certificada · excede` si el mínimo (lo conocido) > techo; `estimada` si el
+    intervalo cruza el techo.
   - Un incumplimiento de 0.3.3 se publica en la primera línea del resumen (DOC §9.7).
 - **Separación:** el consumo del informe es **descriptivo**. El techo de §6.3 solo existe en
   `decidir`, con las dos versiones. El presupuesto del circuito del Bloque 0 (§3.4 del protocolo)
@@ -1256,21 +1271,35 @@ precondición de la piloto. **Este contrato no llama a proveedores.**
   - **Sigue siendo certificable aunque haya intentos fallidos sin cota.**
   - Un fallo de una consulta solo cuenta para la calidad por sus efectos propios: turno no
     completado, fallo sin texto (`texto_ausente`), juicio incompleto, etc., como hasta ahora.
-- **CUOTA:**
-  - `certificada · cumple|excede` si no hubo **ningún** intento sin cota en el ámbito de la
-    condición;
-  - `estimada` si los hubo. Se publican el consumo conocido, la estimación empírica de cada
-    intento sin cota declarada como **NO garantizada**, y el aviso literal: «Cuota estimada: hubo
-    N intentos de consumo desconocido sin cota; la cifra incluye una estimación empírica no
-    garantizada y no certifica el techo»;
-  - si la parte **conocida** ya excede el techo, el resultado es `certificada · excede`
-    (`conocido_excede`), aunque haya intentos sin cota. La regla exacta por condición está en
-    §3.3 D.
+- **CUOTA, por intervalo** (decisión del director en la v8, que aplica el cambio (b) de Astra
+  sobre la v7):
+  - **Consumo como intervalo.** Todo consumo agregado (por corrida, por caso, total, por proveedor)
+    es un intervalo `[mín, máx]`:
+    - `mín` = la suma de lo **conocido**: una fila fallida, con o sin cota, puede no haber
+      consumido nada;
+    - `máx` = lo conocido + la suma de las **cotas finitas**, o `∞` si en el ámbito hay algún
+      intento sin cota.
+  - **Cociente** `r = A/B` de dos intervalos: `r_mín = A.mín / B.máx` (0 si `B.máx = ∞`) y
+    `r_máx = A.máx / B.mín` (`∞` si `B.mín = 0` y `A.máx > 0`; 0 si `A.máx = 0`). El total
+    ponderado por caso usa la media de los `r_mín` y la de los `r_máx` de los casos. Una condición
+    absoluta (el techo del circuito) usa el intervalo directamente.
+  - **Estado de una condición con umbral `u`** (la condición es `≤ u`):
+    - `certificada_cumple` solo si `máx ≤ u`;
+    - `certificada_excede` solo si `mín > u`;
+    - `estimada` si `mín ≤ u < máx`: el intervalo cruza el umbral. **Vale también con solo cotas
+      finitas y ningún intento sin cota.**
+  - **Publicación de una condición `estimada`:** el intervalo, la estimación puntual (inicial y
+    final, abajo) y el aviso literal: «Cuota estimada: el consumo real está en el intervalo
+    publicado y cruza el umbral; la cifra puntual es una estimación empírica no garantizada y no
+    certifica el techo».
+  - **Estimación puntual** de un consumo = lo conocido + Σ `min(cota, estimación empírica)` de las
+    filas con cota finita + Σ estimación empírica de las filas sin cota.
+  - **Veredicto de cuota:** §3.1 (precedencia).
 
 **El techo sigue gobernando la suspensión** durante la corrida (§3.4 del protocolo).
 
-- El control previo y `ContadorCuota` suman conocido + cotas + **estimación empírica** de las filas
-  sin cota, de forma conservadora, para detener antes.
+- El control previo y `ContadorCuota` suman conocido + cotas + **estimación empírica inicial**
+  (congelada) de las filas sin cota, de forma conservadora, para detener antes.
 - Esa suma nunca certifica nada.
 - La parada por evento sin cota de §5.1 y la reanudación con autorización de Pipe **siguen
   iguales**, y C27 se mantiene.
@@ -1286,9 +1315,21 @@ precondición de la piloto. **Este contrato no llama a proveedores.**
   familia, con `componentes.salida_observada_fuente = "familia"`.
 - `fondo_observado`: el `fondo_max` de la entrada `fondo_cli` de la instantánea citada (misma
   familia, versión y firma). Sin entrada, `0`, con `fondo_observado_fuente = "no_medido"`.
-- Cada fila sin cota guarda `estimacion_empirica` con sus componentes, la versión de la regla
-  (`banco04-estimacion-intento/v1`) y el sha256 de la instantánea. La puerta la recalcula y exige
-  igualdad; si difiere, `telemetria_contradictoria` (calidad, identidad del registro).
+- **Estimación inicial congelada (v8).**
+  - Cada fila guarda `estimacion_empirica.inicial`, con su `corte_seq` (su propio `seq_cierre`, o
+    `seq_deteccion` si es huérfana) y el conjunto exacto de observaciones usado.
+  - Las observaciones son los ids de las filas conocidas con `seq_cierre < corte_seq` y la misma
+    familia, versión y firma. Se registran con su sha256.
+  - La puerta recalcula la inicial con **ese** conjunto y **ese** corte, y exige igualdad: con otro
+    conjunto u otro resultado, `telemetria_contradictoria`. Un máximo observado **posterior** al
+    corte no entra en la inicial y **nunca** produce contradicción.
+- **Actualización final.** La calcula la puerta al decidir, con todas las observaciones conocidas
+  del bloque. Se publica junto a la inicial (`estimacion_puntual_final`) y no se compara con nada
+  guardado.
+- **Uso de cada una:**
+  - la **inicial** se usa para suspender (§3.4) y para la decisión de R (R11);
+  - las dos se publican en la cuota;
+  - ninguna certifica.
 
 **Medición del fondo: se conserva como estimación empírica versionada.**
 
@@ -1322,11 +1363,19 @@ empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición 
    que omite `output_tokens`, y otro que agota el tiempo) → `veredicto: aprueba` y `cuota.estado:
    estimada`, con `consumo_conocido`, `estimacion_empirica` por intento, el aviso literal y la lista
    `intentos_sin_cota`.
-2. **Conocido ya excede.** Con intentos sin cota y el conocido de la nueva > 1,25 × (conocido + cotas)
-   de la base en un caso sin filas sin cota de la base → `cuota: certificada · excede ·
-   conocido_excede`.
-3. **Sin intentos sin cota.** `cuota: certificada · cumple`, y en otra variante `certificada ·
+2. **El mínimo excede.** Hay intentos sin cota en la nueva, y en un caso de la base sin filas sin
+   cota el conocido de la nueva es > 1,25 × (conocido + cotas) de la base → `cuota: certificada ·
    excede`.
+3. **Sin incertidumbre.** Sin cotas ni intentos sin cota: `certificada · cumple`, y en otra
+   variante `certificada · excede`.
+3b. **Contraejemplo de Astra (obligatorio).** Nueva = 100 conocidos; base = 10 conocidos + un intento
+   con cota 90 (consumo real 1). Intervalo de la base [10, 100]; cociente [100/100, 100/10] =
+   [1, 10], que cruza 1,25 → `estimada`. **Nunca `certificada · cumple`.**
+3c. **Inverso (obligatorio).** Nueva = 100 conocidos + un intento con cota 1 000 (numerador
+   sobredimensionado); base = 100 exactos. Cociente [1, 11] → `estimada`. **Nunca un falso
+   `certificada · excede`.**
+3d. **Solo cotas finitas que no cruzan.** Nueva 100; base 90 + una cota de 5 → [100/95, 100/90] =
+   [1,05; 1,11] ≤ 1,25 → `certificada · cumple`.
 4. **Suspensión conservadora.** Un acumulado conocido por debajo del tope, pero que con la
    estimación empírica lo supera → suspensión **antes** de la siguiente corrida. La misma corrida
    publica `cuota: estimada`.
@@ -1334,8 +1383,15 @@ empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición 
    y con `CLAUDE_CODE_RETRY_WATCHDOG=1`, el `env` que recibe `subprocess.run` es idéntico al de la
    original, y `entorno_cli` registra esos valores.
 6. **Codex sin cota** → `cuota: estimada`, `fondo_observado_fuente = "no_medido"`, calidad intacta.
-7. **Estimación recalculada.** Editar `estimacion_empirica` de una fila → calidad `no_certificable`
-   (`telemetria_contradictoria`).
+7. **Estimación congelada.**
+   - Editar `estimacion_empirica.inicial` de una fila o su conjunto de observaciones → calidad
+     `no_certificable` (`telemetria_contradictoria`).
+   - En cambio, una llamada **posterior** con una salida mayor (100 → 200) **no** produce
+     contradicción: cambia solo la `estimacion_puntual_final`.
+7b. **Piloto con un intento sin cota.** La corrida piloto de un caso tiene una fila sin cota.
+   - `decision_r.json` se reproduce con la estimación inicial registrada, sin `no_certificable`.
+   - El inventario exige las R decididas.
+   - La calidad se certifica si lo demás está completo.
 8. **Separación estricta.** Ninguna condición de cuota aparece en `veredicto.motivos`, y ninguna de
    calidad en `cuota.condiciones`.
 
@@ -1502,8 +1558,8 @@ Se define e(C) como la etapa de C (`juicio`, `validacion`, `produccion` o `aprob
 
 Si se viola, `no_certificable` con `llamada_tras_desconocido_sin_autorizacion`.
 
-**Con cualquier evento sin cota, el veredicto de CUOTA queda `estimada`**, salvo que lo conocido
-ya exceda (`certificada · excede`). El veredicto de CALIDAD **no** se ve afectado por el evento:
+**Con cualquier evento sin cota, las condiciones de CUOTA de su ámbito tienen máximo `∞`**: quedan
+`estimada`, salvo que su mínimo ya exceda (`certificada · excede`, §4.5). El veredicto de CALIDAD **no** se ve afectado por el evento:
 solo por sus efectos propios (§4.5). Reanudar permite terminar de medir y publicar.
 
 Lo que sí da calidad `no_certificable` es el orden: una llamada comprometida tras un evento sin
@@ -1745,7 +1801,7 @@ de la identidad del circuito. Los eventos **con** cota entran en la cuota con su
     | pasada 2 (cobertura, conducta, puntos) | coberturas (materiales, decisivos y en lo leído, con su suelo), `definitivo_con_lectura_insuficiente`, `definitivo_con_hecho_decisivo_omitido`, `definitivo_con_hecho_no_disponible`, omisiones, utilidad, `abstencion_injustificada`, proxy, las comparativas de esas métricas, la pérdida por caso y los decisivos estables |
     | `material_turno` (alcance) | lo mismo que la pasada 2, más el alcance C8 |
     | texto del borrador o del diagnóstico | la señal de fuga y, si se rejuzga, todo lo de las pasadas 1 y 2 |
-    | consumo (proveedores dobles) | las condiciones del techo de §6.3, C25 y el presupuesto del circuito |
+    | consumo (proveedores dobles) | solo `cuota.condiciones` (techo de §6.3, C25, presupuesto del circuito). **Ninguna condición de calidad** puede cambiar |
     | `fallo_producto`, `limite_de_uso` | `turnos_completados`, la completitud y lo que dependa de la corrida que falta |
 
   - **Prohibido:**
@@ -1772,9 +1828,9 @@ de la identidad del circuito. Los eventos **con** cota entran en la cuota con su
 | S05 | pasada 2: conducta `definitiva` en una corrida cuyo `material_turno` (mundo) da alcance < 0,95 | `definitivo_con_lectura_insuficiente` 0 → 1 | reprueba |
 | S06 | el mundo emite `entraron_tramos` reducido (alcance 0,96 → 0,90) y se rejuzga con conducta `definitiva` | alcance C8 `suficiente` → `insuficiente`; DLI 0 → 1 | reprueba |
 | S07 | el mundo emite `fragmentos_en_prompt.completo=false` | alcance → `sin_medicion` (insuficiente); DLI 0 → 1 con conducta `definitiva` | reprueba |
-| S08 | los proveedores dobles devuelven más `output_tokens` en un caso de la nueva | `claude_extremo_por_caso` > 1,25 | reprueba |
+| S08 | los proveedores dobles devuelven más `output_tokens` en un caso de la nueva | CUOTA: `claude_extremo_por_caso` con mínimo > 1,25 → `cuota: certificada · excede` | **calidad sin cambio** (`aprueba`); `cuota.resultado: excede` |
 | S09 | un proveedor doble de Claude omite `output_tokens` en una llamada | la fila queda sin cota; `cuota.estado` → `estimada` | calidad **sin cambio** (`aprueba`), cuota `estimada`; el juicio se detiene hasta la reanudación (E2E-3) |
-| S10 | el mundo fija con `set_node` un nodo fuera de `atribucion_preregistrada` en las llamadas que suben más del 10 % | C25: la subida no es atribuible | reprueba |
+| S10 | el mundo fija con `set_node` un nodo fuera de `atribucion_preregistrada` en las llamadas que suben más del 10 % | CUOTA: C25, la subida no es atribuible → `cuota: … excede` | **calidad sin cambio** (`aprueba`); `cuota.resultado: excede` |
 | S11 | los runners de pasada 2 hacen caer un decisivo de 3/5 en la base a 1/5 en la nueva | `decisivos_estables_perdidos` ≠ ∅ | reprueba |
 | S12 | VJ con runners dobles que fallan defectos plantados hasta que la sensibilidad < 0,95 | `circuito_sobre_mutaciones_reservadas` | no_certificable |
 | S13 | VJ con estados de Codex invertidos hasta kappa < 0,6 | `kappa_reservado` | no_certificable |
@@ -2006,6 +2062,10 @@ Se adoptan como contrato las interfaces 1–5 y 7–10 del §4 del informe del a
     versionada.
   - Codex cae en la misma regla.
   - Se implementa como §3.1, §3.3 D, §4.5 y §5, y en la propuesta de protocolo v1.4.
+  - **Aplicación del director en la v8 (no es decisión de Pipe):** «certificada» exige que el
+    intervalo de consumo lo garantice (§4.5). Sin intentos sin cota, unas cotas finitas que cruzan el
+    umbral también dan «estimada». Es más estricto que la letra «si no hubo ningún intento sin
+    cota» y no la contradice: solo se certifica lo garantizado.
 
 ### 8.2 Resueltas por este contrato (las revisa Astra; no son decisiones de Pipe)
 
@@ -2237,6 +2297,20 @@ Aplicadas tal como las pidió Astra en su ronda 2:
 
 ---
 
+### 8.6 bis Habilitación de VJ en v1.4 (v8; explícito)
+
+**Lo único que se retira** de las exigencias de `evaluar_exigencias` (VJ:277-347) es el predicado
+`consumo_certificable` (VJ:329-332). Se conservan, sin cambio:
+
+- el **contador compartido** del circuito, con la suspensión y la reanudación de §5 y C27: la
+  validación sigue deteniéndose ante un evento sin cota no autorizado;
+- **cero salidas sin evaluar** (`salidas_sin_evaluar`, VJ:321);
+- **cero discordancias** (`discordancias_sin_resolver`, VJ:323);
+- la **acreditación v1.3 del reservado** (`acreditacion_compatibilidad_v13`, VJ:326-328);
+- todas las exigencias de sensibilidad, falsos positivos, kappa y cláusula breve.
+
+El consumo de la validación entra en la cuota (§4.5).
+
 ### 8.7 Pendientes y preguntas de la v7 para el director
 
 - La propuesta `docs/banco-calidad-04-protocolo-v1.4-propuesta.md` necesita la revisión de Astra y
@@ -2272,3 +2346,7 @@ Aplicadas tal como las pidió Astra en su ronda 2:
 | **Astra sobre v6 (a)** | Bloqueante | la cota de §4.5 no era conservadora: entrada heurística, salida dependiente del modelo, fondo muestral | §4.5 v7: ningún CLI tiene cota, y el intento sin cota da cuota `estimada` con estimación empírica **no garantizada**, nunca certificada; R4 (`cota` nula, `estimacion_empirica`); E2E-19 1–4 |
 | **Astra sobre v6 (b)** | Mayor | imponer `CLAUDE_CODE_MAX_RETRIES=10` alteraba la conducta | §4.3 v7 (el envoltorio devuelve el entorno idéntico); §4.5 («Entorno del CLI»); E2E-6 punto 2; E2E-19 5 |
 | **Pipe 2026-10-12 «Separar calidad y cuota»** | Decisión | dos veredictos; la calidad es certificable con intentos sin cota; la cuota es certificada o estimada; la suspensión usa conocido + estimación; Codex en la misma regla | §3.1 (salida y precedencia por veredicto); §3.3 D y E; §3.5 (`cuota` en el Bloque 0); §3.8; §4.1; §4.5; §5.1 y §5.4; §6.2 (E2E-3, E2E-14, E2E-19); §6.3 (S09, I03); §8.1; §8.7; propuesta de protocolo v1.4 |
+| **Astra sobre v7 (a)** | Mayor | dos caminos por los que el consumo invalidaba la CALIDAD: piloto con fila sin cota; estimación recalculada que contradecía por un máximo posterior | §3.3 A (R11 y R12: piloto con la estimación inicial, R reproducible y todas las repeticiones exigidas); R4 y §4.5 (estimación inicial congelada con `corte_seq` y observaciones registradas; actualización final aparte); E2E-19 7 y 7b |
+| **Astra sobre v7 (b)** | Bloqueante | certificar el cumplimiento solo si el máximo posible cumple, y el exceso solo si el mínimo excede; estado del intervalo que cruza, también con cotas finitas | §4.5 («CUOTA, por intervalo»); §3.1 (precedencia); §3.3 D; §3.5; E2E-19 3b (contraejemplo 100 frente a 10 + 90), 3c (inverso) y 3d |
+| **Astra sobre v7 (d)** | Mayor | S08 y S10 con resultado separado de CUOTA; textos viejos del protocolo | §6.3 (S08, S10 y cierre «consumo»); propuesta v1.4 (§4 y barrido de §5) |
+| **Astra sobre v7 (e)** | — | retirar solo `consumo_certificable` de VJ | §8.6 bis |
