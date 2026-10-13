@@ -9,6 +9,33 @@ como tarea del harness en primer plano dentro de `run_in_background` (sin `&` in
 huérfano queda sin lector). El perfil por defecto de esta máquina es xhigh, prohibido sin autorización
 de Pipe.
 
+## 0. Avance del 2026-10-13 (sobre el cierre de abajo)
+
+- **Contrato de la cadena cerrado: v9.1** (`5beaa54`).
+  - Astra dio APTO CON CAMBIOS a la v8; el director aplicó sus correcciones literales y Astra no vio
+    otro mandato contradictorio (`docs/banco04-revisiones/r4/veredicto_contrato8.md`, `9.md` y
+    `10.md`).
+  - La regla (d) de la v9.1 cubre el aborto. El director verificó que toda ruta que redacta un
+    borrador pasa por el muro (`agents/graph.py:2278`, 2306 y 2238). La única excepción es
+    `stage_abort_node` (3013-3024), que cuenta como turno no completado.
+- **El protocolo pasó a `banco04-v1.4`** (`b06055f`), con calidad y cuota separadas y la cuota por
+  intervalo.
+- **Pruebas de la cadena ajustadas a la v9** por el autor independiente (`07b721e`): 27/180 PASS,
+  recontado por el director. Las suites viejas, también recontadas: juicio 387/387, producción
+  238/238, spend_guard 83/83 y gates no ciegos en verde.
+- **EN CURSO:** un solo implementador Opus construye el ESQUELETO (encargo en el scratchpad
+  2876318c, `r6/encargo_esqueleto.md`; su informe irá a `docs/banco04-revisiones/r6/`).
+  - Barreras: `git diff --exit-code` sobre las pruebas y sus fixtures, y sobre
+    `backend/mia/agent{,s}/` y `scoring.py`.
+  - Tabla de migración obligatoria para las suites viejas.
+- **Pendientes nuevos:**
+  - el autor independiente debe agregar el check de la regla (d);
+  - después del esqueleto, una pasada corta de Astra solo sobre ese corte (trazar desde `main`),
+    antes de abrir frentes paralelos.
+- **Defecto del producto, para el Bloque 1:** cuando el abogado edita el borrador, el muro corre
+  sobre el texto editado DESPUÉS de la aprobación (`agents/graph.py:2753-2771`). El abogado firma sin
+  ver el informe de su versión final.
+
 ## 1. Dónde quedó, en una frase
 
 El banco de calidad 0.4 tiene sus puertas escritas, pero **no tiene la cadena que las recorra**. Se
