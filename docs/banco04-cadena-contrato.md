@@ -1384,11 +1384,11 @@ empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición 
    [1,05; 1,11] ≤ 1,25 → `certificada · cumple`.
 4. **Suspensión conservadora.** Un acumulado conocido por debajo del tope, pero que con la
    estimación empírica lo supera → suspensión **antes** de la siguiente corrida. La misma corrida
-   publica la cuota por intervalo; con los datos fijados (el evento está en la versión NUEVA (numerador), de modo que el intervalo cruza el umbral), `estimada`.
+   publica la cuota por intervalo; con los datos fijados (el evento está en la versión NUEVA (numerador) y el mínimo del cociente no supera el umbral, por lo que el intervalo lo cruza), `estimada`.
 5. **El envoltorio no toca el entorno.** Con `CLAUDE_CODE_MAX_RETRIES` igual a `0`, a `15` o ausente,
    y con `CLAUDE_CODE_RETRY_WATCHDOG=1`, el `env` que recibe `subprocess.run` es idéntico al de la
    original, y `entorno_cli` registra esos valores.
-6. **Codex sin cota** → `cuota: estimada` (el evento está en el numerador), `fondo_observado_fuente = "no_medido"`, calidad intacta.
+6. **Codex sin cota** → `cuota: estimada` (datos fijados: el evento está en el numerador y el mínimo del cociente no supera el umbral, por lo que el intervalo lo cruza), `fondo_observado_fuente = "no_medido"`, calidad intacta.
 7. **Estimación congelada.**
    - Editar `estimacion_empirica.inicial` de una fila o su conjunto de observaciones → calidad
      `no_certificable` (`telemetria_contradictoria`).
@@ -1558,7 +1558,7 @@ Se define e(C) como la etapa de C (`juicio`, `validacion`, `produccion` o `aprob
   con su sha256) → reanudación `r2`, que cubre evento 2 y `s2` → juicio termina.
 
   Exigido: las dos suspensiones y las dos reanudaciones existen y validan, la puerta acepta el orden,
-  la calidad se calcula y la cuota queda `estimada` (datos fijados: el evento está en la versión NUEVA (numerador), de modo que el intervalo cruza el umbral). Variantes:
+  la calidad se calcula y la cuota queda `estimada` (datos fijados: el evento está en la versión NUEVA (numerador) y el mínimo del cociente no supera el umbral, por lo que el intervalo lo cruza). Variantes:
   - `r2` que cubre solo el evento 1 → la llamada posterior al evento 2 da
     `llamada_tras_desconocido_sin_autorizacion`;
   - borrar o editar `s1` invalida `r1`.
@@ -1686,7 +1686,7 @@ de la identidad del circuito. Los eventos **con** cota entran en la cuota con su
     `no_enviado` (K15).
   - La siguiente llamada de juez lanza `CuotaAgotada` con el mismo código y se escribe una
     suspensión nueva R6 `suspensiones/juicio-<seq>.json` con `eventos` = [id de la fila]. En la
-    puerta, la cuota queda `estimada` (datos fijados: el evento está en la versión NUEVA (numerador), de modo que el intervalo cruza el umbral), y la calidad no tiene ningún motivo
+    puerta, la cuota queda `estimada` (datos fijados: el evento está en la versión NUEVA (numerador) y el mínimo del cociente no supera el umbral, por lo que el intervalo lo cruza), y la calidad no tiene ningún motivo
     por el evento.
   - Variantes con la misma exigencia: Codex sin evento `usage`; `cli-codex-eval` con `None`.
   - Variantes del registro de §4.4: las ocho pruebas listadas allí, con producción y con el juez
@@ -1840,7 +1840,7 @@ de la identidad del circuito. Los eventos **con** cota entran en la cuota con su
 | S06 | el mundo emite `entraron_tramos` reducido (alcance 0,96 → 0,90) y se rejuzga con conducta `definitiva` | alcance C8 `suficiente` → `insuficiente`; DLI 0 → 1 | reprueba |
 | S07 | el mundo emite `fragmentos_en_prompt.completo=false` | alcance → `sin_medicion` (insuficiente); DLI 0 → 1 con conducta `definitiva` | reprueba |
 | S08 | los proveedores dobles devuelven más `output_tokens` en un caso de la nueva | CUOTA: `claude_extremo_por_caso` con mínimo > 1,25 → `cuota: certificada · excede` | **calidad sin cambio** (`aprueba`); `cuota.resultado: excede` |
-| S09 | un proveedor doble de Claude omite `output_tokens` en una llamada | la fila (de la versión NUEVA, numerador) queda sin cota; el intervalo cruza el umbral; `cuota.estado` → `estimada` | calidad **sin cambio** (`aprueba`), cuota `estimada`; el juicio se detiene hasta la reanudación (E2E-3) |
+| S09 | un proveedor doble de Claude omite `output_tokens` en una llamada | la fila (de la versión NUEVA, numerador) queda sin cota y el mínimo del cociente no supera el umbral, por lo que el intervalo lo cruza; `cuota.estado` → `estimada` | calidad **sin cambio** (`aprueba`), cuota `estimada`; el juicio se detiene hasta la reanudación (E2E-3) |
 | S10 | el mundo fija con `set_node` un nodo fuera de `atribucion_preregistrada` en las llamadas que suben más del 10 % | CUOTA: C25, la subida no es atribuible → `cuota: … excede` | **calidad sin cambio** (`aprueba`); `cuota.resultado: excede` |
 | S11 | los runners de pasada 2 hacen caer un decisivo de 3/5 en la base a 1/5 en la nueva | `decisivos_estables_perdidos` ≠ ∅ | reprueba |
 | S12 | VJ con runners dobles que fallan defectos plantados hasta que la sensibilidad < 0,95 | `circuito_sobre_mutaciones_reservadas` | no_certificable |
