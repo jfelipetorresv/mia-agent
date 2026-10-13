@@ -1,6 +1,6 @@
 # Banco 0.4: contrato de la cadena (producir, juzgar, decidir)
 
-Versión del contrato: **banco04-cadena/v8** (propuesta). Fecha: 2026-10-12. Base: HEAD `b89e4e8` (v5 con APTO de Astra en `6c26afc`; v6 y v7 rechazadas),
+Versión del contrato: **banco04-cadena/v9** (propuesta). Fecha: 2026-10-12. Base: HEAD `b89e4e8` (v5 con APTO de Astra en `6c26afc`; v6 y v7 rechazadas),
 rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad-04-protocolo.md`).
 
 **Cambios de v1 a v2.**
@@ -27,7 +27,8 @@ rama `feat/mia-04-hermes-legal`, protocolo **banco04-v1.3** (`docs/banco-calidad
 
 - **Decisión de Pipe del 2026-10-12, «Separar calidad y cuota».** **Revoca** «Acotar y medir».
   - El banco emite **dos veredictos**: CALIDAD y CUOTA (§3.1, §4.5).
-  - Un intento sin cota ya no hace no certificable la calidad: la cuota pasa a «estimada».
+  - Un intento sin cota ya no hace no certificable la calidad: pone máximo `∞` en su ámbito y la cuota
+    se resuelve por intervalo (§4.5).
   - El envoltorio **no toca** el entorno del CLI.
 - **Objeciones de Astra sobre la v6:**
   - (a) la cota no era conservadora: ya no se certifica ninguna cota de CLI;
@@ -302,7 +303,8 @@ B14).
   - **No detiene nada.**
 - **desconocido sin cota:** `consumo_conocido == false` y `cota.tokens_cota_superior` es `null`, o
   bien una fila **huérfana enviada** (ver abajo).
-  - Deja la **cuota** `estimada` (§4.5, v7); la calidad sigue siendo certificable.
+  - Pone máximo `∞` en el consumo de su ámbito; la **cuota** se resuelve por intervalo (§4.5, v9).
+    La calidad sigue siendo certificable.
   - Es el **único** evento que detiene la ejecución y exige reanudación (§5).
 - **no enviado:** `estado == "no_enviado"`, o fila **huérfana no enviada**. No es consumo (§4.2).
 
@@ -740,7 +742,7 @@ puerta lo convierte en `muestra_incompleta` y construye el inventario con los id
 | `discordancias_sin_resolver` = 0 | `len(recuento.discordancias_sin_resolver)` (es una lista, J:1076; hoy M:341 hace `int()` sobre ella) + `discordancias` de las negativas falsas + cobertura con resultado `discordancia_sin_resolver` | si faltan los votos crudos, lo cubre el bloque A («Juicio completo»); cualquier discordancia > 0 | no certificable |
 | `kappa_reservado` ≥ 0,6 | `evaluar_kappa(pares, conjunto="reservado")` sobre los pares de la reproducción de R9 | falta R9; kappa < 0,6 | no certificable |
 | `kappa_salidas_reales` | `evaluar_kappa(..., "real")` sobre `pares_kappa` reproducidos de las corridas juzgadas de **las dos versiones** (§8.4, Q6) | se exige y queda < 0,6 | no certificable. Indefinido o inestable: se publica y no cuenta como ≥ 0,6 (§8.5) |
-| `circuito_sobre_mutaciones_reservadas` | `evaluar_exigencias` (VJ:277) sobre la reproducción de R9 y la acreditación de R9. **v7:** la exigencia `consumo_certificable` (VJ:329-332) sale del circuito y pasa a la cuota: un intento sin cota en la validación deja la cuota `estimada`, no el circuito inutilizable | falta R9; `circuito_utilizable` falso por una exigencia de calidad | no certificable |
+| `circuito_sobre_mutaciones_reservadas` | `evaluar_exigencias` (VJ:277) sobre la reproducción de R9 y la acreditación de R9. **v7:** la exigencia `consumo_certificable` (VJ:329-332) sale del circuito y pasa a la cuota: un intento sin cota en la validación pone máximo `∞` en su ámbito y va a la cuota por intervalo, no deja el circuito inutilizable | falta R9; `circuito_utilizable` falso por una exigencia de calidad | no certificable |
 | `evaluacion_completa_dos_jueces` | resultado del bloque A, «Juicio completo», en las dos versiones | cualquier corrida del inventario sin juicio completo de los dos jueces (regla del bloque A) | no certificable |
 | Cobertura de decisivos, lectura completa (media ≥ 0,90; ningún caso < 0,80) | `cubierto` final por hecho decisivo de la clave (pasada 2 y cobertura adjudicada), media sobre R por caso y media de casos por estrato | la clave del caso no se puede leer | reprueba |
 | `aprobacion_sin_edicion_proxy` ≥ 0,60 | M:316-327: `completada` (R2 `estado`), defectos (fila 1), omisiones (puntos de la pasada 2), celda, `aprobaria_sin_editar`; `negativa_correcta` de la pasada 2 (R5, campo nuevo, con su validación) | falta la pasada 2; `negativa_correcta` contradice los puntos o los defectos de la corrida | reprueba |
@@ -963,7 +965,7 @@ sigue fuera del banco.
 | `no_concluyente_sin_extension` · `extension_sin_causa` · `extension_no_coincide` · `extension_incompleta` | §3.4 |
 | `submuestra_incompleta` | §3.3 E, §3.7 |
 | `techo_sin_aprobacion` · `atribucion_mapa_no_coincide` | calidad: completitud e identidad (§3.3 D) |
-| `consumo_desconocido_sin_cota` | **solo** código de parada en tiempo de ejecución (`CuotaAgotada`, `ParadaCodexProduccion`) y motivo de `cuota.estado = estimada`. **Nunca** es motivo de calidad `no_certificable` (v7) |
+| `consumo_desconocido_sin_cota` | **solo** código de parada en tiempo de ejecución (`CuotaAgotada`, `ParadaCodexProduccion`) y causa del máximo `∞` del ámbito en la cuota (que se resuelve por intervalo, §4.5). **Nunca** es motivo de calidad `no_certificable` (v7) |
 | `telemetria_contradictoria` · `telemetria_acreditada_no_coincide` | §4.1, §4.4 |
 | `circuito_suspendido` · `llamada_tras_desconocido_sin_autorizacion` · `reanudacion_invalida` | §3.3 E, §5.4, R6 |
 | `identidad_efectiva_ausente` | §3.3 A, comparabilidad (K8) |
@@ -1345,7 +1347,8 @@ entorno: solo lo lee y lo registra (`entorno_cli`, §4.3). Si el entorno trae
 `CLAUDE_CODE_RETRY_WATCHDOG` o unos reintentos distintos de los de fábrica, se publica junto a la
 cuota. No cambia nada más.
 
-**Codex.** Sus intentos sin cota caen en la misma regla: cuota `estimada`, con su estimación
+**Codex.** Sus intentos sin cota caen en la misma regla (máximo `∞` en su ámbito, cuota por
+intervalo), con su estimación
 empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición equivalente).
 
 **Cambios de código respecto de la v6:**
@@ -1374,6 +1377,9 @@ empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición 
 3c. **Inverso (obligatorio).** Nueva = 100 conocidos + un intento con cota 1 000 (numerador
    sobredimensionado); base = 100 exactos. Cociente [1, 11] → `estimada`. **Nunca un falso
    `certificada · excede`.**
+3e. **Evento sin cota solo en el denominador (obligatorio, Astra v8).** Nueva = 100 exactos; base =
+   100 conocidos + un intento sin cota → base [100, ∞]; cociente [0, 1] ≤ 1,25 → `certificada ·
+   cumple`. Su variante con el evento en el numerador da `estimada`.
 3d. **Solo cotas finitas que no cruzan.** Nueva 100; base 90 + una cota de 5 → [100/95, 100/90] =
    [1,05; 1,11] ≤ 1,25 → `certificada · cumple`.
 4. **Suspensión conservadora.** Un acumulado conocido por debajo del tope, pero que con la
@@ -1382,7 +1388,7 @@ empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición 
 5. **El envoltorio no toca el entorno.** Con `CLAUDE_CODE_MAX_RETRIES` igual a `0`, a `15` o ausente,
    y con `CLAUDE_CODE_RETRY_WATCHDOG=1`, el `env` que recibe `subprocess.run` es idéntico al de la
    original, y `entorno_cli` registra esos valores.
-6. **Codex sin cota** → `cuota: estimada`, `fondo_observado_fuente = "no_medido"`, calidad intacta.
+6. **Codex sin cota** → `cuota: estimada` (el evento está en el numerador), `fondo_observado_fuente = "no_medido"`, calidad intacta.
 7. **Estimación congelada.**
    - Editar `estimacion_empirica.inicial` de una fila o su conjunto de observaciones → calidad
      `no_certificable` (`telemetria_contradictoria`).
@@ -1558,8 +1564,11 @@ Se define e(C) como la etapa de C (`juicio`, `validacion`, `produccion` o `aprob
 
 Si se viola, `no_certificable` con `llamada_tras_desconocido_sin_autorizacion`.
 
-**Con cualquier evento sin cota, las condiciones de CUOTA de su ámbito tienen máximo `∞`**: quedan
-`estimada`, salvo que su mínimo ya exceda (`certificada · excede`, §4.5). El veredicto de CALIDAD **no** se ve afectado por el evento:
+**Con cualquier evento sin cota, el consumo de su ámbito tiene máximo `∞`**, y cada condición de
+CUOTA se resuelve por intervalo (§4.5): `estimada` si su intervalo cruza el umbral, `certificada ·
+excede` si su mínimo ya excede y `certificada · cumple` si su máximo cumple. Esto último ocurre cuando
+el evento solo está en el denominador de un cociente: nueva = 100, base = `[100, ∞]`, cociente
+`[0, 1]`, que cumple frente a 1,25. Prueba obligatoria en E2E-19. El veredicto de CALIDAD **no** se ve afectado por el evento:
 solo por sus efectos propios (§4.5). Reanudar permite terminar de medir y publicar.
 
 Lo que sí da calidad `no_certificable` es el orden: una llamada comprometida tras un evento sin

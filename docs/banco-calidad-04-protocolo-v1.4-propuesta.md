@@ -87,6 +87,16 @@ Al final del párrafo de cabecera se añade: «La v1.4 separa el veredicto de ca
 
 ### 4.2 §3.4 · Techo efectivo, contingencia y suspensión
 
+**Actual** (último punto de «Suspensión», protocolo:281):
+
+> - **un resultado incompleto nunca se certifica**: ni para la línea base ni para aprobar 0.4.
+
+**Nuevo:**
+
+> - **una CALIDAD incompleta nunca se certifica**: ni para la línea base ni para aprobar 0.4. La
+>   CUOTA de lo medido hasta la suspensión se publica por separado con su veredicto por intervalo
+>   (§6.3).
+
 **Actual:**
 
 > Se miden acumulados durante la corrida, incluida la cota conservadora de los intentos fallidos
@@ -135,7 +145,7 @@ Al final del párrafo de cabecera se añade: «La v1.4 separa el veredicto de ca
 
 > - El techo de §6.3 se evalúa con esa cota superior **cuando existe**.
 > - Un intento sin cota (por C18, todo intento fallido de un CLI) no hace no certificable el techo:
->   deja el veredicto de cuota en **«estimada»** (§6.3, §6.4).
+>   pone **máximo infinito** en el consumo de su ámbito; el veredicto de cuota se resuelve por intervalo (§6.3): queda «estimada» si su intervalo cruza el umbral, «certificada · excede» si su mínimo ya excede y «certificada · cumple» si el máximo cumple, por ejemplo cuando el evento solo afecta al denominador de un cociente (§6.4).
 > - Cada intento sin cota se registra con una **estimación empírica no garantizada**: entrada
 >   heurística + la salida máxima observada en llamadas conocidas de la misma familia, versión del
 >   CLI y firma de comando + el fondo observado en la medición versionada del CLI (instantánea, firma
@@ -168,7 +178,7 @@ Al final del párrafo de cabecera se añade: «La v1.4 separa el veredicto de ca
 **Nuevo:**
 
 > - **Segundo proveedor (Codex, 5C):** se mide igual, por caso y en total, en su propia cuota. Sus
->   intentos sin cota caen en la misma regla (cuota «estimada»).
+>   intentos sin cota caen en la misma regla (máximo infinito en su ámbito; cuota por intervalo, §6.3).
 
 ### 4.4 §6.3 · Techo de cuota
 
@@ -280,8 +290,8 @@ Al final del párrafo de cabecera se añade: «La v1.4 separa el veredicto de ca
 
 > Todo intento fallido bajo un alias `cli-*` (Claude o Codex) se
 > registra con consumo desconocido y **sin cota**. Por la decisión de Pipe del 2026-10-12 (§12.7),
-> eso deja el veredicto de **cuota** en «estimada», con su estimación empírica no garantizada. No
-> hace no certificable la calidad. Para la suspensión de §3.4 cuenta la estimación empírica.
+> eso pone máximo infinito en el consumo de su ámbito, con su estimación empírica no garantizada; el
+> veredicto de **cuota** se resuelve por intervalo (§6.3): queda «estimada» si su intervalo cruza el umbral, «certificada · excede» si su mínimo ya excede y «certificada · cumple» si el máximo cumple, por ejemplo cuando el evento solo afecta al denominador de un cociente. No hace no certificable la calidad. Para la suspensión de §3.4 cuenta la estimación empírica.
 
 **Se añade al final de C18:**
 
@@ -310,7 +320,7 @@ Al final del párrafo de cabecera se añade: «La v1.4 separa el veredicto de ca
 >   - La producción Claude puede seguir.
 >   - Las métricas de calidad que se obtengan **son certificables** y entran en el veredicto de
 >     calidad.
->   - El veredicto de cuota queda «estimada» (§6.3).
+>   - El veredicto de cuota se resuelve por intervalo (§6.3): queda «estimada» si su intervalo cruza el umbral, «certificada · excede» si su mínimo ya excede y «certificada · cumple» si el máximo cumple, por ejemplo cuando el evento solo afecta al denominador de un cociente.
 
 ### 4.10 §12.7 nueva · Versión banco04-v1.4 (2026-10-12): separar calidad y cuota
 
@@ -423,19 +433,20 @@ Al final del párrafo de cabecera se añade: «La v1.4 separa el veredicto de ca
 
 **Nuevo:**
 
->     - un intento fallido sin cota deja **la cuota** «estimada», con máximo infinito en su ámbito,
->       y **no** hace no certificable la calidad. Un intento con una cota finita que cruza el umbral
+>     - un intento fallido sin cota pone máximo infinito en su ámbito y la cuota se resuelve por intervalo (§6.3): queda «estimada» si su intervalo cruza el umbral, «certificada · excede» si su mínimo ya excede y «certificada · cumple» si el máximo cumple, por ejemplo cuando el evento solo afecta al denominador de un cociente; **no** hace
+>       no certificable la calidad. Un intento con una cota finita que cruza el umbral
 >       también deja la cuota «estimada». El contraejemplo «nueva 100; base 10 + cota 90» nunca da
 >       «certificada · cumple», y un numerador sobredimensionado nunca da un falso «excede» (P10, v1.4);
 >     - el contador (conocido + cotas + estimación empírica inicial) alcanza el techo, suspende y
->       publica «incompleto — no certificable» en la calidad y la cuota por separado (P11);
+>       publica la calidad «incompleta — no certificable» y, por separado, el veredicto de cuota por
+>       intervalo (§6.3) sobre lo medido hasta la suspensión (P11);
 
 ### 4.15 §12.1 · Registro de P10 (nota, sin reescribir el histórico)
 
 La tabla de §12.1 es el registro de la ronda 1 y no se reescribe. Al final de la fila **P10** se añade:
 
-> *(v1.4: un intento sin cota ya no deja el techo «no certificable»; deja la cuota «estimada» por
-> intervalo, §6.3, y no afecta a la calidad.)*
+> *(v1.4: un intento sin cota ya no deja el techo «no certificable»; pone máximo infinito en su
+> ámbito y la cuota se resuelve por intervalo, §6.3; no afecta a la calidad.)*
 
 ### 4.16 §12.6 · C24
 
