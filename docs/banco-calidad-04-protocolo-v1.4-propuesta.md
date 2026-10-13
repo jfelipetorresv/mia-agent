@@ -59,6 +59,13 @@ Revoca «Acotar y medir», del mismo día, que nunca se integró en el protocolo
   del CLI.
 - Codex: los intentos sin cota caen en la misma regla (cuota estimada).
 
+**Aplicación por intervalo (director, v9; no es decisión de Pipe).** Las dos frases «“estimada” si los
+hubo» y «Codex […] cuota estimada» registran la decisión tal como se dictó. Se aplican por la regla
+del intervalo de §6.3: un intento sin cota pone máximo infinito en el consumo de su ámbito, y la cuota
+es «estimada» solo si el intervalo resultante cruza el umbral. Si el evento solo está en el
+denominador de un cociente, puede certificarse «cumple», y si lo conocido ya excede, «certificada ·
+excede». Solo se certifica lo garantizado.
+
 ## 3 · Lo que no cambia
 
 La muestra, las repeticiones, la rúbrica, las métricas, los umbrales de §6.1 y §6.2, las cifras de

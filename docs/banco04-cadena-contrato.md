@@ -1384,7 +1384,7 @@ empírica (`fondo_observado` = 0, `no_medido`, mientras no exista una medición 
    [1,05; 1,11] ≤ 1,25 → `certificada · cumple`.
 4. **Suspensión conservadora.** Un acumulado conocido por debajo del tope, pero que con la
    estimación empírica lo supera → suspensión **antes** de la siguiente corrida. La misma corrida
-   publica `cuota: estimada`.
+   publica la cuota por intervalo; con los datos fijados (el evento está en la versión NUEVA (numerador), de modo que el intervalo cruza el umbral), `estimada`.
 5. **El envoltorio no toca el entorno.** Con `CLAUDE_CODE_MAX_RETRIES` igual a `0`, a `15` o ausente,
    y con `CLAUDE_CODE_RETRY_WATCHDOG=1`, el `env` que recibe `subprocess.run` es idéntico al de la
    original, y `entorno_cli` registra esos valores.
@@ -1424,7 +1424,8 @@ cualquier versión de `versiones_contador`:
 - **La producción Codex:** ningún compromiso `cli-codex*` nuevo de producción ni de aprobación.
   `GuardBanco.check_and_reserve` lanza `ParadaCodexProduccion` (R:1563-1568) con el mismo código.
 - **La producción Claude puede seguir** (C19). Sus métricas de calidad se calculan y son
-  certificables. La cuota queda `estimada` (§4.5).
+  certificables. La cuota se resuelve por intervalo (§4.5): `estimada` solo si su intervalo cruza el
+  umbral.
 
 ### 5.2 Cómo se reanuda
 
@@ -1557,7 +1558,7 @@ Se define e(C) como la etapa de C (`juicio`, `validacion`, `produccion` o `aprob
   con su sha256) → reanudación `r2`, que cubre evento 2 y `s2` → juicio termina.
 
   Exigido: las dos suspensiones y las dos reanudaciones existen y validan, la puerta acepta el orden,
-  la calidad se calcula y la cuota queda `estimada`. Variantes:
+  la calidad se calcula y la cuota queda `estimada` (datos fijados: el evento está en la versión NUEVA (numerador), de modo que el intervalo cruza el umbral). Variantes:
   - `r2` que cubre solo el evento 1 → la llamada posterior al evento 2 da
     `llamada_tras_desconocido_sin_autorizacion`;
   - borrar o editar `s1` invalida `r1`.
@@ -1685,7 +1686,8 @@ de la identidad del circuito. Los eventos **con** cota entran en la cuota con su
     `no_enviado` (K15).
   - La siguiente llamada de juez lanza `CuotaAgotada` con el mismo código y se escribe una
     suspensión nueva R6 `suspensiones/juicio-<seq>.json` con `eventos` = [id de la fila]. En la
-    puerta, la cuota queda `estimada`, y la calidad no tiene ningún motivo por el evento.
+    puerta, la cuota queda `estimada` (datos fijados: el evento está en la versión NUEVA (numerador), de modo que el intervalo cruza el umbral), y la calidad no tiene ningún motivo
+    por el evento.
   - Variantes con la misma exigencia: Codex sin evento `usage`; `cli-codex-eval` con `None`.
   - Variantes del registro de §4.4: las ocho pruebas listadas allí, con producción y con el juez
     Codex. El juez Codex con varios eventos `usage` persiste todos en R5 y R4.
@@ -1838,7 +1840,7 @@ de la identidad del circuito. Los eventos **con** cota entran en la cuota con su
 | S06 | el mundo emite `entraron_tramos` reducido (alcance 0,96 → 0,90) y se rejuzga con conducta `definitiva` | alcance C8 `suficiente` → `insuficiente`; DLI 0 → 1 | reprueba |
 | S07 | el mundo emite `fragmentos_en_prompt.completo=false` | alcance → `sin_medicion` (insuficiente); DLI 0 → 1 con conducta `definitiva` | reprueba |
 | S08 | los proveedores dobles devuelven más `output_tokens` en un caso de la nueva | CUOTA: `claude_extremo_por_caso` con mínimo > 1,25 → `cuota: certificada · excede` | **calidad sin cambio** (`aprueba`); `cuota.resultado: excede` |
-| S09 | un proveedor doble de Claude omite `output_tokens` en una llamada | la fila queda sin cota; `cuota.estado` → `estimada` | calidad **sin cambio** (`aprueba`), cuota `estimada`; el juicio se detiene hasta la reanudación (E2E-3) |
+| S09 | un proveedor doble de Claude omite `output_tokens` en una llamada | la fila (de la versión NUEVA, numerador) queda sin cota; el intervalo cruza el umbral; `cuota.estado` → `estimada` | calidad **sin cambio** (`aprueba`), cuota `estimada`; el juicio se detiene hasta la reanudación (E2E-3) |
 | S10 | el mundo fija con `set_node` un nodo fuera de `atribucion_preregistrada` en las llamadas que suben más del 10 % | CUOTA: C25, la subida no es atribuible → `cuota: … excede` | **calidad sin cambio** (`aprueba`); `cuota.resultado: excede` |
 | S11 | los runners de pasada 2 hacen caer un decisivo de 3/5 en la base a 1/5 en la nueva | `decisivos_estables_perdidos` ≠ ∅ | reprueba |
 | S12 | VJ con runners dobles que fallan defectos plantados hasta que la sensibilidad < 0,95 | `circuito_sobre_mutaciones_reservadas` | no_certificable |
@@ -2064,7 +2066,8 @@ Se adoptan como contrato las interfaces 1–5 y 7–10 del §4 del informe del a
     - CALIDAD (`aprueba` / `reprueba` / `no_certificable`), certificable aunque haya intentos sin
       cota;
     - CUOTA (`certificada` cumple / excede; `estimada` si hubo intentos sin cota; `excede` si lo
-      conocido ya excede).
+      conocido ya excede). **Aplicación por intervalo (v9):** «estimada si los hubo» se lee como
+      «estimada si, por los intentos sin cota o por las cotas, el intervalo cruza el umbral» (§4.5).
   - El techo sigue gobernando la suspensión, con conocido + estimación empírica.
   - La reanudación y C27 siguen igual.
   - Se retira el fijado de reintentos y se conserva la medición del fondo como estimación empírica
@@ -2240,7 +2243,7 @@ Primero va la redacción original; las revisiones posteriores al dictamen de Ast
   La garantía de compromiso irrevocable de §4.2 (decisión del director, K7) se recoge en la misma
   aclaración C27, como la forma en que se aplica la reanudación.
 - **Q14. [SUSTITUIDA por la decisión de Pipe «Separar calidad y cuota» (§4.5, §8.1): ningún CLI
-  tiene cota, y su consecuencia ya no es la no certificabilidad sino la cuota `estimada`]** Se intenta acreditar la cota según C18, sin cambiar la conducta del
+  tiene cota, y su consecuencia ya no es la no certificabilidad sino la cuota por intervalo (§4.5)]** Se intenta acreditar la cota según C18, sin cambiar la conducta del
   producto. Para eso se
   necesitan dos datos de la documentación oficial de la versión instalada del CLI: el número máximo de
   reintentos por defecto y si en modo `-p --max-turns 1` sin herramientas se emiten peticiones de
@@ -2300,7 +2303,7 @@ Aplicadas tal como las pidió Astra en su ronda 2:
 - **Interpretación declarada para Astra.** La medición del fondo se hace como **paso 0 de la
   piloto** (§4.5) y no durante las corridas, porque K13 congela la instantánea en el primer R1.
 - **Pendientes:**
-  - ~~la cota de Codex~~ (v7: sin objeto, porque ningún CLI tiene cota y rige la cuota estimada);
+  - ~~la cota de Codex~~ (v7: sin objeto, porque ningún CLI tiene cota y rige la cuota por intervalo);
   - comprobar que `--debug-file` existe en `claude --help` 2.1.296, o montar el proxy local;
   - las claves de los 13 casos visibles en la custodia real.
 
