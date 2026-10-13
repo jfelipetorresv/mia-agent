@@ -1,10 +1,11 @@
 # Banco de calidad 0.4 — Protocolo (fijado antes de correr)
 
-Versión del protocolo: **banco04-v1.3** · Fecha: 2026-10-11 · Plan: `como-vamos-con-la-robust-llama.md`
+Versión del protocolo: **banco04-v1.4** · Fecha: 2026-10-12 · Plan: `como-vamos-con-la-robust-llama.md`
 (Bloque 0, contrato 11, respuestas a Astra rondas 1-2, objeciones N1 y O17). La v1.1 incorporó la
 primera revisión de Codex Astra (NO APTO, 12 objeciones). La v1.2 incorpora su segunda revisión
 (cinco parciales y N1-N5) y las decisiones de Pipe del 2026-10-11 (§11). Detalle de los cambios en
-§12.
+§12. La v1.4 separa el veredicto de calidad del de cuota
+(decisión de Pipe del 2026-10-12, §12.7).
 
 Este documento fija qué significa «MIA es buena» para comparar 0.3.3 con 0.4. Una vez corrida la
 línea base, **nada de lo que aquí se fija se cambia**: ni la muestra, ni R, ni la rúbrica, ni los
@@ -257,15 +258,24 @@ Se publica, por estrato y por caso:
 - Bloque 0: **18 M de cuota Claude** y **5 M de cuota Codex**.
 - Bloque 7: **32 M Claude** y **8 M Codex**.
 
-Se miden acumulados durante la corrida, incluida la cota conservadora de los intentos fallidos
-(§5.5).
+Se miden acumulados durante la corrida. Cada intento fallido con cota suma su cota (§5.5). Cada
+intento sin cota suma, **solo para decidir la suspensión**, su estimación empírica (§5.5), de forma
+conservadora, para detener antes. Para eso se usa su **estimación empírica inicial congelada**
+(§5.5). Esa suma nunca certifica la cuota (§6.3).
 
 **Reserva del juicio.** Del techo se apartan desde el principio la cuota del juicio, la
 adjudicación y la validación (≈ 7 M Claude y la totalidad de Codex en el Bloque 0). La producción
 no puede consumir esa reserva: un banco con salidas que no se pueden juzgar no sirve.
 
 **Tanda piloto.** La primera tanda es una corrida de cada uno de los 17 casos, y cuenta como
-repetición 1. Con su consumo medido se proyecta el circuito completo.
+repetición 1. Con su consumo se proyecta el circuito completo: lo conocido, más las cotas finitas,
+más la **estimación empírica inicial congelada** (§5.5) de cada intento sin cota. Esa
+estimación y su conjunto de observaciones quedan registrados en la decisión de R, que se reproduce
+con ellos.
+
+Un intento sin cota en la piloto **no** hace no certificable la calidad ni la decisión de R. La
+selección de aprobaciones sigue siendo la reproducible, y se exigen todas las repeticiones 1..R de
+la R decidida.
 
 - Si la proyección supera el techo, R baja de 5 a **3** solo en los 9 pequeños sin fuga (total: 82
   corridas). Esta decisión se toma **solo con el dato de consumo**, sin mirar la calidad, y queda
@@ -275,10 +285,12 @@ repetición 1. Con su consumo medido se proyecta el circuito completo.
 **Suspensión.** Si en cualquier momento el acumulado alcanza el techo, o el plan devuelve límites
 de uso que impiden terminar:
 
-- se para, se persiste lo hecho y se publica como **«incompleto — no certificable»**, con la cifra
-  de consumo;
+- se para, se persiste lo hecho y se publica como **«incompleto — no certificable»** en el
+  veredicto de calidad, con la cifra de consumo y el veredicto de cuota (§6.4);
 - solo se reanuda con una nueva aprobación expresa de Pipe;
-- **un resultado incompleto nunca se certifica**: ni para la línea base ni para aprobar 0.4.
+- **una CALIDAD incompleta nunca se certifica**: ni para la línea base ni para aprobar 0.4. La
+  CUOTA de lo medido hasta la suspensión se publica por separado con su veredicto por intervalo
+  (§6.3).
 
 ---
 
@@ -289,7 +301,8 @@ de uso que impiden terminar:
 Se juzga **lo que el abogado ve**: diagnóstico y borrador completos al llegar a la pantalla de
 revisión, después del muro determinista (`annotate_draft`). Requiere `MIA_EVAL_PERSIST_FULL=1`.
 Una corrida sin texto completo (`harness.evidence_audit`) cuenta como corrida faltante y bloquea la
-certificación.
+certificación **de calidad** (§6.4). No tiene efecto sobre la cuota, salvo por el consumo que
+haya registrado.
 
 ### 4.2 Extracción de las afirmaciones: todo segmento se juzga
 
@@ -451,8 +464,9 @@ La medición real de la aprobación llega con `draft_outcome` (Bloque 3).
   en su propio despacho y su propio `MIA_HOME`, porque escribe en el SOUL. Se espera a que terminen
   los trabajos en segundo plano.
 - **Consumo agregado por caso (la cifra que decide):** `consumo_agregado_caso` = **suma** de los
-  tokens de las R corridas del turno, más los de la aprobación de ese caso. Incluye la cota
-  conservadora de los intentos fallidos.
+  tokens de las R corridas del turno, más los de la aprobación de ese caso. Es un **intervalo**:
+  el mínimo es lo conocido y el máximo es lo conocido más las cotas finitas, o infinito si hay un
+  intento sin cota (§6.3). `consumo_max_corrida` es también un intervalo, por la misma regla.
 - **Extremo por caso:** `consumo_max_corrida` = la corrida que más consumió entre las R de ese caso.
 - **Descriptivas, nunca puerta:** `tokens_por_operacion` (p50 por caso) e
   `inferencias_por_operacion` (p50), y sus análogos de inferencias (suma y máximo).
@@ -464,9 +478,22 @@ La medición real de la aprobación llega con `draft_outcome` (Bloque 3).
   - Por eso cada intento fallido se registra con `consumo_conocido = false`, los tokens de entrada
     estimados antes de enviar (`memory.tokens.estimate_tokens` sobre los mensajes) y, como cota
     superior de salida, el máximo de salida permitido a esa llamada.
-  - El techo de §6 se evalúa **con esa cota superior**. Si un intento fallido no permite calcularla,
-    el techo queda **no certificable** y 0.4 no aprueba esa fila.
-- **Segundo proveedor (Codex, 5C):** se mide igual, por caso y en total, en su propia cuota.
+  - El techo de §6.3 se evalúa con esa cota superior **cuando existe**.
+  - Un intento sin cota (por C18, todo intento fallido de un CLI) no hace no certificable el techo:
+    pone **máximo infinito** en el consumo de su ámbito; el veredicto de cuota se resuelve por intervalo (§6.3): queda «estimada» si su intervalo cruza el umbral, «certificada · excede» si su mínimo ya excede y «certificada · cumple» si el máximo cumple, por ejemplo cuando el evento solo afecta al denominador de un cociente (§6.4).
+  - Cada intento sin cota se registra con una **estimación empírica no garantizada**: entrada
+    heurística + la salida máxima observada en llamadas conocidas de la misma familia, versión del
+    CLI y firma de comando + el fondo observado en la medición versionada del CLI (instantánea, firma
+    y versión), o 0 declarado «no medido».
+  - **Estimación inicial congelada.** Se calcula al cerrar el intento con un **corte de secuencia**:
+    solo entran las llamadas conocidas cerradas antes del corte. El conjunto de observaciones usado
+    queda registrado.
+    - Esa es la estimación que sirve para suspender (§3.4) y para decidir R.
+    - Al decidir se publica además una **actualización final** con todas las observaciones del
+      bloque, que no se compara con la inicial: un máximo posterior mayor no es una contradicción.
+  - Las dos se publican. **Ninguna certifica.**
+- **Segundo proveedor (Codex, 5C):** se mide igual, por caso y en total, en su propia cuota. Sus
+  intentos sin cota caen en la misma regla (máximo infinito en su ámbito; cuota por intervalo, §6.3).
 - **Cuota de los jueces:** se contabiliza aparte de la del producto. Cuenta para el techo del
   circuito (§3.4), no para el techo de producto (§6).
 
@@ -579,7 +606,7 @@ Pipe fijó el techo en «+25 % por consulta frente a 0.3.3» y en «Codex, como 
 que gasta Claude». Una mediana o un p50 dejan pasar subidas extremas. Por ejemplo, con
 {100, 100, 100, 10 000, 10 000} la mediana sigue en 100 y el total se multiplica por 40,6 frente a
 cinco corridas de 100. Por eso **el techo se aplica solo a consumo real agregado (sumas) y a
-extremos**, siempre con la cota conservadora de los intentos fallidos (§5.5). Las medianas y los
+extremos**, con la cota de los intentos fallidos que la tienen (§5.5). Las medianas y los
 p50 son solo descriptivos.
 
 | Condición de techo | Claude: 0.4 frente a 0.3.3 | Codex (5C): frente a Claude en 0.4 |
@@ -598,12 +625,50 @@ Una subida de más del 10 % en cualquier condición tiene que ir acompañada de 
 `mejora`) en una métrica de calidad, atribuible por nodo (`usage_by_node`). Si no la hay, el nodo
 no se activa (plan, Bloque 4). La latencia se publica y no es techo.
 
-### 6.4 Veredicto global
+**Veredicto de cuota, por intervalo.** El techo de esta sección y la atribución de subidas forman
+el **veredicto de CUOTA**, separado del de calidad (§6.4).
 
-0.4 **aprueba** si cumple todo §6.1, no tiene ninguna `regresion` en §6.2 y cumple §6.3. Una sola
-fila roja reprueba (como en `eval/compare.py`): las métricas no se compensan entre sí. Si falta
-evidencia (salidas sin juzgar, discordancias sin resolver, techo no certificable, banco suspendido),
-el veredicto es **«no certificable»**, que no es lo mismo que aprobar.
+- **Consumo como intervalo.** Cada consumo es un intervalo `[mínimo, máximo]`. El mínimo es lo
+  conocido. El máximo es lo conocido más las cotas finitas, o infinito si hay un intento sin cota.
+- **Cociente** de dos intervalos: mínimo = mínimo del numerador / máximo del denominador; máximo
+  = máximo del numerador / mínimo del denominador. El total ponderado por caso promedia por
+  separado los mínimos y los máximos de los casos.
+- **Estado de cada condición «≤ umbral»:**
+  1. **«certificada · cumple»** solo si el **máximo** posible cumple;
+  2. **«certificada · excede»** solo si el **mínimo** posible excede;
+  3. **«estimada»** si el intervalo **cruza** el umbral. Se publican el intervalo, la estimación
+     empírica y el aviso de que no es garantía. Vale **también con cotas finitas y sin ningún
+     intento sin cota**.
+
+- El veredicto de cuota es **«certificada · excede»** si alguna condición queda en el caso 2.
+- Si no, es **«estimada»** si alguna queda en el caso 3.
+- Si no, es **«certificada · cumple»**.
+- *Ejemplo:* nueva = 100 conocidos y base = 10 conocidos más un intento con cota 90 (real 1).
+  Cociente [100/100, 100/10] = [1, 10], que cruza 1,25: «estimada», nunca «certificada · cumple».
+  A la inversa, un numerador con una cota sobredimensionada da un intervalo que cruza, y nunca un
+  falso «excede».
+- Una subida de más del 10 % sin mejora atribuible deja el veredicto de cuota en «excede»
+  (certificado o estimado, según los consumos de los que dependa).
+- El aviso literal de la cuota estimada es: «Cuota estimada: el consumo real está en el intervalo
+  publicado y cruza el umbral; la cifra puntual es una estimación empírica no garantizada y no
+  certifica el techo».
+
+### 6.4 Veredictos de calidad y de cuota
+
+El banco emite **dos veredictos separados** y los publica juntos. Ninguno se deduce del otro.
+
+- **Calidad.** 0.4 **aprueba** en calidad si cumple todo §6.1 y no tiene ninguna `regresion` en
+  §6.2.
+  - Una sola fila roja reprueba (como en `eval/compare.py`): las métricas no se compensan entre sí.
+  - Si falta evidencia de calidad o de identidad (salidas sin juzgar, discordancias sin resolver,
+    fallo sin texto, banco suspendido), el veredicto de calidad es **«no certificable»**.
+  - **Un intento de consumo sin cota no es falta de evidencia de calidad:** solo cuenta por sus
+    efectos propios (turno no completado, fallo sin texto, juicio incompleto).
+- **Cuota.** Lo fija §6.3: «certificada · cumple», «certificada · excede» o «estimada», con el
+  consumo conocido, la estimación empírica no garantizada y el aviso.
+- El resultado nunca se publica como un único «aprueba» si la cuota no es «certificada · cumple».
+  Qué combinación habilita la entrega de 0.4 es una decisión de producto, que se toma con los dos
+  veredictos a la vista.
 
 ---
 
@@ -934,12 +999,18 @@ jueces quedan fuera.
 
 ### 8.8 Rotulación
 
-Todo número publicado lleva uno de estos dos rótulos:
+Todo número **de calidad** publicado lleva uno de estos dos rótulos:
 
 - «Evaluación automática (Opus high y Codex en cribado doble, adjudicación por mayoría)»;
 - «… calibrada con revisión humana ciega (n = 10)».
 
-Nunca se publica como «validado por abogado» ni como «certificado».
+Un número de calidad nunca se publica como «validado por abogado» ni como «certificado».
+
+**La cuota es distinta.** No es una evaluación de los jueces sino un recuento de consumo, y lleva
+su propio rótulo: **«cuota certificada»** solo si el intervalo lo garantiza, o **«cuota
+estimada»**, con el aviso de §6.3. «Certificada» aplicado a la cuota significa únicamente que el
+intervalo de consumo garantiza el resultado. No es una certificación de la calidad, ni de un
+abogado, ni de un tercero.
 
 ---
 
@@ -1041,6 +1112,12 @@ provisional. La serie F1 bajo `suscripcion` ya estaba cortada y no es comparable
 - Un incumplimiento de 0.3.3 se publica en la primera línea.
 - Un resultado incompleto o no certificable se publica como tal.
 
+- Los dos veredictos se publican **juntos y separados**: el de calidad, con su rótulo de §8.8, y el
+  de cuota, con su estado («certificada» o «estimada»).
+- Una cuota «estimada» se publica con el consumo conocido, la estimación empírica de cada intento
+  sin cota (con sus componentes, la versión de la regla y la instantánea), el número de intentos
+  sin cota y el aviso literal de §6.3. Nunca se presenta como certificada.
+
 ---
 
 ## 10 · Qué se reutiliza y qué hay que construir
@@ -1089,8 +1166,9 @@ provisional. La serie F1 bajo `suscripcion` ya estaba cortada y no es comparable
    limpia, dos pasadas, esquemas, validador con evidencia por estado y reglas anti-evasión,
    reintento, adjudicación simétrica de tres votos, detección de discordancias, kappa y estabilidad.
 10. **Métricas y veredicto:** `backend/mia/eval/banco04/metricas.py`. Cubre §5, §6.1, el bootstrap
-    por casos de §6.2, el techo en tres niveles de §6.3, la matriz de §7.2, las cotas de §3.3 y el
-    veredicto «aprueba / reprueba / no certificable».
+    por casos de §6.2, el techo en tres niveles de §6.3, **por intervalo**, la matriz de §7.2, las
+    cotas de §3.3 y los **dos** veredictos: calidad «aprueba / reprueba / no certificable» y cuota
+    «certificada · cumple / certificada · excede / estimada».
 11. **Validación de jueces:** `execution/banco04_validar_jueces.py`, con el conjunto de ajuste y el
     reservado de un solo uso (§8.6).
 12. **Paquete de calibración:** `execution/banco04_calibracion.py`.
@@ -1109,8 +1187,8 @@ provisional. La serie F1 bajo `suscripcion` ya estaba cortada y no es comparable
     - el reporte nunca emite «equivalente» y aplica la tabla de veredictos de §6.2 (P7);
     - la matriz de §7.2 clasifica bien sus 24 celdas, incluido un decisivo en el 4 % no leído con
       alcance de 0,96 (P8);
-    - los ejemplos {100 ×4, 10 000 ×3} y {100, 100, 100, 10 000, 10 000} reprueban el techo aunque
-      la mediana no cambie (P9);
+    - los ejemplos {100 ×4, 10 000 ×3} y {100, 100, 100, 10 000, 10 000} dan cuota «certificada ·
+      excede» aunque la mediana no cambie, sin afectar a la calidad (P9);
     - **alineación:** una división de Codex produce la unidad común esperada; un defecto que solo
       marca Codex sobre una unidad dividida llega a adjudicación; `localizador_falso` cuenta como
       defecto en el kappa; ambos asignan la misma clase: indefinido, sin acreditar ≥0,6; rige la
@@ -1123,8 +1201,13 @@ provisional. La serie F1 bajo `suscripcion` ya estaba cortada y no es comparable
     - si la mayoría descarta más del 20 % de los defectos vistos solo por Codex, o la sensibilidad
       final del circuito es menor que 0,95, el circuito no se usa (N5);
     - la llave de la custodia está protegida con DPAPI y no aparece bajo el repositorio (P6);
-    - un intento fallido sin cota hace el techo no certificable (P10);
-    - el contador alcanza el techo, suspende y publica «incompleto — no certificable» (P11);
+    - un intento fallido sin cota pone máximo infinito en su ámbito y la cuota se resuelve por intervalo (§6.3): queda «estimada» si su intervalo cruza el umbral, «certificada · excede» si su mínimo ya excede y «certificada · cumple» si el máximo cumple, por ejemplo cuando el evento solo afecta al denominador de un cociente; **no** hace
+      no certificable la calidad. Un intento con una cota finita que cruza el umbral
+      también deja la cuota «estimada». El contraejemplo «nueva 100; base 10 + cota 90» nunca da
+      «certificada · cumple», y un numerador sobredimensionado nunca da un falso «excede» (P10, v1.4);
+    - el contador (conocido + cotas + estimación empírica inicial) alcanza el techo, suspende y
+      publica la calidad «incompleta — no certificable» y, por separado, el veredicto de cuota por
+      intervalo (§6.3) sobre lo medido hasta la suspensión (P11);
     - el runner rechaza el puerto 55432 y el `.env` del repo.
 
     Lo que cuenta como resultado es el número de mutaciones que sobreviven.
@@ -1180,7 +1263,7 @@ la v1.2 queda indicado en §12.2.
 | **P7** | Aceptada. 1 − 0,05^(1/5) ≈ 0,45, como afirma Astra. Se delimitan la población (17 casos fijos) y la dependencia, se dan cotas por caso y por estrato, bootstrap por casos, y se prohíbe declarar equivalencia. | §1; §3.3; §6.2 |
 | **P8** | Aceptada. La matriz pasa a 18 combinaciones (2 × 3 × 3), con su efecto en la aprobación. | §7.2 |
 | **P9** | Aceptada. Mediana de {100 ×4, 10 000 ×3} = 100 y total ×43 frente a 700, como afirma Astra. El techo se aplica al total ponderado, a la mediana de estrato y a los extremos por caso, también para Codex. | §6.3; §10.2.13 |
-| **P10** | Aceptada. `spend_guard.py:1122-1125` registra 0 tokens ante una excepción y `provider_benchmark.py:205-206` lee solo llamadas exitosas. Se registra el consumo desconocido con cota conservadora, y sin cota el techo no es certificable. | §5.5; §9.4; §10.2.5 |
+| **P10** | Aceptada. `spend_guard.py:1122-1125` registra 0 tokens ante una excepción y `provider_benchmark.py:205-206` lee solo llamadas exitosas. Se registra el consumo desconocido con cota conservadora, y sin cota el techo no es certificable.  *(v1.4: un intento sin cota ya no deja el techo «no certificable»; pone máximo infinito en su ámbito y la cuota se resuelve por intervalo, §6.3; no afecta a la calidad.)* | §5.5; §9.4; §10.2.5 |
 | **P11** | Aceptada. Presupuesto del circuito completo, techo efectivo con reserva del juicio, suspensión, y prohibición de certificar resultados incompletos. Pipe autorizó el circuito el 2026-10-11 (decisión 4). | §3.2; §3.4; §6.4; §11 |
 | **P12** | Aceptada como decisión del director: `quality_adaptive`, registrada como corrección técnica del plan, no como default provisional. | §9.1; §11 |
 
@@ -1255,7 +1338,12 @@ Las decide el director y quedan sujetas a la revisión de Astra sobre el código
   material la configuración de jurisdicción. Era errónea: tener pasaje no prueba que la norma sea
   aplicable al ordenamiento configurado.
 - **C14.** Los esquemas de la pasada 2, del tercer voto y del voto de cobertura los fija el código.
-- **C15.** Precedencia de veredictos: `no_certificable` > `reprueba` > `aprueba`.
+- **C15 (revisada en v1.4).** La precedencia rige **por veredicto**:
+  - calidad: `no_certificable` > `reprueba` > `aprueba`;
+  - cuota: «certificada · excede» (algún mínimo excede) > «estimada» (algún intervalo cruza) >
+    «certificada · cumple» (todos los máximos cumplen), por intervalo (§6.3).
+
+  Ningún motivo de cuota entra en el veredicto de calidad, ni al revés.
 - **C16.** La regla de cifras de P5 se aplica por átomo.
 - **C8 y C12 quedan abiertas.**
   - C8: el alcance se mide con la lista real de fragmentos que entraron al prompt.
@@ -1292,20 +1380,35 @@ todas endurecen o declaran conducta. Siguen bajo banco04-v1.3.
 - **C18 (cota de los intentos por CLI; P10).** El máximo de salida que la API documenta para un modelo
   no acredita la cota de una ejecución del CLI de suscripción: una invocación del CLI puede emitir
   varias peticiones a la API (reintentos internos, reenvíos, peticiones de fondo) que el banco no puede
-  fijar sin cambiar el producto. Todo intento fallido bajo un alias `cli-*` (Claude o Codex) se
-  registra con consumo desconocido y **sin cota**, y el techo de §3.4 y §6.3 queda no certificable.
+  fijar sin cambiar el producto. Todo intento fallido bajo un alias `cli-*` (Claude o Codex) se registra con consumo desconocido y **sin cota**. Por la decisión de Pipe del 2026-10-12 (§12.7), eso pone máximo infinito en el consumo de su ámbito, con su estimación empírica no garantizada; el veredicto de **cuota** se resuelve por intervalo (§6.3): queda «estimada» si su intervalo cruza el umbral, «certificada · excede» si su mínimo ya excede y «certificada · cumple» si el máximo cumple, por ejemplo cuando el evento solo afecta al denominador de un cociente. No hace no certificable la calidad. Para la suspensión de §3.4 cuenta la estimación empírica.
   Declarar una cota para un CLI exige acreditar, desde el comando y el entorno reales con que el banco
   lo invoca y desde la documentación oficial de la versión instalada, el número máximo de peticiones
   por invocación y la salida máxima por petición; la cota es entonces peticiones × (entrada estimada +
   salida máxima). Sin esa acreditación no hay cota. Vale igual para los jueces: Claude toma la cota de
   `spend_guard.cota_salida_cli` y Codex no tiene ninguna. Una telemetría parcial (sin los componentes
   de entrada y salida) es consumo desconocido, nunca cero conocido.
-- **C19 (consumo desconocido durante el circuito).** Con un intento de consumo desconocido y sin cota,
-  el acumulado es solo una cota inferior: no se lanza ningún intento más de juez ni ninguna llamada
-  Codex de producción. La producción Claude puede seguir, pero el techo queda no certificable y las
-  métricas de calidad que se obtengan se publican con esa fila en «no certificable». **Pendiente de
-  Pipe:** si continuar el juicio tras un consumo desconocido puede hacerse con su aprobación expresa,
-  registrada como la reanudación de §3.4. Mientras no lo decida, la conducta es detenerse.
+  «Acotar y medir» (v6 del contrato) quedó **revocada**. Ninguna fórmula de cota de CLI se acepta
+  mientras no esté acreditado un límite para **todas** las peticiones de una invocación, sus entradas
+  y sus salidas. Una medición del fondo es una estimación empírica, no una cota. El banco no modifica
+  el entorno del CLI: no fija ni normaliza los reintentos.
+- **C19 (consumo desconocido durante el circuito; revisada en v1.4).** Con un intento de consumo
+  desconocido y sin cota, el acumulado conocido es solo una cota inferior: no se compromete ningún
+  intento más de juez ni ninguna llamada Codex de producción hasta una reanudación con la
+  aprobación expresa de Pipe (C27).
+  - La producción Claude puede seguir.
+  - Las métricas de calidad que se obtengan **son certificables** y entran en el veredicto de
+    calidad.
+  - El veredicto de cuota se resuelve por intervalo (§6.3): queda «estimada» si su intervalo cruza el umbral, «certificada · excede» si su mínimo ya excede y «certificada · cumple» si el máximo cumple, por ejemplo cuando el evento solo afecta al denominador de un cociente.
+
+  De las exigencias que habilitan el circuito de jueces (§8.6) se retira **solo** la de consumo
+  certificable. Siguen exigidos:
+
+  - el contador compartido, con la suspensión y la reanudación de C27;
+  - cero salidas sin evaluar;
+  - cero discordancias sin resolver;
+  - la acreditación del reservado.
+
+  El consumo de la validación entra en la cuota.
 - **C20 (piloto y Codex en el Bloque 0).** Cada corrida de la tanda piloto se controla antes de
   lanzarse con la base de §3.2 de su clase (48 000 tokens si es pequeña, 177 000 si es voluminosa). En
   el Bloque 0 el presupuesto Codex de producción es cero: el banco impide antes de enviarla cualquier
@@ -1339,9 +1442,11 @@ todas endurecen o declaran conducta. Siguen bajo banco04-v1.3.
   evaluador congelado (§9.6).
 - **C24 (veredicto global recalculado y recibo de extensión; §6.2).** La puerta global no confía en el
   inventario del llamador: lo reconstruye desde el protocolo, exige las repeticiones exactas 1..R por
-  versión y caso, consumo de los 17 casos en las dos versiones y pares completos, y recalcula las
-  comparativas desde los casos agregados de 0.3.3 y 0.4 con su semilla. Toda ausencia es
-  `no_certificable`. El recibo de extensión `{casos, corridas_por_caso: 5, veredicto_final,
+  versión y caso, **los registros** de consumo de los 17 casos en las dos versiones y pares
+  completos, y recalcula las comparativas desde los casos agregados de 0.3.3 y 0.4 con su
+  semilla. Toda ausencia **de registros** es `no_certificable` en calidad (identidad y
+  completitud). Un intento sin cota no es una ausencia de registro: entra en la cuota por
+  intervalo (§6.3). El recibo de extensión `{casos, corridas_por_caso: 5, veredicto_final,
   comparativa_previa}` exige que la comparativa previa sea `no_concluyente`, que los casos sean los de
   la regla y que las corridas adicionales existan, estén juzgadas y entren al recálculo.
 - **C25 (atribución de subidas de cuota; §6.3).** Una subida de consumo de un caso solo se atribuye a
@@ -1359,3 +1464,41 @@ consume tal cual las filas absolutas de §6.1, la de decisivos estables y la de 
 su presencia y cobertura, no las recalcula); `metricas_corrida` exige `texto_salida` y
 `jurisdicciones`, pero el runner aún no la llama; la entrada de un intento se estima (caracteres / 3),
 no se acota.
+
+### 12.7 Versión banco04-v1.4 (2026-10-12): separar calidad y cuota
+
+**Motivo.** El dictamen de Astra sobre el contrato de la cadena v6 mostró que la cota propuesta
+para el CLI no era conservadora y que fijar los reintentos alteraba la conducta medida (§1 de la
+propuesta).
+
+**Decisión de Pipe (2026-10-12), «Separar calidad y cuota»,** que revoca «Acotar y medir»: dos
+veredictos.
+
+- La calidad es certificable con intentos sin cota.
+- La cuota es «certificada» (cumple / excede) o «estimada», y «excede» si lo conocido ya excede.
+  El director la aplica por intervalo (§6.3): solo se certifica lo que el intervalo garantiza.
+- El techo gobierna la suspensión con conocido + estimación empírica.
+- La reanudación y C27 siguen igual.
+- El banco no toca el entorno del CLI, y la medición del fondo se conserva como estimación
+  empírica versionada.
+- Codex sigue la misma regla.
+
+**Cambios:** cabecera, §3.4, §4.1, §5.5, §6.3, §6.4, §8.8, §9.7, §10.2.10, §10.2.13 (P9, P10 y
+P11), nota a P10 de §12.1, C15, C18, C19 y C24.
+
+**No cambian** la muestra, R, las métricas, los umbrales, las cifras de los techos, los jueces ni la
+custodia.
+
+**C27 (se mantiene; integrada en esta versión).**
+
+- **Decisión de Pipe del 2026-10-12:** «que se reanude con mi autorización». Un consumo
+  desconocido sin cota detiene el juicio y la producción Codex, y solo se reanuda con una
+  referencia de aprobación de Pipe que cubra los eventos ya registrados. Un evento nuevo vuelve a
+  detener.
+- **Garantía de compromiso irrevocable (decisión del director):** el punto de compromiso de una
+  llamada es su `seq_envio`, escrito bajo el cerrojo del circuito.
+  - Una llamada comprometida antes del evento es legítima aunque invoque después.
+  - Lo prohibido es comprometer una llamada después del evento sin una autorización que lo cubra.
+  - Residual declarado: esa llamada puede consumir después del evento.
+
+  Detalle en el contrato de la cadena, §4.2 y §5.
